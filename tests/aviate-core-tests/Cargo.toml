@@ -5,4 +5,4 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
-aviate-core = { path = "../../aviate-core" }
+aviate-core = { path = "../../aviate-core", features = ["mc", "fw", "vtol"] }

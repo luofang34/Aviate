@@ -65,3 +65,60 @@ impl_validated!(
     Pascals, Celsius, Degrees, Microtesla, 
     Kilograms, KilogramMeterSquared
 );
+
+pub trait FloatExt {
+    fn sqrt(self) -> Self;
+    fn sin(self) -> Self;
+    fn cos(self) -> Self;
+}
+
+impl FloatExt for Scalar {
+    fn sqrt(self) -> Self { libm::sqrtf(self) }
+    fn sin(self) -> Self { libm::sinf(self) }
+    fn cos(self) -> Self { libm::cosf(self) }
+}
+
+macro_rules! impl_arithmetic {
+    ($($t:ty),*) => {
+        $(
+            impl core::ops::Add for $t {
+                type Output = Self;
+                fn add(self, rhs: Self) -> Self {
+                    Self(self.0 + rhs.0)
+                }
+            }
+            impl core::ops::Sub for $t {
+                type Output = Self;
+                fn sub(self, rhs: Self) -> Self {
+                    Self(self.0 - rhs.0)
+                }
+            }
+            impl core::ops::Mul<Scalar> for $t {
+                type Output = Self;
+                fn mul(self, rhs: Scalar) -> Self {
+                    Self(self.0 * rhs)
+                }
+            }
+            impl core::ops::Div<Scalar> for $t {
+                type Output = Self;
+                fn div(self, rhs: Scalar) -> Self {
+                    Self(self.0 / rhs)
+                }
+            }
+             impl core::ops::Neg for $t {
+                type Output = Self;
+                fn neg(self) -> Self {
+                    Self(-self.0)
+                }
+            }
+        )*
+    }
+}
+
+impl_arithmetic!(
+    Meters, MetersPerSecond, MetersPerSecondSquared,
+    RadiansPerSecond, Radians, Seconds,
+    Normalized, NormalizedSigned,
+    Pascals, Celsius, Degrees, Microtesla,
+    Kilograms, KilogramMeterSquared
+);

@@ -1,4 +1,5 @@
 use crate::types::Scalar;
+use crate::types::FloatExt;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Vector3<T> {
@@ -16,6 +17,17 @@ impl<T> Vector3<T> {
 impl Vector3<Scalar> {
     pub fn zero() -> Self {
         Self::new(0.0, 0.0, 0.0)
+    }
+    
+    pub fn skew_symmetric(&self) -> Matrix<3, 3> {
+        let mut m = Matrix::<3, 3>::zero();
+        m.data[0][1] = -self.z;
+        m.data[0][2] =  self.y;
+        m.data[1][0] =  self.z;
+        m.data[1][2] = -self.x;
+        m.data[2][0] = -self.y;
+        m.data[2][1] =  self.x;
+        m
     }
 }
 
@@ -153,7 +165,7 @@ impl Quaternion {
 
     pub fn normalize(&self) -> Self {
         let n = self.norm_sq().sqrt();
-        if n > 1e-6 {
+        if n > 1e-6 && n.is_finite() {
             Self {
                 w: self.w / n,
                 x: self.x / n,
@@ -204,6 +216,36 @@ impl Quaternion {
             y: axis.y * s,
             z: axis.z * s,
         }
+    }
+    pub fn to_rotation_matrix(&self) -> Matrix<3, 3> {
+        let x2 = self.x + self.x;
+        let y2 = self.y + self.y;
+        let z2 = self.z + self.z;
+        let xx = self.x * x2;
+        let xy = self.x * y2;
+        let xz = self.x * z2;
+        let yy = self.y * y2;
+        let yz = self.y * z2;
+        let zz = self.z * z2;
+        let wx = self.w * x2;
+        let wy = self.w * y2;
+        let wz = self.w * z2;
+
+        let mut m = Matrix::<3, 3>::zero();
+        
+        m.data[0][0] = 1.0 - (yy + zz);
+        m.data[0][1] = xy - wz;
+        m.data[0][2] = xz + wy;
+
+        m.data[1][0] = xy + wz;
+        m.data[1][1] = 1.0 - (xx + zz);
+        m.data[1][2] = yz - wx;
+
+        m.data[2][0] = xz - wy;
+        m.data[2][1] = yz + wx;
+        m.data[2][2] = 1.0 - (xx + yy);
+        
+        m
     }
 }
 
