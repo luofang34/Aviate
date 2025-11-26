@@ -9,7 +9,7 @@ bitflags = "2.4"
 libm = "0.2"
 
 [features]
-default = ["mc"]
+default = ["mc", "fw", "vtol"]
 mc = []
 fw = []
 vtol = []

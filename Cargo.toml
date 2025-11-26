@@ -7,7 +7,6 @@ members = [
     "aviate-platform/sitl",
     "aviate-apps/quadcopter-stm32h7",
     "aviate-apps/quadcopter-sitl",
-    "tests/aviate-core-tests",
     "tests/aviate-hil-quadcopter",
     "tests/lint-verification",
 ]

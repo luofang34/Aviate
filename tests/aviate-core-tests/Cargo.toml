@@ -1,8 +1,0 @@
-[package]
-name = "aviate-core-tests"
-edition.workspace = true
-version.workspace = true
-license.workspace = true
-
-[dependencies]
-aviate-core = { path = "../../aviate-core", features = ["mc", "fw", "vtol"] }
