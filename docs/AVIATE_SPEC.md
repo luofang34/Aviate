@@ -194,7 +194,7 @@ RULE 3: On transition failure:
 RULE 4: ConfigMode determines which ModeConfig is active,
         which determines actuator grouping and coupling semantics.
 
-RULE 5: Transition to ConfigTransitionState::Failed SHALL raise FaultCategory::ConfigInvalid and any actuator-related fault implied by TransitionFailure; recovery requires explicit reset or valid re-transition.
+RULE 5: Transition to ConfigTransitionState::Failed SHALL raise FaultCategory::ConfigTransitionFailed (and any actuator-related fault implied by TransitionFailure); recovery requires explicit reset or valid re-transition.
 
 Transition triggers:
 - External systems request mode changes via `Command.config_mode_request` or `AviateKernel::request_config_mode`.
@@ -292,6 +292,13 @@ impl Validated for Scalar {
 }
 
 // All dimensional newtypes SHALL implement Validated by delegating to inner Scalar
+// Example pattern:
+// impl Validated for Meters {
+//     fn is_valid(&self) -> bool { self.0.is_finite() }
+//     fn sanitize_or_default(&self, default: Self) -> Self {
+//         if self.0.is_finite() { *self } else { default }
+//     }
+// }
 ```
 
 ---
@@ -371,11 +378,19 @@ pub enum GnssFix {
     RtkFixed,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum GnssHealth {
+    Good,
+    Suspect, // propagated for diagnostics only; not fused for control/estimation
+    Lost,
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct GnssData {
     pub position_ned: [Meters; 3],
     pub velocity_ned: [MetersPerSecond; 3],
     pub fix: GnssFix,
+    pub health: GnssHealth,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -407,6 +422,12 @@ pub struct SensorSet {
     pub airspeeds: [SensorReading<AirspeedData>; MAX_AIRSPEED],
     /// Optional geometry feedback for morphing aircraft (fold angles, etc.)
     pub geometry: Option<GeometryState>,
+}
+
+/// External/upper-layer sensor overrides (e.g., force GNSS trust state)
+#[derive(Copy, Clone, Debug)]
+pub struct SensorOverrides {
+    pub gnss_force_state: Option<GnssHealth>, // None = no override
 }
 ```
 
@@ -635,8 +656,8 @@ RULE 3: A coherent fallback vector SHALL be used instead. Options (in order):
 RULE 4: Independent actuators (landing gear, etc.) MAY use per-channel fallback.
 
 RULE 5: Fallback events MUST be reported via:
-        - ActuatorCmd.fallback_groups flags
-        - FaultFlags::ACTUATOR_NUMERIC_ERROR
+        - ActuatorCmd.fallback_mask (bit i corresponds to groups[i])
+        - FaultFlags::ACTUATOR_NUMERIC
         - Status reporting to upper systems
 ```
 
@@ -767,7 +788,7 @@ Sanitization is the LAST line of defense, not a control strategy.
                                           └───────────────┘
 
 If sanitizer triggers fallback:
-1. Set FaultFlags::ACTUATOR_NUMERIC_ERROR
+1. Set FaultFlags::ACTUATOR_NUMERIC
 2. Increment consecutive fallback counter
 3. If counter > MAX_CONSECUTIVE_FALLBACK:
    - Trigger FaultHandlingTable lookup
@@ -841,7 +862,7 @@ pub struct Setpoint {
     pub velocity: Option<[MetersPerSecond; 3]>,
     pub lateral_deviation: Option<Meters>,
     pub vertical_deviation: Option<Meters>,
-    pub collective_thrust: Normalized,
+    pub collective_thrust: Normalized, // semantics interpreted per active ModeConfig; not comparable across modes
 }
 
 #[derive(Clone, Debug)]
@@ -851,6 +872,8 @@ pub struct Command {
     pub setpoint: Setpoint,
     /// Optional request to change configuration mode (morphing)
     pub config_mode_request: Option<ConfigMode>,
+    /// Optional overrides from higher-level systems (e.g., GNSS trust)
+    pub sensor_overrides: Option<SensorOverrides>,
     pub timestamp: Timestamp,
     pub sequence: u32,
     pub source: CommandSource,
@@ -1401,6 +1424,8 @@ pub trait AviateKernel {
 23. **Sanitizer is last defense, not control strategy**
 24. **ConfigMode determines active ModeConfig (mixer, groups, limits)**
 25. Core control/estimation uses dimensional newtypes (no bare Scalar) and obeys the language profile summary in §3 (no unsafe, no panics, bounded loops, no alloc, no recursion)
+26. GNSS SHALL NOT drive inner attitude/rate loops; its effect on position/velocity estimates SHALL be bounded over finite time windows and may be removed entirely without destabilizing the control core
+27. Quaternions used in StateEstimate/Setpoint SHALL be normalized to unit length within tolerance ε; violation is a numeric fault (e.g., NumericError/EstimatorDiverged)
 
 ---
 
@@ -1417,6 +1442,16 @@ pub trait AviateKernel {
 | Coupling groups | All motors in single Strong group |
 | Fallback | Last good vector only |
 | Geometry | Static (no morphing) |
+
+---
+
+## 23. GNSS Usage Boundaries (Spoofing-Resilient)
+
+1. **Scope**: GNSS SHALL NOT be used in inner attitude/rate loops. GNSS is only a low-frequency aid for position/velocity/heading drift; primary altitude/vertical-speed sources are baro + IMU.
+2. **Kinematic Gate**: Each GNSS sample MUST be kinematically consistent with recent IMU linear acceleration/angular rates, barometric altitude changes, and airspeed plus a configured max-wind assumption. Violations SHALL be rejected and MAY downgrade GNSS health.
+3. **Bounded Authority**: The cumulative correction applied from GNSS to INS position/velocity SHALL be bounded over any finite window (e.g., max Δpos/Δvel per 10s). Beyond the bound, additional GNSS innovation is ignored/down-weighted (effectively INS-only).
+4. **Suspect State**: GNSS may enter a Suspect state where measurements are forwarded for diagnostics/telemetry but NOT used to drive control or estimator corrections.
+5. **External Override**: Higher-level systems may request GNSS Ignore/Suspect via a minimal override interface; the core shall honor overrides by treating GNSS as lost or suspect accordingly.
 
 ---
 
