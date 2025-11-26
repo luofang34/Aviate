@@ -58,6 +58,16 @@ impl<const N: usize> Matrix<N, N> {
         }
         m
     }
+    
+    pub fn make_symmetric(&mut self) {
+        for r in 0..N {
+            for c in 0..r {
+                let avg = (self.data[r][c] + self.data[c][r]) * 0.5;
+                self.data[r][c] = avg;
+                self.data[c][r] = avg;
+            }
+        }
+    }
 }
 
 impl<const R: usize, const C: usize> Matrix<R, C> {

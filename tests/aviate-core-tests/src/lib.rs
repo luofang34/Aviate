@@ -126,4 +126,96 @@ mod tests {
         let axis_cmd = kernel.step(&cmd);
         assert_eq!(axis_cmd.collective.0, 0.5);
     }
+    
+    #[test]
+    fn test_attitude_integration() {
+        let mut ekf = Ekf::default();
+        ekf.init(
+            Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+            Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+            Quaternion::IDENTITY
+        );
+        
+        // Rotate around Z axis at 1 rad/s
+        let imu_rot = ImuData {
+            accel: [MetersPerSecondSquared(0.0); 3],
+            gyro: [RadiansPerSecond(0.0), RadiansPerSecond(0.0), RadiansPerSecond(1.0)],
+        };
+        
+        let dt = 0.1;
+        // Run 10 steps -> 1.0 radian rotation approx
+        for _ in 0..10 {
+            ekf.predict(&imu_rot, dt);
+        }
+        
+        let est = ekf.get_estimate();
+        // Check Z component of quaternion or convert to angle
+        // q = [cos(0.5), 0, 0, sin(0.5)] for 1 rad rotation
+        // sin(0.5) ~ 0.479
+        assert!(est.attitude.z > 0.4, "Should have rotated around Z axis");
+    }
+    
+    #[test]
+    fn test_gnss_health_rejection() {
+        let mut ekf = Ekf::default();
+        ekf.init(
+            Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+            Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+            Quaternion::IDENTITY
+        );
+        
+        // Good fix but Bad Health (Suspect)
+        let gnss = GnssData {
+            position_ned: [Meters(100.0), Meters(0.0), Meters(0.0)], 
+            velocity_ned: [MetersPerSecond(0.0); 3],
+            fix: GnssFix::ThreeD,
+            health: GnssHealth::Suspect,
+        };
+        
+        let gnss_reading = SensorReading {
+            value: gnss,
+            valid: true,
+            source_id: 0,
+            timestamp: Timestamp { ticks: 0, source: TimeSource::Internal },
+            health: SensorHealth::Good, // Sensor itself is fine, but data is suspect
+        };
+        
+        ekf.update_gnss(&gnss_reading);
+        
+        let est = ekf.get_estimate();
+        // Should NOT have moved
+        assert_eq!(est.position_ned[0].0, 0.0, "Suspect GNSS should be ignored");
+    }
+    
+    #[test]
+    fn test_innovation_gating() {
+        let mut ekf = Ekf::default();
+        ekf.init(
+            Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+            Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+            Quaternion::IDENTITY
+        );
+        
+        // Huge jump (1000m)
+        let gnss = GnssData {
+            position_ned: [Meters(1000.0), Meters(0.0), Meters(0.0)], 
+            velocity_ned: [MetersPerSecond(0.0); 3],
+            fix: GnssFix::ThreeD,
+            health: GnssHealth::Good,
+        };
+        
+        let gnss_reading = SensorReading {
+            value: gnss,
+            valid: true,
+            source_id: 0,
+            timestamp: Timestamp { ticks: 0, source: TimeSource::Internal },
+            health: SensorHealth::Good,
+        };
+        
+        ekf.update_gnss(&gnss_reading);
+        
+        let est = ekf.get_estimate();
+        // Should NOT have moved
+        assert_eq!(est.position_ned[0].0, 0.0, "Outlier GNSS should be gated");
+    }
 }

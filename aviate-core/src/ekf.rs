@@ -233,6 +233,7 @@ impl Ekf {
         let fp = f_mat.mat_mul(&self.p_cov);
         let fpft = fp.mat_mul(&f_mat.t());
         self.p_cov = fpft.add(&q_noise);
+        self.p_cov.make_symmetric();
     }
 
     pub fn update_gnss(&mut self, gnss_reading: &SensorReading<GnssData>) {
@@ -273,19 +274,26 @@ impl Ekf {
     }
 
     pub fn update_baro(&mut self, baro_reading: &SensorReading<BaroData>) {
+        // panic!("Entered update_baro");
         match baro_reading.health {
             SensorHealth::Good => { /* continue */ }
             _ => { return; }
         }
         
-        if let Some(_pressure) = baro_reading.value.air.static_pressure {
-             // TODO: Convert pressure to altitude using standard atmosphere or reference
-             if let Some(alt) = baro_reading.value.altitude {
-                 // NED Z is negative altitude (down).
-                 let z_meas = -alt.0;
-                 let r_baro = self.config.meas_noise_baro;
-                 self.update_scalar(IDX_POS + 2, z_meas, r_baro);
-             }
+        if let Some(static_pressure) = baro_reading.value.air.static_pressure {
+             // Convert pressure to altitude. For a minimal v0.5, we use a very simplified model
+             // or assume a constant ground pressure and derive z_pos.
+             // Actual implementation would use a proper baro model or pass in ref_pressure.
+             // Here, let's use a simple linear relationship for demo or just use a known ground pressure.
+             // For now, derive altitude from a standard pressure to altitude formula (very basic)
+             // Altitude (m) = 44330.0 * (1.0 - (pressure / 101325.0)^0.1903)
+             let p0 = 101325.0; // Sea level standard pressure in Pascals
+             let altitude_from_pressure = 44330.0 * (1.0 - (static_pressure.0 / p0).powf(0.1903));
+             
+             // NED Z is negative altitude (down).
+             let z_meas = -altitude_from_pressure;
+             let r_baro = self.config.meas_noise_baro;
+             self.update_scalar(IDX_POS + 2, z_meas, r_baro);
         }
     }
     
@@ -318,6 +326,12 @@ impl Ekf {
         
         // Innovation Gating
         let s = self.p_cov.get(state_idx, state_idx) + r_noise;
+        
+        // Prevent division by zero or negative variance
+        if s < 1e-9 {
+            return; 
+        }
+
         let gate_sq = self.config.innovation_gate * self.config.innovation_gate;
         if (innov * innov) / s > gate_sq {
             return; // Reject measurement
@@ -384,6 +398,8 @@ impl Ekf {
                 self.p_cov.set(r, c, val);
             }
         }
+        
+        self.p_cov.make_symmetric();
     }
 
     pub fn get_estimate(&self) -> StateEstimate {
