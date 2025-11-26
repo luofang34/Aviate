@@ -1,0 +1,22 @@
+[workspace]
+members = [
+    "aviate-core",
+    "aviate-airframes/quadcopter",
+    "aviate-airframes/fixed-wing",
+    "aviate-platform/stm32h7",
+    "aviate-platform/sitl",
+    "aviate-apps/quadcopter-stm32h7",
+    "aviate-apps/quadcopter-sitl",
+    "tests/aviate-core-tests",
+    "tests/aviate-hil-quadcopter",
+    "tests/lint-verification",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.0.0"
+license = "MIT OR Apache-2.0"
+
+[workspace.metadata]
+description = "Aviate workspace — see docs/specs/AVIATE_SPEC_v0.5.md and docs/language/AVIATE_LANGUAGE_PROFILE.md for constraints."

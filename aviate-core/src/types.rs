@@ -1,0 +1,67 @@
+pub type Scalar = f32;
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct Meters(pub Scalar);
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct MetersPerSecond(pub Scalar);
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct MetersPerSecondSquared(pub Scalar);
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct RadiansPerSecond(pub Scalar);
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct Radians(pub Scalar);
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct Seconds(pub Scalar);
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct Normalized(pub Scalar);      // [0.0, 1.0]
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct NormalizedSigned(pub Scalar); // [-1.0, 1.0]
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct Pascals(pub Scalar);
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct Celsius(pub Scalar);
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct Degrees(pub Scalar);
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct Microtesla(pub Scalar);
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct Kilograms(pub Scalar);
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct KilogramMeterSquared(pub Scalar);
+
+pub trait Validated {
+    fn is_valid(&self) -> bool;
+    fn sanitize_or_default(&self, default: Self) -> Self;
+}
+
+impl Validated for Scalar {
+    fn is_valid(&self) -> bool { self.is_finite() }
+    fn sanitize_or_default(&self, default: Self) -> Self {
+        if self.is_finite() { *self } else { default }
+    }
+}
+
+// Macro to implement Validated for newtypes
+macro_rules! impl_validated {
+    ($($t:ty),*) => {
+        $(
+            impl Validated for $t {
+                fn is_valid(&self) -> bool { self.0.is_finite() }
+                fn sanitize_or_default(&self, default: Self) -> Self {
+                    if self.0.is_finite() { *self } else { default }
+                }
+            }
+            
+            // Allow adding scalar to newtype (if needed, mostly we want newtype algebra)
+            // For now, we keep it minimal.
+        )*
+    }
+}
+
+impl_validated!(
+    Meters, MetersPerSecond, MetersPerSecondSquared, 
+    RadiansPerSecond, Radians, Seconds, 
+    Normalized, NormalizedSigned, 
+    Pascals, Celsius, Degrees, Microtesla, 
+    Kilograms, KilogramMeterSquared
+);

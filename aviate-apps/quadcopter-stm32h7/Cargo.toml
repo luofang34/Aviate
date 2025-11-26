@@ -1,0 +1,9 @@
+[package]
+name = "aviate-app-quadcopter-stm32h7"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "aviate-app-quadcopter-stm32h7"
+path = "src/main.rs"

@@ -1,0 +1,9 @@
+[package]
+name = "aviate-hil-quadcopter"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "aviate-hil-quadcopter"
+path = "src/main.rs"

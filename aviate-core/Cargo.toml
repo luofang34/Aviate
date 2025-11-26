@@ -1,0 +1,11 @@
+[package]
+name = "aviate-core"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+bitflags = "2.4"
+
+[lib]
+path = "src/lib.rs"

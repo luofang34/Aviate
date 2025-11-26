@@ -1,0 +1,214 @@
+use crate::types::Scalar;
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Vector3<T> {
+    pub x: T,
+    pub y: T,
+    pub z: T,
+}
+
+impl<T> Vector3<T> {
+    pub const fn new(x: T, y: T, z: T) -> Self {
+        Self { x, y, z }
+    }
+}
+
+impl Vector3<Scalar> {
+    pub fn zero() -> Self {
+        Self::new(0.0, 0.0, 0.0)
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Matrix<const R: usize, const C: usize> {
+    pub data: [[Scalar; C]; R],
+}
+
+impl<const R: usize, const C: usize> Matrix<R, C> {
+    pub fn zero() -> Self {
+        Self { data: [[0.0; C]; R] }
+    }
+
+    pub fn get(&self, r: usize, c: usize) -> Scalar {
+        self.data[r][c]
+    }
+
+    pub fn set(&mut self, r: usize, c: usize, val: Scalar) {
+        self.data[r][c] = val;
+    }
+}
+
+impl<const N: usize> Matrix<N, N> {
+    pub fn identity() -> Self {
+        let mut m = Self::zero();
+        for i in 0..N {
+            m.data[i][i] = 1.0;
+        }
+        m
+    }
+}
+
+impl<const R: usize, const C: usize> Matrix<R, C> {
+    pub fn transpose<const R2: usize, const C2: usize>(&self) -> Matrix<R2, C2> 
+    where 
+        // Only compile if R2 == C and C2 == R, but Rust const generics checks are tricky.
+        // We'll just rely on the caller ensuring dimensions match the return type or use R, C flipped.
+        // Actually, simpler signature:
+        Self: Sized // Dummy bound
+    {
+        // This signature is hard with current const generics.
+        // Let's specific implementation:
+        unimplemented!("Use specific transpose_to or simple transpose returning Matrix<C, R>")
+    }
+
+    pub fn t(&self) -> Matrix<C, R> {
+        let mut res = Matrix::<C, R>::zero();
+        for r in 0..R {
+            for c in 0..C {
+                res.data[c][r] = self.data[r][c];
+            }
+        }
+        res
+    }
+    
+    pub fn add(&self, other: &Self) -> Self {
+        let mut res = Self::zero();
+        for r in 0..R {
+            for c in 0..C {
+                res.data[r][c] = self.data[r][c] + other.data[r][c];
+            }
+        }
+        res
+    }
+
+    pub fn sub(&self, other: &Self) -> Self {
+        let mut res = Self::zero();
+        for r in 0..R {
+            for c in 0..C {
+                res.data[r][c] = self.data[r][c] - other.data[r][c];
+            }
+        }
+        res
+    }
+    
+    pub fn mul_scalar(&self, s: Scalar) -> Self {
+        let mut res = Self::zero();
+        for r in 0..R {
+            for c in 0..C {
+                res.data[r][c] = self.data[r][c] * s;
+            }
+        }
+        res
+    }
+}
+
+// Mat * Mat
+impl<const R1: usize, const C1: usize> Matrix<R1, C1> {
+    pub fn mat_mul<const C2: usize>(&self, other: &Matrix<C1, C2>) -> Matrix<R1, C2> {
+        let mut res = Matrix::<R1, C2>::zero();
+        for r in 0..R1 {
+            for c in 0..C2 {
+                let mut sum = 0.0;
+                for k in 0..C1 {
+                    sum += self.data[r][k] * other.data[k][c];
+                }
+                res.data[r][c] = sum;
+            }
+        }
+        res
+    }
+}
+
+// Vector ops
+impl<const N: usize> Matrix<N, 1> {
+    pub fn to_vec3(&self) -> Vector3<Scalar> {
+        // Assumes N >= 3
+        Vector3 {
+            x: self.data[0][0],
+            y: self.data[1][0],
+            z: self.data[2][0],
+        }
+    }
+}
+
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Quaternion {
+    pub w: Scalar,
+    pub x: Scalar,
+    pub y: Scalar,
+    pub z: Scalar,
+}
+
+impl Quaternion {
+    pub const IDENTITY: Self = Self { w: 1.0, x: 0.0, y: 0.0, z: 0.0 };
+
+    pub fn new(w: Scalar, x: Scalar, y: Scalar, z: Scalar) -> Self {
+        Self { w, x, y, z }
+    }
+    
+    pub fn norm_sq(&self) -> Scalar {
+        self.w * self.w + self.x * self.x + self.y * self.y + self.z * self.z
+    }
+
+    pub fn normalize(&self) -> Self {
+        let n = self.norm_sq().sqrt();
+        if n > 1e-6 {
+            Self {
+                w: self.w / n,
+                x: self.x / n,
+                y: self.y / n,
+                z: self.z / n,
+            }
+        } else {
+            Self::IDENTITY
+        }
+    }
+    
+    pub fn rotate_vector(&self, v: Vector3<Scalar>) -> Vector3<Scalar> {
+        // Standard quaternion rotation
+        let qx = self.x;
+        let qy = self.y;
+        let qz = self.z;
+        let qw = self.w;
+
+        let ix = qw * v.x + qy * v.z - qz * v.y;
+        let iy = qw * v.y + qz * v.x - qx * v.z;
+        let iz = qw * v.z + qx * v.y - qy * v.x;
+        let iw = -qx * v.x - qy * v.y - qz * v.z;
+
+        Vector3 {
+            x: ix * qw + iw * -qx + iy * -qz - iz * -qy,
+            y: iy * qw + iw * -qy + iz * -qx - ix * -qz,
+            z: iz * qw + iw * -qz + ix * -qy - iy * -qx,
+        }
+    }
+    
+    // Quaternion multiplication
+    pub fn mul(&self, other: &Self) -> Self {
+         Self {
+            w: self.w * other.w - self.x * other.x - self.y * other.y - self.z * other.z,
+            x: self.w * other.x + self.x * other.w + self.y * other.z - self.z * other.y,
+            y: self.w * other.y - self.x * other.z + self.y * other.w + self.z * other.x,
+            z: self.w * other.z + self.x * other.y - self.y * other.x + self.z * other.w,
+        }
+    }
+    
+    // Create from axis-angle
+    pub fn from_axis_angle(axis: Vector3<Scalar>, angle: Scalar) -> Self {
+        let half_angle = angle * 0.5;
+        let s = half_angle.sin();
+        Self {
+            w: half_angle.cos(),
+            x: axis.x * s,
+            y: axis.y * s,
+            z: axis.z * s,
+        }
+    }
+}
+
+impl Default for Quaternion {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
