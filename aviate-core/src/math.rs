@@ -1,5 +1,4 @@
-use crate::types::Scalar;
-use crate::types::FloatExt;
+use crate::types::{Scalar, FloatExt};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Vector3<T> {
