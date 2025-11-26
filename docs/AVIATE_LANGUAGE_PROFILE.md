@@ -155,11 +155,13 @@ All physical quantities must use dimensional newtypes:
 Meters, Seconds, Radians
 MetersPerSecond, MetersPerSecondSquared
 RadiansPerSecond
-Newtons, NewtonMeters
-Pascals, Celsius
+Pascals, Celsius, Microtesla
+Kilograms, KilogramMeterSquared
 Normalized      // [0.0, 1.0]
 NormalizedSigned // [-1.0, 1.0]
 ```
+
+No Euler-in-degrees types are used in the core or language profile; any human-readable angle conversions belong in higher-level telemetry/UI code, not in Aviate.
 
 ### 5.3 Key Constraint
 
@@ -209,7 +211,7 @@ A coherent fallback vector shall be used instead:
 
 This is configured via `ModeConfig` in the Spec, not hardcoded per actuator.
 
-### 6.3 Sanitizer Role
+### 6.4 Sanitizer Role
 
 Sanitization is the **last line of defense**, not a control strategy.
 
