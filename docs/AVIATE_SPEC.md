@@ -60,6 +60,7 @@ Aviate is a minimal, deterministic, hard-real-time motion control kernel respons
 | Loops | Statically bounded |
 | Panics | Forbidden (`unwrap`, `expect`, `panic!`) |
 | Concurrency | No threads, no async, no interrupt-driven state |
+| Units | No bare `Scalar` for physical quantities in control/estimation; use dimensional newtypes |
 
 ### 3.2 Numeric Policy
 
@@ -107,6 +108,9 @@ pub struct ModeConfig {
     pub limits: Limits,
     pub law_profile: LawProfile,
 }
+
+// Contract: The number of actuator groups in one ModeConfig shall not exceed
+// MAX_GROUPS, otherwise config loading fails with FaultFlags::CONFIG_INVALID.
 ```
 
 ### 4.3 Geometry State (Continuous)
@@ -145,7 +149,7 @@ pub enum ConfigTransitionState {
         /// Progress 0.0 (start) to 1.0 (complete)
         progress: Scalar,
         /// Geometry state during transition
-        geometry: GeometryState,
+        geometry: Option<GeometryState>,
     },
     
     /// Transition failed, in degraded configuration
@@ -189,6 +193,14 @@ RULE 3: On transition failure:
         
 RULE 4: ConfigMode determines which ModeConfig is active,
         which determines actuator grouping and coupling semantics.
+
+RULE 5: Transition to ConfigTransitionState::Failed SHALL raise FaultCategory::ConfigInvalid and any actuator-related fault implied by TransitionFailure; recovery requires explicit reset or valid re-transition.
+
+Transition triggers:
+- External systems request mode changes via `Command.config_mode_request` or `AviateKernel::request_config_mode`.
+- The kernel exposes `transition_state()`/`config_mode()` for status reporting; transitions are performed only when RULE 1 conditions are met.
+- Re-entrant requests while already Switching SHALL be rejected with TransitionError::NotReady; requesting the current stable mode is a no-op; when in Failed, only a reset or valid re-transition to a safe mode is allowed.
+- Transition ModeConfig MUST exist in `airframe.modes`; its mixer may be precomputed offline (e.g., interpolated between source/target geometry) but must be deterministic and static-size (no dynamic allocation).
 ```
 
 ---
@@ -240,9 +252,9 @@ bitflags::bitflags! {
 
 ---
 
-## 5. Numeric Representation
+## 6. Numeric Representation
 
-### 5.1 Base Types
+### 6.1 Base Types
 
 ```rust
 pub type Scalar = f32;
@@ -256,9 +268,15 @@ pub struct Radians(pub Scalar);
 pub struct Seconds(pub Scalar);
 pub struct Normalized(pub Scalar);      // [0.0, 1.0]
 pub struct NormalizedSigned(pub Scalar); // [-1.0, 1.0]
+pub struct Pascals(pub Scalar);
+pub struct Celsius(pub Scalar);
+pub struct Degrees(pub Scalar);
+pub struct Microtesla(pub Scalar);
+pub struct Kilograms(pub Scalar);
+pub struct KilogramMeterSquared(pub Scalar);
 ```
 
-### 5.2 Validation Trait
+### 6.2 Validation Trait
 
 ```rust
 pub trait Validated {
@@ -272,11 +290,13 @@ impl Validated for Scalar {
         if self.is_finite() { *self } else { default }
     }
 }
+
+// All dimensional newtypes SHALL implement Validated by delegating to inner Scalar
 ```
 
 ---
 
-## 6. Time Model
+## 7. Time Model
 
 ```rust
 pub const TICK_FREQUENCY_HZ: u64 = 1_000_000;
@@ -299,7 +319,7 @@ pub struct TimeDelta {
 
 ---
 
-## 7. Sensor Model
+## 8. Sensor Model
 
 ```rust
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -320,6 +340,64 @@ pub const MAX_MAG: usize = 2;
 pub const MAX_BARO: usize = 2;
 pub const MAX_AIRSPEED: usize = 2;
 
+/// Unified air-data payload: baro, pitot, or air-data computer
+#[derive(Copy, Clone, Debug)]
+pub struct AirData {
+    /// Static pressure [Pa] if available
+    pub static_pressure: Option<Pascals>,
+    /// Dynamic pressure [Pa] if available
+    pub dynamic_pressure: Option<Pascals>,
+    /// Total pressure [Pa] if provided directly
+    pub total_pressure: Option<Pascals>,
+    pub temperature: Option<Celsius>,
+    /// Sensor-provided indicated airspeed (derived)
+    pub indicated_airspeed: Option<MetersPerSecond>,
+    /// Sensor-provided true airspeed (derived)
+    pub true_airspeed: Option<MetersPerSecond>,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct ImuData {
+    pub accel: [MetersPerSecondSquared; 3],
+    pub gyro: [RadiansPerSecond; 3],
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum GnssFix {
+    None,
+    TwoD,
+    ThreeD,
+    RtkFloat,
+    RtkFixed,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct GnssData {
+    pub position_ned: [Meters; 3],
+    pub velocity_ned: [MetersPerSecond; 3],
+    pub fix: GnssFix,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct MagData {
+    /// Magnetic field in microtesla
+    pub field_ut: [Microtesla; 3],
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct BaroData {
+    /// Optional sensor-provided altitude (for display/debug)
+    pub altitude: Option<Meters>,
+    /// Static air data (static_pressure + temperature expected to be Some)
+    pub air: AirData,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct AirspeedData {
+    /// Air data focused on dynamic/total pressure or sensor-derived IAS/TAS
+    pub air: AirData,
+}
+
 #[derive(Clone, Debug)]
 pub struct SensorSet {
     pub imus: [SensorReading<ImuData>; MAX_IMU],
@@ -327,14 +405,22 @@ pub struct SensorSet {
     pub mags: [SensorReading<MagData>; MAX_MAG],
     pub baros: [SensorReading<BaroData>; MAX_BARO],
     pub airspeeds: [SensorReading<AirspeedData>; MAX_AIRSPEED],
+    /// Optional geometry feedback for morphing aircraft (fold angles, etc.)
+    pub geometry: Option<GeometryState>,
 }
 ```
 
+**Air-data usage rules**:
+- The EKF and control logic treat `static_pressure`, `dynamic_pressure`, or `total_pressure` as the authoritative sources. Derived fields (`altitude`, `indicated_airspeed`, `true_airspeed`) are optional convenience values and must never override raw pressures.
+- In morphing/configurable aircraft, the role of each physical pressure port (static/dynamic/total) is defined per `ConfigMode`/`SensorConfig`; HAL populates `AirData` accordingly rather than hardcoding roles in `SensorSet` types.
+- For BaroData used in EKF, `air.static_pressure` MUST be `Some`; invalid/missing static pressure is a config/init fault.
+- If both `dynamic_pressure` and `indicated_airspeed` are present, EKF shall treat `dynamic_pressure` as authoritative and may recompute IAS to check consistency; disagreements beyond tolerance raise `FaultCategory::AirspeedFailed`.
+
 ---
 
-## 8. Actuator Model
+## 9. Actuator Model
 
-### 8.1 Actuator Types
+### 9.1 Actuator Types
 
 ```rust
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -363,7 +449,7 @@ pub struct ActuatorChannelConfig {
 pub const MAX_ACTUATORS: usize = 16;
 ```
 
-### 8.2 Actuator Group Configuration (Per-Mode)
+### 9.2 Actuator Group Configuration (Per-Mode)
 
 **Critical**: Coupling semantics are determined by flight mode, not fixed actuator properties.
 
@@ -396,6 +482,14 @@ pub enum CouplingKind {
     Weak,
 }
 
+/// Group-level actuator vector (shared by config and runtime fallback)
+#[derive(Clone, Debug)]
+pub struct GroupVector {
+    pub outputs: [Normalized; MAX_ACTUATORS],
+    pub mask: u16,
+    pub valid: bool,
+}
+
 /// Fallback strategy when fault detected
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FallbackPolicy {
@@ -416,11 +510,12 @@ pub struct ActuatorGroupConfig {
     /// Member channel indices
     pub members: &'static [u8],
     /// Safe pattern for this group (used by SafePattern/DecayToSafe)
-    pub safe_pattern: [Normalized; MAX_ACTUATORS],
+    /// Populated per mode from MixerConfig.safe_vectors or mode-specific data
+    pub safe_pattern: GroupVector,
 }
 ```
 
-### 8.3 Example: Same Motors, Different Coupling by Mode
+### 9.3 Example: Same Motors, Different Coupling by Mode
 
 ```rust
 // HOVER MODE: Quadrotor motors are strongly coupled
@@ -429,7 +524,11 @@ const HOVER_ROTOR_GROUP: ActuatorGroupConfig = ActuatorGroupConfig {
     coupling: CouplingKind::Strong,  // ← Any fault = all fallback
     fallback: FallbackPolicy::HoldLastGood,
     members: &[0, 1, 2, 3],
-    safe_pattern: [Normalized(0.15); MAX_ACTUATORS], // Idle
+    safe_pattern: GroupVector { 
+        outputs: [Normalized(0.15); MAX_ACTUATORS], 
+        mask: 0b0000_0000_0000_1111, 
+        valid: true,
+    }, // Idle
 };
 
 // CRUISE MODE: Same motors as distributed thrust, weakly coupled
@@ -438,7 +537,11 @@ const CRUISE_THRUST_GROUP: ActuatorGroupConfig = ActuatorGroupConfig {
     coupling: CouplingKind::Weak,    // ← Per-channel fallback OK
     fallback: FallbackPolicy::SafePattern,
     members: &[0, 1, 2, 3],
-    safe_pattern: [Normalized(0.0); MAX_ACTUATORS], // Feathered/idle
+    safe_pattern: GroupVector { 
+        outputs: [Normalized(0.0); MAX_ACTUATORS], 
+        mask: 0b0000_0000_0000_1111, 
+        valid: true,
+    }, // Feathered/idle
 };
 
 // Different ModeConfigs reference different group configs
@@ -455,7 +558,7 @@ const CRUISE_MODE: ModeConfig = ModeConfig {
 };
 ```
 
-### 8.4 Coupling Rationale by Phase
+### 9.4 Coupling Rationale by Phase
 
 | Mode | Actuators | Coupling | Single-Failure Consequence |
 |------|-----------|----------|---------------------------|
@@ -464,9 +567,8 @@ const CRUISE_MODE: ModeConfig = ModeConfig {
 | Hover | Ailerons | N/A (inactive) | - |
 | Cruise | Ailerons | **Strong** | Roll authority loss |
 | Any | Landing gear | **Weak** | Degraded but manageable |
-```
 
-### 8.5 Actuator Commands
+### 9.5 Actuator Commands
 
 ```rust
 #[derive(Clone, Debug)]
@@ -476,13 +578,22 @@ pub struct ActuatorCmd {
     pub sequence: u32,
     pub timestamp: Timestamp,
     /// Which groups had fallback this cycle (bitmask by group index)
+    /// Limited to MAX_GROUPS entries (bit i corresponds to groups[i])
     pub fallback_mask: u8,
     /// Was any sanitization performed?
     pub sanitized: bool,
 }
+
+/// Feedback from actuators (e.g., positions for servos/tilts)
+#[derive(Clone, Debug)]
+pub struct ActuatorState {
+    pub feedback: [Normalized; MAX_ACTUATORS],
+    pub timestamp: Timestamp,
+}
+// Minimal feedback; per-actuator health/load feedback may extend this in later versions.
 ```
 
-### 8.6 Vector-Level Fallback State
+### 9.6 Vector-Level Fallback State
 
 ```rust
 /// Tracks last-known-good actuator vectors per group
@@ -495,26 +606,19 @@ pub struct ActuatorFallbackState {
 }
 
 pub const MAX_GROUPS: usize = 8;
-
-#[derive(Clone, Debug)]
-pub struct GroupVector {
-    pub outputs: [Normalized; MAX_ACTUATORS],
-    pub mask: u16,
-    pub valid: bool,
-}
 ```
 
 ---
 
-## 9. Actuator Output Sanitization (CRITICAL SAFETY)
+## 10. Actuator Output Sanitization (CRITICAL SAFETY)
 
-### 9.1 Design Rationale
+### 10.1 Design Rationale
 
 **Problem**: Per-channel sanitization (replacing one bad channel with a default while keeping others) creates catastrophic torque imbalance on coupled systems like quadrotors.
 
 **Solution**: Vector-level sanitization — if any channel in a coupled group fails numeric validation, the ENTIRE group falls back to a coherent safe vector.
 
-### 9.2 Sanitization Rules
+### 10.2 Sanitization Rules
 
 ```
 RULE 1: Numeric validation is per-channel, but fallback is per-group.
@@ -536,7 +640,7 @@ RULE 5: Fallback events MUST be reported via:
         - Status reporting to upper systems
 ```
 
-### 9.3 Sanitization Implementation
+### 10.3 Sanitization Implementation
 
 ```rust
 /// Sanitization result for one coupling group
@@ -557,7 +661,7 @@ pub enum GroupSanitizeResult {
 pub trait ActuatorSanitizer {
     /// Sanitize actuator command before hardware output
     /// 
-    /// For each coupling group:
+    /// For each coupling group in the active ModeConfig:
     /// 1. Check all channels in group for NaN/Inf/out-of-range
     /// 2. If ANY channel invalid → reject entire group's new values
     /// 3. Replace with coherent fallback vector
@@ -565,19 +669,19 @@ pub trait ActuatorSanitizer {
     fn sanitize(
         &mut self,
         cmd: &mut ActuatorCmd,
-        config: &MixerConfig,
+        mode: &ModeConfig,
     ) -> SanitizeReport;
 }
 
 #[derive(Clone, Debug)]
 pub struct SanitizeReport {
-    pub group_results: [GroupSanitizeResult; MAX_COUPLING_GROUPS],
+    pub group_results: [GroupSanitizeResult; MAX_GROUPS],
     pub any_fallback: bool,
     pub critical_failure: bool,  // true if FallbackUnavailable occurred
 }
 ```
 
-### 9.4 Fallback Aging and Limits
+### 10.4 Fallback Aging and Limits
 
 ```rust
 /// How many cycles a "last good" vector remains usable
@@ -590,7 +694,7 @@ pub const MAX_CONSECUTIVE_FALLBACK: u16 = 10;  // 10ms
 /// to prevent indefinite operation on stale/safe vectors
 ```
 
-### 9.5 Per-Vehicle Safe Vectors
+### 10.5 Per-Vehicle Safe Vectors
 
 ```rust
 /// MixerConfig must define safe fallback vectors
@@ -632,9 +736,18 @@ impl SafeVectorSet {
         tilt_mechanism: None,
     };
 }
+
+// SafeVectorSet is a template; configuration tooling shall project these into
+// per-mode ActuatorGroupConfig.safe_pattern values. Runtime uses the per-group
+// safe_pattern only.
+
+// Fallback vector precedence:
+// 1) ModeConfig/ActuatorGroupConfig.safe_pattern.valid == true (per-mode, authoritative)
+// 2) MixerConfig.safe_vectors template (used to populate group safe_pattern during config load)
+// 3) Zero output only if no valid safe_pattern exists (config load should reject before flight)
 ```
 
-### 9.6 Integration with Control Law
+### 10.6 Integration with Control Law
 
 ```
 Sanitization is the LAST line of defense, not a control strategy.
@@ -664,7 +777,7 @@ If sanitizer triggers fallback:
 
 ---
 
-## 10. State Representation
+## 11. State Representation
 
 ```rust
 #[derive(Copy, Clone, Debug)]
@@ -675,13 +788,28 @@ pub struct Quaternion {
     pub z: Scalar,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum EstimateQuality {
+    Good,
+    Degraded,
+    Unusable,
+}
+
+bitflags::bitflags! {
+    pub struct StateValidFlags: u8 {
+        const ATTITUDE = 0x01;
+        const ANGULAR_RATE = 0x02;
+        const POSITION = 0x04;
+        const VELOCITY = 0x08;
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StateEstimate {
     pub attitude: Quaternion,
     pub angular_velocity: [RadiansPerSecond; 3],
     pub position_ned: [Meters; 3],
     pub velocity_ned: [MetersPerSecond; 3],
-    pub euler_deg: EulerAngles,
     pub quality: EstimateQuality,
     pub valid_flags: StateValidFlags,
 }
@@ -689,7 +817,7 @@ pub struct StateEstimate {
 
 ---
 
-## 11. Command & Setpoint Model
+## 12. Command & Setpoint Model
 
 ```rust
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -704,7 +832,6 @@ pub enum ControlMode {
 
 #[derive(Clone, Debug)]
 pub struct Setpoint {
-    pub mode: ControlMode,
     pub attitude: Option<Quaternion>,
     pub angular_rate: Option<[RadiansPerSecond; 3]>,
     pub altitude: Option<Meters>,
@@ -720,7 +847,10 @@ pub struct Setpoint {
 #[derive(Clone, Debug)]
 pub struct Command {
     pub mode: ControlMode,
+    /// Setpoint values must be consistent with `mode`; no duplicate mode inside
     pub setpoint: Setpoint,
+    /// Optional request to change configuration mode (morphing)
+    pub config_mode_request: Option<ConfigMode>,
     pub timestamp: Timestamp,
     pub sequence: u32,
     pub source: CommandSource,
@@ -732,7 +862,7 @@ pub enum CommandSource { Pilot, Autopilot, Gcs, Failsafe }
 
 ---
 
-## 12. Envelope Protection
+## 13. Envelope Protection
 
 ```rust
 #[derive(Clone, Debug)]
@@ -749,8 +879,36 @@ pub struct Limits {
     pub min_altitude: Meters,
     pub min_airspeed: Option<MetersPerSecond>,
     pub max_airspeed: Option<MetersPerSecond>,
-    pub max_load_factor: Scalar,
-    pub min_load_factor: Scalar,
+    pub max_load_factor: Scalar, // dimensionless
+    pub min_load_factor: Scalar, // dimensionless
+}
+
+bitflags::bitflags! {
+    pub struct AxisLimitFlags: u8 {
+        const ROLL = 0x01;
+        const PITCH = 0x02;
+        const YAW = 0x04;
+        const ALTITUDE = 0x08;
+        const SPEED = 0x10;
+        const LOAD_FACTOR = 0x20;
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct EnvelopeMargin {
+    /// Positive values mean remaining margin before limit breach
+    pub roll_rad: Radians,
+    pub pitch_rad: Radians,
+    pub yaw_rate_rad_s: RadiansPerSecond,
+    pub altitude_m: Meters,
+    pub airspeed_mps: MetersPerSecond,
+    pub load_factor: Scalar, // dimensionless
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct ProtectionStatus {
+    pub limited_axes: AxisLimitFlags,
+    pub saturated: bool,
 }
 
 pub trait EnvelopeProtector {
@@ -766,7 +924,7 @@ pub trait EnvelopeProtector {
 
 ---
 
-## 13. Control Law Degradation
+## 14. Control Law Degradation
 
 ```rust
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -802,9 +960,9 @@ pub enum DegradationReason {
 
 ---
 
-## 14. Fault Model & Handling
+## 15. Fault Model & Handling
 
-### 14.1 Fault Categories
+### 15.1 Fault Categories
 
 ```rust
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -837,6 +995,7 @@ pub enum FaultCategory {
     TimingViolation,
     TimingViolationPersistent,
     ConfigInvalid,
+    ConfigTransitionFailed,
 }
 
 bitflags::bitflags! {
@@ -866,11 +1025,33 @@ bitflags::bitflags! {
         const TIMING_VIOLATION = 1 << 40;
         const TIMING_PERSISTENT = 1 << 41;
         const CONFIG_INVALID = 1 << 48;
+        const CONFIG_TRANSITION_FAILED = 1 << 49;
     }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FaultAction {
+    Monitor,
+    Isolate,
+    Degrade,
+    Emergency,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct FaultResponse {
+    pub fault: FaultCategory,
+    pub action: FaultAction,
+    pub degrade_to: Option<ControlLaw>,
+    pub max_response_time_ms: u32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct FaultHandlingTable {
+    pub entries: &'static [FaultResponse],
 }
 ```
 
-### 14.2 Fault Response Table
+### 15.2 Fault Response Table
 
 ```rust
 impl FaultHandlingTable {
@@ -892,6 +1073,12 @@ impl FaultHandlingTable {
                 degrade_to: Some(ControlLaw::Alternate1),
                 max_response_time_ms: 10,
             },
+            FaultResponse { 
+                fault: FaultCategory::ConfigTransitionFailed, 
+                action: FaultAction::Degrade, 
+                degrade_to: Some(ControlLaw::Alternate1),
+                max_response_time_ms: 0,
+            },
         ],
     };
 }
@@ -899,7 +1086,7 @@ impl FaultHandlingTable {
 
 ---
 
-## 15. Channel & Redundancy Model
+## 16. Channel & Redundancy Model
 
 ```rust
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -926,6 +1113,8 @@ pub enum ChannelHealth { Operative, Degraded, Failed, Testing }
 #[derive(Clone, Debug)]
 pub struct ChannelStatus {
     pub mode: ControlMode,
+    pub config_mode: ConfigMode,
+    pub transition_state: ConfigTransitionState,
     pub law: ControlLaw,
     pub health: ChannelHealth,
     pub faults: FaultFlags,
@@ -939,7 +1128,7 @@ pub struct ChannelStatus {
 
 ---
 
-## 16. Initialization
+## 17. Initialization
 
 ```rust
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -967,11 +1156,26 @@ impl InitState {
         else { Some(ControlLaw::Frozen) }
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct InitResult {
+    pub state: InitState,
+    pub faults: FaultFlags,
+    pub ready: bool,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ArmError {
+    NotReady,
+    Faulted,
+    AlreadyArmed,
+    ConfigInvalid,
+}
 ```
 
 ---
 
-## 17. Timing & Watchdog
+## 18. Timing & Watchdog
 
 ```rust
 pub const CONTROL_LOOP_PERIOD_US: u64 = 1000;
@@ -990,6 +1194,14 @@ pub struct TimingStats {
     pub total_cycles: u64,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub struct CycleTiming {
+    pub cycle_start_us: u32,
+    pub cycle_end_us: u32,
+    pub duration_us: u32,
+    pub deadline_met: bool,
+}
+
 pub trait Watchdog {
     fn kick(&mut self);
     fn check_deadline(&self) -> bool;
@@ -998,7 +1210,7 @@ pub trait Watchdog {
 
 ---
 
-## 18. Configuration
+## 19. Configuration
 
 ```rust
 #[derive(Clone, Debug)]
@@ -1016,8 +1228,8 @@ pub struct Config {
 #[derive(Clone, Debug)]
 pub struct AirframeConfig {
     pub vehicle_type: VehicleType,
-    pub mass_kg: Scalar,
-    pub inertia: [Scalar; 3],
+    pub mass: Kilograms,
+    pub inertia: [KilogramMeterSquared; 3],
     /// Mode configurations (for morphing aircraft, multiple modes)
     pub modes: &'static [ModeConfig],
     /// Default/fallback mixer (used if no mode-specific config)
@@ -1026,13 +1238,74 @@ pub struct AirframeConfig {
     pub safe_output: [Normalized; MAX_ACTUATORS],
 }
 
+#[derive(Clone, Debug)]
+pub struct TuningConfig {
+    pub rate_gains: [Scalar; 3],
+    pub attitude_gains: [Scalar; 3],
+    pub position_gains: [Scalar; 3],
+}
+// Minimal placeholder; full implementations may include I/D terms, damping, feedforward, and response shaping.
+
+#[derive(Clone, Debug)]
+pub struct FailsafeConfig {
+    /// Command timeout before failsafe triggers
+    pub command_timeout_ms: u32,
+    /// Descent rate during land failsafe
+    pub land_descent_rate: MetersPerSecond,
+    /// Optional return-to height for fixed-wing/VTOL
+    pub return_altitude: Option<Meters>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SensorConfig {
+    pub imu_used: usize,
+    pub gnss_used: usize,
+    pub mag_used: usize,
+    pub baro_used: usize,
+    pub airspeed_used: usize,
+    pub geometry_used: bool,
+}
+// Contract: indices in each sensor array < *_used are eligible for estimation; the rest are ignored.
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum InvalidCommandPolicy {
+    Reject,   // Drop command and set fault
+    Clamp,    // Clamp to limits and continue
+    Freeze,   // Hold last valid command
+}
+
+#[derive(Clone, Debug)]
+pub struct ConfigBlock {
+    /// Raw serialized config blob (e.g., from flash)
+    pub data: &'static [u8],
+    pub version: u16,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ConfigError {
+    InvalidFormat,
+    UnsupportedVersion,
+    OutOfRange,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TransitionError {
+    InvalidRequest,
+    NotReady,
+    UnsafeConditions,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum VehicleType { Multirotor, FixedWing, VTOL, MorphingVTOL, Rover, Boat }
 ```
 
+**ModeConfig precedence**:
+- If `airframe.modes` is non-empty, the active `ModeConfig` selected by `ConfigMode` SHALL provide the authoritative `mixer`, `groups`, `limits`, and `law_profile`. The top-level `Config.limits` and `Config.law_profile` serve only as defaults for non-morphing/single-mode vehicles and SHALL NOT conflict with any `ModeConfig`; conflicts are `ConfigError::InvalidFormat`.
+- Each `ConfigMode` SHALL appear at most once in `airframe.modes`; missing mandatory modes (e.g., `Degraded` when morphing is enabled) are `ConfigError::InvalidFormat`.
+
 ---
 
-## 19. Core Interface
+## 20. Core Interface
 
 ```rust
 #[derive(Clone, Debug)]
@@ -1043,6 +1316,17 @@ pub struct UpdateResult {
     pub timing: CycleTiming,
     pub degradation: Option<DegradationEvent>,
 }
+
+#[derive(Clone, Debug)]
+pub struct HealthReport {
+    pub init_state: InitState,
+    pub control_law: ControlLaw,
+    pub config_mode: ConfigMode,
+    pub transition_state: ConfigTransitionState,
+    pub faults: FaultFlags,
+    pub channel_health: ChannelHealth,
+}
+// HealthReport is a lightweight snapshot API; ChannelStatus is the per-cycle detailed status returned by update().
 
 pub fn update(
     channel: ChannelId,
@@ -1059,6 +1343,9 @@ pub trait AviateKernel {
     fn is_ready(&self) -> bool;
     fn arm(&mut self) -> Result<(), ArmError>;
     fn disarm(&mut self);
+    fn config_mode(&self) -> ConfigMode;
+    fn transition_state(&self) -> ConfigTransitionState;
+    fn request_config_mode(&mut self, to: ConfigMode) -> Result<(), TransitionError>;
     
     fn update(
         &mut self,
@@ -1087,37 +1374,37 @@ pub trait AviateKernel {
 
 ---
 
-## 20. Architecture Invariants
+## 21. Architecture Invariants
 
 1. Aviate never parses maps, routes, or procedures
 2. Aviate never contains network protocol stacks
 3. Aviate only operates on physical state and control error
 4. Aviate is a "black box control core" driven by external world
-5. Euler angles never enter EKF or controller internals
-6. Control law degradation is monotonic (ground reset to restore)
-7. All external inputs are validated before use
-8. All outputs include diagnostic/health information
-9. Time is explicit, never implicit wall-clock
-10. Configuration changes are transactional with rollback
-11. Physics calculations use dimensional newtypes, not raw Scalar
-12. NaN/Inf never propagates to actuator output
-13. Non-Armed states produce only safe/neutral output
-14. Fault→Degradation mapping is explicit in FaultHandlingTable
-15. Authority philosophy is visible in Config
-16. No unsafe code in flight build (HAL boundary only)
-17. No dynamic memory allocation at runtime
-18. No recursion
-19. All loops have statically bounded iteration count
-20. No panic-based error handling; all errors explicit
-21. No non-deterministic concurrency in core
-22. **Actuator coupling is per-mode, not fixed actuator property**
-23. **Strongly coupled groups use vector-level fallback, never per-channel**
-24. **Sanitizer is last defense, not control strategy**
-25. **ConfigMode determines active ModeConfig (mixer, groups, limits)**
+5. Control law degradation is monotonic (ground reset to restore)
+6. All external inputs are validated before use
+7. All outputs include diagnostic/health information
+8. Time is explicit, never implicit wall-clock
+9. Configuration changes are transactional with rollback
+10. Physics calculations use dimensional newtypes, not raw Scalar
+11. NaN/Inf never propagates to actuator output
+12. Non-Armed states produce only safe/neutral output
+13. Fault→Degradation mapping is explicit in FaultHandlingTable
+14. Authority philosophy is visible in Config
+15. No unsafe code in flight build (HAL boundary only)
+16. No dynamic memory allocation at runtime
+17. No recursion
+18. All loops have statically bounded iteration count
+19. No panic-based error handling; all errors explicit
+20. No non-deterministic concurrency in core
+21. **Actuator coupling is per-mode, not fixed actuator property**
+22. **Strongly coupled groups use vector-level fallback, never per-channel**
+23. **Sanitizer is last defense, not control strategy**
+24. **ConfigMode determines active ModeConfig (mixer, groups, limits)**
+25. Core control/estimation uses dimensional newtypes (no bare Scalar) and obeys the language profile summary in §3 (no unsafe, no panics, bounded loops, no alloc, no recursion)
 
 ---
 
-## 21. Minimal Implementation Strategy
+## 22. Minimal Implementation Strategy
 
 | Component | v0.5 Minimal Implementation |
 |-----------|----------------------------|
