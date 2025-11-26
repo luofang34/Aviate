@@ -8,6 +8,7 @@ pub mod sensor;
 pub mod state;
 pub mod ekf;
 pub mod control;
+pub mod mixer;
 
 use crate::ekf::Ekf;
 use crate::control::{VehicleController, Command, ConfigMode, Limits, AxisCommand};
