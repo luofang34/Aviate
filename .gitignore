@@ -1,0 +1,34 @@
+# General ignores
+target/
+debug/
+release/
+*.log
+*.tmp
+*.swp
+*.swo
+*.bak
+*.orig
+
+# AI/agent artifacts (keep these out of repo)
+.claude/
+.claude-cache/
+.gemini/
+.agents/
+CLAUDE.md
+CLAUDE*.md
+AGENTS.md
+AGENT*.md
+GEMINI.md
+GEMINI*.md
+
+# Rust tooling
+/.cargo/
+/.rustup/
+Cargo.lock
+**/*.rs.bk
+
+# IDE/editor cruft
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
