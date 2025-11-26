@@ -20,3 +20,6 @@ license = "MIT OR Apache-2.0"
 
 [workspace.metadata]
 description = "Aviate workspace — see docs/specs/AVIATE_SPEC_v0.5.md and docs/language/AVIATE_LANGUAGE_PROFILE.md for constraints."
+
+[workspace.metadata.release]
+pre-release-hook = ["./scripts/run_pre_release_checks.sh"]
