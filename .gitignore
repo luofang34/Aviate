@@ -27,6 +27,10 @@ GEMINI*.md
 Cargo.lock
 **/*.rs.bk
 
+# Workspace-specific
+**/target/
+**/Cargo.lock
+
 # IDE/editor cruft
 .idea/
 .vscode/
