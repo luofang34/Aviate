@@ -12,7 +12,7 @@ mod tests {
 
     #[test]
     fn test_ekf_init_predict() {
-        let mut ekf = Ekf::new();
+        let mut ekf = Ekf::default();
         assert!(!ekf.is_initialized());
 
         ekf.init(
@@ -38,7 +38,7 @@ mod tests {
 
     #[test]
     fn test_ekf_accel_integration() {
-        let mut ekf = Ekf::new();
+        let mut ekf = Ekf::default();
         ekf.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
@@ -70,7 +70,7 @@ mod tests {
 
     #[test]
     fn test_ekf_gnss_update() {
-        let mut ekf = Ekf::new();
+        let mut ekf = Ekf::default();
         ekf.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
@@ -85,7 +85,7 @@ mod tests {
         ekf.predict(&imu_zero, 1.0);
 
         let gnss = GnssData {
-            position_ned: [Meters(10.0), Meters(0.0), Meters(0.0)], // Measure 10m
+            position_ned: [Meters(1.0), Meters(0.0), Meters(0.0)], // Measure 1.0m (was 10.0m, rejected by gate)
             velocity_ned: [MetersPerSecond(0.0); 3],
             fix: GnssFix::ThreeD,
         };
@@ -101,9 +101,11 @@ mod tests {
         ekf.update_gnss(&gnss_reading);
 
         let est = ekf.get_estimate();
-        // Estimate should move significantly towards 10.0
-        assert!(est.position_ned[0].0 > 1.0, "Position should move towards measurement");
-        assert!(est.position_ned[0].0 < 10.0, "Position should not overshoot measurement");
+        // Estimate should move significantly towards 1.0
+        // P ~ 0.1, R ~ 0.5. K ~ 0.16.
+        // Pos ~ 0 + 0.16 * 1.0 = 0.16.
+        assert!(est.position_ned[0].0 > 0.1, "Position should move towards measurement");
+        assert!(est.position_ned[0].0 < 1.0, "Position should not overshoot measurement");
     }
 
     #[test]

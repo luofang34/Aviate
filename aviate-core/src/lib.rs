@@ -23,7 +23,7 @@ pub struct AviateKernel<V: VehicleController> {
 impl<V: VehicleController> AviateKernel<V> {
     pub fn new(controller: V) -> Self {
         Self {
-            ekf: Ekf::new(),
+            ekf: Ekf::default(),
             controller,
             limits: Limits { 
                 max_roll: crate::types::Radians(0.78), // ~45 deg

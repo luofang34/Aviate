@@ -1,7 +1,7 @@
 use crate::math::{Matrix, Quaternion, Vector3};
 use crate::types::{Scalar, Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond, Validated, FloatExt};
 use crate::state::{StateEstimate, EstimateQuality, StateValidFlags};
-use crate::sensor::{ImuData, GnssData, SensorReading, SensorHealth, GnssFix};
+use crate::sensor::{ImuData, GnssData, SensorReading, SensorHealth, GnssFix, BaroData, MagData};
 
 // State dimension: 3 pos, 3 vel, 3 att_err, 3 gyro_bias, 3 accel_bias = 15
 pub const STATE_DIM: usize = 15;
@@ -12,6 +12,36 @@ const IDX_VEL: usize = 3;
 const IDX_ATT: usize = 6;
 const IDX_GB: usize = 9;
 const IDX_AB: usize = 12;
+
+#[derive(Clone, Copy, Debug)]
+pub struct EkfConfig {
+    pub process_noise_gyro: Scalar,
+    pub process_noise_accel: Scalar,
+    pub process_noise_gyro_bias: Scalar,
+    pub process_noise_accel_bias: Scalar,
+    pub meas_noise_gnss_pos: Scalar,
+    pub meas_noise_gnss_vel: Scalar,
+    pub meas_noise_baro: Scalar,
+    pub meas_noise_mag: Scalar,
+    // Innovation gate threshold (sigma)
+    pub innovation_gate: Scalar,
+}
+
+impl Default for EkfConfig {
+    fn default() -> Self {
+        Self {
+            process_noise_gyro: 1e-3,
+            process_noise_accel: 1e-2,
+            process_noise_gyro_bias: 1e-4,
+            process_noise_accel_bias: 1e-4,
+            meas_noise_gnss_pos: 0.5, // m^2
+            meas_noise_gnss_vel: 0.1, // (m/s)^2
+            meas_noise_baro: 2.0,     // m^2
+            meas_noise_mag: 0.01,     // uT^2 (very rough guess)
+            innovation_gate: 5.0,     // 5-sigma gate
+        }
+    }
+}
 
 pub struct Ekf {
     // Core state
@@ -26,23 +56,20 @@ pub struct Ekf {
     // Covariance P (15x15)
     p_cov: Matrix<STATE_DIM, STATE_DIM>,
 
-    // Tuning parameters
-    process_noise_gyro: Scalar,
-    process_noise_accel: Scalar,
-    process_noise_gyro_bias: Scalar,
-    process_noise_accel_bias: Scalar,
+    // Configuration
+    config: EkfConfig,
     
     initialized: bool,
 }
 
 impl Default for Ekf {
     fn default() -> Self {
-        Self::new()
+        Self::new(EkfConfig::default())
     }
 }
 
 impl Ekf {
-    pub fn new() -> Self {
+    pub fn new(config: EkfConfig) -> Self {
         Self {
             quat: Quaternion::IDENTITY,
             pos: Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
@@ -51,10 +78,7 @@ impl Ekf {
             accel_bias: Vector3::new(MetersPerSecondSquared(0.0), MetersPerSecondSquared(0.0), MetersPerSecondSquared(0.0)),
             last_gyro_body: Vector3::new(RadiansPerSecond(0.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)),
             p_cov: Matrix::identity().mul_scalar(0.1), // Initial uncertainty
-            process_noise_gyro: 1e-3,
-            process_noise_accel: 1e-2,
-            process_noise_gyro_bias: 1e-4,
-            process_noise_accel_bias: 1e-4,
+            config,
             initialized: false,
         }
     }
@@ -200,10 +224,10 @@ impl Ekf {
         let mut q_noise = Matrix::<15, 15>::zero();
         // Populate Q diagonal
         for i in 0..3 { q_noise.set(IDX_POS+i, IDX_POS+i, 0.001); } // Small pos noise
-        for i in 0..3 { q_noise.set(IDX_VEL+i, IDX_VEL+i, self.process_noise_accel * dt * dt); }
-        for i in 0..3 { q_noise.set(IDX_ATT+i, IDX_ATT+i, self.process_noise_gyro * dt * dt); }
-        for i in 0..3 { q_noise.set(IDX_GB+i, IDX_GB+i, self.process_noise_gyro_bias * dt); }
-        for i in 0..3 { q_noise.set(IDX_AB+i, IDX_AB+i, self.process_noise_accel_bias * dt); }
+        for i in 0..3 { q_noise.set(IDX_VEL+i, IDX_VEL+i, self.config.process_noise_accel * dt * dt); }
+        for i in 0..3 { q_noise.set(IDX_ATT+i, IDX_ATT+i, self.config.process_noise_gyro * dt * dt); }
+        for i in 0..3 { q_noise.set(IDX_GB+i, IDX_GB+i, self.config.process_noise_gyro_bias * dt); }
+        for i in 0..3 { q_noise.set(IDX_AB+i, IDX_AB+i, self.config.process_noise_accel_bias * dt); }
 
         // P = F * P * F' + Q
         let fp = f_mat.mat_mul(&self.p_cov);
@@ -228,20 +252,45 @@ impl Ekf {
         let gnss = &gnss_reading.value;
 
         // Update Position NED
-        // We treat North, East, Down as independent scalar updates for simplicity 
-        // (diagonal R, sequential update) which is mathematically equivalent to batch if errors are uncorrelated.
-        
-        let r_pos = 0.5; // GNSS position noise variance (e.g. 0.5m^2)
+        let r_pos = self.config.meas_noise_gnss_pos;
 
         self.update_scalar(IDX_POS, gnss.position_ned[0].0, r_pos);
         self.update_scalar(IDX_POS + 1, gnss.position_ned[1].0, r_pos);
         self.update_scalar(IDX_POS + 2, gnss.position_ned[2].0, r_pos);
         
         // Update Velocity NED
-        let r_vel = 0.1; // GNSS velocity noise variance
+        let r_vel = self.config.meas_noise_gnss_vel;
         self.update_scalar(IDX_VEL, gnss.velocity_ned[0].0, r_vel);
         self.update_scalar(IDX_VEL + 1, gnss.velocity_ned[1].0, r_vel);
         self.update_scalar(IDX_VEL + 2, gnss.velocity_ned[2].0, r_vel);
+    }
+
+    pub fn update_baro(&mut self, baro_reading: &SensorReading<BaroData>) {
+        match baro_reading.health {
+            SensorHealth::Good => { /* continue */ }
+            _ => { return; }
+        }
+        
+        if let Some(_pressure) = baro_reading.value.air.static_pressure {
+             // TODO: Convert pressure to altitude using standard atmosphere or reference
+             if let Some(alt) = baro_reading.value.altitude {
+                 // NED Z is negative altitude (down).
+                 let z_meas = -alt.0;
+                 let r_baro = self.config.meas_noise_baro;
+                 self.update_scalar(IDX_POS + 2, z_meas, r_baro);
+             }
+        }
+    }
+    
+    pub fn update_mag(&mut self, mag_reading: &SensorReading<MagData>) {
+        match mag_reading.health {
+            SensorHealth::Good => { /* continue */ }
+            _ => { return; }
+        }
+        
+        // Placeholder for mag update
+        let _mag = &mag_reading.value;
+        // Real implementation would involve estimating heading/yaw from 3D mag + tilt
     }
 
     fn update_scalar(&mut self, state_idx: usize, meas: Scalar, r_noise: Scalar) {
@@ -260,11 +309,14 @@ impl Ekf {
         };
         let innov = meas - pred;
         
-        // 2. Innovation Covariance S = HPH' + R
-        // HPH' is just P[state_idx][state_idx]
+        // Innovation Gating
         let s = self.p_cov.get(state_idx, state_idx) + r_noise;
+        let gate_sq = self.config.innovation_gate * self.config.innovation_gate;
+        if (innov * innov) / s > gate_sq {
+            return; // Reject measurement
+        }
         
-        // 3. Kalman Gain K = PH' / S
+        // 2. Kalman Gain K = PH' / S
         // PH' is the column of P at state_idx
         let k_gain_factor = 1.0 / s;
         // We can compute K and update state & P directly to avoid allocating K vector explicitly
