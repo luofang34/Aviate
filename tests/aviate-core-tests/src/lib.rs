@@ -5,7 +5,7 @@ mod tests {
     use aviate_core::ekf::Ekf;
     use aviate_core::math::{Vector3, Quaternion};
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond, Meters, MetersPerSecond, Normalized};
-    use aviate_core::sensor::{ImuData, GnssData, GnssFix, SensorReading, SensorHealth};
+    use aviate_core::sensor::{ImuData, GnssData, GnssFix, SensorReading, SensorHealth, GnssHealth};
     use aviate_core::time::{Timestamp, TimeSource};
     use aviate_core::AviateKernel;
     use aviate_core::control::Command;
@@ -88,6 +88,7 @@ mod tests {
             position_ned: [Meters(1.0), Meters(0.0), Meters(0.0)], // Measure 1.0m (was 10.0m, rejected by gate)
             velocity_ned: [MetersPerSecond(0.0); 3],
             fix: GnssFix::ThreeD,
+            health: GnssHealth::Good,
         };
 
         let gnss_reading = SensorReading {

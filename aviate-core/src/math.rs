@@ -61,18 +61,6 @@ impl<const N: usize> Matrix<N, N> {
 }
 
 impl<const R: usize, const C: usize> Matrix<R, C> {
-    pub fn transpose<const R2: usize, const C2: usize>(&self) -> Matrix<R2, C2> 
-    where 
-        // Only compile if R2 == C and C2 == R, but Rust const generics checks are tricky.
-        // We'll just rely on the caller ensuring dimensions match the return type or use R, C flipped.
-        // Actually, simpler signature:
-        Self: Sized // Dummy bound
-    {
-        // This signature is hard with current const generics.
-        // Let's specific implementation:
-        unimplemented!("Use specific transpose_to or simple transpose returning Matrix<C, R>")
-    }
-
     pub fn t(&self) -> Matrix<C, R> {
         let mut res = Matrix::<C, R>::zero();
         for r in 0..R {

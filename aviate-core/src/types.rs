@@ -70,12 +70,14 @@ pub trait FloatExt {
     fn sqrt(self) -> Self;
     fn sin(self) -> Self;
     fn cos(self) -> Self;
+    fn powf(self, exp: Self) -> Self;
 }
 
 impl FloatExt for Scalar {
     fn sqrt(self) -> Self { libm::sqrtf(self) }
     fn sin(self) -> Self { libm::sinf(self) }
     fn cos(self) -> Self { libm::cosf(self) }
+    fn powf(self, exp: Self) -> Self { libm::powf(self, exp) }
 }
 
 macro_rules! impl_arithmetic {

@@ -1,7 +1,7 @@
 use crate::math::{Matrix, Quaternion, Vector3};
 use crate::types::{Scalar, Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond, Validated, FloatExt};
 use crate::state::{StateEstimate, EstimateQuality, StateValidFlags};
-use crate::sensor::{ImuData, GnssData, SensorReading, SensorHealth, GnssFix, BaroData, MagData};
+use crate::sensor::{ImuData, GnssData, SensorReading, SensorHealth, GnssFix, GnssHealth, BaroData, MagData};
 
 // State dimension: 3 pos, 3 vel, 3 att_err, 3 gyro_bias, 3 accel_bias = 15
 pub const STATE_DIM: usize = 15;
@@ -246,6 +246,13 @@ impl Ekf {
             }
         }
         
+        // Check GnssData.health for specific fusion rules
+        match gnss_reading.value.health {
+            GnssHealth::Good => { /* continue */ }
+            GnssHealth::Suspect => { return; } // Do not fuse suspect data
+            GnssHealth::Lost => { return; }    // Do not fuse lost data
+        }
+
         // Extra check for fix type if needed
         if gnss_reading.value.fix == GnssFix::None { return; }
 

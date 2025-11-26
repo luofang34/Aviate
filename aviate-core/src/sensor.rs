@@ -32,8 +32,9 @@ pub struct ImuData {
     pub gyro: [RadiansPerSecond; 3],
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum GnssFix {
+    #[default]
     None,
     TwoD,
     ThreeD,
@@ -41,11 +42,20 @@ pub enum GnssFix {
     RtkFixed,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum GnssHealth {
+    Good,
+    Suspect, // propagated for diagnostics only; not fused for control/estimation
+    #[default]
+    Lost,
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct GnssData {
     pub position_ned: [Meters; 3],
     pub velocity_ned: [MetersPerSecond; 3],
     pub fix: GnssFix,
+    pub health: GnssHealth, // Added health field
 }
 
 #[derive(Copy, Clone, Debug)]
