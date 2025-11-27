@@ -11,7 +11,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AVIATE_DIR="$(dirname "$SCRIPT_DIR")"
 SITL_DIR="${AVIATE_DIR}/aviate-apps/quadcopter-sitl"
 WORLD_FILE="${SITL_DIR}/worlds/x500_quadcopter.sdf"
-MODELS_DIR="${SITL_DIR}/models"
+MODELS_DIR="${AVIATE_DIR}/external/PX4-gazebo-models/models"
+
+# Check submodule is initialized
+if [ ! -d "$MODELS_DIR" ]; then
+    echo "Error: PX4-gazebo-models submodule not found."
+    echo "Run: git submodule update --init external/PX4-gazebo-models"
+    exit 1
+fi
 
 # Export model path so Gazebo can find x500/x500_base models
 export GZ_SIM_RESOURCE_PATH="${MODELS_DIR}:${GZ_SIM_RESOURCE_PATH:-}"
@@ -29,10 +36,13 @@ fi
 
 echo "Launching Gazebo (HEADLESS=$HEADLESS)..."
 
-# Launch Gazebo in server-only mode (headless) or with GUI
+# Launch Gazebo in headless mode (for automated tests) or with GUI (for manual testing)
+# Headless rendering uses EGL backend for GPU-accelerated rendering without X server
+# See: https://gazebosim.org/api/sim/9/headless_rendering.html
 if [ "$HEADLESS" -eq 1 ]; then
-    echo "Starting Gazebo in headless mode..."
-    gz sim -s -r "$WORLD_FILE" &
+    echo "Starting Gazebo in headless mode (with EGL rendering)..."
+    # Clear DISPLAY to force EGL backend, use --headless-rendering for sensor support
+    DISPLAY= gz sim -s -r --headless-rendering "$WORLD_FILE" &
 else
     echo "Starting Gazebo with GUI..."
     gz sim -r "$WORLD_FILE" &

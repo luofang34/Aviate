@@ -9,13 +9,13 @@
 #[cfg(feature = "gz-bridge")]
 mod inner {
     use std::net::UdpSocket;
+    use std::process::Command;
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
-    use gz::transport::{Node, Publisher};
+    use gz::transport::Node;
     use gz_msgs::imu::IMU;
     use gz_msgs::odometry::Odometry;
-    use gz_msgs::actuators::Actuators;
 
     use aviate_mavlink::{
         serialize_mavlink, HilSensor, HilGps, HilActuatorControls,
@@ -63,6 +63,9 @@ mod inner {
         // Timestamps
         last_imu_us: u64,
         last_odom_us: u64,
+        // Callback counters
+        imu_callback_count: u64,
+        odom_callback_count: u64,
     }
 
     /// Gazebo-MAVLink bridge
@@ -74,8 +77,6 @@ mod inner {
         send_socket: UdpSocket,
         recv_socket: UdpSocket,
         seq: u8,
-        // Motor command publisher (created once, reused)
-        motor_pub: Option<Publisher<Actuators>>,
         // Statistics
         imu_count: u64,
         hil_sent: u64,
@@ -103,7 +104,6 @@ mod inner {
                 send_socket,
                 recv_socket,
                 seq: 0,
-                motor_pub: None,
                 imu_count: 0,
                 hil_sent: 0,
                 motor_recv: 0,
@@ -115,10 +115,13 @@ mod inner {
             let state = Arc::clone(&self.state);
             let start = self.start_time;
 
+            eprintln!("[DEBUG] Subscribing to IMU topic: {}", &self.config.imu_topic);
+
             // Subscribe to IMU topic
             let imu_ok = self.node.subscribe(&self.config.imu_topic, move |msg: IMU| {
                 let now_us = start.elapsed().as_micros() as u64;
                 if let Ok(mut s) = state.lock() {
+                    s.imu_callback_count += 1;
                     // Extract angular velocity (MessageField)
                     if let Some(av) = msg.angular_velocity.as_ref() {
                         s.gyro = [av.x as f32, av.y as f32, av.z as f32];
@@ -130,6 +133,7 @@ mod inner {
                     s.last_imu_us = now_us;
                 }
             });
+            eprintln!("[DEBUG] IMU subscribe result: {}", imu_ok);
             if !imu_ok {
                 return Err("Failed to subscribe to IMU topic".to_string());
             }
@@ -168,12 +172,7 @@ mod inner {
                 return Err("Failed to subscribe to odometry topic".to_string());
             }
 
-            // Create motor command publisher (must be done once, kept alive)
-            self.motor_pub = self.node.advertise::<Actuators>(&self.config.motor_topic);
-            if self.motor_pub.is_none() {
-                return Err("Failed to advertise motor topic".to_string());
-            }
-            eprintln!("[INFO] Motor publisher created for {}", self.config.motor_topic);
+            eprintln!("[INFO] Using gz topic CLI for motor commands to {}", self.config.motor_topic);
 
             Ok(())
         }
@@ -214,8 +213,8 @@ mod inner {
             // Print stats every second (250 iterations at 250 Hz)
             if self.hil_sent % 250 == 0 {
                 let s = self.state.lock().unwrap();
-                eprintln!("[DEBUG] hil={}, motors={}, imu={}us, accel=[{:.2},{:.2},{:.2}]",
-                    self.hil_sent, self.motor_recv, s.last_imu_us,
+                eprintln!("[DEBUG] hil={}, motors={}, imu_cb={}, imu={}us, accel=[{:.2},{:.2},{:.2}]",
+                    self.hil_sent, self.motor_recv, s.imu_callback_count, s.last_imu_us,
                     s.accel[0], s.accel[1], s.accel[2]);
             }
 
@@ -281,7 +280,7 @@ mod inner {
             }
         }
 
-        /// Send motor velocity command to Gazebo
+        /// Send motor velocity command to Gazebo via gz topic CLI
         fn send_motor_command(&mut self, ctrl: &HilActuatorControls) {
             // Convert normalized thrust (0-1) to motor velocity (0-1000 rad/s)
             // X500 model uses maxRotVelocity=1000
@@ -296,14 +295,17 @@ mod inner {
                     velocities[0], velocities[1], velocities[2], velocities[3]);
             }
 
-            // Create Actuators message
-            let mut actuators = Actuators::default();
-            actuators.velocity = velocities;
+            // Publish to Gazebo using gz topic CLI (workaround for Rust publisher issue)
+            let msg = format!(
+                "velocity:[{:.1},{:.1},{:.1},{:.1}]",
+                velocities[0], velocities[1], velocities[2], velocities[3]
+            );
 
-            // Publish to Gazebo using the persistent publisher
-            if let Some(ref mut publisher) = self.motor_pub {
-                publisher.publish(&actuators);
-            }
+            let _ = Command::new("gz")
+                .args(["topic", "-t", &self.config.motor_topic, "-m", "gz.msgs.Actuators", "-p", &msg])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
         }
 
         /// Get timestamp in microseconds
