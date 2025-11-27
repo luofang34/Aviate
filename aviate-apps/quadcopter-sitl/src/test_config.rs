@@ -264,16 +264,24 @@ impl PhaseBuilder {
 
 /// Parse an action from TOML inline table format
 fn parse_action(s: &str) -> Action {
-    // Simple parsing of { type = "...", value = ... }
+    // Simple parsing of { type = "...", value = ..., ... }
     let s = s.trim().trim_start_matches('{').trim_end_matches('}');
     let mut type_str = String::new();
     let mut value: f32 = 0.0;
+    let mut thrust: f32 = 0.0;
+    let mut q: [f32; 4] = [1.0, 0.0, 0.0, 0.0]; // identity quaternion
+    let mut position: [f32; 3] = [0.0, 0.0, 0.0];
+    let mut heading: f32 = 0.0;
 
     for part in s.split(',') {
         if let Some((k, v)) = parse_kv(part) {
             match k.as_str() {
                 "type" => type_str = v,
                 "value" => value = v.parse().unwrap_or(0.0),
+                "thrust" => thrust = v.parse().unwrap_or(0.0),
+                "q" => q = parse_quat(&v),
+                "position" => position = parse_vec3(&v),
+                "heading" => heading = v.parse().unwrap_or(0.0),
                 _ => {}
             }
         }
@@ -284,8 +292,25 @@ fn parse_action(s: &str) -> Action {
         "disarm" => Action::Disarm,
         "thrust" => Action::Thrust(value),
         "wait" => Action::Wait,
+        "attitude_target" => Action::AttitudeTarget { q, thrust },
+        "goto" => Action::GoTo { position, heading },
         _ => Action::Wait,
     }
+}
+
+/// Parse a quaternion [w, x, y, z]
+fn parse_quat(s: &str) -> [f32; 4] {
+    let s = s.trim().trim_start_matches('[').trim_end_matches(']');
+    let parts: Vec<f32> = s.split(',')
+        .map(|p| p.trim().parse().unwrap_or(0.0))
+        .collect();
+
+    [
+        parts.first().copied().unwrap_or(1.0), // w defaults to 1 (identity)
+        parts.get(1).copied().unwrap_or(0.0),
+        parts.get(2).copied().unwrap_or(0.0),
+        parts.get(3).copied().unwrap_or(0.0),
+    ]
 }
 
 /// Parse criteria from TOML array format
@@ -304,6 +329,9 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
         let mut type_str = String::new();
         let mut value: f32 = 0.0;
         let mut bool_value = false;
+        let mut target: f32 = 0.0;
+        let mut tolerance: f32 = 1.0;
+        let mut position: [f32; 3] = [0.0, 0.0, 0.0];
 
         for part in item.split(',') {
             if let Some((k, v)) = parse_kv(part) {
@@ -318,6 +346,9 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
                             value = v.parse().unwrap_or(0.0);
                         }
                     }
+                    "target" => target = v.parse().unwrap_or(0.0),
+                    "tolerance" => tolerance = v.parse().unwrap_or(1.0),
+                    "position" => position = parse_vec3(&v),
                     _ => {}
                 }
             }
@@ -328,6 +359,9 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
             "min_altitude" => Criterion::MinAltitude(value),
             "max_altitude" => Criterion::MaxAltitude(value),
             "max_drift" => Criterion::MaxDrift(value),
+            "altitude_hold" => Criterion::AltitudeHold { target, tolerance },
+            "position_hold" => Criterion::PositionHold { target: position, tolerance },
+            "sensor_data" => Criterion::SensorDataReceived,
             _ => continue,
         };
 

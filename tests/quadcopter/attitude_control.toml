@@ -1,0 +1,110 @@
+# Aviate SITL Test: Attitude Control
+#
+# Tests attitude setpoint tracking (AVIATE_SPEC.md Section 12)
+# Verifies: Attitude control mode, quaternion setpoints, stabilization loops
+#
+# Tests the core attitude control capabilities:
+#   - Level hover (identity quaternion)
+#   - Small pitch forward (simulates forward flight intent)
+#   - Return to level
+#   - Small roll maneuver
+#
+# Note: Quaternion format is [w, x, y, z]
+#   - Identity (level): [1, 0, 0, 0]
+#   - 10 deg pitch forward: [0.996, 0, 0.087, 0] (rotation about Y axis)
+#   - 10 deg roll right: [0.996, 0.087, 0, 0] (rotation about X axis)
+
+[test]
+name = "attitude_control"
+description = "Verify attitude setpoint tracking with quaternion targets"
+lockstep = true
+
+[world]
+file = "worlds/x500_quadcopter_lockstep.sdf"
+real_time_factor = 1.0
+
+[[vehicles]]
+id = "x500"
+model = "x500"
+instance = 0
+spawn_position = [0.0, 0.0, 0.0]
+spawn_heading = 0.0
+
+[vehicles.mission]
+name = "attitude_control_test"
+
+# Phase 1: Arm
+[[vehicles.mission.phases]]
+name = "arm"
+duration_ms = 500
+action = { type = "arm" }
+verify = [{ type = "armed", value = true }]
+
+# Phase 2: Takeoff to safe altitude
+[[vehicles.mission.phases]]
+name = "takeoff"
+duration_ms = 5000
+action = { type = "thrust", value = 0.8 }
+verify = [{ type = "min_altitude", value = 8.0 }]
+
+# Phase 3: Level hover - identity quaternion
+# Tests basic attitude stabilization at level
+[[vehicles.mission.phases]]
+name = "level_hover"
+duration_ms = 3000
+action = { type = "attitude_target", q = [1.0, 0.0, 0.0, 0.0], thrust = 0.65 }
+verify = [
+    { type = "altitude_hold", target = 10.0, tolerance = 2.0 },
+    { type = "max_drift", value = 2.0 }
+]
+
+# Phase 4: Pitch forward ~10 degrees
+# Tests attitude tracking - vehicle should move forward slightly
+[[vehicles.mission.phases]]
+name = "pitch_forward"
+duration_ms = 3000
+action = { type = "attitude_target", q = [0.996, 0.0, 0.087, 0.0], thrust = 0.65 }
+verify = [{ type = "min_altitude", value = 5.0 }]
+
+# Phase 5: Return to level
+[[vehicles.mission.phases]]
+name = "return_level"
+duration_ms = 2000
+action = { type = "attitude_target", q = [1.0, 0.0, 0.0, 0.0], thrust = 0.65 }
+verify = [{ type = "min_altitude", value = 5.0 }]
+
+# Phase 6: Roll right ~10 degrees
+# Tests roll axis attitude tracking
+[[vehicles.mission.phases]]
+name = "roll_right"
+duration_ms = 3000
+action = { type = "attitude_target", q = [0.996, 0.087, 0.0, 0.0], thrust = 0.65 }
+verify = [{ type = "min_altitude", value = 5.0 }]
+
+# Phase 7: Return to level hover
+[[vehicles.mission.phases]]
+name = "stabilize"
+duration_ms = 2000
+action = { type = "attitude_target", q = [1.0, 0.0, 0.0, 0.0], thrust = 0.65 }
+verify = [{ type = "min_altitude", value = 5.0 }]
+
+# Phase 8: Descend
+[[vehicles.mission.phases]]
+name = "descend"
+duration_ms = 4000
+action = { type = "thrust", value = 0.3 }
+verify = []
+
+# Phase 9: Land
+[[vehicles.mission.phases]]
+name = "land"
+duration_ms = 3000
+action = { type = "thrust", value = 0.0 }
+verify = []
+
+# Phase 10: Disarm
+[[vehicles.mission.phases]]
+name = "disarm"
+duration_ms = 500
+action = { type = "disarm" }
+verify = [{ type = "armed", value = false }]

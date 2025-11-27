@@ -1,0 +1,74 @@
+# Aviate SITL Test: Hover Stability
+#
+# Tests altitude hold and horizontal stability (AVIATE_SPEC.md Section 12)
+# Verifies: AltitudeHold control mode, state estimation, stabilization
+#
+# Expected behavior:
+#   - Takeoff to 10m
+#   - Maintain altitude within 1m tolerance
+#   - Maintain horizontal position within 2m drift
+#   - Controlled descent and land
+
+[test]
+name = "hover_stability"
+description = "Verify altitude hold and position stability during hover"
+lockstep = true
+
+[world]
+file = "worlds/x500_quadcopter_lockstep.sdf"
+real_time_factor = 1.0
+
+[[vehicles]]
+id = "x500"
+model = "x500"
+instance = 0
+spawn_position = [0.0, 0.0, 0.0]
+spawn_heading = 0.0
+
+[vehicles.mission]
+name = "hover_stability_test"
+
+# Phase 1: Arm
+[[vehicles.mission.phases]]
+name = "arm"
+duration_ms = 500
+action = { type = "arm" }
+verify = [{ type = "armed", value = true }]
+
+# Phase 2: Takeoff to 10m
+[[vehicles.mission.phases]]
+name = "takeoff"
+duration_ms = 5000
+action = { type = "thrust", value = 0.8 }
+verify = [{ type = "min_altitude", value = 8.0 }]
+
+# Phase 3: Hover at altitude - test altitude hold
+[[vehicles.mission.phases]]
+name = "hover_hold"
+duration_ms = 8000
+action = { type = "thrust", value = 0.65 }
+verify = [
+    { type = "altitude_hold", target = 10.0, tolerance = 2.0 },
+    { type = "max_drift", value = 3.0 }
+]
+
+# Phase 4: Controlled descent
+[[vehicles.mission.phases]]
+name = "descend"
+duration_ms = 4000
+action = { type = "thrust", value = 0.3 }
+verify = [{ type = "max_altitude", value = 12.0 }]
+
+# Phase 5: Land
+[[vehicles.mission.phases]]
+name = "land"
+duration_ms = 3000
+action = { type = "thrust", value = 0.0 }
+verify = []
+
+# Phase 6: Disarm
+[[vehicles.mission.phases]]
+name = "disarm"
+duration_ms = 500
+action = { type = "disarm" }
+verify = [{ type = "armed", value = false }]

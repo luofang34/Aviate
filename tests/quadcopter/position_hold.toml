@@ -1,0 +1,104 @@
+# Aviate SITL Test: Position Hold
+#
+# Tests position hold capability (AVIATE_SPEC.md Section 12)
+# Verifies: PositionHold control mode, GoTo waypoints
+#
+# Tests the position control capabilities:
+#   - Takeoff and hold initial position
+#   - Move to a waypoint (GoTo action)
+#   - Hold the new position
+#   - Return and land
+#
+# Note: Position is in NED frame (North, East, Down)
+#   - Positive X = North
+#   - Positive Y = East
+#   - Positive Z = Down (so negative Z is altitude)
+
+[test]
+name = "position_hold"
+description = "Verify position hold and waypoint navigation"
+lockstep = true
+
+[world]
+file = "worlds/x500_quadcopter_lockstep.sdf"
+real_time_factor = 1.0
+
+[[vehicles]]
+id = "x500"
+model = "x500"
+instance = 0
+spawn_position = [0.0, 0.0, 0.0]
+spawn_heading = 0.0
+
+[vehicles.mission]
+name = "position_hold_test"
+
+# Phase 1: Arm
+[[vehicles.mission.phases]]
+name = "arm"
+duration_ms = 500
+action = { type = "arm" }
+verify = [{ type = "armed", value = true }]
+
+# Phase 2: Takeoff to 10m
+[[vehicles.mission.phases]]
+name = "takeoff"
+duration_ms = 5000
+action = { type = "thrust", value = 0.8 }
+verify = [{ type = "min_altitude", value = 8.0 }]
+
+# Phase 3: Hold position at origin
+# Tests position hold at spawn location
+[[vehicles.mission.phases]]
+name = "hold_origin"
+duration_ms = 5000
+action = { type = "goto", position = [0.0, 0.0, -10.0], heading = 0.0 }
+verify = [
+    { type = "position_hold", position = [0.0, 0.0, -10.0], tolerance = 3.0 },
+    { type = "altitude_hold", target = 10.0, tolerance = 2.0 }
+]
+
+# Phase 4: Move North 5m
+# Tests position tracking during translation
+[[vehicles.mission.phases]]
+name = "move_north"
+duration_ms = 5000
+action = { type = "goto", position = [5.0, 0.0, -10.0], heading = 0.0 }
+verify = [{ type = "min_altitude", value = 5.0 }]
+
+# Phase 5: Hold at waypoint
+[[vehicles.mission.phases]]
+name = "hold_waypoint"
+duration_ms = 5000
+action = { type = "goto", position = [5.0, 0.0, -10.0], heading = 0.0 }
+verify = [
+    { type = "position_hold", position = [5.0, 0.0, -10.0], tolerance = 3.0 }
+]
+
+# Phase 6: Return to origin
+[[vehicles.mission.phases]]
+name = "return_origin"
+duration_ms = 5000
+action = { type = "goto", position = [0.0, 0.0, -10.0], heading = 0.0 }
+verify = [{ type = "min_altitude", value = 5.0 }]
+
+# Phase 7: Descend
+[[vehicles.mission.phases]]
+name = "descend"
+duration_ms = 4000
+action = { type = "thrust", value = 0.3 }
+verify = []
+
+# Phase 8: Land
+[[vehicles.mission.phases]]
+name = "land"
+duration_ms = 3000
+action = { type = "thrust", value = 0.0 }
+verify = []
+
+# Phase 9: Disarm
+[[vehicles.mission.phases]]
+name = "disarm"
+duration_ms = 500
+action = { type = "disarm" }
+verify = [{ type = "armed", value = false }]

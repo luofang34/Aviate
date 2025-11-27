@@ -1,19 +1,20 @@
-# Aviate SITL Test Configuration
+# Aviate SITL Test: Basic Flight
 #
-# This file defines test scenarios for the SITL environment.
-# Each test can have multiple vehicles running different missions.
+# Fundamental flight test for SITL verification.
+# Tests basic motor control, takeoff, and landing.
+#
+# This is the simplest test - if this fails, nothing else will work.
+# Used as a smoke test before running more complex tests.
 
 [test]
 name = "basic_flight"
 description = "Basic single vehicle flight test (takeoff and land)"
 lockstep = true
 
-# World configuration
 [world]
 file = "worlds/x500_quadcopter_lockstep.sdf"
 real_time_factor = 1.0
 
-# Vehicle configurations
 [[vehicles]]
 id = "x500"
 model = "x500"
@@ -21,28 +22,46 @@ instance = 0
 spawn_position = [0.0, 0.0, 0.0]
 spawn_heading = 0.0
 
-# Mission for this vehicle
 [vehicles.mission]
 name = "basic_takeoff_land"
 
+# Phase 1: Arm
+# Verifies: Arm command accepted, motors ready
 [[vehicles.mission.phases]]
 name = "arm"
 duration_ms = 500
 action = { type = "arm" }
 verify = [{ type = "armed", value = true }]
 
+# Phase 2: Takeoff
+# Verifies: Motors generate lift, vehicle climbs
 [[vehicles.mission.phases]]
 name = "takeoff"
 duration_ms = 5000
 action = { type = "thrust", value = 0.8 }
+verify = [
+    { type = "min_altitude", value = 5.0 },
+    { type = "max_drift", value = 5.0 }
+]
+
+# Phase 3: Brief hover
+# Verifies: Vehicle can maintain altitude briefly
+[[vehicles.mission.phases]]
+name = "hover"
+duration_ms = 2000
+action = { type = "thrust", value = 0.65 }
 verify = [{ type = "min_altitude", value = 5.0 }]
 
+# Phase 4: Land
+# Verifies: Vehicle descends when thrust reduced
 [[vehicles.mission.phases]]
 name = "land"
-duration_ms = 3000
+duration_ms = 4000
 action = { type = "thrust", value = 0.0 }
-verify = []
+verify = [{ type = "max_altitude", value = 15.0 }]
 
+# Phase 5: Disarm
+# Verifies: Motors stop, disarm command accepted
 [[vehicles.mission.phases]]
 name = "disarm"
 duration_ms = 500
