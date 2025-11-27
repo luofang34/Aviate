@@ -73,6 +73,10 @@ mod inner {
         send_socket: UdpSocket,
         recv_socket: UdpSocket,
         seq: u8,
+        // Statistics
+        imu_count: u64,
+        hil_sent: u64,
+        motor_recv: u64,
     }
 
     impl GzBridge {
@@ -96,6 +100,9 @@ mod inner {
                 send_socket,
                 recv_socket,
                 seq: 0,
+                imu_count: 0,
+                hil_sent: 0,
+                motor_recv: 0,
             })
         }
 
@@ -191,6 +198,15 @@ mod inner {
             };
 
             self.send_mavlink(&MavMessage::HilSensor(hil_sensor));
+            self.hil_sent += 1;
+
+            // Print stats every second (250 iterations at 250 Hz)
+            if self.hil_sent % 250 == 0 {
+                let s = self.state.lock().unwrap();
+                eprintln!("[DEBUG] hil={}, motors={}, imu={}us, accel=[{:.2},{:.2},{:.2}]",
+                    self.hil_sent, self.motor_recv, s.last_imu_us,
+                    s.accel[0], s.accel[1], s.accel[2]);
+            }
 
             // Send HIL_GPS at lower rate (every 25th iteration ≈ 10Hz at 250Hz loop)
             if self.seq % 25 == 0 {
@@ -243,6 +259,7 @@ mod inner {
                     Ok((len, _)) => {
                         if let Ok((msg, _)) = parse_mavlink(&buf[..len]) {
                             if let MavMessage::HilActuatorControls(ctrl) = msg {
+                                self.motor_recv += 1;
                                 self.send_motor_command(&ctrl);
                             }
                         }
@@ -260,6 +277,12 @@ mod inner {
                 .iter()
                 .map(|&c| (c.max(0.0) * 800.0) as f64)
                 .collect();
+
+            // Debug: print motor commands occasionally
+            if self.motor_recv % 500 == 1 {
+                eprintln!("[DEBUG] Motor cmd: [{:.1},{:.1},{:.1},{:.1}] rad/s",
+                    velocities[0], velocities[1], velocities[2], velocities[3]);
+            }
 
             // Create Actuators message
             let mut actuators = Actuators::default();

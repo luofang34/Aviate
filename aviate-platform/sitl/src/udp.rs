@@ -314,12 +314,12 @@ impl ActuatorHal for UdpMavlinkHal {
 
     fn arm(&mut self) {
         self.armed = true;
-        println!("[SITL] Armed");
+        eprintln!("[INFO] HAL armed");
     }
 
     fn disarm(&mut self) {
         self.armed = false;
-        println!("[SITL] Disarmed");
+        eprintln!("[INFO] HAL disarmed");
     }
 
     fn is_armed(&self) -> bool {
@@ -346,12 +346,12 @@ impl SystemHal for UdpMavlinkHal {
     fn kick_watchdog(&mut self) {}
 
     fn reboot(&mut self) -> ! {
-        println!("[SITL] Reboot requested");
+        eprintln!("[INFO] Reboot requested");
         std::process::exit(0);
     }
 
     fn enter_bootloader(&mut self) -> ! {
-        println!("[SITL] Bootloader not supported in SITL");
+        eprintln!("[WARN] Bootloader not supported in SITL");
         std::process::exit(1);
     }
 }

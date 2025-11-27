@@ -11,6 +11,27 @@
 //! Options:
 //!   --mock    Run in mock mode (no UDP, for testing)
 
+/// Simple logging macros
+macro_rules! info {
+    ($($arg:tt)*) => {
+        eprintln!("[INFO] {}", format_args!($($arg)*));
+    };
+}
+
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        if std::env::var("RUST_LOG").map(|v| v.contains("debug")).unwrap_or(false) {
+            eprintln!("[DEBUG] {}", format_args!($($arg)*));
+        }
+    };
+}
+
+macro_rules! warn {
+    ($($arg:tt)*) => {
+        eprintln!("[WARN] {}", format_args!($($arg)*));
+    };
+}
+
 use aviate_core::AviateKernel;
 use aviate_core::control::mc::McController;
 use aviate_core::control::{Command, Setpoint, CommandSource, ControlMode, ConfigMode};
@@ -18,6 +39,7 @@ use aviate_core::mixer::{QuadXMixer, ModeConfig};
 use aviate_core::time::{Timestamp, TimeSource};
 use aviate_core::hal::{SensorHal, ActuatorHal, SystemHal, CommandHal, SystemCommand};
 use aviate_core::types::Normalized;
+use aviate_core::sensor::{SensorSet, SensorReading, ImuData, GnssData, MagData, BaroData, AirspeedData};
 
 use aviate_platform_sitl::{SitlConfig, SitlHal, UdpMavlinkHal};
 
@@ -30,12 +52,12 @@ fn main() {
     let mock_mode = args.iter().any(|a| a == "--mock");
 
     if mock_mode {
-        println!("Starting Aviate SITL Quadcopter (mock mode)...");
+        info!("Starting Aviate SITL Quadcopter (mock mode)");
         run_mock();
     } else {
-        println!("Starting Aviate SITL Quadcopter (UDP MAVLink mode)...");
-        println!("Listening for HIL_SENSOR/HIL_GPS on port 14560");
-        println!("Sending HIL_ACTUATOR_CONTROLS to 127.0.0.1:14561");
+        info!("Starting Aviate SITL Quadcopter (UDP MAVLink mode)");
+        info!("Listening for HIL_SENSOR/HIL_GPS on port 14560");
+        info!("Sending HIL_ACTUATOR_CONTROLS to 127.0.0.1:14561");
         run_udp();
     }
 }
@@ -55,7 +77,7 @@ fn run_mock() {
 fn run_udp() {
     // Gazebo should be launched externally via scripts/run_sitl.sh
     // This application expects HIL_SENSOR/HIL_GPS messages on port 14560
-    println!("Expecting Gazebo to be running with HIL bridge...");
+    debug!("Expecting Gazebo to be running with HIL bridge");
 
     let config = SitlConfig::default();
     // Retry binding a few times if port is busy (race condition with pkill)
@@ -67,7 +89,7 @@ fn run_udp() {
                 break;
             }
             Err(e) => {
-                eprintln!("Failed to bind UDP port: {}. Retrying in 1s...", e);
+                warn!("Failed to bind UDP port: {}. Retrying in 1s...", e);
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
         }
@@ -167,14 +189,16 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
                 *last_cmd = cmd;
             }
             SystemCommand::Arm => {
-                println!("Command: Arming");
+                info!("Arm command received (state={:?})", kernel.init_state);
                 if let Err(e) = kernel.arm() {
-                    println!("Arming failed: {:?}", e);
+                    warn!("Arming failed: {:?}", e);
+                } else {
+                    info!("Armed successfully");
                 }
                 hal.arm(); // Update HAL state too
             }
             SystemCommand::Disarm => {
-                println!("Command: Disarming");
+                info!("Disarm command received");
                 kernel.disarm();
                 hal.disarm();
             }
@@ -184,10 +208,18 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
     // 3. Run init state machine
     if !kernel.is_ready() {
         // Keep running init until ready
-        // In real usage, sensors need to be feeding valid data
-        // Mock sensors might be needed if not connected to simulator
-    } 
-    // Removed auto-arm logic to allow GCS control
+        // SensorSet is not used in simple init, but required by the API
+        let sensors = SensorSet {
+            imus: [SensorReading::<ImuData>::default(); 3],
+            gnss: [SensorReading::<GnssData>::default(); 2],
+            mags: [SensorReading::<MagData>::default(); 2],
+            baros: [SensorReading::<BaroData>::default(); 2],
+            airspeeds: [SensorReading::<AirspeedData>::default(); 2],
+            geometry: None,
+        };
+        let ts = hal.now();
+        kernel.init_step(&sensors, ts);
+    }
 
     // 4. Step kernel
     let actuator_cmd = kernel.step(last_cmd);
