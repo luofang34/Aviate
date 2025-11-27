@@ -93,14 +93,29 @@ impl MissionRunner {
             self.log("Lockstep enabled");
         }
 
-        // Wait for initial state
-        std::thread::sleep(Duration::from_millis(100));
-        self.last_step = self.bridge.sim_step();
+        // Wait for simulation to be ready and model to be found
+        // The plugin needs time to locate the included model entity
+        let timeout = Duration::from_secs(10);
+        let start = Instant::now();
+        let mut found_model = false;
 
-        // Record start position
-        if let Some(state) = self.bridge.get_model_state() {
-            self.start_position = enu_to_ned_f32(state.pos);
-            self.current_position = self.start_position;
+        while start.elapsed() < timeout {
+            self.last_step = self.bridge.sim_step();
+            if let Some(state) = self.bridge.get_model_state() {
+                // Check for valid position (valid != 0 and time_us > 0 means plugin found model)
+                if state.valid != 0 && state.time_us > 0 {
+                    self.start_position = enu_to_ned_f32(state.pos);
+                    self.current_position = self.start_position;
+                    found_model = true;
+                    self.log(&format!("Model state ready (time={}us, step={})", state.time_us, self.last_step));
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        if !found_model {
+            self.log("WARNING: Model state not available, simulation may not work correctly");
         }
 
         let mission_start = Instant::now();

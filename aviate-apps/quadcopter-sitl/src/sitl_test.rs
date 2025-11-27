@@ -1,322 +1,362 @@
-//! SITL Flight Test Binary
+//! Config-based SITL Test Runner
 //!
-//! This test verifies the SITL command path by:
-//! 1. Sending heartbeat/arm/disarm commands to Aviate via MAVLink
-//! 2. Sending attitude/thrust commands to control the quadcopter
-//! 3. Verifying motor commands are forwarded to Gazebo (via gz-bridge)
-//! 4. Recording flight trajectory via FlightLog for analysis
+//! Runs SITL tests defined by TOML configuration files.
+//! Generates world files dynamically and executes missions.
 //!
 //! Usage:
-//!   # Automated test (headless):
-//!   ./scripts/run_sitl.sh --test
+//!   config-test tests/basic_flight.toml
+//!   config-test tests/two_vehicle_formation.toml
 //!
-//!   # Manual test with GUI:
-//!   ./scripts/run_sitl.sh
-//!
-//! The test requires:
-//! - Gazebo running with the x500_quadcopter world
-//! - gz-bridge running (bridges Gazebo ↔ MAVLink)
-//! - Aviate SITL running (flight controller)
+//! Environment variables:
+//!   HEADLESS=1  - Run without GUI (uses EGL rendering)
 
-use std::net::UdpSocket;
-use std::time::{Duration, Instant};
+use std::env;
+use std::path::Path;
+use std::process::ExitCode;
 
-use aviate_mavlink::{
-    serialize_mavlink, parse_mavlink, MavMessage,
-    Heartbeat, CommandLong, SetAttitudeTarget,
-    MavType, MavState, MavModeFlag,
-    mav_cmd,
+use aviate_app_quadcopter_sitl::{
+    parse_test_config, generate_world, WorldParams,
 };
 
-use aviate_platform_sitl::{FlightLog, FlightLogConfig};
+/// Environment variable to run in headless mode
+const HEADLESS_ENV: &str = "HEADLESS";
 
-/// Test configuration
-const AVIATE_PORT: u16 = 14560;
-const LISTEN_PORT: u16 = 14562;  // For receiving responses (different from bridge)
+fn main() -> ExitCode {
+    let args: Vec<String> = env::args().collect();
 
-/// Test result
-#[derive(Debug)]
-struct TestResult {
-    armed: bool,
-    received_actuator_response: bool,
-    test_duration_ms: u64,
-    max_altitude: f64,
-}
-
-/// SITL Test Client
-struct SitlTestClient {
-    socket: UdpSocket,
-    seq: u8,
-    start_time: Instant,
-    flight_log: FlightLog,
-}
-
-impl SitlTestClient {
-    fn new() -> std::io::Result<Self> {
-        let socket = UdpSocket::bind(("0.0.0.0", LISTEN_PORT))?;
-        socket.set_nonblocking(true)?;
-
-        // Configure flight log: 50Hz sampling, 1000 samples (20 seconds of data)
-        let log_config = FlightLogConfig {
-            max_samples: 1000,
-            sample_interval_ms: 20,
-        };
-
-        Ok(Self {
-            socket,
-            seq: 0,
-            start_time: Instant::now(),
-            flight_log: FlightLog::new(log_config),
-        })
+    if args.len() < 2 {
+        eprintln!("Usage: {} <config.toml>", args[0]);
+        eprintln!("");
+        eprintln!("Examples:");
+        eprintln!("  {} tests/basic_flight.toml", args[0]);
+        eprintln!("  {} tests/two_vehicle_formation.toml", args[0]);
+        return ExitCode::from(1);
     }
 
-    fn send_heartbeat(&mut self) {
-        let hb = Heartbeat {
-            mav_type: MavType::Gcs as u8,
-            autopilot: 8,  // MAV_AUTOPILOT_INVALID
-            base_mode: 0,
-            custom_mode: 0,
-            system_status: MavState::Active as u8,
-            mavlink_version: 3,
-        };
-        self.send_message(&MavMessage::Heartbeat(hb));
-    }
+    let config_path = Path::new(&args[1]);
 
-    fn send_arm_command(&mut self, arm: bool) {
-        let cmd = CommandLong {
-            target_system: 1,
-            target_component: 1,
-            command: mav_cmd::COMPONENT_ARM_DISARM,
-            confirmation: 0,
-            param1: if arm { 1.0 } else { 0.0 },
-            param2: 0.0,
-            param3: 0.0,
-            param4: 0.0,
-            param5: 0.0,
-            param6: 0.0,
-            param7: 0.0,
-        };
-        self.send_message(&MavMessage::CommandLong(cmd));
-    }
-
-    fn send_attitude_target(&mut self, thrust: f32) {
-        let time_ms = self.start_time.elapsed().as_millis() as u32;
-        let target = SetAttitudeTarget {
-            time_boot_ms: time_ms,
-            target_system: 1,
-            target_component: 1,
-            type_mask: 0,
-            q: [1.0, 0.0, 0.0, 0.0],  // Level attitude (identity quaternion)
-            body_roll_rate: 0.0,
-            body_pitch_rate: 0.0,
-            body_yaw_rate: 0.0,
-            thrust,
-            thrust_body: [0.0, 0.0, 0.0],
-        };
-        self.send_message(&MavMessage::SetAttitudeTarget(target));
-    }
-
-    fn send_message(&mut self, msg: &MavMessage) {
-        let mut buf = [0u8; 300];
-        if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
-            self.seq = self.seq.wrapping_add(1);
-            let _ = self.socket.send_to(&buf[..len], ("127.0.0.1", AVIATE_PORT));
-        }
-    }
-
-    fn receive_messages(&mut self) -> Vec<MavMessage> {
-        let mut messages = Vec::new();
-        let mut buf = [0u8; 512];
-        let time_ms = self.start_time.elapsed().as_millis() as u32;
-
-        loop {
-            match self.socket.recv_from(&mut buf) {
-                Ok((len, _)) => {
-                    if let Ok((msg, _)) = parse_mavlink(&buf[..len]) {
-                        // Record position data to flight log
-                        if let MavMessage::LocalPositionNed(pos) = &msg {
-                            let position = [pos.x, pos.y, pos.z];
-                            let velocity = [pos.vx, pos.vy, pos.vz];
-                            self.flight_log.record(time_ms, position, velocity);
-                        }
-                        messages.push(msg);
-                    }
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(_) => break,
-            }
-        }
-        messages
-    }
-
-    /// Get the flight log for analysis
-    fn flight_log(&self) -> &FlightLog {
-        &self.flight_log
-    }
-}
-
-
-/// Verify trajectory based on flight log
-fn verify_trajectory(log: &FlightLog) -> (bool, &'static str) {
-    const MIN_ALTITUDE: f32 = 0.5;  // At least 0.5m altitude required
-    const MIN_SAMPLES: usize = 10;  // At least 10 samples required
-
-    println!("\n[Trajectory Verification]");
-
-    let (ok, reason) = log.verify_flight(MIN_ALTITUDE, MIN_SAMPLES);
-
-    let stats = log.analyze();
-    println!("  Samples: {}", stats.sample_count);
-    println!("  Max altitude: {:.2} m", stats.max_altitude);
-    println!("  Required: >= {:.2} m, >= {} samples", MIN_ALTITUDE, MIN_SAMPLES);
-
-    if ok {
-        println!("  ✓ Flight trajectory verified!");
-    } else {
-        println!("  ✗ Flight trajectory verification failed: {}", reason);
-    }
-
-    (ok, reason)
-}
-
-fn main() {
-    println!("SITL Flight Test");
-    println!("================");
-    println!();
-    println!("Prerequisites:");
-    println!("  1. Gazebo running: gz sim -r aviate-apps/quadcopter-sitl/worlds/x500_quadcopter.sdf");
-    println!("  2. Bridge running: ./target/debug/gz-bridge");
-    println!("  3. Aviate running: ./target/debug/aviate-app-quadcopter-sitl");
+    println!("=== Aviate Config-Based SITL Test ===");
+    println!("Config: {}", config_path.display());
     println!();
 
-    let mut client = match SitlTestClient::new() {
+    // Parse configuration
+    let config = match parse_test_config(config_path) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Failed to create test client: {}", e);
-            std::process::exit(1);
+            eprintln!("Failed to parse config: {}", e);
+            return ExitCode::from(1);
         }
     };
 
-    // Run the test but capture the flight log before consuming the result
-    match run_flight_test_with_log(&mut client) {
-        Ok(result) => {
-            println!("\n=== Test Results ===");
-            println!("Duration: {} ms", result.test_duration_ms);
-            println!("Armed: {}", if result.armed { "YES" } else { "NO (warning)" });
-            println!("Actuator response: {}", if result.received_actuator_response { "YES" } else { "NO" });
-            println!("Max altitude: {:.2} m", result.max_altitude);
+    println!("Test: {}", config.name);
+    println!("Description: {}", config.description);
+    println!("Lockstep: {}", config.lockstep);
+    println!("Vehicles: {}", config.vehicles.len());
+    println!();
 
-            // Verify trajectory
-            let (trajectory_ok, trajectory_status) = verify_trajectory(client.flight_log());
-            println!("Trajectory: {}", trajectory_status.to_uppercase());
+    // Print vehicle details
+    for vehicle in &config.vehicles {
+        println!("  Vehicle: {} (model: {}, instance: {})",
+            vehicle.id, vehicle.model, vehicle.instance);
+        println!("    Spawn: [{:.1}, {:.1}, {:.1}] heading={:.1}",
+            vehicle.spawn_position[0],
+            vehicle.spawn_position[1],
+            vehicle.spawn_position[2],
+            vehicle.spawn_heading);
+        println!("    Mission: {} ({} phases)",
+            vehicle.mission.name,
+            vehicle.mission.phases.len());
+    }
+    println!();
 
-            if trajectory_ok {
-                println!("\n✅ SITL Test Complete");
-                std::process::exit(0);
-            } else {
-                eprintln!("\n❌ SITL Test Failed: trajectory verification failed");
-                std::process::exit(1);
-            }
-        }
-        Err(e) => {
-            eprintln!("\n❌ Test Failed: {}", e);
-            std::process::exit(1);
-        }
+    // Generate world parameters
+    let params = WorldParams {
+        lockstep: config.lockstep,
+        ..WorldParams::default()
+    };
+
+    // Generate world SDF
+    println!("=== Generated World SDF ===");
+    let sdf = generate_world(&config, &params);
+
+    // Print summary of generated world
+    let line_count = sdf.lines().count();
+    println!("Generated {} lines of SDF", line_count);
+
+    // Print first 30 lines for preview
+    println!();
+    println!("--- Preview (first 30 lines) ---");
+    for (i, line) in sdf.lines().take(30).enumerate() {
+        println!("{:3}: {}", i + 1, line);
+    }
+    println!("...");
+    println!();
+
+    // Check for required features
+    #[cfg(feature = "gz-plugin")]
+    {
+        run_test_with_gazebo(&config, &params)
+    }
+
+    #[cfg(not(feature = "gz-plugin"))]
+    {
+        println!("=== Dry Run (gz-plugin feature not enabled) ===");
+        println!("To run actual tests, build with: cargo build --features gz-plugin");
+        println!();
+        println!("Test configuration validated successfully.");
+        ExitCode::from(0)
     }
 }
 
-/// Run flight test with access to the client's flight log
-fn run_flight_test_with_log(client: &mut SitlTestClient) -> Result<TestResult, String> {
-    println!("=== SITL Flight Test ===");
-    println!("Connecting to Aviate at 127.0.0.1:{}", AVIATE_PORT);
-    println!("Listening for position data on port {}", LISTEN_PORT);
+#[cfg(feature = "gz-plugin")]
+fn run_test_with_gazebo(
+    config: &aviate_app_quadcopter_sitl::TestConfig,
+    params: &WorldParams,
+) -> ExitCode {
+    use std::thread;
+    use std::time::Duration;
+    use aviate_app_quadcopter_sitl::{
+        generate_temp_world, MissionRunner,
+    };
 
+    println!("=== Running Test with Gazebo ===");
+
+    // Generate world file to temp location
+    let world_path = match generate_temp_world(config, params) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Failed to generate world file: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    println!("World file: {}", world_path.display());
+    println!();
+
+    // Clean up any existing Gazebo processes
+    cleanup_gazebo();
+
+    // Set up Gazebo environment
+    let (gz_resource_path, gz_plugin_path) = setup_gz_environment();
+
+    // Launch Gazebo
+    let headless = env::var(HEADLESS_ENV).map(|v| v == "1").unwrap_or(false);
+    let gz_child = match launch_gazebo(&world_path, headless, &gz_resource_path, &gz_plugin_path) {
+        Ok(child) => child,
+        Err(e) => {
+            eprintln!("Failed to launch Gazebo: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    // Wait for shared memory to be ready
+    if !wait_for_shm(Duration::from_secs(15)) {
+        eprintln!("Timeout waiting for Gazebo plugin to initialize shared memory");
+        drop(gz_child);
+        cleanup_gazebo();
+        return ExitCode::from(1);
+    }
+
+    println!("Gazebo ready, connecting to vehicles...");
+    println!();
+
+    let mut all_passed = true;
+    let mut handles = Vec::new();
+
+    // Spawn a thread for each vehicle
+    for vehicle in &config.vehicles {
+        let vehicle_id = vehicle.id.clone();
+        let instance = vehicle.instance;
+        let mission = vehicle.mission.clone();
+
+        let handle = thread::spawn(move || {
+            match MissionRunner::for_instance(instance, &vehicle_id) {
+                Ok(mut runner) => {
+                    let result = runner.run(&mission);
+                    (vehicle_id, result.passed, Some(result))
+                }
+                Err(e) => {
+                    eprintln!("[{}:{}] Failed to connect: {}", vehicle_id, instance, e);
+                    (vehicle_id, false, None)
+                }
+            }
+        });
+
+        handles.push(handle);
+    }
+
+    // Wait for all vehicles to complete
+    println!("Waiting for vehicles to complete...");
+    println!();
+
+    for handle in handles {
+        let (vehicle_id, passed, result) = handle.join().unwrap();
+
+        if !passed {
+            all_passed = false;
+        }
+
+        if let Some(result) = result {
+            println!("=== Vehicle {} Results ===", vehicle_id);
+            println!("  Mission: {}", result.mission_name);
+            println!("  Passed: {}", result.passed);
+            println!("  Duration: {:.2}s", result.total_duration.as_secs_f32());
+            println!("  Max Altitude: {:.2}m", result.max_altitude);
+            println!();
+        }
+    }
+
+    // Check global verification
+    if let Some(ref verification) = config.global_verification {
+        println!("=== Global Verification ===");
+        if let Some(min_sep) = verification.min_separation {
+            println!("  Min separation required: {}m", min_sep);
+            // Note: Actual verification would need to track positions during flight
+            println!("  (Verification not yet implemented for multi-vehicle)");
+        }
+        println!();
+    }
+
+    // Cleanup Gazebo
+    drop(gz_child);
+    cleanup_gazebo();
+
+    println!("=== Test Result ===");
+    if all_passed {
+        println!("PASSED: {}", config.name);
+        ExitCode::from(0)
+    } else {
+        println!("FAILED: {}", config.name);
+        ExitCode::from(1)
+    }
+}
+
+/// Clean up any existing Gazebo processes and shared memory
+#[cfg(feature = "gz-plugin")]
+fn cleanup_gazebo() {
+    use std::process::Command;
+    use std::fs;
+
+    // Kill Gazebo processes
+    let _ = Command::new("pkill")
+        .args(["-9", "-f", "gz sim"])
+        .status();
+
+    // Remove shared memory
+    let _ = fs::remove_file("/dev/shm/aviate_gz_bridge");
+
+    // Brief pause for cleanup
+    std::thread::sleep(std::time::Duration::from_millis(500));
+}
+
+/// Set up Gazebo environment variables
+#[cfg(feature = "gz-plugin")]
+fn setup_gz_environment() -> (String, String) {
+    // Find the Aviate directory (assuming we're running from repo root)
+    let aviate_dir = env::current_dir().unwrap_or_default();
+
+    // Set up model path - local models first (override), then PX4-gazebo-models
+    let local_models_dir = aviate_dir.join("models");
+    let px4_models_dir = aviate_dir.join("external/PX4-gazebo-models/models");
+
+    let mut paths = Vec::new();
+    if local_models_dir.exists() {
+        paths.push(local_models_dir.to_string_lossy().to_string());
+    }
+    if px4_models_dir.exists() {
+        paths.push(px4_models_dir.to_string_lossy().to_string());
+    }
+    let gz_resource_path = paths.join(":");
+
+    // Set up plugin path for AviateGzPlugin
+    // Check new location first, then legacy
+    let new_plugin_dir = aviate_dir.join("aviate-platform/aviate_gz_plugin/build");
+    let legacy_plugin_dir = aviate_dir.join("aviate-platform/sitl/aviate_gz_plugin/build");
+
+    let plugin_dir = if new_plugin_dir.join("libAviateGzPlugin.so").exists() {
+        new_plugin_dir
+    } else {
+        legacy_plugin_dir
+    };
+
+    let gz_plugin_path = plugin_dir.to_string_lossy().to_string();
+
+    (gz_resource_path, gz_plugin_path)
+}
+
+/// Launch Gazebo with the given world file
+#[cfg(feature = "gz-plugin")]
+fn launch_gazebo(
+    world_path: &std::path::Path,
+    headless: bool,
+    gz_resource_path: &str,
+    gz_plugin_path: &str,
+) -> Result<std::process::Child, std::io::Error> {
+    use std::process::{Command, Stdio};
+
+    let mut cmd = Command::new("gz");
+    cmd.arg("sim");
+
+    if headless {
+        // Server-only mode with headless rendering for sensors
+        cmd.arg("-s");
+        cmd.arg("-r");
+        cmd.arg("--headless-rendering");
+        // Clear DISPLAY to force EGL backend
+        cmd.env_remove("DISPLAY");
+    } else {
+        cmd.arg("-r");
+    }
+
+    cmd.arg(world_path);
+
+    // Set environment paths
+    if !gz_resource_path.is_empty() {
+        let existing = env::var("GZ_SIM_RESOURCE_PATH").unwrap_or_default();
+        let combined = if existing.is_empty() {
+            gz_resource_path.to_string()
+        } else {
+            format!("{}:{}", gz_resource_path, existing)
+        };
+        cmd.env("GZ_SIM_RESOURCE_PATH", combined);
+    }
+
+    if !gz_plugin_path.is_empty() {
+        let existing = env::var("GZ_SIM_SYSTEM_PLUGIN_PATH").unwrap_or_default();
+        let combined = if existing.is_empty() {
+            gz_plugin_path.to_string()
+        } else {
+            format!("{}:{}", gz_plugin_path, existing)
+        };
+        cmd.env("GZ_SIM_SYSTEM_PLUGIN_PATH", combined);
+    }
+
+    // Suppress Gazebo output (use Stdio::inherit() for debugging)
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+
+    println!("Launching Gazebo (headless={})...", headless);
+    cmd.spawn()
+}
+
+/// Wait for shared memory to be created by the plugin
+#[cfg(feature = "gz-plugin")]
+fn wait_for_shm(timeout: std::time::Duration) -> bool {
+    use std::time::Instant;
+    use std::path::Path;
+
+    let shm_path = Path::new("/dev/shm/aviate_gz_bridge");
     let start = Instant::now();
-    let mut armed = false;
-    let mut received_position = false;
 
-    // Phase 1: Send heartbeats and drain any pending messages
-    println!("\n[Phase 1] Sending heartbeats...");
-    for _ in 0..10 {
-        client.send_heartbeat();
-        client.receive_messages();
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    println!("Waiting for Gazebo plugin to initialize...");
 
-    // Phase 2: Arm
-    println!("\n[Phase 2] Arming...");
-    client.send_arm_command(true);
-    std::thread::sleep(Duration::from_millis(500));
-
-    // Check for responses
-    let msgs = client.receive_messages();
-    for msg in &msgs {
-        if let MavMessage::Heartbeat(hb) = msg {
-            if hb.base_mode & MavModeFlag::SAFETY_ARMED.0 != 0 {
-                armed = true;
-                println!("  Received armed heartbeat");
-            }
+    while start.elapsed() < timeout {
+        if shm_path.exists() {
+            println!("Shared memory ready.");
+            return true;
         }
+        std::thread::sleep(std::time::Duration::from_millis(250));
     }
 
-    // Phase 3: Takeoff (send thrust commands)
-    // Note: X500 model requires ~75% thrust to lift off
-    println!("\n[Phase 3] Taking off (80% thrust for 5 seconds)...");
-    let takeoff_duration = Duration::from_secs(5);
-    let takeoff_start = Instant::now();
-    let mut last_print = Instant::now();
-
-    while takeoff_start.elapsed() < takeoff_duration {
-        client.send_attitude_target(0.8);
-        let _msgs = client.receive_messages();
-
-        if client.flight_log().len() > 0 {
-            received_position = true;
-        }
-
-        // Print status every second
-        if last_print.elapsed() >= Duration::from_secs(1) {
-            let stats = client.flight_log().analyze();
-            if stats.sample_count > 0 {
-                println!("  Altitude: {:.2} m (max: {:.2} m, {} samples)",
-                    stats.final_altitude, stats.max_altitude, stats.sample_count);
-            }
-            last_print = Instant::now();
-        }
-
-        std::thread::sleep(Duration::from_millis(20));  // 50 Hz
-    }
-
-    // Print takeoff summary
-    let takeoff_stats = client.flight_log().analyze();
-    println!("  Takeoff complete: max alt {:.2} m ({} samples)",
-        takeoff_stats.max_altitude, takeoff_stats.sample_count);
-
-    // Phase 4: Land (zero thrust)
-    println!("\n[Phase 4] Landing (0% thrust)...");
-    for _ in 0..10 {
-        client.send_attitude_target(0.0);
-        client.receive_messages();
-        std::thread::sleep(Duration::from_millis(100));
-    }
-
-    // Phase 5: Disarm
-    println!("\n[Phase 5] Disarming...");
-    client.send_arm_command(false);
-    std::thread::sleep(Duration::from_millis(500));
-
-    let test_duration = start.elapsed();
-
-    // Print flight log summary
-    println!("\n[Flight Summary]");
-    client.flight_log().print_summary();
-
-    let final_stats = client.flight_log().analyze();
-
-    Ok(TestResult {
-        armed,
-        received_actuator_response: received_position,
-        test_duration_ms: test_duration.as_millis() as u64,
-        max_altitude: final_stats.max_altitude as f64,
-    })
+    false
 }

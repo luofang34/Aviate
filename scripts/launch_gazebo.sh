@@ -16,7 +16,9 @@ export LOCKSTEP=${LOCKSTEP:-0}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AVIATE_DIR="$(dirname "$SCRIPT_DIR")"
 SITL_DIR="${AVIATE_DIR}/aviate-apps/quadcopter-sitl"
-MODELS_DIR="${AVIATE_DIR}/external/PX4-gazebo-models/models"
+# Local models override PX4-gazebo-models (e.g., x500 without MotorFailurePlugin)
+LOCAL_MODELS_DIR="${AVIATE_DIR}/models"
+PX4_MODELS_DIR="${AVIATE_DIR}/external/PX4-gazebo-models/models"
 
 # Select world file based on LOCKSTEP mode
 if [ "$LOCKSTEP" -eq 1 ]; then
@@ -28,22 +30,28 @@ else
 fi
 
 # Check submodule is initialized
-if [ ! -d "$MODELS_DIR" ]; then
+if [ ! -d "$PX4_MODELS_DIR" ]; then
     echo "Error: PX4-gazebo-models submodule not found."
     echo "Run: git submodule update --init external/PX4-gazebo-models"
     exit 1
 fi
 
-# Export model path so Gazebo can find x500/x500_base models
-export GZ_SIM_RESOURCE_PATH="${MODELS_DIR}:${GZ_SIM_RESOURCE_PATH:-}"
+# Export model path - local models first (override), then PX4-gazebo-models (for x500_base, etc.)
+export GZ_SIM_RESOURCE_PATH="${LOCAL_MODELS_DIR}:${PX4_MODELS_DIR}:${GZ_SIM_RESOURCE_PATH:-}"
 
 # Export plugin path so Gazebo can find AviateGzPlugin
-PLUGIN_DIR="${AVIATE_DIR}/aviate-platform/sitl/aviate_gz_plugin/build"
+# Check new location first, then legacy location
+PLUGIN_DIR="${AVIATE_DIR}/aviate-platform/aviate_gz_plugin/build"
+if [ ! -f "${PLUGIN_DIR}/libAviateGzPlugin.so" ]; then
+    # Fallback to legacy location
+    PLUGIN_DIR="${AVIATE_DIR}/aviate-platform/sitl/aviate_gz_plugin/build"
+fi
+
 if [ -f "${PLUGIN_DIR}/libAviateGzPlugin.so" ]; then
     export GZ_SIM_SYSTEM_PLUGIN_PATH="${PLUGIN_DIR}:${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
     echo "AviateGzPlugin found at ${PLUGIN_DIR}"
 else
-    echo "Warning: AviateGzPlugin not built. Run: cd aviate-platform/sitl/aviate_gz_plugin/build && cmake .. && make"
+    echo "Warning: AviateGzPlugin not built. Run: cd aviate-platform/aviate_gz_plugin/build && cmake .. && make"
 fi
 
 if [ ! -f "$WORLD_FILE" ]; then

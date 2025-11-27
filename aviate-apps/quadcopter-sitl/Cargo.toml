@@ -12,18 +12,6 @@ path = "src/main.rs"
 name = "sitl-test"
 path = "src/sitl_test.rs"
 
-[[bin]]
-name = "lockstep-test"
-path = "src/lockstep_test.rs"
-
-[[bin]]
-name = "mission-test"
-path = "src/mission_test.rs"
-
-[[bin]]
-name = "config-test"
-path = "src/config_test.rs"
-
 [lib]
 name = "aviate_app_quadcopter_sitl"
 path = "src/lib.rs"

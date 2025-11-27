@@ -1,234 +1,149 @@
 #!/bin/bash
 set -e
 
-# Aviate SITL Launcher
+# Aviate SITL Test Runner
 #
-# This script builds and runs the Aviate SITL quadcopter application
-# with Gazebo Sim (Harmonic).
+# Runs SITL flight tests with Gazebo simulation.
+# All tests are config-based using TOML test definitions.
 #
 # Usage:
-#   ./scripts/run_sitl.sh              # Interactive mode with GUI
-#   ./scripts/run_sitl.sh --headless   # Headless mode (no GUI)
-#   ./scripts/run_sitl.sh --test       # Automated test (async mode, real-time)
-#   ./scripts/run_sitl.sh --test --lockstep  # Deterministic test (lockstep mode)
+#   ./scripts/run_sitl.sh                           # Default test (basic_flight)
+#   ./scripts/run_sitl.sh tests/quadcopter/hover.toml  # Specific test
+#   ./scripts/run_sitl.sh --help                    # Show help
 #
-# Modes:
-#   Async (default): Gazebo runs at real-time, FC reads when ready
-#   Lockstep:        Gazebo waits for FC acknowledgment each step (deterministic)
+# The test runner handles:
+#   - Process cleanup (kill existing Gazebo/test processes)
+#   - World file generation from TOML config
+#   - Gazebo launch with proper environment
+#   - Test execution with mission verification
+#   - Multi-vehicle support (concurrent vehicle testing)
+#   - Proper cleanup on exit
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AVIATE_DIR="$(dirname "$SCRIPT_DIR")"
 
-HEADLESS=0
-AUTO_TEST=0
-LOCKSTEP=0
+# Default test config
+DEFAULT_TEST="tests/quadcopter/basic_flight.toml"
+TEST_CONFIG=""
 
 # Parse arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --headless) HEADLESS=1 ;;
-        --test) AUTO_TEST=1; HEADLESS=1 ;; # Test mode implies headless
-        --lockstep) LOCKSTEP=1 ;;
         -h|--help)
-            echo "Aviate SITL Launcher"
+            echo "Aviate SITL Test Runner"
             echo ""
-            echo "Usage: $0 [OPTIONS]"
+            echo "Usage: $0 [TEST_CONFIG]"
             echo ""
-            echo "Options:"
-            echo "  --headless   Run without GUI (uses EGL rendering)"
-            echo "  --test       Run automated flight test (implies --headless)"
-            echo "  --lockstep   Use lockstep mode (deterministic simulation)"
-            echo "  -h, --help   Show this help message"
+            echo "Arguments:"
+            echo "  TEST_CONFIG  Path to test TOML file (default: $DEFAULT_TEST)"
             echo ""
             echo "Examples:"
-            echo "  $0                      # Interactive with GUI"
-            echo "  $0 --test               # Quick functional test (async)"
-            echo "  $0 --test --lockstep    # Deterministic test (lockstep)"
+            echo "  $0                                    # Run default test"
+            echo "  $0 tests/quadcopter/basic_flight.toml # Basic flight test"
+            echo "  $0 tests/quadcopter/two_vehicle.toml  # Multi-vehicle test"
+            echo ""
+            echo "Test configs define:"
+            echo "  - Vehicles: model, spawn position, instance ID"
+            echo "  - Mission: phases with actions and verification criteria"
+            echo "  - World: lockstep mode, physics settings"
             exit 0
             ;;
-        *) echo "Unknown parameter: $1"; exit 1 ;;
+        *)
+            if [ -z "$TEST_CONFIG" ]; then
+                TEST_CONFIG="$1"
+            else
+                echo "Error: unexpected argument: $1"
+                exit 1
+            fi
+            ;;
     esac
     shift
 done
 
-# Export for sub-scripts
-export HEADLESS
-export LOCKSTEP
+# Use default if not specified
+if [ -z "$TEST_CONFIG" ]; then
+    TEST_CONFIG="$DEFAULT_TEST"
+fi
 
-# Check gz is available
+# Validate test config exists
+if [ ! -f "$TEST_CONFIG" ]; then
+    echo "Error: Test config not found: $TEST_CONFIG"
+    echo "Available tests:"
+    ls -1 tests/quadcopter/*.toml 2>/dev/null || echo "  (none found)"
+    exit 1
+fi
+
+# Set headless mode for CI/automated testing
+export HEADLESS=1
+
+echo "=== Aviate SITL Test Runner ==="
+echo "Test: $TEST_CONFIG"
+echo ""
+
+# --- Step 0: Kill existing processes ---
+cleanup() {
+    echo ""
+    echo "Cleaning up..."
+    pkill -9 -f "gz sim" 2>/dev/null || true
+    pkill -9 -f "sitl-test" 2>/dev/null || true
+    pkill -9 -f "aviate-app-quadcopter-sitl" 2>/dev/null || true
+    rm -f /dev/shm/aviate_gz_bridge* 2>/dev/null || true
+    echo "Done."
+}
+
+# Register cleanup on exit
+trap cleanup EXIT
+
+# Initial cleanup
+echo "Killing existing processes..."
+cleanup
+sleep 1
+
+# --- Step 1: Check gz is available ---
 if ! command -v gz &> /dev/null; then
     echo "Error: Gazebo (gz) not found. Please install Gazebo Harmonic."
     exit 1
 fi
 
-# Kill any existing SITL processes first
-echo "Cleaning up existing processes..."
-pkill -9 -f "gz sim" 2>/dev/null || true
-pkill -9 -f "gz-bridge" 2>/dev/null || true
-pkill -9 -f "aviate-app-quadcopter-sitl" 2>/dev/null || true
-pkill -9 -f "sitl-test" 2>/dev/null || true
-pkill -9 -f "lockstep-test" 2>/dev/null || true
-# Clean up shared memory from previous runs
-rm -f /dev/shm/aviate_gz_bridge 2>/dev/null || true
-sleep 2
+# --- Step 2: Build the test binary ---
+echo "Building SITL test binary..."
+cargo build -p aviate-app-quadcopter-sitl --features gz-plugin 2>&1 | tail -5
 
-echo "=== Aviate SITL Launcher ==="
-if [ "$LOCKSTEP" -eq 1 ]; then
-    echo "Mode: Headless=$HEADLESS, AutoTest=$AUTO_TEST, Lockstep=YES (deterministic)"
-else
-    echo "Mode: Headless=$HEADLESS, AutoTest=$AUTO_TEST, Lockstep=NO (async/real-time)"
-fi
-
-# Build the Aviate SITL app
-echo "Building Aviate SITL app..."
-cargo build -p aviate-app-quadcopter-sitl
-
-# Build the gz-bridge (requires libaviate_gz_bridge.so to be built)
-# Check new location first, then legacy location
+# Check plugin is available
 PLUGIN_DIR="${AVIATE_DIR}/aviate-platform/aviate_gz_plugin/build"
-if [ ! -f "${PLUGIN_DIR}/libaviate_gz_bridge.so" ]; then
-    # Fallback to legacy location
+if [ ! -f "${PLUGIN_DIR}/libAviateGzPlugin.so" ]; then
     PLUGIN_DIR="${AVIATE_DIR}/aviate-platform/sitl/aviate_gz_plugin/build"
 fi
 
-if [ -f "${PLUGIN_DIR}/libaviate_gz_bridge.so" ]; then
-    echo "Building Gazebo bridge..."
-    cargo build -p aviate-platform-sitl --features gz-plugin
-    # Also build config-test and lockstep-test with gz-plugin
-    cargo build -p aviate-app-quadcopter-sitl --features gz-plugin
-    GZ_BRIDGE_AVAILABLE=1
-    echo "Gazebo bridge built successfully."
-else
-    GZ_BRIDGE_AVAILABLE=0
-    echo "Warning: libaviate_gz_bridge.so not found."
+if [ ! -f "${PLUGIN_DIR}/libAviateGzPlugin.so" ]; then
+    echo "Error: AviateGzPlugin not found."
     echo "Build it first: cd aviate-platform/aviate_gz_plugin/build && cmake .. && make"
-    echo "The test will run but won't have real sensor data from Gazebo."
+    exit 1
 fi
 
 # Set library path for FFI
 export LD_LIBRARY_PATH="${PLUGIN_DIR}:${LD_LIBRARY_PATH:-}"
 
-cleanup() {
-    echo ""
-    echo "Shutting down..."
-    pkill -f "gz sim" 2>/dev/null || true
-    pkill -f "gz-bridge" 2>/dev/null || true
-    pkill -f "aviate-app-quadcopter-sitl" 2>/dev/null || true
-    # Clean up shared memory
-    rm -f /dev/shm/aviate_gz_bridge 2>/dev/null || true
-    sleep 1
-}
+echo ""
+echo "=== Running Test ==="
 
-trap cleanup EXIT
+# --- Step 3: Run the test ---
+# sitl-test handles:
+#   - World file generation from TOML
+#   - Gazebo launch with proper environment
+#   - Mission execution with lockstep
+#   - Multi-vehicle coordination
+#   - Result reporting
 
-if [ "$AUTO_TEST" -eq 1 ]; then
-    echo ""
-    echo "=== Starting Gazebo ==="
-    "$SCRIPT_DIR/launch_gazebo.sh"
+./target/debug/sitl-test "$TEST_CONFIG"
+TEST_EXIT=$?
 
-    # Wait a bit more for plugin to initialize shared memory
-    echo "Waiting for AviateGzPlugin to initialize..."
-    for i in {1..10}; do
-        if [ -f /dev/shm/aviate_gz_bridge ]; then
-            echo "Shared memory ready."
-            break
-        fi
-        sleep 0.5
-    done
-
-    if [ ! -f /dev/shm/aviate_gz_bridge ]; then
-        echo "Warning: Shared memory not found. Plugin may not have loaded."
-    fi
-
-    if [ "$LOCKSTEP" -eq 1 ]; then
-        # Lockstep mode: Run dedicated lockstep test (no separate Aviate/bridge)
-        echo ""
-        echo "=== Running Lockstep Flight Test ==="
-        set +e
-        ./target/debug/lockstep-test
-        TEST_EXIT_CODE=$?
-        set -e
-    else
-        # Async mode: Run full stack (Aviate + Bridge + Test)
-
-        # Start Aviate FIRST so it binds port 14560 before gz-bridge sends to it
-        echo ""
-        echo "=== Starting Aviate Core (Background) ==="
-        ./target/debug/aviate-app-quadcopter-sitl &
-        AVIATE_PID=$!
-        sleep 2  # Give Aviate time to bind ports
-
-        # Start bridge if available
-        if [ "$GZ_BRIDGE_AVAILABLE" -eq 1 ]; then
-            echo ""
-            echo "=== Starting Gazebo Bridge (Background) ==="
-            ./target/debug/gz-bridge &
-            BRIDGE_PID=$!
-            sleep 2  # Give bridge time to connect
-        fi
-
-        echo ""
-        echo "Waiting for system to stabilize (3s)..."
-        sleep 3
-
-        echo ""
-        echo "=== Running Flight Test ==="
-        set +e
-        ./target/debug/sitl-test
-        TEST_EXIT_CODE=$?
-        set -e
-
-        # Kill Aviate and Bridge
-        kill $AVIATE_PID 2>/dev/null || true
-        [ -n "$BRIDGE_PID" ] && kill $BRIDGE_PID 2>/dev/null || true
-    fi
-
-    echo ""
-    echo "=== Test Completed with Exit Code: $TEST_EXIT_CODE ==="
-
-    if [ $TEST_EXIT_CODE -eq 0 ]; then
-        if [ "$LOCKSTEP" -eq 1 ]; then
-            echo "PASSED: Lockstep SITL Test"
-        else
-            echo "PASSED: Async SITL Test"
-        fi
-        exit 0
-    else
-        if [ "$LOCKSTEP" -eq 1 ]; then
-            echo "FAILED: Lockstep SITL Test"
-        else
-            echo "FAILED: Async SITL Test"
-        fi
-        exit 1
-    fi
+echo ""
+echo "=== Test Result ==="
+if [ $TEST_EXIT -eq 0 ]; then
+    echo "PASSED: $TEST_CONFIG"
 else
-    echo ""
-    echo "=== Starting Gazebo ==="
-    "$SCRIPT_DIR/launch_gazebo.sh"
-
-    # Wait for plugin
-    echo "Waiting for AviateGzPlugin to initialize..."
-    for i in {1..10}; do
-        if [ -f /dev/shm/aviate_gz_bridge ]; then
-            echo "Shared memory ready."
-            break
-        fi
-        sleep 0.5
-    done
-
-    # Start bridge if available
-    if [ "$GZ_BRIDGE_AVAILABLE" -eq 1 ]; then
-        echo ""
-        echo "=== Starting Gazebo Bridge (Background) ==="
-        ./target/debug/gz-bridge &
-        BRIDGE_PID=$!
-        sleep 2
-    fi
-
-    echo ""
-    echo "=== Starting Aviate Core (Interactive) ==="
-    ./target/debug/aviate-app-quadcopter-sitl
-
-    # Kill bridge on exit
-    [ -n "$BRIDGE_PID" ] && kill $BRIDGE_PID 2>/dev/null || true
+    echo "FAILED: $TEST_CONFIG (exit code: $TEST_EXIT)"
 fi
+
+exit $TEST_EXIT

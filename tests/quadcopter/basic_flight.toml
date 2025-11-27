@@ -15,7 +15,7 @@ real_time_factor = 1.0
 
 # Vehicle configurations
 [[vehicles]]
-id = "x500_0"
+id = "x500"
 model = "x500"
 instance = 0
 spawn_position = [0.0, 0.0, 0.0]
