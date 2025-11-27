@@ -1,0 +1,89 @@
+cmake_minimum_required(VERSION 3.10)
+project(aviate_gz_plugin VERSION 0.1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Find Gazebo Harmonic (gz-sim8)
+find_package(gz-sim8 REQUIRED)
+find_package(gz-plugin2 REQUIRED COMPONENTS register)
+find_package(gz-common5 REQUIRED)
+find_package(gz-transport13 REQUIRED)
+find_package(gz-msgs10 REQUIRED)
+
+# Get GZ include/lib directories
+set(GZ_SIM_VER ${gz-sim8_VERSION_MAJOR})
+message(STATUS "Found gz-sim version: ${GZ_SIM_VER}")
+
+#------------------------------------------------------------------------------
+# gz-sim System Plugin (loaded by Gazebo)
+#------------------------------------------------------------------------------
+add_library(AviateGzPlugin SHARED
+    AviateGzPlugin.cc
+)
+
+target_link_libraries(AviateGzPlugin
+    gz-sim${GZ_SIM_VER}::gz-sim${GZ_SIM_VER}
+    gz-plugin2::register
+    gz-transport13::gz-transport13
+    gz-msgs10::gz-msgs10
+)
+
+target_include_directories(AviateGzPlugin PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Install plugin to standard gz-sim plugin path
+install(TARGETS AviateGzPlugin
+    LIBRARY DESTINATION lib/gz-sim-${GZ_SIM_VER}/plugins
+)
+
+#------------------------------------------------------------------------------
+# C Bridge Library (for Rust FFI)
+#------------------------------------------------------------------------------
+add_library(aviate_gz_bridge SHARED
+    aviate_gz_bridge.cc
+)
+
+target_include_directories(aviate_gz_bridge PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Link against rt for shared memory (shm_open)
+target_link_libraries(aviate_gz_bridge
+    rt
+)
+
+# Also create static library for easier Rust linking
+add_library(aviate_gz_bridge_static STATIC
+    aviate_gz_bridge.cc
+)
+
+target_include_directories(aviate_gz_bridge_static PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(aviate_gz_bridge_static
+    rt
+)
+
+# Install bridge library and headers
+install(TARGETS aviate_gz_bridge aviate_gz_bridge_static
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+)
+
+install(FILES
+    aviate_gz_bridge.h
+    DESTINATION include/aviate
+)
+
+#------------------------------------------------------------------------------
+# Summary
+#------------------------------------------------------------------------------
+message(STATUS "")
+message(STATUS "Aviate Gazebo Plugin Configuration:")
+message(STATUS "  Plugin:  AviateGzPlugin -> lib/gz-sim-${GZ_SIM_VER}/plugins/")
+message(STATUS "  Bridge:  libaviate_gz_bridge.so -> lib/")
+message(STATUS "  Header:  aviate_gz_bridge.h -> include/aviate/")
+message(STATUS "")

@@ -1,0 +1,22 @@
+# CMake build directory
+build/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+
+# Compiled libraries
+*.so
+*.so.*
+*.a
+*.dylib
+
+# Object files
+*.o
+*.obj
+
+# Shared memory (runtime)
+/dev/shm/aviate_gz_bridge
