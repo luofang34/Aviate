@@ -4,15 +4,13 @@
 mod tests {
     use aviate_core::ekf::Ekf;
     use aviate_core::math::{Vector3, Quaternion};
-    use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond, Meters, MetersPerSecond, Normalized, Scalar, Pascals, Microtesla, FloatExt};
+    use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond, Meters, MetersPerSecond, Normalized, Scalar, Pascals, Microtesla};
     use aviate_core::sensor::{ImuData, GnssData, GnssFix, SensorReading, SensorHealth, GnssHealth, BaroData, AirData, MagData};
     use aviate_core::time::{Timestamp, TimeSource};
     use aviate_core::AviateKernel;
     use aviate_core::control::Command;
     use aviate_core::control::rate::RateController;
     use aviate_core::control::attitude::AttitudeController;
-    use aviate_core::control::position::PositionController; // Added
-    use aviate_core::control::velocity::VelocityController; // Added
 
 
     #[test]

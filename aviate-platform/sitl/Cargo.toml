@@ -9,3 +9,4 @@ path = "src/lib.rs"
 
 [dependencies]
 aviate-core = { path = "../../aviate-core" }
+aviate-mavlink = { path = "../../aviate-mavlink" }

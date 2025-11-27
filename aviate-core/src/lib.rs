@@ -17,7 +17,7 @@ use crate::control::{VehicleController, Command, ConfigMode, Limits, AuthorityPr
 use crate::control::envelope::{SimpleEnvelopeProtector, EnvelopeProtector};
 use crate::mixer::{Mixer, Sanitizer, ActuatorCmd, ActuatorSanitizer, ModeConfig};
 use crate::fault::{FaultFlags, FaultHandlingTable};
-use crate::time::{Timestamp, TimeDelta};
+use crate::time::Timestamp;
 use crate::sensor::SensorSet;
 use crate::types::Normalized;
 
@@ -176,9 +176,8 @@ impl<V: VehicleController, M: Mixer> AviateKernel<V, M> {
         // For now, keep as Disarmed.
     }
 
-    pub fn get_health(&self) -> () {
+    pub fn get_health(&self) {
         // Placeholder for HealthReport
-        ()
     }
     
     pub fn step(&mut self, cmd: &Command) -> ActuatorCmd {

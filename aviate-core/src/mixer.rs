@@ -264,16 +264,9 @@ pub trait ActuatorSanitizer {
     ) -> SanitizeReport;
 }
 
+#[derive(Default)]
 pub struct Sanitizer {
     pub state: ActuatorFallbackState,
-}
-
-impl Default for Sanitizer {
-    fn default() -> Self {
-        Self {
-            state: ActuatorFallbackState::default(),
-        }
-    }
 }
 
 impl ActuatorSanitizer for Sanitizer {

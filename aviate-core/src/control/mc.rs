@@ -4,7 +4,6 @@ use crate::control::attitude::AttitudeController;
 use crate::control::position::PositionController;
 use crate::control::velocity::VelocityController;
 use crate::state::StateEstimate;
-use crate::types::{Normalized, NormalizedSigned, RadiansPerSecond, Scalar};
 use crate::math::{Quaternion, Vector3};
 
 pub struct McController {

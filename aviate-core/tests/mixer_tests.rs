@@ -110,7 +110,7 @@ mod tests {
         cmd.outputs[0] = Normalized(0.5);
         cmd.outputs[1] = Normalized(Scalar::NAN); // Bad
         
-        let report = sanitizer.sanitize(&mut cmd, &mode);
+        let _report = sanitizer.sanitize(&mut cmd, &mode);
         
         // Weak coupling: bad channel falls back, good channel stays?
         // Current implementation: Clamped/Fallback logic for weak

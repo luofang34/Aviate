@@ -1,5 +1,5 @@
 use crate::types::{Scalar, RadiansPerSecond};
-use crate::math::{Quaternion, Vector3};
+use crate::math::Quaternion;
 
 #[derive(Clone, Debug)]
 pub struct AttitudeController {
@@ -42,7 +42,7 @@ impl AttitudeController {
         // Extract rotation vector (axis-angle) from q_err.
         // q = [cos(theta/2), v*sin(theta/2)]
         // if w < 0, negate entire quaternion to take shortest path (q and -q are same rotation)
-        let (w, x, y, z) = if q_err.w < 0.0 {
+        let (_w, x, y, z) = if q_err.w < 0.0 {
             (-q_err.w, -q_err.x, -q_err.y, -q_err.z)
         } else {
             (q_err.w, q_err.x, q_err.y, q_err.z)

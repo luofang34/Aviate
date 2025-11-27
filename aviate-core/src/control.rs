@@ -1,6 +1,6 @@
 use crate::state::StateEstimate;
-use crate::types::{Normalized, NormalizedSigned, Radians, RadiansPerSecond, Meters, MetersPerSecond, Seconds};
-use crate::math::{Quaternion, Vector3};
+use crate::types::{Normalized, NormalizedSigned, Radians, RadiansPerSecond, Meters, MetersPerSecond};
+use crate::math::Quaternion;
 
 // Re-exporting for submodules
 pub use crate::types::Scalar;

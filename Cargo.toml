@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "aviate-core",
+    "aviate-mavlink",
     "aviate-airframes/quadcopter",
     "aviate-airframes/fixed-wing",
     "aviate-platform/stm32h7",

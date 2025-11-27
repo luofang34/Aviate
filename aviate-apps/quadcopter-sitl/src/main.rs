@@ -1,5 +1,16 @@
 #![forbid(unsafe_code)]
 
+//! Aviate SITL Quadcopter Application
+//!
+//! Runs the aviate-core flight controller in software-in-the-loop mode,
+//! communicating with external simulators (jMAVSim, Gazebo, AirSim) via UDP MAVLink.
+//!
+//! Usage:
+//!   aviate-app-quadcopter-sitl [--mock]
+//!
+//! Options:
+//!   --mock    Run in mock mode (no UDP, for testing)
+
 use aviate_core::AviateKernel;
 use aviate_core::control::mc::McController;
 use aviate_core::control::{Command, Setpoint, CommandSource, ControlMode, ConfigMode};
@@ -7,82 +18,132 @@ use aviate_core::mixer::{QuadXMixer, ModeConfig};
 use aviate_core::time::{Timestamp, TimeSource};
 use aviate_core::hal::{SensorHal, ActuatorHal, SystemHal};
 use aviate_core::types::Normalized;
-use aviate_platform_sitl::SitlHal;
+
+use aviate_platform_sitl::{SitlConfig, SitlHal, UdpMavlinkHal};
 
 fn sitl_timestamp() -> Timestamp {
     Timestamp { ticks: 0, source: TimeSource::Internal }
 }
 
 fn main() {
-    println!("Starting Aviate SITL Quadcopter...");
+    let args: Vec<String> = std::env::args().collect();
+    let mock_mode = args.iter().any(|a| a == "--mock");
 
-    // 1. Initialize HAL
+    if mock_mode {
+        println!("Starting Aviate SITL Quadcopter (mock mode)...");
+        run_mock();
+    } else {
+        println!("Starting Aviate SITL Quadcopter (UDP MAVLink mode)...");
+        println!("Listening for HIL_SENSOR/HIL_GPS on port 14560");
+        println!("Sending HIL_ACTUATOR_CONTROLS to 127.0.0.1:14561");
+        run_udp();
+    }
+}
+
+fn run_mock() {
     let mut hal = SitlHal::new();
+    let mut kernel = create_kernel();
 
-    // 2. Initialize Core
-    let controller = McController::default();
-    let mixer = QuadXMixer { timestamp_source: sitl_timestamp };
-    let mode_config = ModeConfig {
-        mode: ConfigMode::Hover,
-        groups: &[], // Empty groups for now
+    loop {
+        run_loop_iteration(&mut hal, &mut kernel);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+fn run_udp() {
+    let config = SitlConfig::default();
+    let mut hal = match UdpMavlinkHal::new(config) {
+        Ok(hal) => hal,
+        Err(e) => {
+            eprintln!("Failed to create UDP HAL: {}", e);
+            std::process::exit(1);
+        }
     };
 
-    let mut kernel = AviateKernel::new(controller, mixer, mode_config);
+    let mut kernel = create_kernel();
 
-    // 3. Main Loop
+    // Main loop at ~1kHz
+    let loop_period_us = 1000; // 1ms = 1kHz
     let mut last_tick = hal.now_us();
 
     loop {
         let now = hal.now_us();
-        let _dt_us = now.saturating_sub(last_tick);
-        last_tick = now;
+        let elapsed = now.saturating_sub(last_tick);
 
-        // 3.1 Read Sensors (Poll HAL)
-        if let Some(imu) = hal.read_imu() {
-            // Core EKF prediction
-            // Note: predict needs dt in seconds (f32)
-            // For SITL mock, we might not have valid dt if sensors are sparse.
-            // Assuming 1kHz IMU (~0.001s)
-            kernel.ekf.predict(&imu.value, 0.001);
-        }
-
-        if let Some(gnss) = hal.read_gnss() {
-            kernel.ekf.update_gnss(&gnss);
-        }
-
-        // 3.2 Get Command (Stub)
-        let cmd = Command {
-            mode: ControlMode::Attitude,
-            setpoint: Setpoint {
-                collective_thrust: Normalized(0.5),
-                ..Default::default()
-            },
-            config_mode_request: None,
-            sensor_overrides: None,
-            sequence: 0,
-            source: CommandSource::Pilot,
-        };
-
-        // 3.3 Step Kernel
-        // First, ensure kernel is ready/armed for this test loop
-        if !kernel.is_ready() {
-             // In real loop, we feed sensors until ready
-             // Here we might force init_step if we had sensor data
-             // kernel.init_step(..., ...);
+        if elapsed >= loop_period_us {
+            last_tick = now;
+            run_loop_iteration(&mut hal, &mut kernel);
         } else {
-             // Try to arm if ready
-             let _ = kernel.arm();
+            // Sleep for remaining time (rough, not real-time precise)
+            let remaining_us = loop_period_us - elapsed;
+            if remaining_us > 100 {
+                std::thread::sleep(std::time::Duration::from_micros(remaining_us - 100));
+            }
         }
-
-        let actuator_cmd = kernel.step(&cmd);
-
-        // 3.4 Write Outputs
-        hal.write(&actuator_cmd);
-
-        // 3.5 Watchdog
-        hal.kick_watchdog();
-
-        // Sleep to simulate real-time (simple spin or sleep)
-        std::thread::sleep(std::time::Duration::from_millis(10));
     }
+}
+
+fn create_kernel() -> AviateKernel<McController, QuadXMixer> {
+    let controller = McController::default();
+    let mixer = QuadXMixer { timestamp_source: sitl_timestamp };
+    let mode_config = ModeConfig {
+        mode: ConfigMode::Hover,
+        groups: &[],
+    };
+
+    AviateKernel::new(controller, mixer, mode_config)
+}
+
+fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal>(
+    hal: &mut H,
+    kernel: &mut AviateKernel<McController, QuadXMixer>,
+) {
+    // 1. Read sensors and update EKF
+    if let Some(imu) = hal.read_imu() {
+        // Predict at IMU rate (~1kHz)
+        kernel.ekf.predict(&imu.value, 0.001);
+    }
+
+    if let Some(gnss) = hal.read_gnss() {
+        kernel.ekf.update_gnss(&gnss);
+    }
+
+    if let Some(baro) = hal.read_baro() {
+        kernel.ekf.update_baro(&baro);
+    }
+
+    if let Some(mag) = hal.read_mag() {
+        kernel.ekf.update_mag(&mag);
+    }
+
+    // 2. Get command (stub - would come from RC/GCS)
+    let cmd = Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint {
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 0,
+        source: CommandSource::Pilot,
+    };
+
+    // 3. Run init state machine
+    if !kernel.is_ready() {
+        // Keep running init until ready
+        // In real usage, sensors need to be feeding valid data
+    } else if kernel.init_state != aviate_core::InitState::Armed {
+        // Auto-arm for testing (real system requires explicit arm command)
+        let _ = kernel.arm();
+    }
+
+    // 4. Step kernel
+    let actuator_cmd = kernel.step(&cmd);
+
+    // 5. Write outputs
+    hal.write(&actuator_cmd);
+
+    // 6. Watchdog
+    hal.kick_watchdog();
 }

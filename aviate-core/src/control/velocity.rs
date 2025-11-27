@@ -62,8 +62,8 @@ impl VelocityController {
         // This will result in an absolute attitude setpoint assuming the body X axis aligns with velocity.
         // This is an oversimplification for a real velocity controller but sufficient for a stub.
         
-        let half_roll = roll_sp_clamped * 0.5;
-        let half_pitch = pitch_sp_clamped * 0.5;
+        let _half_roll = roll_sp_clamped * 0.5;
+        let _half_pitch = pitch_sp_clamped * 0.5;
         // For small angles, this is okay. Else, need proper rotation math.
         
         // Let's create a quaternion from desired roll, pitch, and current yaw (approx).
