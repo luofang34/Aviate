@@ -76,9 +76,9 @@ if [ "$AUTO_TEST" -eq 1 ]; then
     echo "Waiting for Aviate to initialize (5s)..."
     sleep 5
 
-    echo "=== Running Flight Test Script ==="
+    echo "=== Running Flight Test ==="
     set +e
-    python3 tests/sitl_gcs_test.py
+    ./target/debug/sitl-test
     TEST_EXIT_CODE=$?
     set -e
 
