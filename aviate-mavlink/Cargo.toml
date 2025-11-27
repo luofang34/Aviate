@@ -1,0 +1,12 @@
+[package]
+name = "aviate-mavlink"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "MAVLink message parsing for Aviate HIL simulation"
+
+[features]
+default = []
+std = []
+
+[dependencies]

@@ -183,6 +183,19 @@ pub struct ActuatorCmd {
     pub sanitized: bool,
 }
 
+impl Default for ActuatorCmd {
+    fn default() -> Self {
+        Self {
+            outputs: [Normalized(0.0); MAX_ACTUATORS],
+            active_mask: 0,
+            sequence: 0,
+            timestamp: Timestamp::default(),
+            fallback_mask: 0,
+            sanitized: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ActuatorState {
     pub feedback: [Normalized; MAX_ACTUATORS],

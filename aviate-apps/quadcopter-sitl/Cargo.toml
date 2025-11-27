@@ -7,3 +7,7 @@ license.workspace = true
 [[bin]]
 name = "aviate-app-quadcopter-sitl"
 path = "src/main.rs"
+
+[dependencies]
+aviate-core = { path = "../../aviate-core" }
+aviate-platform-sitl = { path = "../../aviate-platform/sitl" }

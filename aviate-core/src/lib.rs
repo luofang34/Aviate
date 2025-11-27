@@ -10,6 +10,7 @@ pub mod ekf;
 pub mod control;
 pub mod mixer;
 pub mod fault;
+pub mod hal;
 
 use crate::ekf::Ekf;
 use crate::control::{VehicleController, Command, ConfigMode, Limits, AuthorityProfile, ControlLaw};
