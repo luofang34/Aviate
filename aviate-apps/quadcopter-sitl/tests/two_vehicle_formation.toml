@@ -1,0 +1,99 @@
+# Aviate SITL Test Configuration - Multi-Vehicle Formation
+#
+# Tests two vehicles taking off and maintaining formation.
+# Each vehicle has independent shared memory and can be reset separately.
+
+[test]
+name = "two_vehicle_formation"
+description = "Two vehicles takeoff in formation and verify separation"
+lockstep = true
+
+[world]
+file = "worlds/x500_two_vehicle_lockstep.sdf"
+real_time_factor = 1.0
+
+# Vehicle 1 (leader)
+[[vehicles]]
+id = "x500_0"
+model = "x500"
+instance = 0
+spawn_position = [0.0, 0.0, 0.0]
+spawn_heading = 0.0
+
+[vehicles.mission]
+name = "leader_takeoff"
+
+[[vehicles.mission.phases]]
+name = "arm"
+duration_ms = 500
+action = { type = "arm" }
+verify = [{ type = "armed", value = true }]
+
+[[vehicles.mission.phases]]
+name = "takeoff"
+duration_ms = 5000
+action = { type = "thrust", value = 0.8 }
+verify = [{ type = "min_altitude", value = 5.0 }]
+
+[[vehicles.mission.phases]]
+name = "hover"
+duration_ms = 5000
+action = { type = "thrust", value = 0.65 }
+verify = [{ type = "max_drift", value = 2.0 }]
+
+[[vehicles.mission.phases]]
+name = "land"
+duration_ms = 5000
+action = { type = "thrust", value = 0.0 }
+verify = [{ type = "max_altitude", value = 0.5 }]
+
+[[vehicles.mission.phases]]
+name = "disarm"
+duration_ms = 500
+action = { type = "disarm" }
+verify = [{ type = "armed", value = false }]
+
+# Vehicle 2 (follower)
+[[vehicles]]
+id = "x500_1"
+model = "x500"
+instance = 1
+spawn_position = [5.0, 0.0, 0.0]  # 5m east of leader
+spawn_heading = 0.0
+
+[vehicles.mission]
+name = "follower_takeoff"
+
+[[vehicles.mission.phases]]
+name = "arm"
+duration_ms = 500
+action = { type = "arm" }
+verify = [{ type = "armed", value = true }]
+
+[[vehicles.mission.phases]]
+name = "takeoff"
+duration_ms = 5000
+action = { type = "thrust", value = 0.8 }
+verify = [{ type = "min_altitude", value = 5.0 }]
+
+[[vehicles.mission.phases]]
+name = "hover"
+duration_ms = 5000
+action = { type = "thrust", value = 0.65 }
+verify = [{ type = "max_drift", value = 2.0 }]
+
+[[vehicles.mission.phases]]
+name = "land"
+duration_ms = 5000
+action = { type = "thrust", value = 0.0 }
+verify = [{ type = "max_altitude", value = 0.5 }]
+
+[[vehicles.mission.phases]]
+name = "disarm"
+duration_ms = 500
+action = { type = "disarm" }
+verify = [{ type = "armed", value = false }]
+
+# Global verification (checked after all vehicles complete)
+[verification]
+min_separation = 4.0  # Vehicles should stay at least 4m apart

@@ -1,0 +1,18 @@
+[package]
+name = "aviate-platform-xil"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Aviate X-In-Loop (SITL/HITL) core platform - backend agnostic"
+
+[lib]
+name = "aviate_platform_xil"
+path = "src/lib.rs"
+
+[features]
+default = []
+hitl = []
+
+[dependencies]
+aviate-core = { path = "../../aviate-core" }
+aviate-mavlink = { path = "../../aviate-mavlink" }

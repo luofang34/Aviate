@@ -1,0 +1,50 @@
+# Aviate SITL Test Configuration
+#
+# This file defines test scenarios for the SITL environment.
+# Each test can have multiple vehicles running different missions.
+
+[test]
+name = "basic_flight"
+description = "Basic single vehicle flight test (takeoff and land)"
+lockstep = true
+
+# World configuration
+[world]
+file = "worlds/x500_quadcopter_lockstep.sdf"
+real_time_factor = 1.0
+
+# Vehicle configurations
+[[vehicles]]
+id = "x500_0"
+model = "x500"
+instance = 0
+spawn_position = [0.0, 0.0, 0.0]
+spawn_heading = 0.0
+
+# Mission for this vehicle
+[vehicles.mission]
+name = "basic_takeoff_land"
+
+[[vehicles.mission.phases]]
+name = "arm"
+duration_ms = 500
+action = { type = "arm" }
+verify = [{ type = "armed", value = true }]
+
+[[vehicles.mission.phases]]
+name = "takeoff"
+duration_ms = 5000
+action = { type = "thrust", value = 0.8 }
+verify = [{ type = "min_altitude", value = 5.0 }]
+
+[[vehicles.mission.phases]]
+name = "land"
+duration_ms = 3000
+action = { type = "thrust", value = 0.0 }
+verify = []
+
+[[vehicles.mission.phases]]
+name = "disarm"
+duration_ms = 500
+action = { type = "disarm" }
+verify = [{ type = "armed", value = false }]

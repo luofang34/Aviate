@@ -2,6 +2,12 @@
 //!
 //! This module provides the runtime for executing missions defined in mission.rs.
 //! All test missions run under lockstep for deterministic, reproducible results.
+//!
+//! ## Multi-Vehicle Support
+//!
+//! Each vehicle connects to its own shared memory segment (instance-based).
+//! For multi-vehicle tests, create separate MissionRunner instances with
+//! different instance IDs.
 
 #[cfg(feature = "gz-plugin")]
 use std::time::{Duration, Instant};
@@ -15,9 +21,14 @@ use crate::mission::{
 use aviate_platform_sitl::gz_plugin::{GzPluginBridge, AviateModelState, enu_to_ned_f32};
 
 /// Mission runner state
+///
+/// Each MissionRunner connects to a specific vehicle instance via shared memory.
+/// Instance 0 uses /aviate_gz_bridge, instance N uses /aviate_gz_bridge_N.
 #[cfg(feature = "gz-plugin")]
 pub struct MissionRunner {
     bridge: GzPluginBridge,
+    instance: u8,
+    vehicle_id: String,
     last_step: u64,
     current_position: [f32; 3],
     current_velocity: [f32; 3],
@@ -28,13 +39,23 @@ pub struct MissionRunner {
 
 #[cfg(feature = "gz-plugin")]
 impl MissionRunner {
-    /// Create a new mission runner connected to Gazebo
+    /// Create a new mission runner connected to Gazebo (instance 0)
     pub fn new() -> Result<Self, String> {
-        let bridge = GzPluginBridge::connect_with_retry(20, 500)
-            .map_err(|e| format!("Failed to connect to Gazebo: {:?}", e))?;
+        Self::for_instance(0, "x500")
+    }
+
+    /// Create a new mission runner for a specific vehicle instance
+    ///
+    /// Each vehicle instance has its own shared memory segment.
+    /// Use this for multi-vehicle testing.
+    pub fn for_instance(instance: u8, vehicle_id: &str) -> Result<Self, String> {
+        let bridge = GzPluginBridge::connect_instance_with_retry(instance, 20, 500)
+            .map_err(|e| format!("Failed to connect to instance {}: {:?}", instance, e))?;
 
         Ok(Self {
             bridge,
+            instance,
+            vehicle_id: vehicle_id.to_string(),
             last_step: 0,
             current_position: [0.0; 3],
             current_velocity: [0.0; 3],
@@ -44,18 +65,32 @@ impl MissionRunner {
         })
     }
 
+    /// Get the instance ID this runner is connected to
+    pub fn instance(&self) -> u8 {
+        self.instance
+    }
+
+    /// Get the vehicle ID
+    pub fn vehicle_id(&self) -> &str {
+        &self.vehicle_id
+    }
+
+    /// Log a message with vehicle prefix
+    fn log(&self, msg: &str) {
+        println!("[{}:{}] {}", self.vehicle_id, self.instance, msg);
+    }
+
     /// Run a complete mission
     pub fn run(&mut self, mission: &Mission) -> MissionResult {
-        println!("=== Mission: {} ===", mission.name);
-        println!("Description: {}", mission.description);
-        println!("Vehicle: {} (instance {})", mission.vehicle.model, mission.vehicle.instance);
-        println!("Lockstep: {}", if mission.lockstep { "YES" } else { "NO" });
+        self.log(&format!("=== Mission: {} ===", mission.name));
+        self.log(&format!("Description: {}", mission.description));
+        self.log(&format!("Lockstep: {}", if mission.lockstep { "YES" } else { "NO" }));
         println!();
 
         // Enable lockstep if required
         if mission.lockstep {
             self.bridge.set_lockstep(true);
-            println!("[Runner] Lockstep enabled");
+            self.log("Lockstep enabled");
         }
 
         // Wait for initial state
@@ -74,18 +109,18 @@ impl MissionRunner {
 
         // Execute each phase
         for (i, phase) in mission.phases.iter().enumerate() {
-            println!("[Phase {}/{}] {}", i + 1, mission.phases.len(), phase.name);
+            self.log(&format!("[Phase {}/{}] {}", i + 1, mission.phases.len(), phase.name));
 
             let result = self.run_phase(phase);
 
             if result.passed {
-                println!("  PASSED (alt: {:.2}m)", result.max_altitude);
+                self.log(&format!("  PASSED (alt: {:.2}m)", result.max_altitude));
             } else {
-                println!("  FAILED");
+                self.log("  FAILED");
                 for cr in &result.criteria_results {
                     if !cr.passed {
-                        println!("    - {}: expected {}, got {}",
-                            cr.criterion, cr.expected, cr.actual_value);
+                        self.log(&format!("    - {}: expected {}, got {}",
+                            cr.criterion, cr.expected, cr.actual_value));
                     }
                 }
                 mission_passed = false;
@@ -102,9 +137,9 @@ impl MissionRunner {
         let total_duration = mission_start.elapsed();
 
         println!();
-        println!("=== Mission {} ===", if mission_passed { "PASSED" } else { "FAILED" });
-        println!("Duration: {:.2}s", total_duration.as_secs_f32());
-        println!("Max altitude: {:.2}m", self.max_altitude);
+        self.log(&format!("=== Mission {} ===", if mission_passed { "PASSED" } else { "FAILED" }));
+        self.log(&format!("Duration: {:.2}s", total_duration.as_secs_f32()));
+        self.log(&format!("Max altitude: {:.2}m", self.max_altitude));
 
         MissionResult {
             mission_name: mission.name.clone(),
@@ -276,20 +311,31 @@ impl MissionRunner {
     }
 }
 
-/// Run multiple missions in sequence
+/// Run multiple missions in sequence on instance 0
 #[cfg(feature = "gz-plugin")]
 pub fn run_mission_suite(missions: &[Mission]) -> Vec<MissionResult> {
+    run_mission_suite_for_instance(0, "x500", missions)
+}
+
+/// Run multiple missions in sequence on a specific instance
+#[cfg(feature = "gz-plugin")]
+pub fn run_mission_suite_for_instance(
+    instance: u8,
+    vehicle_id: &str,
+    missions: &[Mission],
+) -> Vec<MissionResult> {
     let mut results = Vec::new();
 
     for mission in missions {
         // Create fresh runner for each mission
-        match MissionRunner::new() {
+        match MissionRunner::for_instance(instance, vehicle_id) {
             Ok(mut runner) => {
                 let result = runner.run(mission);
                 results.push(result);
             }
             Err(e) => {
-                eprintln!("Failed to create runner for {}: {}", mission.name, e);
+                eprintln!("[{}:{}] Failed to create runner for {}: {}",
+                    vehicle_id, instance, mission.name, e);
                 results.push(MissionResult {
                     mission_name: mission.name.clone(),
                     passed: false,

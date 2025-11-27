@@ -84,20 +84,24 @@ echo "Building Aviate SITL app..."
 cargo build -p aviate-app-quadcopter-sitl
 
 # Build the gz-bridge (requires libaviate_gz_bridge.so to be built)
-PLUGIN_DIR="${AVIATE_DIR}/aviate-platform/sitl/aviate_gz_plugin/build"
+# Check new location first, then legacy location
+PLUGIN_DIR="${AVIATE_DIR}/aviate-platform/aviate_gz_plugin/build"
+if [ ! -f "${PLUGIN_DIR}/libaviate_gz_bridge.so" ]; then
+    # Fallback to legacy location
+    PLUGIN_DIR="${AVIATE_DIR}/aviate-platform/sitl/aviate_gz_plugin/build"
+fi
+
 if [ -f "${PLUGIN_DIR}/libaviate_gz_bridge.so" ]; then
     echo "Building Gazebo bridge..."
     cargo build -p aviate-platform-sitl --features gz-plugin
-    # Also build lockstep-test if in lockstep mode
-    if [ "$LOCKSTEP" -eq 1 ]; then
-        cargo build -p aviate-app-quadcopter-sitl --features gz-plugin
-    fi
+    # Also build config-test and lockstep-test with gz-plugin
+    cargo build -p aviate-app-quadcopter-sitl --features gz-plugin
     GZ_BRIDGE_AVAILABLE=1
     echo "Gazebo bridge built successfully."
 else
     GZ_BRIDGE_AVAILABLE=0
     echo "Warning: libaviate_gz_bridge.so not found."
-    echo "Build it first: cd aviate-platform/sitl/aviate_gz_plugin/build && cmake .. && make"
+    echo "Build it first: cd aviate-platform/aviate_gz_plugin/build && cmake .. && make"
     echo "The test will run but won't have real sensor data from Gazebo."
 fi
 

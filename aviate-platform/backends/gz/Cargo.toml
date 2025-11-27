@@ -1,0 +1,20 @@
+[package]
+name = "aviate-backend-gz"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Aviate Gazebo backend - implements KinematicsBackend for gz-sim"
+
+[features]
+default = []
+# Link against libaviate_gz_bridge.so for shared memory FFI
+gz-plugin = []
+
+[dependencies]
+aviate-platform-xil = { path = "../../xil" }
+aviate-mavlink = { path = "../../../aviate-mavlink" }
+
+[[bin]]
+name = "gz-bridge"
+path = "src/bin/gz_bridge.rs"
+required-features = ["gz-plugin"]
