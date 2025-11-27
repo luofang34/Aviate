@@ -23,6 +23,8 @@ pub struct SitlConfig {
     pub sensor_port: u16,
     /// Address to send actuator commands to
     pub simulator_addr: std::net::SocketAddr,
+    /// Address to send telemetry to (GCS)
+    pub gcs_addr: std::net::SocketAddr,
     /// Loop rate in Hz (default 1000)
     pub loop_rate_hz: u32,
 }
@@ -32,6 +34,7 @@ impl Default for SitlConfig {
         Self {
             sensor_port: DEFAULT_SENSOR_PORT,
             simulator_addr: std::net::SocketAddr::from(([127, 0, 0, 1], DEFAULT_ACTUATOR_PORT)),
+            gcs_addr: std::net::SocketAddr::from(([127, 0, 0, 1], 14550)),
             loop_rate_hz: 1000,
         }
     }

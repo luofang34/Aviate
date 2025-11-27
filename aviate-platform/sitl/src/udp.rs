@@ -5,9 +5,9 @@
 use std::net::UdpSocket;
 use std::io;
 
-use aviate_core::hal::{AviateHal, SensorHal, ActuatorHal, SystemHal};
+use aviate_core::hal::{SensorHal, ActuatorHal, SystemHal, AviateHal, CommandHal, SystemCommand};
 use aviate_core::sensor::{
-    SensorReading, ImuData, GnssData, BaroData, MagData, AirData, SensorHealth, GnssHealth, GnssFix,
+    SensorReading, ImuData, GnssData, BaroData, MagData, SensorHealth, GnssHealth, GnssFix, AirData,
 };
 use aviate_core::mixer::ActuatorCmd;
 use aviate_core::time::{Timestamp, TimeSource};
@@ -16,11 +16,11 @@ use aviate_core::types::{
 };
 
 use aviate_mavlink::{
-    parse_mavlink, serialize_mavlink, MavMessage, HilActuatorControls,
-    Heartbeat, MavAutopilot, MavType, MavState, MavModeFlag,
+    parse_mavlink, serialize_mavlink, MavMessage, HilActuatorControls, HilSensor, HilGps,
+    Heartbeat, MavAutopilot, MavType, MavState, MavModeFlag, SetAttitudeTarget, CommandLong, mav_cmd,
 };
 
-use crate::SitlConfig;
+use crate::{SitlConfig, bridge};
 
 pub struct UdpMavlinkHal {
     recv_socket: UdpSocket,
@@ -30,11 +30,14 @@ pub struct UdpMavlinkHal {
     armed: bool,
     seq: u8,
 
-    // Buffered sensor data (from latest MAVLink messages)
+    // Buffered sensor data
     imu_data: Option<SensorReading<ImuData>>,
     gnss_data: Option<SensorReading<GnssData>>,
     baro_data: Option<SensorReading<BaroData>>,
     mag_data: Option<SensorReading<MagData>>,
+    
+    // Buffered command
+    command: Option<SystemCommand>,
 
     // Heartbeat timing
     last_heartbeat_us: u64,
@@ -65,6 +68,7 @@ impl UdpMavlinkHal {
             gnss_data: None,
             baro_data: None,
             mag_data: None,
+            command: None,
             last_heartbeat_us: 0,
             rx_count: 0,
             tx_count: 0,
@@ -113,128 +117,118 @@ impl UdpMavlinkHal {
         let ts = Timestamp { ticks: self.now_us(), source: TimeSource::Internal };
 
         match msg {
-            MavMessage::HilSensor(sensor) => {
-                // Convert HIL_SENSOR to ImuData, BaroData, MagData
-                self.imu_data = Some(SensorReading {
-                    value: ImuData {
-                        accel: [
-                            MetersPerSecondSquared(sensor.xacc),
-                            MetersPerSecondSquared(sensor.yacc),
-                            MetersPerSecondSquared(sensor.zacc),
-                        ],
-                        gyro: [
-                            RadiansPerSecond(sensor.xgyro),
-                            RadiansPerSecond(sensor.ygyro),
-                            RadiansPerSecond(sensor.zgyro),
-                        ],
-                    },
-                    valid: true,
-                    source_id: sensor.id,
-                    timestamp: ts,
-                    health: SensorHealth::Good,
-                });
-
-                // Convert pressure to altitude using barometric formula
-                // Standard atmosphere: P = P0 * (1 - L*h/T0)^(g*M/(R*L))
-                // Simplified: h ≈ (1 - (P/P0)^0.190284) * 44330.77
-                let pressure_pa = sensor.abs_pressure * 100.0; // mbar to Pa
-                let altitude_m = (1.0 - (pressure_pa / 101325.0_f32).powf(0.190284)) * 44330.77;
-
-                self.baro_data = Some(SensorReading {
-                    value: BaroData {
-                        altitude: Some(Meters(altitude_m)),
-                        air: AirData {
-                            static_pressure: Some(Pascals(pressure_pa)),
-                            dynamic_pressure: None,
-                            total_pressure: None,
-                            temperature: Some(Celsius(sensor.temperature)),
-                            indicated_airspeed: None,
-                            true_airspeed: None,
-                        },
-                    },
-                    valid: true,
-                    source_id: sensor.id,
-                    timestamp: ts,
-                    health: SensorHealth::Good,
-                });
-
-                self.mag_data = Some(SensorReading {
-                    value: MagData {
-                        field_ut: [
-                            Microtesla(sensor.xmag * 100.0), // Gauss to µT
-                            Microtesla(sensor.ymag * 100.0),
-                            Microtesla(sensor.zmag * 100.0),
-                        ],
-                    },
-                    valid: true,
-                    source_id: sensor.id,
-                    timestamp: ts,
-                    health: SensorHealth::Good,
-                });
-            }
-
-            MavMessage::HilGps(gps) => {
-                let fix = match gps.fix_type {
-                    0 | 1 => GnssFix::None,
-                    2 => GnssFix::TwoD,
-                    3 => GnssFix::ThreeD,
-                    4 => GnssFix::ThreeD, // DGPS -> ThreeD (no separate variant)
-                    5 => GnssFix::RtkFloat,
-                    6 => GnssFix::RtkFixed,
-                    _ => GnssFix::None,
-                };
-
-                // Convert GPS lat/lon/alt to NED position (simplified: relative to origin)
-                // In a real system, this would use a proper geodetic to NED conversion
-                // For SITL, we use a simple flat-earth approximation around origin
-                let vel_n = MetersPerSecond((gps.vn as f32) / 100.0);
-                let vel_e = MetersPerSecond((gps.ve as f32) / 100.0);
-                let vel_d = MetersPerSecond((gps.vd as f32) / 100.0);
-
-                // Placeholder NED position (would need proper conversion in real implementation)
-                // For SITL testing, we just pass through velocity which is already in NED
-                let position_ned = [Meters(0.0), Meters(0.0), Meters(-(gps.alt as f32) / 1000.0)];
-
-                let health = if fix == GnssFix::None {
-                    GnssHealth::Lost
-                } else {
-                    GnssHealth::Good
-                };
-
-                self.gnss_data = Some(SensorReading {
-                    value: GnssData {
-                        position_ned,
-                        velocity_ned: [vel_n, vel_e, vel_d],
-                        fix,
-                        health,
-                    },
-                    valid: fix != GnssFix::None,
-                    source_id: gps.id,
-                    timestamp: ts,
-                    health: if health == GnssHealth::Good { SensorHealth::Good } else { SensorHealth::Failed },
-                });
-            }
-
-            MavMessage::Heartbeat(_hb) => {
-                // Track simulator heartbeat for connection status
-            }
-
-            MavMessage::CommandLong(cmd) => {
-                // Handle commands (ARM/DISARM, etc.)
-                if cmd.command == 400 {
-                    // MAV_CMD_COMPONENT_ARM_DISARM
-                    if cmd.param1 > 0.5 {
-                        println!("[SITL] Received ARM command");
-                        self.armed = true;
-                    } else {
-                        println!("[SITL] Received DISARM command");
-                        self.armed = false;
-                    }
-                }
-            }
-
+            MavMessage::HilSensor(sensor) => self.handle_hil_sensor(sensor, ts),
+            MavMessage::HilGps(gps) => self.handle_hil_gps(gps, ts),
+            MavMessage::SetAttitudeTarget(tgt) => self.handle_set_attitude_target(tgt),
+            MavMessage::CommandLong(cmd) => self.handle_command_long(cmd),
             _ => {
                 // Ignore other messages
+            }
+        }
+    }
+
+    fn handle_hil_sensor(&mut self, sensor: HilSensor, ts: Timestamp) {
+        self.imu_data = Some(SensorReading {
+            value: ImuData {
+                accel: [
+                    MetersPerSecondSquared(sensor.xacc),
+                    MetersPerSecondSquared(sensor.yacc),
+                    MetersPerSecondSquared(sensor.zacc),
+                ],
+                gyro: [
+                    RadiansPerSecond(sensor.xgyro),
+                    RadiansPerSecond(sensor.ygyro),
+                    RadiansPerSecond(sensor.zgyro),
+                ],
+            },
+            valid: true,
+            source_id: sensor.id,
+            timestamp: ts,
+            health: SensorHealth::Good,
+        });
+
+        // Convert pressure to altitude (Standard Atmosphere)
+        let pressure_pa = sensor.abs_pressure * 100.0; // mbar to Pa
+        let altitude_m = (1.0 - (pressure_pa / 101325.0_f32).powf(0.190284)) * 44330.77;
+
+        self.baro_data = Some(SensorReading {
+            value: BaroData {
+                altitude: Some(Meters(altitude_m)),
+                air: AirData {
+                    static_pressure: Some(Pascals(pressure_pa)),
+                    dynamic_pressure: None,
+                    total_pressure: None,
+                    temperature: Some(Celsius(sensor.temperature)),
+                    indicated_airspeed: None,
+                    true_airspeed: None,
+                },
+            },
+            valid: true,
+            source_id: sensor.id,
+            timestamp: ts,
+            health: SensorHealth::Good,
+        });
+
+        self.mag_data = Some(SensorReading {
+            value: MagData {
+                field_ut: [
+                    Microtesla(sensor.xmag * 100.0), // Gauss to µT
+                    Microtesla(sensor.ymag * 100.0),
+                    Microtesla(sensor.zmag * 100.0),
+                ],
+            },
+            valid: true,
+            source_id: sensor.id,
+            timestamp: ts,
+            health: SensorHealth::Good,
+        });
+    }
+
+    fn handle_hil_gps(&mut self, gps: HilGps, ts: Timestamp) {
+        let fix = match gps.fix_type {
+            0 | 1 => GnssFix::None,
+            2 => GnssFix::TwoD,
+            3 => GnssFix::ThreeD,
+            4 => GnssFix::ThreeD, // DGPS
+            5 => GnssFix::RtkFloat,
+            6 => GnssFix::RtkFixed,
+            _ => GnssFix::None,
+        };
+
+        let vel_n = MetersPerSecond((gps.vn as f32) / 100.0);
+        let vel_e = MetersPerSecond((gps.ve as f32) / 100.0);
+        let vel_d = MetersPerSecond((gps.vd as f32) / 100.0);
+
+        // Simplified NED position
+        let position_ned = [Meters(0.0), Meters(0.0), Meters(-(gps.alt as f32) / 1000.0)];
+
+        let health = if fix == GnssFix::None { GnssHealth::Lost } else { GnssHealth::Good };
+
+        self.gnss_data = Some(SensorReading {
+            value: GnssData {
+                position_ned,
+                velocity_ned: [vel_n, vel_e, vel_d],
+                fix,
+                health,
+            },
+            valid: fix != GnssFix::None,
+            source_id: gps.id,
+            timestamp: ts,
+            health: if health == GnssHealth::Good { SensorHealth::Good } else { SensorHealth::Failed },
+        });
+    }
+    
+    fn handle_set_attitude_target(&mut self, tgt: SetAttitudeTarget) {
+        let cmd = bridge::mavlink_to_command(&tgt);
+        self.command = Some(SystemCommand::FlightControl(cmd));
+    }
+    
+    fn handle_command_long(&mut self, cmd: CommandLong) {
+        if cmd.command == mav_cmd::COMPONENT_ARM_DISARM {
+            if cmd.param1 == 1.0 {
+                self.command = Some(SystemCommand::Arm);
+            } else if cmd.param1 == 0.0 {
+                self.command = Some(SystemCommand::Disarm);
             }
         }
     }
@@ -359,6 +353,13 @@ impl SystemHal for UdpMavlinkHal {
     fn enter_bootloader(&mut self) -> ! {
         println!("[SITL] Bootloader not supported in SITL");
         std::process::exit(1);
+    }
+}
+
+impl CommandHal for UdpMavlinkHal {
+    fn recv_command(&mut self) -> Option<SystemCommand> {
+        self.poll(); 
+        self.command.take()
     }
 }
 

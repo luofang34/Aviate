@@ -6,6 +6,7 @@
 use crate::sensor::{SensorReading, ImuData, GnssData, BaroData, MagData, AirspeedData};
 use crate::mixer::ActuatorCmd;
 use crate::time::Timestamp;
+use crate::control::Command;
 
 /// Sensor input interface
 ///
@@ -66,6 +67,21 @@ pub trait SystemHal {
     fn enter_bootloader(&mut self) -> !;
 }
 
+/// System command from GCS/RC
+#[derive(Clone, Debug)]
+pub enum SystemCommand {
+    FlightControl(Command),
+    Arm,
+    Disarm,
+    // Future: Reboot, Shutdown, etc.
+}
+
+/// Command input interface (GCS/RC)
+pub trait CommandHal {
+    /// Receive the latest command from GCS/RC
+    fn recv_command(&mut self) -> Option<SystemCommand>;
+}
+
 /// Communication interface for telemetry/commands
 pub trait CommHal {
     /// Send telemetry data
@@ -90,4 +106,4 @@ pub enum CommError {
 /// Combined HAL trait for convenience
 ///
 /// Platform can implement individual traits or this combined trait.
-pub trait AviateHal: SensorHal + ActuatorHal + SystemHal {}
+pub trait AviateHal: SensorHal + ActuatorHal + SystemHal + CommandHal {}
