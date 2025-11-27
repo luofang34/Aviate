@@ -1,35 +1,47 @@
 #!/bin/bash
 set -e
 
-# Configuration
-PX4_DIR=${PX4_AUTOPILOT_REPO:-"../PX4-Autopilot"}
-export HEADLESS=${HEADLESS:-0}
+# Aviate Gazebo SITL Launcher
+#
+# This script launches Gazebo Sim with the Aviate quadcopter world.
+# It uses pre-installed gz (Gazebo Harmonic) directly, not PX4.
 
-if [ ! -d "$PX4_DIR" ]; then
-    echo "Error: PX4-Autopilot repository not found at $PX4_DIR"
+export HEADLESS=${HEADLESS:-0}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AVIATE_DIR="$(dirname "$SCRIPT_DIR")"
+WORLD_FILE="${AVIATE_DIR}/aviate-apps/quadcopter-sitl/worlds/x3_quadcopter.sdf"
+
+if [ ! -f "$WORLD_FILE" ]; then
+    echo "Error: World file not found at $WORLD_FILE"
+    exit 1
+fi
+
+# Check gz is available
+if ! command -v gz &> /dev/null; then
+    echo "Error: Gazebo (gz) not found. Please install Gazebo Harmonic."
     exit 1
 fi
 
 echo "Launching Gazebo (HEADLESS=$HEADLESS)..."
 
-# Run make in background
-(
-    cd "$PX4_DIR"
-    # Suppress output?
-    make px4_sitl gz_x500 > /dev/null 2>&1
-) &
-MAKE_PID=$!
+# Launch Gazebo in server-only mode (headless) or with GUI
+if [ "$HEADLESS" -eq 1 ]; then
+    echo "Starting Gazebo in headless mode..."
+    gz sim -s -r "$WORLD_FILE" &
+else
+    echo "Starting Gazebo with GUI..."
+    gz sim -r "$WORLD_FILE" &
+fi
+GZ_PID=$!
 
-# Wait for Gazebo to initialize
-# We can wait for the port 14560 to be targeted?
-# Or just sleep.
-echo "Waiting for simulator startup (10s)..."
-sleep 10
+# Wait for Gazebo to initialize and topics to become available
+echo "Waiting for simulator startup..."
+for i in {1..30}; do
+    if gz topic -l 2>/dev/null | grep -q "/X3/"; then
+        echo "Gazebo topics available."
+        break
+    fi
+    sleep 1
+done
 
-# Kill the PX4 binary that was started by make, to free up the ports for Aviate
-echo "Stopping default PX4 binary..."
-pkill -x px4 || true
-
-echo "Gazebo ready (Make PID: $MAKE_PID)."
-# We don't wait for MAKE_PID here, we exit so the caller can proceed.
-# The make process keeps running in background managing gz.
+echo "Gazebo ready (PID: $GZ_PID)."

@@ -4,13 +4,21 @@
 //!
 //! Provides HAL implementation for running aviate-core in simulation.
 //! Supports both mock mode (for testing) and UDP MAVLink mode (for external simulators).
+//!
+//! ## Features
+//!
+//! - `gz-bridge`: Enable Gazebo transport bridge (requires gz-transport system libraries)
 
 pub mod mock;
 pub mod udp;
 pub mod bridge;
+pub mod gz_bridge;
 
 pub use mock::SitlHal;
 pub use udp::UdpMavlinkHal;
+
+#[cfg(feature = "gz-bridge")]
+pub use gz_bridge::{GzBridge, GzBridgeConfig};
 
 /// Default ports for MAVLink HIL communication
 pub const DEFAULT_SENSOR_PORT: u16 = 14560;  // Receive HIL_SENSOR/HIL_GPS from simulator

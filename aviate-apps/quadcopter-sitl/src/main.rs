@@ -16,7 +16,7 @@ use aviate_core::control::mc::McController;
 use aviate_core::control::{Command, Setpoint, CommandSource, ControlMode, ConfigMode};
 use aviate_core::mixer::{QuadXMixer, ModeConfig};
 use aviate_core::time::{Timestamp, TimeSource};
-use aviate_core::hal::{SensorHal, ActuatorHal, SystemHal, CommandHal, SystemCommand, TelemetryHal};
+use aviate_core::hal::{SensorHal, ActuatorHal, SystemHal, CommandHal, SystemCommand};
 use aviate_core::types::Normalized;
 
 use aviate_platform_sitl::{SitlConfig, SitlHal, UdpMavlinkHal};
@@ -53,20 +53,9 @@ fn run_mock() {
 }
 
 fn run_udp() {
-    // Attempt to launch Gazebo if script exists
-    if std::path::Path::new("./scripts/launch_gazebo.sh").exists() {
-        println!("Launching Gazebo simulator via script...");
-        match std::process::Command::new("./scripts/launch_gazebo.sh").status() {
-            Ok(status) => {
-                if !status.success() {
-                    eprintln!("Warning: Simulator launch script returned error: {}", status);
-                }
-            }
-            Err(e) => eprintln!("Failed to execute launch script: {}", e),
-        }
-    } else {
-        println!("Launch script not found, assuming simulator is running manually.");
-    }
+    // Gazebo should be launched externally via scripts/run_sitl.sh
+    // This application expects HIL_SENSOR/HIL_GPS messages on port 14560
+    println!("Expecting Gazebo to be running with HIL bridge...");
 
     let config = SitlConfig::default();
     // Retry binding a few times if port is busy (race condition with pkill)
@@ -136,7 +125,7 @@ fn default_command() -> Command {
     }
 }
 
-fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal + TelemetryHal>(
+fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
     hal: &mut H,
     kernel: &mut AviateKernel<McController, QuadXMixer>,
     last_cmd: &mut Command,
@@ -205,10 +194,7 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal + Tele
 
     // 5. Write outputs
     hal.write(&actuator_cmd);
-    
-    // 6. Send Telemetry
-    hal.send_telemetry(&kernel.ekf.get_estimate());
 
-    // 7. Watchdog
+    // 6. Watchdog
     hal.kick_watchdog();
 }

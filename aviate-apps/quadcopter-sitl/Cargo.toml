@@ -8,6 +8,15 @@ license.workspace = true
 name = "aviate-app-quadcopter-sitl"
 path = "src/main.rs"
 
+[[bin]]
+name = "gz-bridge"
+path = "src/gz_bridge_main.rs"
+required-features = ["gz-bridge"]
+
+[features]
+default = []
+gz-bridge = ["aviate-platform-sitl/gz-bridge"]
+
 [dependencies]
 aviate-core = { path = "../../aviate-core" }
 aviate-platform-sitl = { path = "../../aviate-platform/sitl" }
