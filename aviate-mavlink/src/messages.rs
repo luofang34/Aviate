@@ -1,40 +1,25 @@
-//! MAVLink message definitions for HIL simulation
+//! MAVLink message definitions for HIL simulation and core control
+
+// --- Existing HIL messages ---
 
 /// HIL_SENSOR (MAVLink #107)
-/// IMU, barometer, and magnetometer data from simulator
 #[derive(Copy, Clone, Debug, Default)]
 pub struct HilSensor {
-    /// Timestamp (microseconds since boot or Unix epoch)
     pub time_usec: u64,
-    /// X acceleration (m/s^2)
     pub xacc: f32,
-    /// Y acceleration (m/s^2)
     pub yacc: f32,
-    /// Z acceleration (m/s^2)
     pub zacc: f32,
-    /// X angular speed (rad/s)
     pub xgyro: f32,
-    /// Y angular speed (rad/s)
     pub ygyro: f32,
-    /// Z angular speed (rad/s)
     pub zgyro: f32,
-    /// X magnetic field (gauss)
     pub xmag: f32,
-    /// Y magnetic field (gauss)
     pub ymag: f32,
-    /// Z magnetic field (gauss)
     pub zmag: f32,
-    /// Absolute pressure (mbar)
     pub abs_pressure: f32,
-    /// Differential pressure (mbar)
     pub diff_pressure: f32,
-    /// Altitude (pressure altitude, meters)
     pub pressure_alt: f32,
-    /// Temperature (degrees Celsius)
     pub temperature: f32,
-    /// Bitmap of updated sensor fields
     pub fields_updated: u32,
-    /// Sensor ID (0 for default)
     pub id: u8,
 }
 
@@ -44,38 +29,22 @@ impl HilSensor {
 }
 
 /// HIL_GPS (MAVLink #113)
-/// GNSS position and velocity from simulator
 #[derive(Copy, Clone, Debug, Default)]
 pub struct HilGps {
-    /// Timestamp (microseconds since boot or Unix epoch)
     pub time_usec: u64,
-    /// Latitude (degrees * 1e7)
     pub lat: i32,
-    /// Longitude (degrees * 1e7)
     pub lon: i32,
-    /// Altitude MSL (mm)
     pub alt: i32,
-    /// GPS HDOP (cm)
     pub eph: u16,
-    /// GPS VDOP (cm)
     pub epv: u16,
-    /// Ground speed (cm/s)
     pub vel: u16,
-    /// North velocity (cm/s)
     pub vn: i16,
-    /// East velocity (cm/s)
     pub ve: i16,
-    /// Down velocity (cm/s)
     pub vd: i16,
-    /// Course over ground (degrees * 100)
     pub cog: u16,
-    /// GPS fix type (0=No GPS, 1=No Fix, 2=2D, 3=3D, 4=DGPS, 5=RTK)
     pub fix_type: u8,
-    /// Number of satellites visible
     pub satellites_visible: u8,
-    /// GPS ID (0 for default)
     pub id: u8,
-    /// Yaw of vehicle relative to Earth's North in degrees * 100
     pub yaw: u16,
 }
 
@@ -85,16 +54,11 @@ impl HilGps {
 }
 
 /// HIL_ACTUATOR_CONTROLS (MAVLink #93)
-/// Actuator outputs from autopilot to simulator
 #[derive(Copy, Clone, Debug)]
 pub struct HilActuatorControls {
-    /// Timestamp (microseconds since boot or Unix epoch)
     pub time_usec: u64,
-    /// Control outputs [-1..1] or [0..1]
     pub controls: [f32; 16],
-    /// System mode (MAV_MODE_FLAG)
     pub mode: u8,
-    /// Flags (reserved)
     pub flags: u64,
 }
 
@@ -115,20 +79,13 @@ impl HilActuatorControls {
 }
 
 /// HEARTBEAT (MAVLink #0)
-/// System alive signal
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Heartbeat {
-    /// Type of the system (quadrotor, fixed-wing, etc.)
     pub mav_type: u8,
-    /// Autopilot type (PX4, ArduPilot, Aviate, etc.)
     pub autopilot: u8,
-    /// System mode bitmap (MAV_MODE_FLAG)
     pub base_mode: u8,
-    /// Custom mode (autopilot-specific)
     pub custom_mode: u32,
-    /// System status (MAV_STATE)
     pub system_status: u8,
-    /// MAVLink version (usually 3 for MAVLink 2.0)
     pub mavlink_version: u8,
 }
 
@@ -138,12 +95,9 @@ impl Heartbeat {
 }
 
 /// SYSTEM_TIME (MAVLink #2)
-/// System time synchronization
 #[derive(Copy, Clone, Debug, Default)]
 pub struct SystemTime {
-    /// Unix timestamp (microseconds since Jan 1 1970)
     pub time_unix_usec: u64,
-    /// Time since boot (milliseconds)
     pub time_boot_ms: u32,
 }
 
@@ -153,46 +107,240 @@ impl SystemTime {
 }
 
 /// HIL_STATE_QUATERNION (MAVLink #115)
-/// Ground truth state from simulator (for validation/logging)
 #[derive(Copy, Clone, Debug, Default)]
 pub struct HilStateQuaternion {
-    /// Timestamp (microseconds since boot or Unix epoch)
     pub time_usec: u64,
-    /// Attitude quaternion [w, x, y, z]
     pub attitude_quaternion: [f32; 4],
-    /// Roll angular speed (rad/s)
     pub rollspeed: f32,
-    /// Pitch angular speed (rad/s)
     pub pitchspeed: f32,
-    /// Yaw angular speed (rad/s)
     pub yawspeed: f32,
-    /// Latitude (degrees * 1e7)
     pub lat: i32,
-    /// Longitude (degrees * 1e7)
     pub lon: i32,
-    /// Altitude MSL (mm)
     pub alt: i32,
-    /// Ground X speed (NED, cm/s)
     pub vx: i16,
-    /// Ground Y speed (NED, cm/s)
     pub vy: i16,
-    /// Ground Z speed (NED, cm/s)
     pub vz: i16,
-    /// Indicated airspeed (cm/s)
     pub ind_airspeed: u16,
-    /// True airspeed (cm/s)
     pub true_airspeed: u16,
-    /// X acceleration (mG)
     pub xacc: i16,
-    /// Y acceleration (mG)
     pub yacc: i16,
-    /// Z acceleration (mG)
     pub zacc: i16,
 }
 
 impl HilStateQuaternion {
     pub const MSG_ID: u32 = 115;
     pub const PAYLOAD_LEN: usize = 64;
+}
+
+// --- New Messages (Quaternions & Control) ---
+
+/// ATTITUDE_QUATERNION (MAVLink #31)
+#[derive(Copy, Clone, Debug, Default)]
+pub struct AttitudeQuaternion {
+    pub time_boot_ms: u32,
+    pub q1: f32,
+    pub q2: f32,
+    pub q3: f32,
+    pub q4: f32,
+    pub rollspeed: f32,
+    pub pitchspeed: f32,
+    pub yawspeed: f32,
+    pub repr_offset_q: [f32; 4],
+}
+
+impl AttitudeQuaternion {
+    pub const MSG_ID: u32 = 31;
+    pub const PAYLOAD_LEN: usize = 48;
+}
+
+/// LOCAL_POSITION_NED (MAVLink #32)
+#[derive(Copy, Clone, Debug, Default)]
+pub struct LocalPositionNed {
+    pub time_boot_ms: u32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub vx: f32,
+    pub vy: f32,
+    pub vz: f32,
+}
+
+impl LocalPositionNed {
+    pub const MSG_ID: u32 = 32;
+    pub const PAYLOAD_LEN: usize = 28;
+}
+
+/// SET_ATTITUDE_TARGET (MAVLink #82)
+#[derive(Copy, Clone, Debug, Default)]
+pub struct SetAttitudeTarget {
+    pub time_boot_ms: u32,
+    pub target_system: u8,
+    pub target_component: u8,
+    pub type_mask: u8,
+    pub q: [f32; 4],
+    pub body_roll_rate: f32,
+    pub body_pitch_rate: f32,
+    pub body_yaw_rate: f32,
+    pub thrust: f32,
+    pub thrust_body: [f32; 3],
+}
+
+impl SetAttitudeTarget {
+    pub const MSG_ID: u32 = 82;
+    pub const PAYLOAD_LEN: usize = 51;
+}
+
+pub mod attitude_target_typemask {
+    pub const BODY_ROLL_RATE_IGNORE: u8 = 1;
+    pub const BODY_PITCH_RATE_IGNORE: u8 = 2;
+    pub const BODY_YAW_RATE_IGNORE: u8 = 4;
+    pub const THRUST_BODY_SET: u8 = 32;
+    pub const THROTTLE_IGNORE: u8 = 64;
+    pub const ATTITUDE_IGNORE: u8 = 128;
+}
+
+/// COMMAND_LONG (MAVLink #76)
+#[derive(Copy, Clone, Debug, Default)]
+pub struct CommandLong {
+    pub param1: f32,
+    pub param2: f32,
+    pub param3: f32,
+    pub param4: f32,
+    pub param5: f32,
+    pub param6: f32,
+    pub param7: f32,
+    pub command: u16,
+    pub target_system: u8,
+    pub target_component: u8,
+    pub confirmation: u8,
+}
+
+impl CommandLong {
+    pub const MSG_ID: u32 = 76;
+    pub const PAYLOAD_LEN: usize = 33;
+}
+
+/// COMMAND_ACK (MAVLink #77)
+#[derive(Copy, Clone, Debug, Default)]
+pub struct CommandAck {
+    pub command: u16,
+    pub result: u8,
+    pub progress: u8,
+    pub result_param2: i32,
+    pub target_system: u8,
+    pub target_component: u8,
+}
+
+impl CommandAck {
+    pub const MSG_ID: u32 = 77;
+    pub const PAYLOAD_LEN: usize = 10;
+}
+
+// --- Additional Messages ---
+
+/// RC_CHANNELS_OVERRIDE (MAVLink #70)
+#[derive(Copy, Clone, Debug, Default)]
+pub struct RcChannelsOverride {
+    pub chan1_raw: u16,
+    pub chan2_raw: u16,
+    pub chan3_raw: u16,
+    pub chan4_raw: u16,
+    pub chan5_raw: u16,
+    pub chan6_raw: u16,
+    pub chan7_raw: u16,
+    pub chan8_raw: u16,
+    pub target_system: u8,
+    pub target_component: u8,
+    pub chan9_raw: u16,
+    pub chan10_raw: u16,
+    pub chan11_raw: u16,
+    pub chan12_raw: u16,
+    pub chan13_raw: u16,
+    pub chan14_raw: u16,
+    pub chan15_raw: u16,
+    pub chan16_raw: u16,
+    pub chan17_raw: u16,
+    pub chan18_raw: u16,
+}
+
+impl RcChannelsOverride {
+    pub const MSG_ID: u32 = 70;
+    pub const PAYLOAD_LEN: usize = 38; // 18 basic + 20 extension
+}
+
+/// MANUAL_CONTROL (MAVLink #69)
+#[derive(Copy, Clone, Debug, Default)]
+pub struct ManualControl {
+    pub x: i16,
+    pub y: i16,
+    pub z: i16,
+    pub r: i16,
+    pub buttons: u16,
+    pub target: u8,
+    pub s: i16,
+    pub t: i16,
+    pub aux1: i16,
+    pub aux2: i16,
+    pub aux3: i16,
+    pub aux4: i16,
+    pub aux5: i16,
+    pub aux6: i16,
+}
+
+impl ManualControl {
+    pub const MSG_ID: u32 = 69;
+    pub const PAYLOAD_LEN: usize = 33; // 11 basic + 22 extension
+}
+
+/// SYS_STATUS (MAVLink #1)
+#[derive(Copy, Clone, Debug, Default)]
+pub struct SysStatus {
+    pub onboard_control_sensors_present: u32,
+    pub onboard_control_sensors_enabled: u32,
+    pub onboard_control_sensors_health: u32,
+    pub load: u16,
+    pub voltage_battery: u16,
+    pub current_battery: i16,
+    pub drop_rate_comm: u16,
+    pub errors_comm: u16,
+    pub errors_count1: u16,
+    pub errors_count2: u16,
+    pub errors_count3: u16,
+    pub errors_count4: u16,
+    pub battery_remaining: i8,
+    pub onboard_control_sensors_present_extended: u32,
+    pub onboard_control_sensors_enabled_extended: u32,
+    pub onboard_control_sensors_health_extended: u32,
+}
+
+impl SysStatus {
+    pub const MSG_ID: u32 = 1;
+    pub const PAYLOAD_LEN: usize = 43; // 31 basic + 12 extension
+}
+
+/// STATUSTEXT (MAVLink #253)
+#[derive(Copy, Clone, Debug)]
+pub struct Statustext {
+    pub severity: u8,
+    pub text: [u8; 50],
+    pub id: u16,
+    pub chunk_seq: u8,
+}
+
+impl Default for Statustext {
+    fn default() -> Self {
+        Self {
+            severity: 0,
+            text: [0; 50],
+            id: 0,
+            chunk_seq: 0,
+        }
+    }
+}
+
+impl Statustext {
+    pub const MSG_ID: u32 = 253;
+    pub const PAYLOAD_LEN: usize = 54; // 51 basic + 3 extension
 }
 
 /// Enum of all supported MAVLink messages
@@ -204,6 +352,16 @@ pub enum MavMessage {
     HilGps(HilGps),
     HilActuatorControls(HilActuatorControls),
     HilStateQuaternion(HilStateQuaternion),
+    AttitudeQuaternion(AttitudeQuaternion),
+    LocalPositionNed(LocalPositionNed),
+    SetAttitudeTarget(SetAttitudeTarget),
+    CommandLong(CommandLong),
+    CommandAck(CommandAck),
+    RcChannelsOverride(RcChannelsOverride),
+    ManualControl(ManualControl),
+    SysStatus(SysStatus),
+    Statustext(Statustext),
+    
     Unknown { msg_id: u32 },
 }
 
@@ -217,6 +375,15 @@ impl MavMessage {
             MavMessage::HilGps(_) => HilGps::MSG_ID,
             MavMessage::HilActuatorControls(_) => HilActuatorControls::MSG_ID,
             MavMessage::HilStateQuaternion(_) => HilStateQuaternion::MSG_ID,
+            MavMessage::AttitudeQuaternion(_) => AttitudeQuaternion::MSG_ID,
+            MavMessage::LocalPositionNed(_) => LocalPositionNed::MSG_ID,
+            MavMessage::SetAttitudeTarget(_) => SetAttitudeTarget::MSG_ID,
+            MavMessage::CommandLong(_) => CommandLong::MSG_ID,
+            MavMessage::CommandAck(_) => CommandAck::MSG_ID,
+            MavMessage::RcChannelsOverride(_) => RcChannelsOverride::MSG_ID,
+            MavMessage::ManualControl(_) => ManualControl::MSG_ID,
+            MavMessage::SysStatus(_) => SysStatus::MSG_ID,
+            MavMessage::Statustext(_) => Statustext::MSG_ID,
             MavMessage::Unknown { msg_id } => *msg_id,
         }
     }

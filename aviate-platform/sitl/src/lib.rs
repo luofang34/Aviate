@@ -7,6 +7,7 @@
 
 pub mod mock;
 pub mod udp;
+pub mod bridge;
 
 pub use mock::SitlHal;
 pub use udp::UdpMavlinkHal;

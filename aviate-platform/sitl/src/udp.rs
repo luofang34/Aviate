@@ -7,26 +7,24 @@ use std::io;
 
 use aviate_core::hal::{AviateHal, SensorHal, ActuatorHal, SystemHal};
 use aviate_core::sensor::{
-    SensorReading, ImuData, GnssData, BaroData, MagData, SensorHealth, GnssHealth, GnssFix, AirData,
+    SensorReading, ImuData, GnssData, BaroData, MagData, AirData, SensorHealth, GnssHealth, GnssFix,
 };
 use aviate_core::mixer::ActuatorCmd;
 use aviate_core::time::{Timestamp, TimeSource};
 use aviate_core::types::{
-    MetersPerSecondSquared, RadiansPerSecond, Meters, MetersPerSecond, Microtesla, Pascals,
+    MetersPerSecondSquared, RadiansPerSecond, Meters, MetersPerSecond, Microtesla, Pascals, Celsius,
 };
 
-// Note: We don't have a real MAVLink crate in this workspace yet (aviate-mavlink is shown in tree but not implemented),
-// so we will stub the MAVLink parsing logic or assume aviate-mavlink exists.
-// For this exercise, since aviate-mavlink is shown in the tree, I'll assume I can use it, but I should check its content first.
-// The user's tree output showed `aviate-mavlink/src/lib.rs` etc.
+use aviate_mavlink::{
+    parse_mavlink, serialize_mavlink, MavMessage, HilActuatorControls,
+    Heartbeat, MavAutopilot, MavType, MavState, MavModeFlag,
+};
 
 use crate::SitlConfig;
 
-// Stubbing MAVLink structures if aviate-mavlink is not fully ready or to avoid complex deps in this single file view
-// In a real scenario, these would come from `aviate-mavlink`.
-
 pub struct UdpMavlinkHal {
-    socket: UdpSocket,
+    recv_socket: UdpSocket,
+    send_socket: UdpSocket,
     config: SitlConfig,
     start_time: std::time::Instant,
     armed: bool,
@@ -38,17 +36,27 @@ pub struct UdpMavlinkHal {
     baro_data: Option<SensorReading<BaroData>>,
     mag_data: Option<SensorReading<MagData>>,
 
-    // Heartbeat tracking
+    // Heartbeat timing
     last_heartbeat_us: u64,
+
+    // Statistics
+    rx_count: u64,
+    tx_count: u64,
 }
 
 impl UdpMavlinkHal {
     pub fn new(config: SitlConfig) -> io::Result<Self> {
-        let socket = UdpSocket::bind(("0.0.0.0", config.sensor_port))?;
-        socket.set_nonblocking(true)?;
+        // Socket to receive sensor data from simulator
+        let recv_socket = UdpSocket::bind(("0.0.0.0", config.sensor_port))?;
+        recv_socket.set_nonblocking(true)?;
+
+        // Socket to send actuator commands to simulator
+        let send_socket = UdpSocket::bind("0.0.0.0:0")?; // Bind to any available port
+        send_socket.set_nonblocking(true)?;
 
         Ok(Self {
-            socket,
+            recv_socket,
+            send_socket,
             config,
             start_time: std::time::Instant::now(),
             armed: false,
@@ -58,38 +66,231 @@ impl UdpMavlinkHal {
             baro_data: None,
             mag_data: None,
             last_heartbeat_us: 0,
+            rx_count: 0,
+            tx_count: 0,
         })
     }
 
+    /// Poll for incoming MAVLink messages and update sensor data
     pub fn poll(&mut self) {
-        let mut temp_buf = [0u8; 2048];
+        let mut buf = [0u8; 512];
+
+        // Process all available messages
         loop {
-            match self.socket.recv_from(&mut temp_buf) {
+            match self.recv_socket.recv_from(&mut buf) {
                 Ok((len, _src)) => {
-                    // Parse packet here. For now, we just print received bytes count
-                    // In real impl, parse_mavlink(&temp_buf[..len])
+                    self.process_mavlink_data(&buf[..len]);
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(_) => break,
             }
         }
-        
-        // Mock data for now if no simulator connected
-        if self.imu_data.is_none() {
-            // Provide some fake data to keep loop running
-            let ts = Timestamp { ticks: self.now_us(), source: TimeSource::Internal };
-            self.imu_data = Some(SensorReading {
-                value: ImuData::default(),
-                valid: true,
-                source_id: 0,
-                timestamp: ts,
-                health: SensorHealth::Good,
-            });
+
+        // Send heartbeat at 1 Hz
+        let now_us = self.now_us();
+        if now_us - self.last_heartbeat_us >= 1_000_000 {
+            self.send_heartbeat();
+            self.last_heartbeat_us = now_us;
+        }
+    }
+
+    /// Process received MAVLink data
+    fn process_mavlink_data(&mut self, data: &[u8]) {
+        // Try to parse MAVLink message
+        match parse_mavlink(data) {
+            Ok((msg, _consumed)) => {
+                self.rx_count += 1;
+                self.handle_message(msg);
+            }
+            Err(_e) => {
+                // Silently ignore parse errors (might be partial frames)
+            }
+        }
+    }
+
+    /// Handle a parsed MAVLink message
+    fn handle_message(&mut self, msg: MavMessage) {
+        let ts = Timestamp { ticks: self.now_us(), source: TimeSource::Internal };
+
+        match msg {
+            MavMessage::HilSensor(sensor) => {
+                // Convert HIL_SENSOR to ImuData, BaroData, MagData
+                self.imu_data = Some(SensorReading {
+                    value: ImuData {
+                        accel: [
+                            MetersPerSecondSquared(sensor.xacc),
+                            MetersPerSecondSquared(sensor.yacc),
+                            MetersPerSecondSquared(sensor.zacc),
+                        ],
+                        gyro: [
+                            RadiansPerSecond(sensor.xgyro),
+                            RadiansPerSecond(sensor.ygyro),
+                            RadiansPerSecond(sensor.zgyro),
+                        ],
+                    },
+                    valid: true,
+                    source_id: sensor.id,
+                    timestamp: ts,
+                    health: SensorHealth::Good,
+                });
+
+                // Convert pressure to altitude using barometric formula
+                // Standard atmosphere: P = P0 * (1 - L*h/T0)^(g*M/(R*L))
+                // Simplified: h ≈ (1 - (P/P0)^0.190284) * 44330.77
+                let pressure_pa = sensor.abs_pressure * 100.0; // mbar to Pa
+                let altitude_m = (1.0 - (pressure_pa / 101325.0_f32).powf(0.190284)) * 44330.77;
+
+                self.baro_data = Some(SensorReading {
+                    value: BaroData {
+                        altitude: Some(Meters(altitude_m)),
+                        air: AirData {
+                            static_pressure: Some(Pascals(pressure_pa)),
+                            dynamic_pressure: None,
+                            total_pressure: None,
+                            temperature: Some(Celsius(sensor.temperature)),
+                            indicated_airspeed: None,
+                            true_airspeed: None,
+                        },
+                    },
+                    valid: true,
+                    source_id: sensor.id,
+                    timestamp: ts,
+                    health: SensorHealth::Good,
+                });
+
+                self.mag_data = Some(SensorReading {
+                    value: MagData {
+                        field_ut: [
+                            Microtesla(sensor.xmag * 100.0), // Gauss to µT
+                            Microtesla(sensor.ymag * 100.0),
+                            Microtesla(sensor.zmag * 100.0),
+                        ],
+                    },
+                    valid: true,
+                    source_id: sensor.id,
+                    timestamp: ts,
+                    health: SensorHealth::Good,
+                });
+            }
+
+            MavMessage::HilGps(gps) => {
+                let fix = match gps.fix_type {
+                    0 | 1 => GnssFix::None,
+                    2 => GnssFix::TwoD,
+                    3 => GnssFix::ThreeD,
+                    4 => GnssFix::ThreeD, // DGPS -> ThreeD (no separate variant)
+                    5 => GnssFix::RtkFloat,
+                    6 => GnssFix::RtkFixed,
+                    _ => GnssFix::None,
+                };
+
+                // Convert GPS lat/lon/alt to NED position (simplified: relative to origin)
+                // In a real system, this would use a proper geodetic to NED conversion
+                // For SITL, we use a simple flat-earth approximation around origin
+                let vel_n = MetersPerSecond((gps.vn as f32) / 100.0);
+                let vel_e = MetersPerSecond((gps.ve as f32) / 100.0);
+                let vel_d = MetersPerSecond((gps.vd as f32) / 100.0);
+
+                // Placeholder NED position (would need proper conversion in real implementation)
+                // For SITL testing, we just pass through velocity which is already in NED
+                let position_ned = [Meters(0.0), Meters(0.0), Meters(-(gps.alt as f32) / 1000.0)];
+
+                let health = if fix == GnssFix::None {
+                    GnssHealth::Lost
+                } else {
+                    GnssHealth::Good
+                };
+
+                self.gnss_data = Some(SensorReading {
+                    value: GnssData {
+                        position_ned,
+                        velocity_ned: [vel_n, vel_e, vel_d],
+                        fix,
+                        health,
+                    },
+                    valid: fix != GnssFix::None,
+                    source_id: gps.id,
+                    timestamp: ts,
+                    health: if health == GnssHealth::Good { SensorHealth::Good } else { SensorHealth::Failed },
+                });
+            }
+
+            MavMessage::Heartbeat(_hb) => {
+                // Track simulator heartbeat for connection status
+            }
+
+            MavMessage::CommandLong(cmd) => {
+                // Handle commands (ARM/DISARM, etc.)
+                if cmd.command == 400 {
+                    // MAV_CMD_COMPONENT_ARM_DISARM
+                    if cmd.param1 > 0.5 {
+                        println!("[SITL] Received ARM command");
+                        self.armed = true;
+                    } else {
+                        println!("[SITL] Received DISARM command");
+                        self.armed = false;
+                    }
+                }
+            }
+
+            _ => {
+                // Ignore other messages
+            }
+        }
+    }
+
+    /// Send heartbeat message
+    fn send_heartbeat(&mut self) {
+        let hb = Heartbeat {
+            mav_type: MavType::Quadrotor as u8,
+            autopilot: MavAutopilot::Aviate as u8,
+            base_mode: if self.armed {
+                MavModeFlag::SAFETY_ARMED.0 | MavModeFlag::HIL_ENABLED.0
+            } else {
+                MavModeFlag::HIL_ENABLED.0
+            },
+            custom_mode: 0,
+            system_status: MavState::Active as u8,
+            mavlink_version: 3,
+        };
+
+        self.send_message(&MavMessage::Heartbeat(hb));
+    }
+
+    /// Send HIL_ACTUATOR_CONTROLS message
+    fn send_actuator_controls(&mut self, cmd: &ActuatorCmd) {
+        let mut controls = [0.0f32; 16];
+        for (i, output) in cmd.outputs.iter().enumerate().take(16) {
+            controls[i] = output.0;
+        }
+
+        let msg = HilActuatorControls {
+            time_usec: self.now_us(),
+            controls,
+            mode: if self.armed { MavModeFlag::SAFETY_ARMED.0 } else { 0 },
+            flags: 0,
+        };
+
+        self.send_message(&MavMessage::HilActuatorControls(msg));
+    }
+
+    /// Send a MAVLink message
+    fn send_message(&mut self, msg: &MavMessage) {
+        let mut buf = [0u8; 300];
+        if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
+            self.seq = self.seq.wrapping_add(1);
+            let _ = self.send_socket.send_to(&buf[..len], self.config.simulator_addr);
+            self.tx_count += 1;
         }
     }
 
     fn now_us(&self) -> u64 {
         self.start_time.elapsed().as_micros() as u64
+    }
+
+    /// Get statistics
+    pub fn stats(&self) -> (u64, u64) {
+        (self.rx_count, self.tx_count)
     }
 }
 
@@ -114,21 +315,21 @@ impl SensorHal for UdpMavlinkHal {
 
 impl ActuatorHal for UdpMavlinkHal {
     fn write(&mut self, cmd: &ActuatorCmd) {
-        // In previous stub it was write_actuators.
-        // Construct HIL_ACTUATOR_CONTROLS message and send via UDP
-        // Stub for now, eventually implement sending
+        self.send_actuator_controls(cmd);
     }
 
     fn arm(&mut self) {
         self.armed = true;
+        println!("[SITL] Armed");
     }
 
     fn disarm(&mut self) {
         self.armed = false;
+        println!("[SITL] Disarmed");
     }
 
     fn is_armed(&self) -> bool {
-        true // SITL always hardware-armed (switch)
+        true // SITL always hardware-armed (safety switch)
     }
 }
 
@@ -151,12 +352,12 @@ impl SystemHal for UdpMavlinkHal {
     fn kick_watchdog(&mut self) {}
 
     fn reboot(&mut self) -> ! {
-        println!("UDP SITL: Reboot");
+        println!("[SITL] Reboot requested");
         std::process::exit(0);
     }
 
     fn enter_bootloader(&mut self) -> ! {
-        println!("UDP SITL: Bootloader not supported");
+        println!("[SITL] Bootloader not supported in SITL");
         std::process::exit(1);
     }
 }

@@ -98,3 +98,22 @@ impl MavModeFlag {
     pub const MANUAL_INPUT_ENABLED: Self = Self(64);
     pub const SAFETY_ARMED: Self = Self(128);
 }
+
+/// MAV_CMD constants
+pub mod mav_cmd {
+    pub const NAV_LAND: u16 = 21;
+    pub const NAV_TAKEOFF: u16 = 22;
+    pub const DO_SET_MODE: u16 = 176;
+    pub const COMPONENT_ARM_DISARM: u16 = 400;
+}
+
+/// MAV_RESULT constants
+pub mod mav_result {
+    pub const ACCEPTED: u8 = 0;
+    pub const TEMPORARILY_REJECTED: u8 = 1;
+    pub const DENIED: u8 = 2;
+    pub const UNSUPPORTED: u8 = 3;
+    pub const FAILED: u8 = 4;
+    pub const IN_PROGRESS: u8 = 5;
+    pub const CANCELLED: u8 = 6;
+}
