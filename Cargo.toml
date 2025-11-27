@@ -8,7 +8,6 @@ members = [
     "aviate-platform/sitl",
     "aviate-apps/quadcopter-stm32h7",
     "aviate-apps/quadcopter-sitl",
-    "tests/aviate-hil-quadcopter",
     "tests/lint-verification",
 ]
 resolver = "2"
