@@ -40,9 +40,10 @@ mod inner {
     impl Default for GzBridgeConfig {
         fn default() -> Self {
             Self {
-                imu_topic: "/X3/imu".to_string(),
-                odom_topic: "/model/X3/odometry".to_string(),
-                motor_topic: "/X3/gazebo/command/motor_speed".to_string(),
+                // X500 model topics (from PX4-gazebo-models)
+                imu_topic: "/world/aviate_sitl/model/x500/link/base_link/sensor/imu_sensor/imu".to_string(),
+                odom_topic: "/model/x500/odometry".to_string(),
+                motor_topic: "/x500/command/motor_speed".to_string(),
                 aviate_port: 14560,
                 actuator_port: 14561,
             }
@@ -282,10 +283,11 @@ mod inner {
 
         /// Send motor velocity command to Gazebo
         fn send_motor_command(&mut self, ctrl: &HilActuatorControls) {
-            // Convert normalized thrust (0-1) to motor velocity (0-800 rad/s)
+            // Convert normalized thrust (0-1) to motor velocity (0-1000 rad/s)
+            // X500 model uses maxRotVelocity=1000
             let velocities: Vec<f64> = ctrl.controls[..4]
                 .iter()
-                .map(|&c| (c.max(0.0) * 800.0) as f64)
+                .map(|&c| (c.max(0.0) * 1000.0) as f64)
                 .collect();
 
             // Debug: print motor commands occasionally

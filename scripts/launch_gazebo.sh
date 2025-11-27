@@ -9,7 +9,12 @@ set -e
 export HEADLESS=${HEADLESS:-0}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AVIATE_DIR="$(dirname "$SCRIPT_DIR")"
-WORLD_FILE="${AVIATE_DIR}/aviate-apps/quadcopter-sitl/worlds/x3_quadcopter.sdf"
+SITL_DIR="${AVIATE_DIR}/aviate-apps/quadcopter-sitl"
+WORLD_FILE="${SITL_DIR}/worlds/x500_quadcopter.sdf"
+MODELS_DIR="${SITL_DIR}/models"
+
+# Export model path so Gazebo can find x500/x500_base models
+export GZ_SIM_RESOURCE_PATH="${MODELS_DIR}:${GZ_SIM_RESOURCE_PATH:-}"
 
 if [ ! -f "$WORLD_FILE" ]; then
     echo "Error: World file not found at $WORLD_FILE"
@@ -37,7 +42,7 @@ GZ_PID=$!
 # Wait for Gazebo to initialize and topics to become available
 echo "Waiting for simulator startup..."
 for i in {1..30}; do
-    if gz topic -l 2>/dev/null | grep -q "/X3/"; then
+    if gz topic -l 2>/dev/null | grep -q "/x500/"; then
         echo "Gazebo topics available."
         break
     fi
