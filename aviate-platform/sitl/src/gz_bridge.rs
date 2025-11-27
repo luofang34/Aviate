@@ -12,7 +12,7 @@ mod inner {
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
-    use gz::transport::Node;
+    use gz::transport::{Node, Publisher};
     use gz_msgs::imu::IMU;
     use gz_msgs::odometry::Odometry;
     use gz_msgs::actuators::Actuators;
@@ -73,6 +73,8 @@ mod inner {
         send_socket: UdpSocket,
         recv_socket: UdpSocket,
         seq: u8,
+        // Motor command publisher (created once, reused)
+        motor_pub: Option<Publisher<Actuators>>,
         // Statistics
         imu_count: u64,
         hil_sent: u64,
@@ -100,6 +102,7 @@ mod inner {
                 send_socket,
                 recv_socket,
                 seq: 0,
+                motor_pub: None,
                 imu_count: 0,
                 hil_sent: 0,
                 motor_recv: 0,
@@ -163,6 +166,13 @@ mod inner {
             if !odom_ok {
                 return Err("Failed to subscribe to odometry topic".to_string());
             }
+
+            // Create motor command publisher (must be done once, kept alive)
+            self.motor_pub = self.node.advertise::<Actuators>(&self.config.motor_topic);
+            if self.motor_pub.is_none() {
+                return Err("Failed to advertise motor topic".to_string());
+            }
+            eprintln!("[INFO] Motor publisher created for {}", self.config.motor_topic);
 
             Ok(())
         }
@@ -288,9 +298,9 @@ mod inner {
             let mut actuators = Actuators::default();
             actuators.velocity = velocities;
 
-            // Publish to Gazebo (advertise returns Option, not Result)
-            if let Some(mut publisher) = self.node.advertise::<Actuators>(&self.config.motor_topic) {
-                let _ = publisher.publish(&actuators);
+            // Publish to Gazebo using the persistent publisher
+            if let Some(ref mut publisher) = self.motor_pub {
+                publisher.publish(&actuators);
             }
         }
 
