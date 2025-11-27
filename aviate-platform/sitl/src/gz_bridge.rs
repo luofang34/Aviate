@@ -10,9 +10,20 @@
 //! FFI mode is recommended for production use - it provides ~1μs latency.
 
 /// Gazebo bridge configuration
+///
+/// Supports multi-vehicle simulation via instance IDs.
+/// Each instance uses separate shared memory and UDP ports.
+///
+/// Port allocation (base ports + instance * 10):
+/// - Instance 0: aviate=14560, actuator=14561, test=14562
+/// - Instance 1: aviate=14570, actuator=14571, test=14572
+/// - Instance 2: aviate=14580, actuator=14581, test=14582
 #[derive(Clone, Debug)]
 pub struct GzBridgeConfig {
+    /// Instance ID for multi-vehicle simulation (0 for single vehicle)
+    pub instance: u8,
     /// Model name in Gazebo (for SDF plugin config)
+    /// For multi-vehicle: x500_0, x500_1, etc.
     pub model_name: String,
     /// Motor command topic in Gazebo (used by plugin for gz-transport publish)
     pub motor_topic: String,
@@ -24,15 +35,36 @@ pub struct GzBridgeConfig {
     pub test_port: u16,
 }
 
+impl GzBridgeConfig {
+    /// Create config for a specific instance ID
+    ///
+    /// Instance-based naming:
+    /// - model_name: x500_<instance> (or just x500 for instance 0)
+    /// - motor_topic: /<model_name>/command/motor_speed
+    /// - ports: base + instance * 10
+    pub fn for_instance(instance: u8) -> Self {
+        let model_name = if instance == 0 {
+            "x500".to_string()
+        } else {
+            format!("x500_{}", instance)
+        };
+        let motor_topic = format!("/{}/command/motor_speed", model_name);
+        let base_port = 14560u16 + (instance as u16) * 10;
+
+        Self {
+            instance,
+            model_name,
+            motor_topic,
+            aviate_port: base_port,
+            actuator_port: base_port + 1,
+            test_port: base_port + 2,
+        }
+    }
+}
+
 impl Default for GzBridgeConfig {
     fn default() -> Self {
-        Self {
-            model_name: "x500".to_string(),
-            motor_topic: "/x500/command/motor_speed".to_string(),
-            aviate_port: 14560,
-            actuator_port: 14561,
-            test_port: 14562,
-        }
+        Self::for_instance(0)
     }
 }
 

@@ -62,12 +62,17 @@ impl Default for AviateMotorCommand {
 
 // FFI declarations - link against libaviate_gz_bridge.so
 extern "C" {
+    #[allow(dead_code)]
     fn aviate_gz_init() -> c_int;
+    fn aviate_gz_init_instance(instance: c_int) -> c_int;
     fn aviate_gz_shutdown();
     fn aviate_gz_get_model_state(out: *mut AviateModelState) -> c_int;
     fn aviate_gz_set_motor_speeds(cmd: *const AviateMotorCommand) -> c_int;
     fn aviate_gz_get_sim_time_us() -> u64;
     fn aviate_gz_is_connected() -> c_int;
+    fn aviate_gz_set_lockstep(enabled: c_int);
+    fn aviate_gz_get_sim_step() -> u64;
+    fn aviate_gz_ack_step(step: u64);
 }
 
 /// Error type for GzPluginBridge operations
@@ -100,18 +105,29 @@ impl std::error::Error for GzPluginError {}
 ///
 /// This struct manages the lifecycle of the shared memory connection
 /// to the AviateGzPlugin running inside gz-sim.
+///
+/// Supports multi-vehicle simulation via instance IDs.
 pub struct GzPluginBridge {
     initialized: bool,
+    instance: u8,
 }
 
 impl GzPluginBridge {
-    /// Create a new GzPluginBridge connection
+    /// Create a new GzPluginBridge connection (instance 0)
     ///
     /// Returns an error if the AviateGzPlugin is not running in Gazebo.
     pub fn new() -> Result<Self, GzPluginError> {
-        let result = unsafe { aviate_gz_init() };
+        Self::for_instance(0)
+    }
+
+    /// Create a new GzPluginBridge connection for a specific instance
+    ///
+    /// For multi-vehicle simulation, each vehicle uses a different instance ID.
+    /// Instance 0 connects to /aviate_gz_bridge, instance N to /aviate_gz_bridge_N.
+    pub fn for_instance(instance: u8) -> Result<Self, GzPluginError> {
+        let result = unsafe { aviate_gz_init_instance(instance as c_int) };
         match result {
-            0 => Ok(Self { initialized: true }),
+            0 => Ok(Self { initialized: true, instance }),
             -1 => Err(GzPluginError::PluginNotRunning),
             _ => Err(GzPluginError::NotInitialized),
         }
@@ -119,11 +135,24 @@ impl GzPluginBridge {
 
     /// Try to connect to the bridge, retrying if plugin not ready
     pub fn connect_with_retry(max_attempts: u32, delay_ms: u64) -> Result<Self, GzPluginError> {
+        Self::connect_instance_with_retry(0, max_attempts, delay_ms)
+    }
+
+    /// Try to connect to a specific instance, retrying if plugin not ready
+    pub fn connect_instance_with_retry(
+        instance: u8,
+        max_attempts: u32,
+        delay_ms: u64,
+    ) -> Result<Self, GzPluginError> {
         for attempt in 0..max_attempts {
-            match Self::new() {
+            match Self::for_instance(instance) {
                 Ok(bridge) => {
                     if attempt > 0 {
-                        eprintln!("[GzPluginBridge] Connected after {} attempts", attempt + 1);
+                        eprintln!(
+                            "[GzPluginBridge] Instance {} connected after {} attempts",
+                            instance,
+                            attempt + 1
+                        );
                     }
                     return Ok(bridge);
                 }
@@ -134,6 +163,11 @@ impl GzPluginBridge {
             }
         }
         Err(GzPluginError::PluginNotRunning)
+    }
+
+    /// Get the instance ID this bridge is connected to
+    pub fn instance(&self) -> u8 {
+        self.instance
     }
 
     /// Get the current model state from gz-sim
@@ -189,6 +223,78 @@ impl GzPluginBridge {
             return false;
         }
         unsafe { aviate_gz_is_connected() != 0 }
+    }
+
+    /// Enable or disable lockstep mode
+    ///
+    /// When lockstep is enabled, Gazebo waits for the flight controller
+    /// to acknowledge each simulation step before proceeding.
+    /// This ensures deterministic simulation at the cost of real-time performance.
+    pub fn set_lockstep(&self, enabled: bool) {
+        if !self.initialized {
+            return;
+        }
+        unsafe { aviate_gz_set_lockstep(if enabled { 1 } else { 0 }) }
+    }
+
+    /// Get the current simulation step count
+    ///
+    /// In lockstep mode, this increments after each physics step.
+    /// Use this to detect new data and acknowledge steps.
+    pub fn sim_step(&self) -> u64 {
+        if !self.initialized {
+            return 0;
+        }
+        unsafe { aviate_gz_get_sim_step() }
+    }
+
+    /// Acknowledge a simulation step
+    ///
+    /// Call this after processing a step's data to allow Gazebo to proceed.
+    /// In lockstep mode, Gazebo blocks until this is called.
+    pub fn ack_step(&self, step: u64) {
+        if !self.initialized {
+            return;
+        }
+        unsafe { aviate_gz_ack_step(step) }
+    }
+
+    /// Wait for a new simulation step and process it
+    ///
+    /// This is a convenience method for lockstep mode that:
+    /// 1. Waits for new state data (step > last_step)
+    /// 2. Calls the processor function with the state
+    /// 3. Acknowledges the step
+    ///
+    /// Returns None if no new state is available within timeout.
+    pub fn wait_and_process<F, R>(
+        &self,
+        last_step: u64,
+        timeout_us: u64,
+        processor: F,
+    ) -> Option<(u64, R)>
+    where
+        F: FnOnce(&AviateModelState) -> R,
+    {
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_micros(timeout_us);
+
+        loop {
+            let current_step = self.sim_step();
+            if current_step > last_step {
+                if let Some(state) = self.get_model_state() {
+                    let result = processor(&state);
+                    self.ack_step(current_step);
+                    return Some((current_step, result));
+                }
+            }
+
+            if start.elapsed() >= timeout {
+                return None;
+            }
+
+            std::thread::sleep(std::time::Duration::from_micros(10));
+        }
     }
 }
 

@@ -14,8 +14,11 @@
 extern "C" {
 #endif
 
-/// Shared memory name for POSIX shm_open
-#define AVIATE_SHM_NAME "/aviate_gz_bridge"
+/// Shared memory name base for POSIX shm_open
+/// For multi-vehicle: /aviate_gz_bridge_0, /aviate_gz_bridge_1, etc.
+/// Default (instance 0) uses /aviate_gz_bridge for backwards compatibility
+#define AVIATE_SHM_NAME_BASE "/aviate_gz_bridge"
+#define AVIATE_SHM_NAME "/aviate_gz_bridge"  // Instance 0 default
 
 /// Shared memory structure for IPC between plugin and Rust bridge
 typedef struct AviateSharedState {
@@ -35,6 +38,12 @@ typedef struct AviateSharedState {
 
     // Status
     uint32_t plugin_ready;  // Set by plugin when ready
+
+    // Lockstep synchronization (optional)
+    // When lockstep_enabled=1, Gazebo waits for fc_step_ack before proceeding
+    uint32_t lockstep_enabled;  // 0=async (default), 1=lockstep mode
+    uint64_t sim_step;          // Incremented by plugin after each physics step
+    uint64_t fc_step_ack;       // Written by FC after processing a step
 } AviateSharedState;
 
 #ifdef __cplusplus

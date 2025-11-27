@@ -17,8 +17,10 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <chrono>
 #include <cstring>
 #include <iostream>
+#include <thread>
 
 namespace aviate {
 
@@ -41,7 +43,42 @@ void AviateGzPlugin::Configure(
         modelName_ = sdf->Get<std::string>("model_name");
     }
 
+    // Get instance ID for multi-vehicle support (default: 0)
+    instance_ = 0;
+    if (sdf->HasElement("instance")) {
+        instance_ = sdf->Get<int>("instance");
+    }
+
+    // Build motor topic: /<model_name>/command/motor_speed
+    motorTopic_ = "/" + modelName_ + "/command/motor_speed";
+    if (sdf->HasElement("motor_topic")) {
+        motorTopic_ = sdf->Get<std::string>("motor_topic");
+    }
+
+    // Build shared memory name: /aviate_gz_bridge or /aviate_gz_bridge_<instance>
+    if (instance_ == 0) {
+        shmName_ = AVIATE_SHM_NAME;
+    } else {
+        shmName_ = std::string(AVIATE_SHM_NAME_BASE) + "_" + std::to_string(instance_);
+    }
+
+    // Check for lockstep mode (default: disabled for real-time simulation)
+    lockstep_ = false;
+    if (sdf->HasElement("lockstep")) {
+        lockstep_ = sdf->Get<bool>("lockstep");
+    }
+
+    // Lockstep timeout in microseconds (default: 10ms)
+    lockstepTimeoutUs_ = 10000;
+    if (sdf->HasElement("lockstep_timeout_us")) {
+        lockstepTimeoutUs_ = sdf->Get<uint64_t>("lockstep_timeout_us");
+    }
+
     std::cout << "[AviateGzPlugin] Configuring for model: " << modelName_ << std::endl;
+    std::cout << "[AviateGzPlugin] Instance: " << instance_ << std::endl;
+    std::cout << "[AviateGzPlugin] Motor topic: " << motorTopic_ << std::endl;
+    std::cout << "[AviateGzPlugin] Shared memory: " << shmName_ << std::endl;
+    std::cout << "[AviateGzPlugin] Lockstep: " << (lockstep_ ? "enabled" : "disabled") << std::endl;
     std::cout << "[AviateGzPlugin] Model lookup deferred to first update (included models load later)" << std::endl;
 
     // Initialize shared memory early
@@ -57,6 +94,32 @@ void AviateGzPlugin::PreUpdate(
 {
     if (!sharedState_) {
         return;
+    }
+
+    // Lockstep synchronization: wait for flight controller to acknowledge previous step
+    if (lockstep_ && __atomic_load_n(&sharedState_->lockstep_enabled, __ATOMIC_ACQUIRE)) {
+        uint64_t simStep = __atomic_load_n(&sharedState_->sim_step, __ATOMIC_ACQUIRE);
+        if (simStep > 0) {
+            // Wait for FC to acknowledge the previous step (with timeout)
+            auto startWait = std::chrono::steady_clock::now();
+            while (true) {
+                uint64_t fcAck = __atomic_load_n(&sharedState_->fc_step_ack, __ATOMIC_ACQUIRE);
+                if (fcAck >= simStep) {
+                    break;  // FC has caught up
+                }
+
+                // Check timeout
+                auto elapsed = std::chrono::steady_clock::now() - startWait;
+                if (std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count()
+                    >= static_cast<int64_t>(lockstepTimeoutUs_)) {
+                    // Timeout - continue anyway to prevent deadlock
+                    break;
+                }
+
+                // Yield CPU briefly
+                std::this_thread::sleep_for(std::chrono::microseconds(10));
+            }
+        }
     }
 
     // Deferred model lookup - included models are loaded after Configure()
@@ -154,14 +217,19 @@ void AviateGzPlugin::PostUpdate(
     // Increment sequence and mark valid
     __atomic_fetch_add(&sharedState_->seq, 1, __ATOMIC_RELEASE);
     __atomic_store_n(&sharedState_->valid, 1, __ATOMIC_RELEASE);
+
+    // Lockstep: increment sim_step to signal FC that new state is available
+    if (lockstep_) {
+        __atomic_fetch_add(&sharedState_->sim_step, 1, __ATOMIC_RELEASE);
+    }
 }
 
 bool AviateGzPlugin::InitSharedMemory()
 {
-    // Create shared memory object
-    shmFd_ = shm_open(AVIATE_SHM_NAME, O_CREAT | O_RDWR, 0666);
+    // Create shared memory object using instance-specific name
+    shmFd_ = shm_open(shmName_.c_str(), O_CREAT | O_RDWR, 0666);
     if (shmFd_ == -1) {
-        std::cerr << "[AviateGzPlugin] shm_open failed: " << strerror(errno) << std::endl;
+        std::cerr << "[AviateGzPlugin] shm_open failed for " << shmName_ << ": " << strerror(errno) << std::endl;
         return false;
     }
 
@@ -188,7 +256,7 @@ bool AviateGzPlugin::InitSharedMemory()
     std::memset(sharedState_, 0, sizeof(AviateSharedState));
     __atomic_store_n(&sharedState_->plugin_ready, 1, __ATOMIC_RELEASE);
 
-    std::cout << "[AviateGzPlugin] Shared memory initialized: " << AVIATE_SHM_NAME << std::endl;
+    std::cout << "[AviateGzPlugin] Shared memory initialized: " << shmName_ << std::endl;
     return true;
 }
 
@@ -202,7 +270,9 @@ void AviateGzPlugin::CleanupSharedMemory()
 
     if (shmFd_ != -1) {
         close(shmFd_);
-        shm_unlink(AVIATE_SHM_NAME);
+        if (!shmName_.empty()) {
+            shm_unlink(shmName_.c_str());
+        }
         shmFd_ = -1;
     }
 }

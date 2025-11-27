@@ -12,7 +12,12 @@ path = "src/main.rs"
 name = "sitl-test"
 path = "src/sitl_test.rs"
 
+[[bin]]
+name = "lockstep-test"
+path = "src/lockstep_test.rs"
+
 [features]
+gz-plugin = ["aviate-platform-sitl/gz-plugin"]
 default = []
 
 [dependencies]

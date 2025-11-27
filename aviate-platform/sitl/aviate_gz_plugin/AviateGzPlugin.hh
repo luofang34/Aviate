@@ -60,6 +60,9 @@ private:
     /// Clean up shared memory
     void CleanupSharedMemory();
 
+    /// Instance ID for multi-vehicle support
+    int instance_{0};
+
     /// Model name to track
     std::string modelName_;
 
@@ -72,17 +75,26 @@ private:
     /// Shared memory file descriptor
     int shmFd_{-1};
 
+    /// Shared memory name (instance-specific)
+    std::string shmName_;
+
     /// Last motor command sequence (to detect new commands)
     uint32_t lastMotorSeq_{0};
 
-    /// Motor topic name
-    std::string motorTopic_{"/x500/command/motor_speed"};
+    /// Motor topic name (instance-specific)
+    std::string motorTopic_;
 
     /// gz-transport node for publishing motor commands
     gz::transport::Node node_;
 
     /// Motor command publisher
     gz::transport::Node::Publisher motorPub_;
+
+    /// Lockstep mode enabled
+    bool lockstep_{false};
+
+    /// Timeout for lockstep wait (microseconds)
+    uint64_t lockstepTimeoutUs_{10000};  // 10ms default
 };
 
 }  // namespace aviate

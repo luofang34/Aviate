@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <cstdio>
 #include <cstring>
 #include <atomic>
 
@@ -23,14 +24,22 @@ static struct {
 
 extern "C" {
 
-int aviate_gz_init(void)
+int aviate_gz_init_instance(int instance)
 {
     if (g_bridge.initialized) {
         return 0;  // Already initialized
     }
 
+    // Build shared memory name based on instance
+    char shm_name[64];
+    if (instance == 0) {
+        snprintf(shm_name, sizeof(shm_name), "%s", AVIATE_SHM_NAME);
+    } else {
+        snprintf(shm_name, sizeof(shm_name), "%s_%d", AVIATE_SHM_NAME_BASE, instance);
+    }
+
     // Open existing shared memory (created by plugin)
-    g_bridge.fd = shm_open(AVIATE_SHM_NAME, O_RDWR, 0666);
+    g_bridge.fd = shm_open(shm_name, O_RDWR, 0666);
     if (g_bridge.fd == -1) {
         return -1;  // Plugin not running yet
     }
@@ -49,6 +58,11 @@ int aviate_gz_init(void)
     g_bridge.initialized = true;
 
     return 0;
+}
+
+int aviate_gz_init(void)
+{
+    return aviate_gz_init_instance(0);
 }
 
 void aviate_gz_shutdown(void)
@@ -145,6 +159,30 @@ int aviate_gz_is_connected(void)
         return 0;
     }
     return __atomic_load_n(&g_bridge.shm->plugin_ready, __ATOMIC_ACQUIRE) != 0;
+}
+
+void aviate_gz_set_lockstep(int enabled)
+{
+    if (!g_bridge.initialized || !g_bridge.shm) {
+        return;
+    }
+    __atomic_store_n(&g_bridge.shm->lockstep_enabled, enabled ? 1 : 0, __ATOMIC_RELEASE);
+}
+
+uint64_t aviate_gz_get_sim_step(void)
+{
+    if (!g_bridge.initialized || !g_bridge.shm) {
+        return 0;
+    }
+    return __atomic_load_n(&g_bridge.shm->sim_step, __ATOMIC_ACQUIRE);
+}
+
+void aviate_gz_ack_step(uint64_t step)
+{
+    if (!g_bridge.initialized || !g_bridge.shm) {
+        return;
+    }
+    __atomic_store_n(&g_bridge.shm->fc_step_ack, step, __ATOMIC_RELEASE);
 }
 
 }  // extern "C"

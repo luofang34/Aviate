@@ -260,13 +260,14 @@ fn run_flight_test_with_log(client: &mut SitlTestClient) -> Result<TestResult, S
     }
 
     // Phase 3: Takeoff (send thrust commands)
-    println!("\n[Phase 3] Taking off (60% thrust for 5 seconds)...");
+    // Note: X500 model requires ~75% thrust to lift off
+    println!("\n[Phase 3] Taking off (80% thrust for 5 seconds)...");
     let takeoff_duration = Duration::from_secs(5);
     let takeoff_start = Instant::now();
     let mut last_print = Instant::now();
 
     while takeoff_start.elapsed() < takeoff_duration {
-        client.send_attitude_target(0.6);
+        client.send_attitude_target(0.8);
         let _msgs = client.receive_messages();
 
         if client.flight_log().len() > 0 {

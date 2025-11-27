@@ -5,13 +5,27 @@ set -e
 #
 # This script launches Gazebo Sim with the Aviate quadcopter world.
 # It uses pre-installed gz (Gazebo Harmonic) directly, not PX4.
+#
+# Environment variables:
+#   HEADLESS=1  - Run without GUI (uses EGL rendering)
+#   LOCKSTEP=1  - Use lockstep world (deterministic simulation)
 
 export HEADLESS=${HEADLESS:-0}
+export LOCKSTEP=${LOCKSTEP:-0}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AVIATE_DIR="$(dirname "$SCRIPT_DIR")"
 SITL_DIR="${AVIATE_DIR}/aviate-apps/quadcopter-sitl"
-WORLD_FILE="${SITL_DIR}/worlds/x500_quadcopter.sdf"
 MODELS_DIR="${AVIATE_DIR}/external/PX4-gazebo-models/models"
+
+# Select world file based on LOCKSTEP mode
+if [ "$LOCKSTEP" -eq 1 ]; then
+    WORLD_FILE="${SITL_DIR}/worlds/x500_quadcopter_lockstep.sdf"
+    echo "Using LOCKSTEP world (deterministic simulation)"
+else
+    WORLD_FILE="${SITL_DIR}/worlds/x500_quadcopter.sdf"
+    echo "Using ASYNC world (real-time simulation)"
+fi
 
 # Check submodule is initialized
 if [ ! -d "$MODELS_DIR" ]; then
@@ -43,7 +57,7 @@ if ! command -v gz &> /dev/null; then
     exit 1
 fi
 
-echo "Launching Gazebo (HEADLESS=$HEADLESS)..."
+echo "Launching Gazebo (HEADLESS=$HEADLESS, LOCKSTEP=$LOCKSTEP)..."
 
 # Launch Gazebo in headless mode (for automated tests) or with GUI (for manual testing)
 # Headless rendering uses EGL backend for GPU-accelerated rendering without X server

@@ -41,9 +41,14 @@ typedef struct AviateMotorCommand {
     int num_motors;
 } AviateMotorCommand;
 
-/// Initialize the bridge (called once at startup)
+/// Initialize the bridge for instance 0 (backwards compatible)
 /// Returns 0 on success, non-zero on error
 int aviate_gz_init(void);
+
+/// Initialize the bridge for a specific instance (multi-vehicle support)
+/// Instance 0 uses /aviate_gz_bridge, instance N uses /aviate_gz_bridge_N
+/// Returns 0 on success, non-zero on error
+int aviate_gz_init_instance(int instance);
 
 /// Shutdown the bridge (called at cleanup)
 void aviate_gz_shutdown(void);
@@ -62,6 +67,17 @@ uint64_t aviate_gz_get_sim_time_us(void);
 /// Check if the bridge is connected to gz-sim
 /// Returns non-zero if connected
 int aviate_gz_is_connected(void);
+
+/// Enable/disable lockstep mode
+/// When enabled, Gazebo waits for FC to acknowledge each step
+void aviate_gz_set_lockstep(int enabled);
+
+/// Get the current simulation step count (for lockstep)
+uint64_t aviate_gz_get_sim_step(void);
+
+/// Acknowledge a simulation step (FC calls this after processing)
+/// This allows Gazebo to proceed to the next step in lockstep mode
+void aviate_gz_ack_step(uint64_t step);
 
 #ifdef __cplusplus
 }
