@@ -16,7 +16,7 @@ use aviate_core::control::mc::McController;
 use aviate_core::control::{Command, Setpoint, CommandSource, ControlMode, ConfigMode};
 use aviate_core::mixer::{QuadXMixer, ModeConfig};
 use aviate_core::time::{Timestamp, TimeSource};
-use aviate_core::hal::{SensorHal, ActuatorHal, SystemHal, CommandHal, SystemCommand};
+use aviate_core::hal::{SensorHal, ActuatorHal, SystemHal, CommandHal, SystemCommand, TelemetryHal};
 use aviate_core::types::Normalized;
 
 use aviate_platform_sitl::{SitlConfig, SitlHal, UdpMavlinkHal};
@@ -136,7 +136,7 @@ fn default_command() -> Command {
     }
 }
 
-fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
+fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal + TelemetryHal>(
     hal: &mut H,
     kernel: &mut AviateKernel<McController, QuadXMixer>,
     last_cmd: &mut Command,
@@ -205,7 +205,10 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
 
     // 5. Write outputs
     hal.write(&actuator_cmd);
+    
+    // 6. Send Telemetry
+    hal.send_telemetry(&kernel.ekf.get_estimate());
 
-    // 6. Watchdog
+    // 7. Watchdog
     hal.kick_watchdog();
 }

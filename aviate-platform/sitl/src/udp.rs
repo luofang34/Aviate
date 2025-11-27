@@ -5,7 +5,7 @@
 use std::net::UdpSocket;
 use std::io;
 
-use aviate_core::hal::{SensorHal, ActuatorHal, SystemHal, AviateHal, CommandHal, SystemCommand};
+use aviate_core::hal::{SensorHal, ActuatorHal, SystemHal, AviateHal, CommandHal, SystemCommand, TelemetryHal, CommHal, CommError};
 use aviate_core::sensor::{
     SensorReading, ImuData, GnssData, BaroData, MagData, SensorHealth, GnssHealth, GnssFix, AirData,
 };
@@ -14,10 +14,12 @@ use aviate_core::time::{Timestamp, TimeSource};
 use aviate_core::types::{
     MetersPerSecondSquared, RadiansPerSecond, Meters, MetersPerSecond, Microtesla, Pascals, Celsius,
 };
+use aviate_core::state::StateEstimate;
 
 use aviate_mavlink::{
     parse_mavlink, serialize_mavlink, MavMessage, HilActuatorControls, HilSensor, HilGps,
     Heartbeat, MavAutopilot, MavType, MavState, MavModeFlag, SetAttitudeTarget, CommandLong, mav_cmd,
+    AttitudeQuaternion, LocalPositionNed,
 };
 
 use crate::{SitlConfig, bridge};
@@ -77,7 +79,7 @@ impl UdpMavlinkHal {
 
     /// Poll for incoming MAVLink messages and update sensor data
     pub fn poll(&mut self) {
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; 2048]; // Increased buffer size
 
         // Process all available messages
         loop {
@@ -85,8 +87,12 @@ impl UdpMavlinkHal {
                 Ok((len, _src)) => {
                     self.process_mavlink_data(&buf[..len]);
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(_) => break,
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    break; // No more data available
+                }
+                Err(_) => {
+                    break; // Other error, stop polling
+                }
             }
         }
 
@@ -233,7 +239,6 @@ impl UdpMavlinkHal {
         }
     }
 
-    /// Send heartbeat message
     fn send_heartbeat(&mut self) {
         let hb = Heartbeat {
             mav_type: MavType::Quadrotor as u8,
@@ -248,7 +253,11 @@ impl UdpMavlinkHal {
             mavlink_version: 3,
         };
 
-        self.send_message(&MavMessage::Heartbeat(hb));
+        let msg = MavMessage::Heartbeat(hb);
+        self.send_message(&msg); // To Simulator
+        
+        // Send to GCS as well
+        self.send_to_gcs(&msg);
     }
 
     /// Send HIL_ACTUATOR_CONTROLS message
@@ -268,12 +277,22 @@ impl UdpMavlinkHal {
         self.send_message(&MavMessage::HilActuatorControls(msg));
     }
 
-    /// Send a MAVLink message
+    /// Send a MAVLink message to Simulator
     fn send_message(&mut self, msg: &MavMessage) {
         let mut buf = [0u8; 300];
         if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
             self.seq = self.seq.wrapping_add(1);
             let _ = self.send_socket.send_to(&buf[..len], self.config.simulator_addr);
+            self.tx_count += 1;
+        }
+    }
+    
+    /// Send a MAVLink message to GCS
+    fn send_to_gcs(&mut self, msg: &MavMessage) {
+        let mut buf = [0u8; 300];
+        if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
+            self.seq = self.seq.wrapping_add(1);
+            let _ = self.send_socket.send_to(&buf[..len], self.config.gcs_addr);
             self.tx_count += 1;
         }
     }
@@ -360,6 +379,34 @@ impl CommandHal for UdpMavlinkHal {
     fn recv_command(&mut self) -> Option<SystemCommand> {
         self.poll(); 
         self.command.take()
+    }
+}
+
+impl TelemetryHal for UdpMavlinkHal {
+    fn send_telemetry(&mut self, state: &StateEstimate) {
+        let time_boot_ms = (self.now_us() / 1000) as u32;
+        
+        let att = bridge::state_to_attitude_quaternion(state, time_boot_ms);
+        self.send_to_gcs(&MavMessage::AttitudeQuaternion(att));
+        
+        let pos = bridge::state_to_local_position_ned(state, time_boot_ms);
+        self.send_to_gcs(&MavMessage::LocalPositionNed(pos));
+    }
+}
+
+impl CommHal for UdpMavlinkHal {
+    fn send(&mut self, data: &[u8]) -> Result<usize, CommError> {
+        self.send_socket.send_to(data, self.config.gcs_addr)
+            .map_err(|_| CommError::Disconnected)
+    }
+
+    fn recv(&mut self, _buf: &mut [u8]) -> Result<usize, CommError> {
+        // Not implemented for raw recv, we use poll/recv_command
+        Ok(0)
+    }
+
+    fn available(&self) -> usize {
+        0
     }
 }
 

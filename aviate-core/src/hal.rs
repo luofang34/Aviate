@@ -7,6 +7,7 @@ use crate::sensor::{SensorReading, ImuData, GnssData, BaroData, MagData, Airspee
 use crate::mixer::ActuatorCmd;
 use crate::time::Timestamp;
 use crate::control::Command;
+use crate::state::StateEstimate;
 
 /// Sensor input interface
 ///
@@ -82,6 +83,12 @@ pub trait CommandHal {
     fn recv_command(&mut self) -> Option<SystemCommand>;
 }
 
+/// Telemetry output interface
+pub trait TelemetryHal {
+    /// Send state estimate to GCS/Logging
+    fn send_telemetry(&mut self, state: &StateEstimate);
+}
+
 /// Communication interface for telemetry/commands
 pub trait CommHal {
     /// Send telemetry data
@@ -106,4 +113,4 @@ pub enum CommError {
 /// Combined HAL trait for convenience
 ///
 /// Platform can implement individual traits or this combined trait.
-pub trait AviateHal: SensorHal + ActuatorHal + SystemHal + CommandHal {}
+pub trait AviateHal: SensorHal + ActuatorHal + SystemHal + CommandHal + TelemetryHal {}

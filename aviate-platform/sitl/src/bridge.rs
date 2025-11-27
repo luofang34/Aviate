@@ -2,7 +2,7 @@ use aviate_core::control::{Command, Setpoint, CommandSource, ControlMode};
 use aviate_core::state::StateEstimate;
 use aviate_core::math::Quaternion;
 use aviate_core::types::{RadiansPerSecond, Normalized};
-use aviate_mavlink::{SetAttitudeTarget, AttitudeQuaternion};
+use aviate_mavlink::{SetAttitudeTarget, AttitudeQuaternion, LocalPositionNed};
 
 // MAVLink → Aviate Command
 pub fn mavlink_to_command(
@@ -45,5 +45,17 @@ pub fn state_to_attitude_quaternion(state: &StateEstimate, time_boot_ms: u32) ->
         pitchspeed: state.angular_velocity[1].0,
         yawspeed: state.angular_velocity[2].0,
         repr_offset_q: [0.0; 4], // Not using offset
+    }
+}
+
+pub fn state_to_local_position_ned(state: &StateEstimate, time_boot_ms: u32) -> LocalPositionNed {
+    LocalPositionNed {
+        time_boot_ms,
+        x: state.position_ned[0].0,
+        y: state.position_ned[1].0,
+        z: state.position_ned[2].0,
+        vx: state.velocity_ned[0].0,
+        vy: state.velocity_ned[1].0,
+        vz: state.velocity_ned[2].0,
     }
 }
