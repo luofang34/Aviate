@@ -3,8 +3,10 @@
 
 use aviate_core::AviateKernel;
 use aviate_core::control::mc::McController;
-use aviate_core::control::Command;
+use aviate_core::control::{Command, Setpoint, CommandSource, ControlMode, ConfigMode};
 use aviate_core::types::Normalized;
+use aviate_core::mixer::{Mixer, ActuatorCmd, ModeConfig};
+use aviate_core::time::Timestamp;
 use cortex_m_rt::entry;
 use panic_halt as _;
 
@@ -12,17 +14,40 @@ use panic_halt as _;
 #[used]
 static mut SINK: u32 = 0;
 
+struct DummyMixer;
+impl Mixer for DummyMixer {
+    fn mix(&self, _axis: &aviate_core::control::AxisCommand) -> ActuatorCmd {
+        ActuatorCmd::default()
+    }
+}
+
 #[entry]
 fn main() -> ! {
-    let mut kernel = AviateKernel::new(McController);
-    let cmd = Command { collective_thrust: Normalized(0.5) };
+    let mode_config = ModeConfig {
+        mode: ConfigMode::Hover,
+        groups: &[],
+    };
+    let mut kernel = AviateKernel::new(McController::default(), DummyMixer, mode_config);
+    let cmd = Command { 
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint {
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 0,
+        source: CommandSource::Pilot,
+    };
     
     loop {
         let output = kernel.step(&cmd);
         
         // Force side effect
         unsafe {
-            core::ptr::write_volatile(&mut SINK, output.collective.0.to_bits());
+             // Accessing array elements for side effect
+             let val = output.outputs[0].0;
+             core::ptr::write_volatile(&mut SINK, val.to_bits());
         }
     }
 }

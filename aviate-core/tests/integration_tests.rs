@@ -4,11 +4,16 @@
 mod tests {
     use aviate_core::ekf::Ekf;
     use aviate_core::math::{Vector3, Quaternion};
-    use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond, Meters, MetersPerSecond, Normalized, Scalar, Pascals, Microtesla};
+    use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond, Meters, MetersPerSecond, Normalized, Scalar, Pascals, Microtesla, FloatExt};
     use aviate_core::sensor::{ImuData, GnssData, GnssFix, SensorReading, SensorHealth, GnssHealth, BaroData, AirData, MagData};
     use aviate_core::time::{Timestamp, TimeSource};
     use aviate_core::AviateKernel;
     use aviate_core::control::Command;
+    use aviate_core::control::rate::RateController;
+    use aviate_core::control::attitude::AttitudeController;
+    use aviate_core::control::position::PositionController; // Added
+    use aviate_core::control::velocity::VelocityController; // Added
+
 
     #[test]
     fn test_ekf_init_predict() {
@@ -101,19 +106,74 @@ mod tests {
     #[test]
     fn test_kernel_mc() {
         use aviate_core::control::mc::McController;
-        let mut kernel = AviateKernel::new(McController);
-        let cmd = Command { collective_thrust: Normalized(0.5) };
-        let axis_cmd = kernel.step(&cmd);
-        assert_eq!(axis_cmd.collective.0, 0.5);
+        use aviate_core::mixer::{QuadXMixer, ModeConfig};
+        use aviate_core::control::{ConfigMode, Setpoint, CommandSource, ControlMode};
+        
+        fn dummy_time() -> Timestamp { Timestamp { ticks: 0, source: TimeSource::Internal } }
+        let mixer = QuadXMixer { timestamp_source: dummy_time };
+        
+        // Stub ModeConfig (empty for now as sanitizer handles defaults gracefully or we assume so)
+        // Actually Sanitizer iterates groups. If empty, it does nothing.
+        let mode_config = ModeConfig {
+            mode: ConfigMode::Hover,
+            groups: &[],
+        };
+        
+        let mut kernel = AviateKernel::new(McController::default(), mixer, mode_config);
+        let cmd = Command { 
+            mode: ControlMode::Attitude,
+            setpoint: Setpoint {
+                collective_thrust: Normalized(0.5),
+                ..Default::default()
+            },
+            config_mode_request: None,
+            sensor_overrides: None,
+            sequence: 0,
+            source: CommandSource::Pilot,
+        };
+        let act_cmd = kernel.step(&cmd);
+        
+        // QuadXMixer with 0 R/P/Y should output collective on all 4 motors
+        for i in 0..4 {
+            assert!((act_cmd.outputs[i].0 - 0.5).abs() < 1e-5);
+        }
     }
 
     #[test]
     fn test_kernel_fw() {
         use aviate_core::control::fw::FwController;
-        let mut kernel = AviateKernel::new(FwController);
-        let cmd = Command { collective_thrust: Normalized(0.5) };
-        let axis_cmd = kernel.step(&cmd);
-        assert_eq!(axis_cmd.collective.0, 0.5);
+        // FW usually needs a different mixer (e.g. PlaneMixer), but for this test we just want to check Kernel integration.
+        // We can reuse QuadXMixer or create a dummy one. Reusing QuadXMixer is fine for checking plumbing.
+        use aviate_core::mixer::{QuadXMixer, ModeConfig};
+        use aviate_core::control::{ConfigMode, Setpoint, CommandSource, ControlMode};
+        
+        fn dummy_time() -> Timestamp { Timestamp { ticks: 0, source: TimeSource::Internal } }
+        let mixer = QuadXMixer { timestamp_source: dummy_time };
+        
+        let mode_config = ModeConfig {
+            mode: ConfigMode::Cruise,
+            groups: &[],
+        };
+        
+        let mut kernel = AviateKernel::new(FwController, mixer, mode_config);
+        let cmd = Command { 
+            mode: ControlMode::Attitude,
+            setpoint: Setpoint {
+                collective_thrust: Normalized(0.5),
+                ..Default::default()
+            },
+            config_mode_request: None,
+            sensor_overrides: None,
+            sequence: 0,
+            source: CommandSource::Pilot,
+        };
+        let act_cmd = kernel.step(&cmd);
+        
+        // FwController currently outputs 0 R/P/Y and passes collective.
+        // So QuadXMixer should still produce 0.5 on motors.
+        for i in 0..4 {
+            assert!((act_cmd.outputs[i].0 - 0.5).abs() < 1e-5);
+        }
     }
 
     #[test]
@@ -364,4 +424,89 @@ mod tests {
         assert!(!est.position_ned[0].0.is_nan());
         assert!(est.position_ned[0].0.abs() < 1.0);
     }
-}
+
+    // --- Rate Controller Tests ---
+    #[test]
+    fn test_rate_controller_zero_error() {
+        let ctrl = RateController::new([1.0, 1.0, 1.0]);
+        let sp = [RadiansPerSecond(1.0), RadiansPerSecond(0.5), RadiansPerSecond(-0.5)];
+        let cur = [RadiansPerSecond(1.0), RadiansPerSecond(0.5), RadiansPerSecond(-0.5)];
+        let out = ctrl.step(sp, cur);
+        assert!((out[0].0).abs() < 1e-5);
+        assert!((out[1].0).abs() < 1e-5);
+        assert!((out[2].0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_rate_controller_positive_error() {
+        let ctrl = RateController::new([1.0, 1.0, 1.0]);
+        let sp = [RadiansPerSecond(1.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)];
+        let cur = [RadiansPerSecond(0.0); 3];
+        let out = ctrl.step(sp, cur);
+        assert!(out[0].0 > 0.0); // Positive error → positive output
+        assert!((out[0].0 - 1.0).abs() < 1e-5);
+        assert!((out[1].0).abs() < 1e-5);
+        assert!((out[2].0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_rate_controller_negative_error() {
+        let ctrl = RateController::new([1.0, 1.0, 1.0]);
+        let sp = [RadiansPerSecond(0.0); 3];
+        let cur = [RadiansPerSecond(1.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)];
+        let out = ctrl.step(sp, cur);
+        assert!(out[0].0 < 0.0); // Negative error → negative output
+        assert!((out[0].0 - (-1.0)).abs() < 1e-5);
+        assert!((out[1].0).abs() < 1e-5);
+        assert!((out[2].0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_rate_controller_saturation() {
+        let ctrl = RateController::new([0.5, 0.5, 0.5]); // Smaller gain to test saturation
+        let sp = [RadiansPerSecond(3.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)]; // Large error
+        let cur = [RadiansPerSecond(0.0); 3];
+        let out = ctrl.step(sp, cur);
+        assert!((out[0].0 - 1.0).abs() < 1e-5); // Should clamp to 1.0
+    }
+
+    // --- Attitude Controller Tests ---
+    #[test]
+    fn test_attitude_controller_level_correction() {
+        let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+        let setpoint = Quaternion::IDENTITY; // Level flight
+        // Tilted current: 10 deg pitch (approx)
+        let current = Quaternion::from_axis_angle(Vector3::new(0.0, 1.0, 0.0), 0.1745); // 0.1745 rad = 10 deg pitch
+        
+        let rate_sp = ctrl.step(&setpoint, &current);
+        
+        // Expect negative pitch rate to correct to level
+        assert!(rate_sp[1].0 < 0.0, "Expected negative pitch rate to correct pitch error");
+        assert!((rate_sp[0].0).abs() < 1e-5, "Expected no roll rate");
+        assert!((rate_sp[2].0).abs() < 1e-5, "Expected no yaw rate");
+        
+        // Check magnitude: 2 * y_err * gain[1] = 2 * sin(theta/2) * gain
+        // q_pitch = [cos(angle/2), 0, sin(angle/2), 0]
+        // sin(0.1745/2) = sin(0.08725) ~ 0.087
+        // pitch_err = 2 * 0.087 = 0.174
+        // rate_sp[1].0 = 0.174 * 6.0 = 1.044
+        assert!((rate_sp[1].0 - (-1.04)).abs() < 0.01, "Expected specific pitch rate");
+    }
+    
+    #[test]
+    fn test_attitude_controller_inverted() {
+        let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+        let setpoint = Quaternion::IDENTITY;
+        // Inverted current (180 deg roll around X-axis)
+        let current = Quaternion::new(0.0, 1.0, 0.0, 0.0); // Exactly 180 deg roll
+        
+        let rate_sp = ctrl.step(&setpoint, &current);
+        
+        // For 180 deg roll error, the shortest path is 180 deg roll.
+        // The quaternion error from identity to current is [0, -1, 0, 0].
+        // roll_err = 2 * x = 2 * (-1) = -2.0. (because q_err = [0, -1, 0, 0])
+        // rate_sp[0] = roll_err * gain[0] = -2.0 * 6.0 = -12.0.
+        assert!((rate_sp[0].0 - (-12.0)).abs() < 1e-5, "Expected -12 rad/s roll rate setpoint");
+        assert!((rate_sp[1].0).abs() < 1e-5, "Expected no pitch rate setpoint");
+        assert!((rate_sp[2].0).abs() < 1e-5, "Expected no yaw rate setpoint");
+    }}

@@ -215,6 +215,30 @@ impl Quaternion {
             z: axis.z * s,
         }
     }
+
+    pub fn to_euler(&self) -> (Scalar, Scalar, Scalar) {
+        // Roll (x-axis rotation)
+        let sinr_cosp = 2.0 * (self.w * self.x + self.y * self.z);
+        let cosr_cosp = 1.0 - 2.0 * (self.x * self.x + self.y * self.y);
+        let roll = sinr_cosp.atan2(cosr_cosp);
+
+        // Pitch (y-axis rotation)
+        let sinp = 2.0 * (self.w * self.y - self.z * self.x);
+        let pitch = if sinp.abs() >= 1.0 {
+            // use 90 degrees if out of range
+            if sinp > 0.0 { core::f32::consts::FRAC_PI_2 } else { -core::f32::consts::FRAC_PI_2 }
+        } else {
+            sinp.asin()
+        };
+
+        // Yaw (z-axis rotation)
+        let siny_cosp = 2.0 * (self.w * self.z + self.x * self.y);
+        let cosy_cosp = 1.0 - 2.0 * (self.y * self.y + self.z * self.z);
+        let yaw = siny_cosp.atan2(cosy_cosp);
+
+        (roll, pitch, yaw)
+    }
+
     pub fn to_rotation_matrix(&self) -> Matrix<3, 3> {
         let x2 = self.x + self.x;
         let y2 = self.y + self.y;

@@ -110,7 +110,7 @@ mod tests {
         cmd.outputs[0] = Normalized(0.5);
         cmd.outputs[1] = Normalized(Scalar::NAN); // Bad
         
-        let _report = sanitizer.sanitize(&mut cmd, &mode);
+        let report = sanitizer.sanitize(&mut cmd, &mode);
         
         // Weak coupling: bad channel falls back, good channel stays?
         // Current implementation: Clamped/Fallback logic for weak
@@ -120,4 +120,72 @@ mod tests {
         // Channel 1 should be safe pattern (0.1)
         assert_eq!(cmd.outputs[1].0, 0.1);
     }
+
+    use aviate_core::mixer::{QuadXMixer, Mixer};
+    use aviate_core::control::AxisCommand;
+    use aviate_core::types::NormalizedSigned;
+
+    fn dummy_timestamp() -> Timestamp {
+        Timestamp { ticks: 123, source: TimeSource::Internal }
+    }
+
+    #[test]
+    fn test_quad_mixer_hover() {
+        let mixer = QuadXMixer { timestamp_source: dummy_timestamp };
+        let axis = AxisCommand {
+            roll: NormalizedSigned(0.0),
+            pitch: NormalizedSigned(0.0),
+            yaw: NormalizedSigned(0.0),
+            collective: Normalized(0.5),
+        };
+        
+        let cmd = mixer.mix(&axis);
+        
+        // All motors should be 0.5
+        for i in 0..4 {
+            assert!((cmd.outputs[i].0 - 0.5).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn test_quad_mixer_roll() {
+        let mixer = QuadXMixer { timestamp_source: dummy_timestamp };
+        // Roll right (+0.1)
+        // M0(FR, CW): -0.1 -> 0.4
+        // M1(FL, CCW): +0.1 -> 0.6
+        // M2(RL, CCW): +0.1 -> 0.6
+        // M3(RR, CW): -0.1 -> 0.4
+        let axis = AxisCommand {
+            roll: NormalizedSigned(0.1),
+            pitch: NormalizedSigned(0.0),
+            yaw: NormalizedSigned(0.0),
+            collective: Normalized(0.5),
+        };
+        
+        let cmd = mixer.mix(&axis);
+        
+        assert!((cmd.outputs[0].0 - 0.4).abs() < 1e-5);
+        assert!((cmd.outputs[1].0 - 0.6).abs() < 1e-5);
+        assert!((cmd.outputs[2].0 - 0.6).abs() < 1e-5);
+        assert!((cmd.outputs[3].0 - 0.4).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_quad_mixer_saturation() {
+        let mixer = QuadXMixer { timestamp_source: dummy_timestamp };
+        // High collective + roll
+        // t=0.9, r=0.2
+        // M1 = 0.9 + 0.2 = 1.1 -> clamped to 1.0
+        let axis = AxisCommand {
+            roll: NormalizedSigned(0.2),
+            pitch: NormalizedSigned(0.0),
+            yaw: NormalizedSigned(0.0),
+            collective: Normalized(0.9),
+        };
+        
+        let cmd = mixer.mix(&axis);
+        
+        assert!((cmd.outputs[1].0 - 1.0).abs() < 1e-5);
+    }
+
 }

@@ -17,7 +17,7 @@ impl VehicleController for VtolController {
             roll: NormalizedSigned(0.0),
             pitch: NormalizedSigned(0.0),
             yaw: NormalizedSigned(0.0),
-            collective: command.collective_thrust,
+            collective: command.setpoint.collective_thrust,
         }
     }
 }

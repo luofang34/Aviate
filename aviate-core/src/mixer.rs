@@ -2,6 +2,96 @@ use crate::types::{Normalized, Validated};
 use crate::time::Timestamp;
 use crate::control::ConfigMode;
 
+use crate::control::AxisCommand;
+
+/// Mixer trait - converts axis commands to actuator outputs
+pub trait Mixer {
+    fn mix(&self, axis: &AxisCommand) -> ActuatorCmd;
+}
+
+/// Quadrotor X-configuration mixer
+/// Motor layout:
+///   0(CW)   1(CCW)
+///      \   /
+///       [X]
+///      /   \
+///   2(CCW)  3(CW)
+pub struct QuadXMixer {
+    pub timestamp_source: fn() -> Timestamp,
+}
+
+impl Mixer for QuadXMixer {
+    fn mix(&self, axis: &AxisCommand) -> ActuatorCmd {
+        let t = axis.collective.0;      // [0, 1]
+        let r = axis.roll.0;            // [-1, 1]
+        let p = axis.pitch.0;           // [-1, 1]
+        let y = axis.yaw.0;             // [-1, 1]
+
+        // Standard X-config mixing:
+        // M0 (front-right, CW):  +roll -pitch +yaw
+        // M1 (front-left, CCW):  -roll -pitch -yaw
+        // M2 (rear-left, CW):    -roll +pitch +yaw
+        // M3 (rear-right, CCW):  +roll +pitch -yaw
+
+        let _m0 = t - r + p + y; // M0: Front Right (CW) -> -Roll, +Pitch, +Yaw (Wait, standard is +Roll? FR is +X +Y? No, FR is +X -Y (NED?))
+        // Spec does not define motor mapping explicitly yet.
+        // Standard PX4/ArduPilot Quad X:
+        // 1 (FR, CCW) - 3 (RL, CCW)
+        //    \ /
+        //    / \
+        // 2 (FL, CW) - 4 (RR, CW)
+        // Let's stick to the layout in the prompt comment:
+        //   0(CW)   1(CCW)  (Front)
+        //      \   /
+        //       [X]
+        //      /   \
+        //   2(CCW)  3(CW)   (Rear)
+        //
+        // Roll (+ right):  M0(Right) down/up?, M3(Right) down/up?
+        // Right roll -> Right side down (thrust decrease), Left side up (thrust increase).
+        // M0 (FR), M3 (RR) -> Decrease. (- roll)
+        // M1 (FL), M2 (RL) -> Increase. (+ roll)
+        //
+        // Pitch (+ nose up): Front up, Rear down.
+        // M0 (FR), M1 (FL) -> Increase (+ pitch)
+        // M2 (RL), M3 (RR) -> Decrease (- pitch)
+        //
+        // Yaw (+ CW): CW motors torque left (anti-torque right). To yaw right (CW), increase CCW motors, decrease CW?
+        // No, to yaw right (CW), body torque must be CW. Motors apply torque opposite to spin.
+        // CW motors (0, 3) apply CCW torque. CCW motors (1, 2) apply CW torque.
+        // To yaw CW (positive), we need net CW torque. So increase CCW motors (1, 2), decrease CW motors (0, 3).
+        //
+        // Summary:
+        // M0 (FR, CW):  -roll +pitch -yaw
+        // M1 (FL, CCW): +roll +pitch +yaw
+        // M2 (RL, CCW): +roll -pitch +yaw
+        // M3 (RR, CW):  -roll -pitch -yaw
+        
+        // Let's implement THIS logic.
+        
+        let m0 = t - r + p - y;
+        let m1 = t + r + p + y;
+        let m2 = t + r - p + y;
+        let m3 = t - r - p - y;
+
+        // Clamp to [0, 1]
+        let mut outputs = [Normalized(0.0); MAX_ACTUATORS];
+        outputs[0] = Normalized(m0.clamp(0.0, 1.0));
+        outputs[1] = Normalized(m1.clamp(0.0, 1.0));
+        outputs[2] = Normalized(m2.clamp(0.0, 1.0));
+        outputs[3] = Normalized(m3.clamp(0.0, 1.0));
+
+        ActuatorCmd {
+            outputs,
+            active_mask: 0b1111,
+            sequence: 0,
+            timestamp: (self.timestamp_source)(),
+            fallback_mask: 0,
+            sanitized: false,
+        }
+    }
+}
+
 pub const MAX_ACTUATORS: usize = 16;
 pub const MAX_GROUPS: usize = 8;
 
