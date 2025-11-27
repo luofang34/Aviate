@@ -4,7 +4,12 @@ set -e
 # Aviate SITL Launcher
 #
 # This script builds and runs the Aviate SITL quadcopter application
-# with Gazebo Sim (Harmonic). No PX4 dependency required.
+# with Gazebo Sim (Harmonic).
+#
+# Usage:
+#   ./scripts/run_sitl.sh              # Interactive mode with GUI
+#   ./scripts/run_sitl.sh --headless   # Headless mode (no GUI)
+#   ./scripts/run_sitl.sh --test       # Automated test (headless + flight test)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AVIATE_DIR="$(dirname "$SCRIPT_DIR")"
@@ -32,43 +37,73 @@ if ! command -v gz &> /dev/null; then
 fi
 
 # Kill any existing SITL processes first
+echo "Cleaning up existing processes..."
 pkill -9 -f "gz sim" 2>/dev/null || true
-pkill -9 -f gz-bridge 2>/dev/null || true
-pkill -9 -f aviate-app-quadcopter-sitl 2>/dev/null || true
-pkill -9 -f sitl-test 2>/dev/null || true
+pkill -9 -f "gz-bridge" 2>/dev/null || true
+pkill -9 -f "aviate-app-quadcopter-sitl" 2>/dev/null || true
+pkill -9 -f "sitl-test" 2>/dev/null || true
+# Clean up shared memory from previous runs
+rm -f /dev/shm/aviate_gz_bridge 2>/dev/null || true
 sleep 2
 
 echo "=== Aviate SITL Launcher ==="
 echo "Mode: Headless=$HEADLESS, AutoTest=$AUTO_TEST"
 
-echo "Building Aviate..."
+# Build the Aviate SITL app
+echo "Building Aviate SITL app..."
 cargo build -p aviate-app-quadcopter-sitl
 
-# Try to build the gz-bridge (optional, requires Gazebo libraries)
-echo "Building Gazebo bridge (optional)..."
-if cargo build -p aviate-app-quadcopter-sitl --features gz-bridge --bin gz-bridge 2>/dev/null; then
+# Build the gz-bridge (requires libaviate_gz_bridge.so to be built)
+PLUGIN_DIR="${AVIATE_DIR}/aviate-platform/sitl/aviate_gz_plugin/build"
+if [ -f "${PLUGIN_DIR}/libaviate_gz_bridge.so" ]; then
+    echo "Building Gazebo bridge..."
+    cargo build -p aviate-platform-sitl --features gz-plugin
     GZ_BRIDGE_AVAILABLE=1
     echo "Gazebo bridge built successfully."
 else
     GZ_BRIDGE_AVAILABLE=0
-    echo "Note: Gazebo bridge not available (missing gz-transport libraries)."
-    echo "      The test will run but won't have real sensor data from Gazebo."
+    echo "Warning: libaviate_gz_bridge.so not found."
+    echo "Build it first: cd aviate-platform/sitl/aviate_gz_plugin/build && cmake .. && make"
+    echo "The test will run but won't have real sensor data from Gazebo."
 fi
 
+# Set library path for FFI
+export LD_LIBRARY_PATH="${PLUGIN_DIR}:${LD_LIBRARY_PATH:-}"
+
 cleanup() {
+    echo ""
     echo "Shutting down..."
     pkill -f "gz sim" 2>/dev/null || true
-    # Give processes time to exit gracefully
+    pkill -f "gz-bridge" 2>/dev/null || true
+    pkill -f "aviate-app-quadcopter-sitl" 2>/dev/null || true
+    # Clean up shared memory
+    rm -f /dev/shm/aviate_gz_bridge 2>/dev/null || true
     sleep 1
 }
 
 trap cleanup EXIT
 
 if [ "$AUTO_TEST" -eq 1 ]; then
+    echo ""
     echo "=== Starting Gazebo ==="
     "$SCRIPT_DIR/launch_gazebo.sh"
 
+    # Wait a bit more for plugin to initialize shared memory
+    echo "Waiting for AviateGzPlugin to initialize..."
+    for i in {1..10}; do
+        if [ -f /dev/shm/aviate_gz_bridge ]; then
+            echo "Shared memory ready."
+            break
+        fi
+        sleep 0.5
+    done
+
+    if [ ! -f /dev/shm/aviate_gz_bridge ]; then
+        echo "Warning: Shared memory not found. Plugin may not have loaded."
+    fi
+
     # Start Aviate FIRST so it binds port 14560 before gz-bridge sends to it
+    echo ""
     echo "=== Starting Aviate Core (Background) ==="
     ./target/debug/aviate-app-quadcopter-sitl &
     AVIATE_PID=$!
@@ -76,21 +111,25 @@ if [ "$AUTO_TEST" -eq 1 ]; then
 
     # Start bridge if available
     if [ "$GZ_BRIDGE_AVAILABLE" -eq 1 ]; then
+        echo ""
         echo "=== Starting Gazebo Bridge (Background) ==="
         ./target/debug/gz-bridge &
         BRIDGE_PID=$!
         sleep 2  # Give bridge time to connect
     fi
 
+    echo ""
     echo "Waiting for system to stabilize (3s)..."
     sleep 3
 
+    echo ""
     echo "=== Running Flight Test ==="
     set +e
     ./target/debug/sitl-test
     TEST_EXIT_CODE=$?
     set -e
 
+    echo ""
     echo "=== Test Completed with Exit Code: $TEST_EXIT_CODE ==="
 
     # Kill Aviate and Bridge
@@ -105,17 +144,30 @@ if [ "$AUTO_TEST" -eq 1 ]; then
         exit 1
     fi
 else
+    echo ""
     echo "=== Starting Gazebo ==="
     "$SCRIPT_DIR/launch_gazebo.sh"
 
+    # Wait for plugin
+    echo "Waiting for AviateGzPlugin to initialize..."
+    for i in {1..10}; do
+        if [ -f /dev/shm/aviate_gz_bridge ]; then
+            echo "Shared memory ready."
+            break
+        fi
+        sleep 0.5
+    done
+
     # Start bridge if available
     if [ "$GZ_BRIDGE_AVAILABLE" -eq 1 ]; then
+        echo ""
         echo "=== Starting Gazebo Bridge (Background) ==="
         ./target/debug/gz-bridge &
         BRIDGE_PID=$!
         sleep 2
     fi
 
+    echo ""
     echo "=== Starting Aviate Core (Interactive) ==="
     ./target/debug/aviate-app-quadcopter-sitl
 
