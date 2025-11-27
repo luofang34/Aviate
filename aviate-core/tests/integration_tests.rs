@@ -108,18 +108,25 @@ mod tests {
         use aviate_core::control::mc::McController;
         use aviate_core::mixer::{QuadXMixer, ModeConfig};
         use aviate_core::control::{ConfigMode, Setpoint, CommandSource, ControlMode};
+        use aviate_core::sensor::SensorSet;
         
         fn dummy_time() -> Timestamp { Timestamp { ticks: 0, source: TimeSource::Internal } }
         let mixer = QuadXMixer { timestamp_source: dummy_time };
         
-        // Stub ModeConfig (empty for now as sanitizer handles defaults gracefully or we assume so)
-        // Actually Sanitizer iterates groups. If empty, it does nothing.
         let mode_config = ModeConfig {
             mode: ConfigMode::Hover,
             groups: &[],
         };
         
         let mut kernel = AviateKernel::new(McController::default(), mixer, mode_config);
+        
+        // Initialize EKF to ensure it's ready for transition (though current placeholder init_step is simple)
+        kernel.ekf.init(
+            Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+            Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+            Quaternion::IDENTITY
+        );
+
         let cmd = Command { 
             mode: ControlMode::Attitude,
             setpoint: Setpoint {
@@ -131,21 +138,51 @@ mod tests {
             sequence: 0,
             source: CommandSource::Pilot,
         };
+        
+        // Before arming: Expect safe output (0.0)
+        let act_cmd_safe = kernel.step(&cmd);
+        for i in 0..4 {
+            assert!((act_cmd_safe.outputs[i].0).abs() < 1e-5, "Should be zero when disarmed");
+        }
+
+        // Cycle init state
+        // PowerOn -> ConfigLoading -> SensorInit -> EstimatorConverging -> PreArm -> Ready
+        // My implementation moves one state per call
+        
+        let empty_sensors = SensorSet {
+            imus: [SensorReading::default(), SensorReading::default(), SensorReading::default()],
+            gnss: [SensorReading::default(), SensorReading::default()],
+            mags: [SensorReading::default(), SensorReading::default()],
+            baros: [SensorReading::default(), SensorReading::default()],
+            airspeeds: [SensorReading::default(), SensorReading::default()],
+            geometry: None,
+        };
+        
+        // 5 transitions needed?
+        for _ in 0..10 {
+            kernel.init_step(&empty_sensors, dummy_time());
+            if kernel.is_ready() { break; }
+        }
+        assert!(kernel.is_ready(), "Kernel failed to become ready");
+        
+        // Arm
+        kernel.arm().expect("Failed to arm");
+        
+        // After arming: Expect control output
         let act_cmd = kernel.step(&cmd);
         
         // QuadXMixer with 0 R/P/Y should output collective on all 4 motors
         for i in 0..4 {
-            assert!((act_cmd.outputs[i].0 - 0.5).abs() < 1e-5);
+            assert!((act_cmd.outputs[i].0 - 0.5).abs() < 1e-5, "Should be 0.5 when armed");
         }
     }
 
     #[test]
     fn test_kernel_fw() {
         use aviate_core::control::fw::FwController;
-        // FW usually needs a different mixer (e.g. PlaneMixer), but for this test we just want to check Kernel integration.
-        // We can reuse QuadXMixer or create a dummy one. Reusing QuadXMixer is fine for checking plumbing.
         use aviate_core::mixer::{QuadXMixer, ModeConfig};
         use aviate_core::control::{ConfigMode, Setpoint, CommandSource, ControlMode};
+        use aviate_core::sensor::SensorSet;
         
         fn dummy_time() -> Timestamp { Timestamp { ticks: 0, source: TimeSource::Internal } }
         let mixer = QuadXMixer { timestamp_source: dummy_time };
@@ -156,6 +193,14 @@ mod tests {
         };
         
         let mut kernel = AviateKernel::new(FwController, mixer, mode_config);
+        
+        // Init EKF
+        kernel.ekf.init(
+            Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+            Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+            Quaternion::IDENTITY
+        );
+
         let cmd = Command { 
             mode: ControlMode::Attitude,
             setpoint: Setpoint {
@@ -167,6 +212,25 @@ mod tests {
             sequence: 0,
             source: CommandSource::Pilot,
         };
+        
+        // Cycle init state
+        let empty_sensors = SensorSet {
+            imus: [SensorReading::default(), SensorReading::default(), SensorReading::default()],
+            gnss: [SensorReading::default(), SensorReading::default()],
+            mags: [SensorReading::default(), SensorReading::default()],
+            baros: [SensorReading::default(), SensorReading::default()],
+            airspeeds: [SensorReading::default(), SensorReading::default()],
+            geometry: None,
+        };
+
+        for _ in 0..10 {
+            kernel.init_step(&empty_sensors, dummy_time());
+            if kernel.is_ready() { break; }
+        }
+        assert!(kernel.is_ready(), "Kernel failed to become ready");
+        
+        kernel.arm().expect("Failed to arm");
+        
         let act_cmd = kernel.step(&cmd);
         
         // FwController currently outputs 0 R/P/Y and passes collective.

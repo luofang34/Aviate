@@ -20,13 +20,25 @@ pub struct SensorReading<T> {
     pub health: SensorHealth,
 }
 
+impl<T: Default> Default for SensorReading<T> {
+    fn default() -> Self {
+        Self {
+            value: T::default(),
+            valid: false,
+            source_id: 0,
+            timestamp: Timestamp::default(),
+            health: SensorHealth::default(),
+        }
+    }
+}
+
 pub const MAX_IMU: usize = 3;
 pub const MAX_GNSS: usize = 2;
 pub const MAX_MAG: usize = 2;
 pub const MAX_BARO: usize = 2;
 pub const MAX_AIRSPEED: usize = 2;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct ImuData {
     pub accel: [MetersPerSecondSquared; 3],
     pub gyro: [RadiansPerSecond; 3],
@@ -50,20 +62,20 @@ pub enum GnssHealth {
     Lost,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct GnssData {
     pub position_ned: [Meters; 3],
     pub velocity_ned: [MetersPerSecond; 3],
     pub fix: GnssFix,
-    pub health: GnssHealth, // Added health field
+    pub health: GnssHealth,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct MagData {
     pub field_ut: [Microtesla; 3],
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct AirData {
     pub static_pressure: Option<Pascals>,
     pub dynamic_pressure: Option<Pascals>,
@@ -73,13 +85,13 @@ pub struct AirData {
     pub true_airspeed: Option<MetersPerSecond>,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct BaroData {
     pub altitude: Option<Meters>,
     pub air: AirData,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct AirspeedData {
     pub air: AirData,
 }

@@ -15,6 +15,15 @@ pub enum ControlMode {
     DeviationTracking,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ControlLaw {
+    Normal = 0,
+    Alternate1 = 1,
+    Alternate2 = 2,
+    Direct = 3,
+    Frozen = 4,
+}
+
 #[derive(Clone, Debug)]
 pub struct Setpoint {
     pub attitude: Option<Quaternion>,
@@ -109,7 +118,8 @@ pub enum AuthorityProfile {
 #[derive(Clone, Debug)]
 pub struct LawProfile {
     pub authority: AuthorityProfile,
-    // chain and capabilities would be here but require more types
+    pub chain: &'static [ControlLaw],
+    // capabilities...
 }
 
 #[derive(Clone, Debug)]
