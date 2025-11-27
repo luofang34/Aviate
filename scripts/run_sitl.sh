@@ -78,7 +78,7 @@ if [ "$AUTO_TEST" -eq 1 ]; then
 
     echo "=== Running Flight Test Script ==="
     set +e
-    python3 sitl_flight_test.py
+    python3 tests/sitl_gcs_test.py
     TEST_EXIT_CODE=$?
     set -e
 
