@@ -16,6 +16,14 @@ path = "src/sitl_test.rs"
 name = "lockstep-test"
 path = "src/lockstep_test.rs"
 
+[[bin]]
+name = "mission-test"
+path = "src/mission_test.rs"
+
+[lib]
+name = "aviate_app_quadcopter_sitl"
+path = "src/lib.rs"
+
 [features]
 gz-plugin = ["aviate-platform-sitl/gz-plugin"]
 default = []

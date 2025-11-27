@@ -16,6 +16,8 @@
 
 #[cfg(feature = "gz-plugin")]
 use aviate_platform_sitl::gz_plugin::{GzPluginBridge, enu_to_ned_f32};
+#[cfg(feature = "gz-plugin")]
+use std::time::{Duration, Instant};
 
 fn main() {
     println!("Lockstep Synchronization Test");
