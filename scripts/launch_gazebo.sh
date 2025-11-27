@@ -23,6 +23,15 @@ fi
 # Export model path so Gazebo can find x500/x500_base models
 export GZ_SIM_RESOURCE_PATH="${MODELS_DIR}:${GZ_SIM_RESOURCE_PATH:-}"
 
+# Export plugin path so Gazebo can find AviateGzPlugin
+PLUGIN_DIR="${AVIATE_DIR}/aviate-platform/sitl/aviate_gz_plugin/build"
+if [ -f "${PLUGIN_DIR}/libAviateGzPlugin.so" ]; then
+    export GZ_SIM_SYSTEM_PLUGIN_PATH="${PLUGIN_DIR}:${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
+    echo "AviateGzPlugin found at ${PLUGIN_DIR}"
+else
+    echo "Warning: AviateGzPlugin not built. Run: cd aviate-platform/sitl/aviate_gz_plugin/build && cmake .. && make"
+fi
+
 if [ ! -f "$WORLD_FILE" ]; then
     echo "Error: World file not found at $WORLD_FILE"
     exit 1

@@ -9,17 +9,11 @@ name = "aviate-app-quadcopter-sitl"
 path = "src/main.rs"
 
 [[bin]]
-name = "gz-bridge"
-path = "src/gz_bridge_main.rs"
-required-features = ["gz-bridge"]
-
-[[bin]]
 name = "sitl-test"
 path = "src/sitl_test.rs"
 
 [features]
 default = []
-gz-bridge = ["aviate-platform-sitl/gz-bridge"]
 
 [dependencies]
 aviate-core = { path = "../../aviate-core" }

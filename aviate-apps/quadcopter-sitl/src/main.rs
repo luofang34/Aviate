@@ -186,6 +186,7 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
     if let Some(sys_cmd) = hal.recv_command() {
         match sys_cmd {
             SystemCommand::FlightControl(cmd) => {
+                debug!("FlightControl: thrust={:.2}", cmd.setpoint.collective_thrust.0);
                 *last_cmd = cmd;
             }
             SystemCommand::Arm => {
@@ -223,6 +224,13 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
 
     // 4. Step kernel
     let actuator_cmd = kernel.step(last_cmd);
+
+    // Debug output - print actuator commands when thrust command is non-zero
+    if last_cmd.setpoint.collective_thrust.0 > 0.1 {
+        let sum: f32 = actuator_cmd.outputs.iter().map(|o| o.0).sum();
+        debug!("ActuatorCmd: sum={:.3}, thrust_in={:.2}, state={:?}",
+            sum, last_cmd.setpoint.collective_thrust.0, kernel.init_state);
+    }
 
     // 5. Write outputs
     hal.write(&actuator_cmd);

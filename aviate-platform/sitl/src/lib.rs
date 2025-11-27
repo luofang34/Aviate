@@ -1,5 +1,3 @@
-#![forbid(unsafe_code)]
-
 //! SITL (Software-In-The-Loop) platform implementation
 //!
 //! Provides HAL implementation for running aviate-core in simulation.
@@ -7,18 +5,45 @@
 //!
 //! ## Features
 //!
-//! - `gz-bridge`: Enable Gazebo transport bridge (requires gz-transport system libraries)
+//! - `gz-plugin`: Enable Gazebo bridge via shared memory FFI (zero-copy, requires libaviate_gz_bridge.so)
+//!
+//! ## Architecture
+//!
+//! The SITL platform consists of:
+//!
+//! - **GzBridge**: Bridges Gazebo physics to MAVLink HIL protocol
+//!   - Reads model state via shared memory (AviateGzPlugin)
+//!   - Sends HIL_SENSOR/HIL_GPS to Aviate autopilot
+//!   - Receives HIL_ACTUATOR_CONTROLS and forwards to Gazebo
+//!
+//! - **UdpMavlinkHal**: HAL implementation for receiving simulator data
+//!   - Binds to UDP ports for MAVLink communication
+//!   - Parses HIL_SENSOR/HIL_GPS messages
+//!   - Sends HIL_ACTUATOR_CONTROLS
+
+// Allow unsafe code only for gz-plugin FFI
+#![cfg_attr(not(feature = "gz-plugin"), forbid(unsafe_code))]
 
 pub mod mock;
 pub mod udp;
 pub mod bridge;
 pub mod gz_bridge;
+pub mod flight_log;
+
+#[cfg(feature = "gz-plugin")]
+pub mod gz_plugin;
 
 pub use mock::SitlHal;
 pub use udp::UdpMavlinkHal;
 
-#[cfg(feature = "gz-bridge")]
-pub use gz_bridge::{GzBridge, GzBridgeConfig};
+// gz_bridge exports (requires gz-plugin feature for full functionality)
+pub use gz_bridge::{GzBridge, GzBridgeConfig, GzBridgeError};
+
+// flight_log exports
+pub use flight_log::{FlightLog, FlightLogConfig, FlightSample, FlightStats};
+
+#[cfg(feature = "gz-plugin")]
+pub use gz_plugin::{GzPluginBridge, GzPluginError, AviateModelState, enu_to_ned, enu_vel_to_ned};
 
 /// Default ports for MAVLink HIL communication
 pub const DEFAULT_SENSOR_PORT: u16 = 14560;  // Receive HIL_SENSOR/HIL_GPS from simulator

@@ -1,95 +1,105 @@
-//! Gazebo Transport Bridge for SITL
+//! Gazebo Bridge for SITL
 //!
-//! This module bridges Gazebo Sim sensor topics to MAVLink HIL protocol.
-//! It subscribes to Gazebo IMU and odometry topics, converts them to
-//! HIL_SENSOR/HIL_GPS MAVLink messages, and sends them via UDP.
+//! This module bridges Gazebo Sim physics data to MAVLink HIL protocol.
+//! It reads model state from Gazebo and converts to HIL_SENSOR/HIL_GPS MAVLink messages.
 //!
-//! This module is only compiled when the `gz-bridge` feature is enabled.
+//! ## Bridge Modes
+//!
+//! - **FFI Mode** (default, `gz-plugin` feature): Zero-copy shared memory via AviateGzPlugin
+//!
+//! FFI mode is recommended for production use - it provides ~1μs latency.
 
-#[cfg(feature = "gz-bridge")]
-mod inner {
-    use std::net::UdpSocket;
-    use std::process::Command;
-    use std::sync::{Arc, Mutex};
-    use std::time::Instant;
+/// Gazebo bridge configuration
+#[derive(Clone, Debug)]
+pub struct GzBridgeConfig {
+    /// Model name in Gazebo (for SDF plugin config)
+    pub model_name: String,
+    /// Motor command topic in Gazebo (used by plugin for gz-transport publish)
+    pub motor_topic: String,
+    /// UDP port to send HIL data to Aviate
+    pub aviate_port: u16,
+    /// UDP port to receive actuator commands from Aviate
+    pub actuator_port: u16,
+    /// UDP port to send position data to test client
+    pub test_port: u16,
+}
 
-    use gz::transport::Node;
-    use gz_msgs::imu::IMU;
-    use gz_msgs::odometry::Odometry;
-
-    use aviate_mavlink::{
-        serialize_mavlink, HilSensor, HilGps, HilActuatorControls,
-        MavMessage, parse_mavlink,
-    };
-
-    /// Gazebo bridge configuration
-    #[derive(Clone, Debug)]
-    pub struct GzBridgeConfig {
-        /// IMU topic name in Gazebo
-        pub imu_topic: String,
-        /// Odometry topic name in Gazebo
-        pub odom_topic: String,
-        /// Motor command topic in Gazebo
-        pub motor_topic: String,
-        /// UDP port to send HIL data to Aviate
-        pub aviate_port: u16,
-        /// UDP port to receive actuator commands from Aviate
-        pub actuator_port: u16,
-    }
-
-    impl Default for GzBridgeConfig {
-        fn default() -> Self {
-            Self {
-                // X500 model topics (from PX4-gazebo-models)
-                imu_topic: "/world/aviate_sitl/model/x500/link/base_link/sensor/imu_sensor/imu".to_string(),
-                odom_topic: "/model/x500/odometry".to_string(),
-                motor_topic: "/x500/command/motor_speed".to_string(),
-                aviate_port: 14560,
-                actuator_port: 14561,
-            }
+impl Default for GzBridgeConfig {
+    fn default() -> Self {
+        Self {
+            model_name: "x500".to_string(),
+            motor_topic: "/x500/command/motor_speed".to_string(),
+            aviate_port: 14560,
+            actuator_port: 14561,
+            test_port: 14562,
         }
     }
+}
 
-    /// Shared sensor state between callbacks and main loop
-    #[derive(Default)]
-    struct SensorState {
-        // IMU data
-        accel: [f32; 3],
-        gyro: [f32; 3],
-        // Odometry data
-        position: [f32; 3],
-        velocity: [f32; 3],
-        orientation: [f32; 4], // quaternion [w, x, y, z]
-        // Timestamps
-        last_imu_us: u64,
-        last_odom_us: u64,
-        // Callback counters
-        imu_callback_count: u64,
-        odom_callback_count: u64,
+/// Error type for GzBridge operations
+#[derive(Debug)]
+pub enum GzBridgeError {
+    /// IO error (socket binding, etc.)
+    Io(std::io::Error),
+    /// Plugin not running (shared memory not available)
+    PluginNotRunning,
+    /// Connection timeout
+    Timeout,
+}
+
+impl std::fmt::Display for GzBridgeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "IO error: {}", e),
+            Self::PluginNotRunning => write!(f, "AviateGzPlugin not running in Gazebo"),
+            Self::Timeout => write!(f, "Connection timeout"),
+        }
     }
+}
 
-    /// Gazebo-MAVLink bridge
+impl std::error::Error for GzBridgeError {}
+
+impl From<std::io::Error> for GzBridgeError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+// ============================================================================
+// FFI Mode (gz-plugin feature) - Zero-copy shared memory
+// ============================================================================
+
+#[cfg(feature = "gz-plugin")]
+mod ffi_bridge {
+    use super::*;
+    use std::net::UdpSocket;
+    use std::time::Instant;
+    use aviate_mavlink::{
+        serialize_mavlink, parse_mavlink, HilSensor, HilGps, HilActuatorControls, LocalPositionNed,
+        MavMessage,
+    };
+    use crate::gz_plugin::{GzPluginBridge, GzPluginError, enu_to_ned_f32, enu_vel_to_ned_f32};
+
+    /// Gazebo-MAVLink bridge using shared memory FFI
     pub struct GzBridge {
         config: GzBridgeConfig,
-        node: Node,
-        state: Arc<Mutex<SensorState>>,
+        plugin: Option<GzPluginBridge>,
         start_time: Instant,
         send_socket: UdpSocket,
         recv_socket: UdpSocket,
         seq: u8,
         // Statistics
-        imu_count: u64,
         hil_sent: u64,
         motor_recv: u64,
+        pos_sent: u64,
+        // Cached state
+        last_position: [f32; 3],
+        last_velocity: [f32; 3],
     }
 
     impl GzBridge {
         /// Create a new Gazebo bridge
-        pub fn new(config: GzBridgeConfig) -> std::io::Result<Self> {
-            let node = Node::new().ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::Other, "Failed to create Gazebo node")
-            })?;
-
+        pub fn new(config: GzBridgeConfig) -> Result<Self, GzBridgeError> {
             let send_socket = UdpSocket::bind("0.0.0.0:0")?;
             send_socket.set_nonblocking(true)?;
 
@@ -98,93 +108,75 @@ mod inner {
 
             Ok(Self {
                 config,
-                node,
-                state: Arc::new(Mutex::new(SensorState::default())),
+                plugin: None,
                 start_time: Instant::now(),
                 send_socket,
                 recv_socket,
                 seq: 0,
-                imu_count: 0,
                 hil_sent: 0,
                 motor_recv: 0,
+                pos_sent: 0,
+                last_position: [0.0; 3],
+                last_velocity: [0.0; 3],
             })
         }
 
-        /// Subscribe to Gazebo topics
-        pub fn subscribe(&mut self) -> Result<(), String> {
-            let state = Arc::clone(&self.state);
-            let start = self.start_time;
+        /// Connect to the Gazebo plugin via shared memory
+        ///
+        /// Waits for the AviateGzPlugin to initialize shared memory.
+        pub fn connect(&mut self, timeout_ms: u64) -> Result<(), GzBridgeError> {
+            let max_attempts = (timeout_ms / 500).max(1) as u32;
+            eprintln!("[GzBridge] Connecting to AviateGzPlugin ({}ms timeout)...", timeout_ms);
 
-            eprintln!("[DEBUG] Subscribing to IMU topic: {}", &self.config.imu_topic);
-
-            // Subscribe to IMU topic
-            let imu_ok = self.node.subscribe(&self.config.imu_topic, move |msg: IMU| {
-                let now_us = start.elapsed().as_micros() as u64;
-                if let Ok(mut s) = state.lock() {
-                    s.imu_callback_count += 1;
-                    // Extract angular velocity (MessageField)
-                    if let Some(av) = msg.angular_velocity.as_ref() {
-                        s.gyro = [av.x as f32, av.y as f32, av.z as f32];
-                    }
-                    // Extract linear acceleration
-                    if let Some(la) = msg.linear_acceleration.as_ref() {
-                        s.accel = [la.x as f32, la.y as f32, la.z as f32];
-                    }
-                    s.last_imu_us = now_us;
+            match GzPluginBridge::connect_with_retry(max_attempts, 500) {
+                Ok(plugin) => {
+                    eprintln!("[GzBridge] Connected via shared memory FFI");
+                    self.plugin = Some(plugin);
+                    Ok(())
                 }
-            });
-            eprintln!("[DEBUG] IMU subscribe result: {}", imu_ok);
-            if !imu_ok {
-                return Err("Failed to subscribe to IMU topic".to_string());
+                Err(GzPluginError::PluginNotRunning) => Err(GzBridgeError::PluginNotRunning),
+                Err(_) => Err(GzBridgeError::Timeout),
             }
+        }
 
-            let state = Arc::clone(&self.state);
-            let start = self.start_time;
-
-            // Subscribe to odometry topic
-            let odom_ok = self.node.subscribe(&self.config.odom_topic, move |msg: Odometry| {
-                let now_us = start.elapsed().as_micros() as u64;
-                if let Ok(mut s) = state.lock() {
-                    // Extract pose (MessageField has as_ref() method)
-                    if let Some(pose) = msg.pose.as_ref() {
-                        if let Some(pos) = pose.position.as_ref() {
-                            s.position = [pos.x as f32, pos.y as f32, pos.z as f32];
-                        }
-                        if let Some(orient) = pose.orientation.as_ref() {
-                            s.orientation = [
-                                orient.w as f32,
-                                orient.x as f32,
-                                orient.y as f32,
-                                orient.z as f32,
-                            ];
-                        }
-                    }
-                    // Extract twist (velocity)
-                    if let Some(twist) = msg.twist.as_ref() {
-                        if let Some(lin) = twist.linear.as_ref() {
-                            s.velocity = [lin.x as f32, lin.y as f32, lin.z as f32];
-                        }
-                    }
-                    s.last_odom_us = now_us;
-                }
-            });
-            if !odom_ok {
-                return Err("Failed to subscribe to odometry topic".to_string());
-            }
-
-            eprintln!("[INFO] Using gz topic CLI for motor commands to {}", self.config.motor_topic);
-
-            Ok(())
+        /// Check if connected to the plugin
+        pub fn is_connected(&self) -> bool {
+            self.plugin.as_ref().map(|p| p.is_connected()).unwrap_or(false)
         }
 
         /// Run one iteration of the bridge loop
         pub fn step(&mut self) {
             let now_us = self.start_time.elapsed().as_micros() as u64;
+            let now_ms = (now_us / 1000) as u32;
 
-            // Read current sensor state
-            let (accel, gyro, position, velocity) = {
-                let s = self.state.lock().unwrap();
-                (s.accel, s.gyro, s.position, s.velocity)
+            // Read physics state from plugin (zero-copy via shared memory)
+            let (accel, gyro, position, velocity) = if let Some(ref plugin) = self.plugin {
+                if let Some(state) = plugin.get_model_state() {
+                    // Convert from ENU to NED for MAVLink
+                    let ned_pos = enu_to_ned_f32(state.pos);
+                    let ned_vel = enu_vel_to_ned_f32(state.vel);
+
+                    // Use angular velocity as gyro (already in body frame from physics)
+                    let gyro = [
+                        state.ang_vel[0] as f32,
+                        state.ang_vel[1] as f32,
+                        state.ang_vel[2] as f32,
+                    ];
+
+                    // Simulated accelerometer (gravity + body acceleration)
+                    let accel = [0.0f32, 0.0, -9.81];
+
+                    self.last_position = ned_pos;
+                    self.last_velocity = ned_vel;
+
+                    (accel, gyro, ned_pos, ned_vel)
+                } else {
+                    // No valid data yet, use cached
+                    ([0.0, 0.0, -9.81], [0.0; 3], self.last_position, self.last_velocity)
+                }
+            } else {
+                // Plugin not connected
+                ([0.0, 0.0, -9.81], [0.0; 3], [0.0; 3], [0.0; 3])
             };
 
             // Build and send HIL_SENSOR
@@ -196,12 +188,12 @@ mod inner {
                 xgyro: gyro[0],
                 ygyro: gyro[1],
                 zgyro: gyro[2],
-                xmag: 0.2,  // Simulated magnetometer
+                xmag: 0.2,
                 ymag: 0.0,
                 zmag: 0.4,
-                abs_pressure: 1013.25,  // Sea level pressure (mbar)
+                abs_pressure: 1013.25,
                 diff_pressure: 0.0,
-                pressure_alt: -position[2],  // NED z is down
+                pressure_alt: -position[2],  // NED z is down, altitude is positive up
                 temperature: 25.0,
                 fields_updated: 0x1FFF,
                 id: 0,
@@ -212,17 +204,30 @@ mod inner {
 
             // Print stats every second (250 iterations at 250 Hz)
             if self.hil_sent % 250 == 0 {
-                let s = self.state.lock().unwrap();
-                eprintln!("[DEBUG] hil={}, motors={}, imu_cb={}, imu={}us, accel=[{:.2},{:.2},{:.2}]",
-                    self.hil_sent, self.motor_recv, s.imu_callback_count, s.last_imu_us,
-                    s.accel[0], s.accel[1], s.accel[2]);
+                eprintln!("[GzBridge] hil={}, motors={}, pos_sent={}, pos=[{:.2},{:.2},{:.2}]",
+                    self.hil_sent, self.motor_recv, self.pos_sent,
+                    position[0], position[1], position[2]);
             }
 
-            // Send HIL_GPS at lower rate (every 25th iteration ≈ 10Hz at 250Hz loop)
+            // Send LOCAL_POSITION_NED to test client at 50Hz
+            if self.seq % 5 == 0 {
+                let local_pos = LocalPositionNed {
+                    time_boot_ms: now_ms,
+                    x: position[0],
+                    y: position[1],
+                    z: position[2],
+                    vx: velocity[0],
+                    vy: velocity[1],
+                    vz: velocity[2],
+                };
+                self.send_to_test_client(&MavMessage::LocalPositionNed(local_pos));
+                self.pos_sent += 1;
+            }
+
+            // Send HIL_GPS at 10Hz
             if self.seq % 25 == 0 {
-                // Convert local position to fake GPS coordinates
-                let lat = (position[1] / 111000.0 * 1e7) as i32;
-                let lon = (position[0] / 111000.0 * 1e7) as i32;
+                let lat = (position[0] / 111000.0 * 1e7) as i32;
+                let lon = (position[1] / 111000.0 * 1e7) as i32;
                 let alt = (-position[2] * 1000.0) as i32;
 
                 let hil_gps = HilGps {
@@ -232,10 +237,10 @@ mod inner {
                     alt,
                     eph: 100,
                     epv: 100,
-                    vel: ((velocity[0].powi(2) + velocity[1].powi(2)).sqrt() * 100.0) as u16,
-                    vn: (velocity[1] * 100.0) as i16,
-                    ve: (velocity[0] * 100.0) as i16,
-                    vd: (-velocity[2] * 100.0) as i16,
+                    vel: 0,
+                    vn: (velocity[0] * 100.0) as i16,
+                    ve: (velocity[1] * 100.0) as i16,
+                    vd: (velocity[2] * 100.0) as i16,
                     cog: 0,
                     fix_type: 3,
                     satellites_visible: 10,
@@ -260,6 +265,15 @@ mod inner {
             }
         }
 
+        /// Send a MAVLink message to the test client
+        fn send_to_test_client(&mut self, msg: &MavMessage) {
+            let mut buf = [0u8; 300];
+            if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
+                let addr = ("127.0.0.1", self.config.test_port);
+                let _ = self.send_socket.send_to(&buf[..len], addr);
+            }
+        }
+
         /// Receive and process actuator commands
         fn receive_actuators(&mut self) {
             let mut buf = [0u8; 512];
@@ -280,32 +294,27 @@ mod inner {
             }
         }
 
-        /// Send motor velocity command to Gazebo via gz topic CLI
+        /// Send motor command to Gazebo via shared memory (zero-copy)
         fn send_motor_command(&mut self, ctrl: &HilActuatorControls) {
             // Convert normalized thrust (0-1) to motor velocity (0-1000 rad/s)
-            // X500 model uses maxRotVelocity=1000
-            let velocities: Vec<f64> = ctrl.controls[..4]
-                .iter()
-                .map(|&c| (c.max(0.0) * 1000.0) as f64)
-                .collect();
+            let velocities: [f64; 4] = [
+                (ctrl.controls[0].max(0.0) * 1000.0) as f64,
+                (ctrl.controls[1].max(0.0) * 1000.0) as f64,
+                (ctrl.controls[2].max(0.0) * 1000.0) as f64,
+                (ctrl.controls[3].max(0.0) * 1000.0) as f64,
+            ];
 
-            // Debug: print motor commands occasionally
-            if self.motor_recv % 500 == 1 {
-                eprintln!("[DEBUG] Motor cmd: [{:.1},{:.1},{:.1},{:.1}] rad/s",
-                    velocities[0], velocities[1], velocities[2], velocities[3]);
+            // Send via shared memory (zero-copy, plugin publishes to gz-transport)
+            if let Some(ref plugin) = self.plugin {
+                if plugin.set_motor_speeds(&velocities).is_ok() {
+                    if self.motor_recv % 50 == 1 {
+                        eprintln!("[GzBridge] Motor cmd: [{:.1},{:.1},{:.1},{:.1}] rad/s",
+                            velocities[0], velocities[1], velocities[2], velocities[3]);
+                    }
+                } else if self.motor_recv % 250 == 1 {
+                    eprintln!("[GzBridge] Warning: Failed to send motor command via shm");
+                }
             }
-
-            // Publish to Gazebo using gz topic CLI (workaround for Rust publisher issue)
-            let msg = format!(
-                "velocity:[{:.1},{:.1},{:.1},{:.1}]",
-                velocities[0], velocities[1], velocities[2], velocities[3]
-            );
-
-            let _ = Command::new("gz")
-                .args(["topic", "-t", &self.config.motor_topic, "-m", "gz.msgs.Actuators", "-p", &msg])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
         }
 
         /// Get timestamp in microseconds
@@ -315,16 +324,33 @@ mod inner {
     }
 }
 
-#[cfg(feature = "gz-bridge")]
-pub use inner::*;
+#[cfg(feature = "gz-plugin")]
+pub use ffi_bridge::GzBridge;
 
-// Stub when gz-bridge feature is not enabled
-#[cfg(not(feature = "gz-bridge"))]
-pub struct GzBridgeConfig;
+// ============================================================================
+// Stub when neither feature is enabled
+// ============================================================================
 
-#[cfg(not(feature = "gz-bridge"))]
-impl Default for GzBridgeConfig {
-    fn default() -> Self {
-        Self
+#[cfg(not(feature = "gz-plugin"))]
+pub struct GzBridge;
+
+#[cfg(not(feature = "gz-plugin"))]
+impl GzBridge {
+    pub fn new(_config: GzBridgeConfig) -> Result<Self, GzBridgeError> {
+        Err(GzBridgeError::PluginNotRunning)
+    }
+
+    pub fn connect(&mut self, _timeout_ms: u64) -> Result<(), GzBridgeError> {
+        Err(GzBridgeError::PluginNotRunning)
+    }
+
+    pub fn is_connected(&self) -> bool {
+        false
+    }
+
+    pub fn step(&mut self) {}
+
+    pub fn now_us(&self) -> u64 {
+        0
     }
 }

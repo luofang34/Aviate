@@ -1,18 +1,22 @@
 //! SITL Flight Test Binary
 //!
-//! This test verifies the full SITL loop by:
-//! 1. Sending commands to Aviate via MAVLink
-//! 2. Reading vehicle state from Gazebo (via gz-bridge or odometry topic)
-//! 3. Verifying the quadcopter actually flew the expected trajectory
+//! This test verifies the SITL command path by:
+//! 1. Sending heartbeat/arm/disarm commands to Aviate via MAVLink
+//! 2. Sending attitude/thrust commands to control the quadcopter
+//! 3. Verifying motor commands are forwarded to Gazebo (via gz-bridge)
+//! 4. Recording flight trajectory via FlightLog for analysis
 //!
 //! Usage:
-//!   # First start Gazebo and the gz-bridge, then:
-//!   cargo run -p aviate-app-quadcopter-sitl --bin sitl-test
+//!   # Automated test (headless):
+//!   ./scripts/run_sitl.sh --test
+//!
+//!   # Manual test with GUI:
+//!   ./scripts/run_sitl.sh
 //!
 //! The test requires:
-//! - Gazebo running with the x3_quadcopter world
-//! - gz-bridge running (optional, for trajectory verification)
-//! - Aviate SITL running
+//! - Gazebo running with the x500_quadcopter world
+//! - gz-bridge running (bridges Gazebo ↔ MAVLink)
+//! - Aviate SITL running (flight controller)
 
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
@@ -24,6 +28,8 @@ use aviate_mavlink::{
     mav_cmd,
 };
 
+use aviate_platform_sitl::{FlightLog, FlightLogConfig};
+
 /// Test configuration
 const AVIATE_PORT: u16 = 14560;
 const LISTEN_PORT: u16 = 14562;  // For receiving responses (different from bridge)
@@ -34,6 +40,7 @@ struct TestResult {
     armed: bool,
     received_actuator_response: bool,
     test_duration_ms: u64,
+    max_altitude: f64,
 }
 
 /// SITL Test Client
@@ -41,6 +48,7 @@ struct SitlTestClient {
     socket: UdpSocket,
     seq: u8,
     start_time: Instant,
+    flight_log: FlightLog,
 }
 
 impl SitlTestClient {
@@ -48,10 +56,17 @@ impl SitlTestClient {
         let socket = UdpSocket::bind(("0.0.0.0", LISTEN_PORT))?;
         socket.set_nonblocking(true)?;
 
+        // Configure flight log: 50Hz sampling, 1000 samples (20 seconds of data)
+        let log_config = FlightLogConfig {
+            max_samples: 1000,
+            sample_interval_ms: 20,
+        };
+
         Ok(Self {
             socket,
             seq: 0,
             start_time: Instant::now(),
+            flight_log: FlightLog::new(log_config),
         })
     }
 
@@ -112,11 +127,18 @@ impl SitlTestClient {
     fn receive_messages(&mut self) -> Vec<MavMessage> {
         let mut messages = Vec::new();
         let mut buf = [0u8; 512];
+        let time_ms = self.start_time.elapsed().as_millis() as u32;
 
         loop {
             match self.socket.recv_from(&mut buf) {
                 Ok((len, _)) => {
                     if let Ok((msg, _)) = parse_mavlink(&buf[..len]) {
+                        // Record position data to flight log
+                        if let MavMessage::LocalPositionNed(pos) = &msg {
+                            let position = [pos.x, pos.y, pos.z];
+                            let velocity = [pos.vx, pos.vy, pos.vz];
+                            self.flight_log.record(time_ms, position, velocity);
+                        }
                         messages.push(msg);
                     }
                 }
@@ -126,24 +148,98 @@ impl SitlTestClient {
         }
         messages
     }
+
+    /// Get the flight log for analysis
+    fn flight_log(&self) -> &FlightLog {
+        &self.flight_log
+    }
 }
 
-/// Run the flight test sequence
-fn run_flight_test() -> Result<TestResult, String> {
+
+/// Verify trajectory based on flight log
+fn verify_trajectory(log: &FlightLog) -> (bool, &'static str) {
+    const MIN_ALTITUDE: f32 = 0.5;  // At least 0.5m altitude required
+    const MIN_SAMPLES: usize = 10;  // At least 10 samples required
+
+    println!("\n[Trajectory Verification]");
+
+    let (ok, reason) = log.verify_flight(MIN_ALTITUDE, MIN_SAMPLES);
+
+    let stats = log.analyze();
+    println!("  Samples: {}", stats.sample_count);
+    println!("  Max altitude: {:.2} m", stats.max_altitude);
+    println!("  Required: >= {:.2} m, >= {} samples", MIN_ALTITUDE, MIN_SAMPLES);
+
+    if ok {
+        println!("  ✓ Flight trajectory verified!");
+    } else {
+        println!("  ✗ Flight trajectory verification failed: {}", reason);
+    }
+
+    (ok, reason)
+}
+
+fn main() {
+    println!("SITL Flight Test");
+    println!("================");
+    println!();
+    println!("Prerequisites:");
+    println!("  1. Gazebo running: gz sim -r aviate-apps/quadcopter-sitl/worlds/x500_quadcopter.sdf");
+    println!("  2. Bridge running: ./target/debug/gz-bridge");
+    println!("  3. Aviate running: ./target/debug/aviate-app-quadcopter-sitl");
+    println!();
+
+    let mut client = match SitlTestClient::new() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to create test client: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Run the test but capture the flight log before consuming the result
+    match run_flight_test_with_log(&mut client) {
+        Ok(result) => {
+            println!("\n=== Test Results ===");
+            println!("Duration: {} ms", result.test_duration_ms);
+            println!("Armed: {}", if result.armed { "YES" } else { "NO (warning)" });
+            println!("Actuator response: {}", if result.received_actuator_response { "YES" } else { "NO" });
+            println!("Max altitude: {:.2} m", result.max_altitude);
+
+            // Verify trajectory
+            let (trajectory_ok, trajectory_status) = verify_trajectory(client.flight_log());
+            println!("Trajectory: {}", trajectory_status.to_uppercase());
+
+            if trajectory_ok {
+                println!("\n✅ SITL Test Complete");
+                std::process::exit(0);
+            } else {
+                eprintln!("\n❌ SITL Test Failed: trajectory verification failed");
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("\n❌ Test Failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Run flight test with access to the client's flight log
+fn run_flight_test_with_log(client: &mut SitlTestClient) -> Result<TestResult, String> {
     println!("=== SITL Flight Test ===");
     println!("Connecting to Aviate at 127.0.0.1:{}", AVIATE_PORT);
-
-    let mut client = SitlTestClient::new()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+    println!("Listening for position data on port {}", LISTEN_PORT);
 
     let start = Instant::now();
     let mut armed = false;
-    let mut received_actuator_response = false;
+    let mut received_position = false;
 
-    // Phase 1: Send heartbeats
+    // Phase 1: Send heartbeats and drain any pending messages
     println!("\n[Phase 1] Sending heartbeats...");
     for _ in 0..10 {
         client.send_heartbeat();
+        client.receive_messages();
         std::thread::sleep(Duration::from_millis(100));
     }
 
@@ -165,23 +261,41 @@ fn run_flight_test() -> Result<TestResult, String> {
 
     // Phase 3: Takeoff (send thrust commands)
     println!("\n[Phase 3] Taking off (60% thrust for 5 seconds)...");
+    let takeoff_duration = Duration::from_secs(5);
     let takeoff_start = Instant::now();
-    while takeoff_start.elapsed() < Duration::from_secs(5) {
-        client.send_attitude_target(0.6);
+    let mut last_print = Instant::now();
 
-        // Check for actuator responses (would come from bridge)
-        let msgs = client.receive_messages();
-        if !msgs.is_empty() {
-            received_actuator_response = true;
+    while takeoff_start.elapsed() < takeoff_duration {
+        client.send_attitude_target(0.6);
+        let _msgs = client.receive_messages();
+
+        if client.flight_log().len() > 0 {
+            received_position = true;
+        }
+
+        // Print status every second
+        if last_print.elapsed() >= Duration::from_secs(1) {
+            let stats = client.flight_log().analyze();
+            if stats.sample_count > 0 {
+                println!("  Altitude: {:.2} m (max: {:.2} m, {} samples)",
+                    stats.final_altitude, stats.max_altitude, stats.sample_count);
+            }
+            last_print = Instant::now();
         }
 
         std::thread::sleep(Duration::from_millis(20));  // 50 Hz
     }
 
+    // Print takeoff summary
+    let takeoff_stats = client.flight_log().analyze();
+    println!("  Takeoff complete: max alt {:.2} m ({} samples)",
+        takeoff_stats.max_altitude, takeoff_stats.sample_count);
+
     // Phase 4: Land (zero thrust)
     println!("\n[Phase 4] Landing (0% thrust)...");
     for _ in 0..10 {
         client.send_attitude_target(0.0);
+        client.receive_messages();
         std::thread::sleep(Duration::from_millis(100));
     }
 
@@ -192,110 +306,16 @@ fn run_flight_test() -> Result<TestResult, String> {
 
     let test_duration = start.elapsed();
 
+    // Print flight log summary
+    println!("\n[Flight Summary]");
+    client.flight_log().print_summary();
+
+    let final_stats = client.flight_log().analyze();
+
     Ok(TestResult {
         armed,
-        received_actuator_response,
+        received_actuator_response: received_position,
         test_duration_ms: test_duration.as_millis() as u64,
+        max_altitude: final_stats.max_altitude as f64,
     })
-}
-
-/// Verify trajectory by reading Gazebo odometry via `gz topic`
-fn verify_trajectory() -> Result<bool, String> {
-    use std::process::Command;
-
-    println!("\n[Trajectory Verification] Reading Gazebo odometry...");
-
-    // Use `timeout` to avoid blocking forever if no messages are published
-    // gz topic -e -t /model/x500/odometry -n 1: get one odometry message
-    let output = Command::new("timeout")
-        .args(["5", "gz", "topic", "-e", "-t", "/model/x500/odometry", "-n", "1"])
-        .output();
-
-    match output {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let stderr = String::from_utf8_lossy(&out.stderr);
-
-            // Check for timeout (exit code 124 from timeout command)
-            if out.status.code() == Some(124) {
-                println!("  Odometry topic timeout (no data published)");
-                println!("  Skipping trajectory verification (headless mode may not publish odom)");
-                return Ok(true);  // Don't fail the test
-            }
-
-            // Parse z position from odometry output
-            // Looking for: position { x: ... y: ... z: ... }
-            if let Some(z_match) = stdout
-                .lines()
-                .find(|l| l.contains("z:") && !l.contains("angular"))
-            {
-                // Extract the z value
-                if let Some(z_str) = z_match.split("z:").nth(1) {
-                    if let Ok(z) = z_str.trim().parse::<f64>() {
-                        println!("  Current altitude (z): {:.2} m", -z);  // NED: negative z = altitude
-
-                        // In NED frame, negative z means above ground
-                        // During/after takeoff, we expect z < -0.5 (at least 0.5m altitude)
-                        // But after landing, z should be near 0
-
-                        // For a basic test, just verify we can read the topic
-                        println!("  Gazebo communication: OK");
-                        return Ok(true);
-                    }
-                }
-            }
-
-            // If we got output but couldn't parse it
-            if !stdout.is_empty() {
-                println!("  Could not parse odometry (output: {} bytes)", stdout.len());
-                return Ok(true);
-            }
-
-            // No output - likely a gz-transport issue or topic not available
-            if !stderr.is_empty() {
-                println!("  Warning: {}", stderr.lines().next().unwrap_or(""));
-            }
-            println!("  Skipping trajectory verification (no odometry data)");
-            Ok(true)
-        }
-        Err(e) => {
-            println!("  Warning: Could not read Gazebo topic: {}", e);
-            // Don't fail the test if gz command not available
-            Ok(true)
-        }
-    }
-}
-
-fn main() {
-    println!("SITL Flight Test");
-    println!("================");
-    println!();
-    println!("Prerequisites:");
-    println!("  1. Gazebo running: gz sim -r aviate-apps/quadcopter-sitl/worlds/x3_quadcopter.sdf");
-    println!("  2. Bridge running: ./target/debug/gz-bridge");
-    println!("  3. Aviate running: ./target/debug/aviate-app-quadcopter-sitl");
-    println!();
-
-    match run_flight_test() {
-        Ok(result) => {
-            println!("\n=== Test Results ===");
-            println!("Duration: {} ms", result.test_duration_ms);
-            println!("Armed: {}", if result.armed { "YES" } else { "NO (warning)" });
-            println!("Actuator response: {}", if result.received_actuator_response { "YES" } else { "NO" });
-
-            // Verify trajectory
-            match verify_trajectory() {
-                Ok(true) => println!("Trajectory: VERIFIED"),
-                Ok(false) => println!("Trajectory: FAILED"),
-                Err(e) => println!("Trajectory: ERROR - {}", e),
-            }
-
-            println!("\n✅ Test Complete");
-            std::process::exit(0);
-        }
-        Err(e) => {
-            eprintln!("\n❌ Test Failed: {}", e);
-            std::process::exit(1);
-        }
-    }
 }
