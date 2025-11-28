@@ -24,10 +24,11 @@ impl VelocityController {
             z: setpoint.z.0 - current.z.0,
         };
 
-        // Collective thrust is usually derived from Z velocity error (vertical)
-        // More negative Z error (descending too fast) -> increase collective
-        // Max collective 1.0, min 0.0 (or some hover thrust)
-        let collective_thrust_cmd = (error.z * self.gains[2]).clamp(-0.5, 0.5) + 0.5; // Assume 0.5 is hover thrust
+        // Collective thrust is derived from Z velocity error (vertical)
+        // In NED: +Z is down. To arrest descent (current.z > setpoint.z), need more thrust.
+        // error.z = setpoint.z - current.z (negative when descending too fast)
+        // We invert because negative error (descending too fast) needs positive thrust correction
+        let collective_thrust_cmd = (-error.z * self.gains[2]).clamp(-0.5, 0.5) + 0.5; // 0.5 is hover thrust
         let collective = Normalized(collective_thrust_cmd.clamp(0.0, 1.0));
 
         // Roll/Pitch commands are derived from X/Y velocity errors (horizontal)

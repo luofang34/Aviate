@@ -8,7 +8,17 @@
 //! Each vehicle connects to its own shared memory segment (instance-based).
 //! For multi-vehicle tests, create separate MissionRunner instances with
 //! different instance IDs.
+//!
+//! ## MAVLink Integration
+//!
+//! Commands flow through the full Aviate control stack:
+//! ```text
+//! MissionRunner → MAVLink UDP → Aviate SITL (main.rs) → Controller → Mixer
+//!     → HIL_ACTUATOR_CONTROLS → gz_bridge → Gazebo Motors
+//! ```
 
+#[cfg(feature = "gz-plugin")]
+use std::net::UdpSocket;
 #[cfg(feature = "gz-plugin")]
 use std::time::{Duration, Instant};
 
@@ -20,13 +30,223 @@ use crate::mission::{
 #[cfg(feature = "gz-plugin")]
 use aviate_platform_sitl::gz_plugin::{GzPluginBridge, AviateModelState, enu_to_ned_f32};
 
+#[cfg(feature = "gz-plugin")]
+use aviate_mavlink::{
+    serialize_mavlink, parse_mavlink, MavMessage, Heartbeat, CommandLong,
+    SetAttitudeTarget, SetPositionTargetLocalNed, HilSensor, mav_cmd,
+    MavType, MavAutopilot, MavState,
+};
+
+/// MAVLink GCS client for sending commands to the FC
+///
+/// Sends commands via UDP to the Aviate SITL autopilot (main.rs).
+/// The FC then processes commands through the control loop and mixer.
+#[cfg(feature = "gz-plugin")]
+pub struct MavClient {
+    socket: UdpSocket,
+    target_addr: std::net::SocketAddr,
+    seq: u8,
+    target_system: u8,
+    target_component: u8,
+}
+
+#[cfg(feature = "gz-plugin")]
+impl MavClient {
+    /// Default FC port (Aviate SITL listens on 14560)
+    const FC_PORT: u16 = 14560;
+
+    /// Create a new MAVLink client connected to the FC
+    pub fn new(instance: u8) -> Result<Self, String> {
+        // Bind to ephemeral port (OS assigns)
+        let socket = UdpSocket::bind("0.0.0.0:0")
+            .map_err(|e| format!("Failed to bind UDP socket: {}", e))?;
+        socket.set_nonblocking(true)
+            .map_err(|e| format!("Failed to set nonblocking: {}", e))?;
+
+        // FC address (each instance could have different port in multi-vehicle)
+        let port = Self::FC_PORT + instance as u16 * 10;
+        let target_addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+
+        Ok(Self {
+            socket,
+            target_addr,
+            seq: 0,
+            target_system: 1,
+            target_component: 1,
+        })
+    }
+
+    /// Send a MAVLink message
+    fn send(&mut self, msg: &MavMessage) -> bool {
+        let mut buf = [0u8; 300];
+        if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
+            self.seq = self.seq.wrapping_add(1);
+            self.socket.send_to(&buf[..len], self.target_addr).is_ok()
+        } else {
+            false
+        }
+    }
+
+    /// Try to receive a MAVLink message (non-blocking)
+    fn recv(&mut self) -> Option<MavMessage> {
+        let mut buf = [0u8; 512];
+        match self.socket.recv_from(&mut buf) {
+            Ok((len, _src)) => {
+                match parse_mavlink(&buf[..len]) {
+                    Ok((msg, _)) => Some(msg),
+                    Err(_) => None,
+                }
+            }
+            Err(_) => None,
+        }
+    }
+
+    /// Send heartbeat (Level 1)
+    pub fn send_heartbeat(&mut self) -> bool {
+        let hb = Heartbeat {
+            mav_type: MavType::Gcs as u8,
+            autopilot: MavAutopilot::Generic as u8,
+            base_mode: 0,
+            custom_mode: 0,
+            system_status: MavState::Active as u8,
+            mavlink_version: 3,
+        };
+        self.send(&MavMessage::Heartbeat(hb))
+    }
+
+    /// Send arm command (Level 2)
+    pub fn send_arm(&mut self) -> bool {
+        let cmd = CommandLong {
+            param1: 1.0, // 1 = arm
+            param2: 0.0,
+            param3: 0.0,
+            param4: 0.0,
+            param5: 0.0,
+            param6: 0.0,
+            param7: 0.0,
+            command: mav_cmd::COMPONENT_ARM_DISARM,
+            target_system: self.target_system,
+            target_component: self.target_component,
+            confirmation: 0,
+        };
+        self.send(&MavMessage::CommandLong(cmd))
+    }
+
+    /// Send disarm command (Level 2)
+    pub fn send_disarm(&mut self) -> bool {
+        let cmd = CommandLong {
+            param1: 0.0, // 0 = disarm
+            param2: 0.0,
+            param3: 0.0,
+            param4: 0.0,
+            param5: 0.0,
+            param6: 0.0,
+            param7: 0.0,
+            command: mav_cmd::COMPONENT_ARM_DISARM,
+            target_system: self.target_system,
+            target_component: self.target_component,
+            confirmation: 0,
+        };
+        self.send(&MavMessage::CommandLong(cmd))
+    }
+
+    /// Send attitude target (Level 3-4)
+    /// q: quaternion [w, x, y, z], thrust: 0.0 to 1.0
+    pub fn send_attitude_target(&mut self, q: [f32; 4], thrust: f32) -> bool {
+        let tgt = SetAttitudeTarget {
+            time_boot_ms: 0,
+            target_system: self.target_system,
+            target_component: self.target_component,
+            type_mask: 0x07, // Ignore body rates, use attitude + thrust
+            q,
+            body_roll_rate: 0.0,
+            body_pitch_rate: 0.0,
+            body_yaw_rate: 0.0,
+            thrust,
+            thrust_body: [0.0, 0.0, 0.0],
+        };
+        self.send(&MavMessage::SetAttitudeTarget(tgt))
+    }
+
+    /// Send position target (Level 5)
+    pub fn send_position_target(&mut self, x: f32, y: f32, z: f32, yaw: f32) -> bool {
+        let tgt = SetPositionTargetLocalNed {
+            time_boot_ms: 0,
+            target_system: self.target_system,
+            target_component: self.target_component,
+            coordinate_frame: 1, // MAV_FRAME_LOCAL_NED
+            type_mask: 0x0DF8, // Position + yaw only (ignore velocity, accel, yaw_rate)
+            x,
+            y,
+            z,
+            vx: 0.0,
+            vy: 0.0,
+            vz: 0.0,
+            afx: 0.0,
+            afy: 0.0,
+            afz: 0.0,
+            yaw,
+            yaw_rate: 0.0,
+        };
+        self.send(&MavMessage::SetPositionTargetLocalNed(tgt))
+    }
+
+    /// Wait for COMMAND_ACK
+    pub fn wait_ack(&mut self, timeout_ms: u64) -> Option<u8> {
+        let start = Instant::now();
+        while start.elapsed().as_millis() < timeout_ms as u128 {
+            if let Some(MavMessage::CommandAck(ack)) = self.recv() {
+                return Some(ack.result);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        None
+    }
+
+    /// Send HIL_SENSOR to satisfy pre-arm checks
+    /// This simulates sensor data that gz_bridge would normally send
+    pub fn send_hil_sensor(&mut self) -> bool {
+        let sensor = HilSensor {
+            time_usec: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_micros() as u64)
+                .unwrap_or(0),
+            xacc: 0.0,
+            yacc: 0.0,
+            zacc: -9.81,
+            xgyro: 0.0,
+            ygyro: 0.0,
+            zgyro: 0.0,
+            xmag: 0.2,
+            ymag: 0.0,
+            zmag: 0.4,
+            abs_pressure: 1013.25,
+            diff_pressure: 0.0,
+            pressure_alt: 0.0,
+            temperature: 25.0,
+            fields_updated: 0xFFFF_FFFF,
+            id: 0,
+        };
+        self.send(&MavMessage::HilSensor(sensor))
+    }
+}
+
 /// Mission runner state
 ///
 /// Each MissionRunner connects to a specific vehicle instance via shared memory.
 /// Instance 0 uses /aviate_gz_bridge, instance N uses /aviate_gz_bridge_N.
+///
+/// ## Control Modes
+///
+/// - **MAVLink mode** (when FC is running): Commands flow through the full stack:
+///   `MissionRunner → MAVLink → FC → Controller → Mixer → HIL_ACTUATOR_CONTROLS → gz_bridge → Gazebo`
+///
+/// - **Direct mode** (fallback): Direct motor control via shared memory:
+///   `MissionRunner → GzPluginBridge → Gazebo` (bypasses FC, for testing only)
 #[cfg(feature = "gz-plugin")]
 pub struct MissionRunner {
     bridge: GzPluginBridge,
+    mav: MavClient,
     instance: u8,
     vehicle_id: String,
     last_step: u64,
@@ -35,6 +255,8 @@ pub struct MissionRunner {
     start_position: [f32; 3],
     armed: bool,
     max_altitude: f32,
+    /// True if FC is responding to MAVLink commands
+    fc_connected: bool,
 }
 
 #[cfg(feature = "gz-plugin")]
@@ -52,8 +274,11 @@ impl MissionRunner {
         let bridge = GzPluginBridge::connect_instance_with_retry(instance, 20, 500)
             .map_err(|e| format!("Failed to connect to instance {}: {:?}", instance, e))?;
 
+        let mav = MavClient::new(instance)?;
+
         Ok(Self {
             bridge,
+            mav,
             instance,
             vehicle_id: vehicle_id.to_string(),
             last_step: 0,
@@ -62,7 +287,28 @@ impl MissionRunner {
             start_position: [0.0; 3],
             armed: false,
             max_altitude: 0.0,
+            fc_connected: false, // Will be detected when FC responds
         })
+    }
+
+    /// Check if FC is responding to MAVLink commands
+    fn try_connect_fc(&mut self) -> bool {
+        // Send heartbeat and sensor data to prime the FC
+        for _ in 0..10 {
+            self.mav.send_heartbeat();
+            self.mav.send_hil_sensor();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // Check for heartbeat response
+        for _ in 0..10 {
+            if let Some(MavMessage::Heartbeat(_)) = self.mav.recv() {
+                self.log("FC connected via MAVLink");
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
     }
 
     /// Get the instance ID this runner is connected to
@@ -86,6 +332,14 @@ impl MissionRunner {
         self.log(&format!("Description: {}", mission.description));
         self.log(&format!("Lockstep: {}", if mission.lockstep { "YES" } else { "NO" }));
         println!();
+
+        // Try to connect to FC via MAVLink
+        self.fc_connected = self.try_connect_fc();
+        if self.fc_connected {
+            self.log("Control mode: MAVLink (FC connected)");
+        } else {
+            self.log("Control mode: Direct (FC not running, using shared memory)");
+        }
 
         // Enable lockstep if required
         if mission.lockstep {
@@ -224,12 +478,70 @@ impl MissionRunner {
     }
 
     /// Execute an action
+    ///
+    /// When FC is connected (fc_connected=true), commands flow via MAVLink:
+    ///   MissionRunner → MAVLink → FC → Controller → Mixer → HIL_ACTUATOR_CONTROLS → gz_bridge → Gazebo
+    ///
+    /// When FC is not running (fc_connected=false), direct motor control:
+    ///   MissionRunner → GzPluginBridge → Gazebo (bypasses FC, for testing)
     fn execute_action(&mut self, action: &Action) {
+        if self.fc_connected {
+            self.execute_action_mavlink(action);
+        } else {
+            self.execute_action_direct(action);
+        }
+    }
+
+    /// Execute action via MAVLink commands to FC
+    fn execute_action_mavlink(&mut self, action: &Action) {
+        match action {
+            Action::Wait => {
+                self.mav.send_heartbeat();
+            }
+            Action::Arm => {
+                if !self.armed {
+                    self.mav.send_arm();
+                    self.armed = true;
+                    self.log("ARM via MAVLink");
+                }
+            }
+            Action::Disarm => {
+                if self.armed {
+                    self.mav.send_attitude_target([1.0, 0.0, 0.0, 0.0], 0.0);
+                    self.mav.send_disarm();
+                    self.armed = false;
+                    self.log("DISARM via MAVLink");
+                }
+            }
+            Action::Thrust(t) => {
+                if self.armed {
+                    self.mav.send_attitude_target([1.0, 0.0, 0.0, 0.0], *t);
+                }
+            }
+            Action::AttitudeTarget { q, thrust } => {
+                if self.armed {
+                    self.mav.send_attitude_target(*q, *thrust);
+                }
+            }
+            Action::GoTo { position, heading } => {
+                if self.armed {
+                    self.mav.send_position_target(
+                        position[0],
+                        position[1],
+                        position[2],
+                        *heading,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Execute action via direct motor control (bypass FC)
+    fn execute_action_direct(&mut self, action: &Action) {
         match action {
             Action::Wait => {}
             Action::Arm => {
                 self.armed = true;
-                // In a full implementation, send MAVLink arm command
             }
             Action::Disarm => {
                 self.armed = false;
@@ -237,18 +549,18 @@ impl MissionRunner {
             }
             Action::Thrust(t) => {
                 if self.armed {
-                    let speed = t * 1000.0; // Scale to rad/s
-                    let _ = self.bridge.set_motor_speeds(&[speed as f64, speed as f64, speed as f64, speed as f64]);
+                    let speed = (*t * 1000.0) as f64;
+                    let _ = self.bridge.set_motor_speeds(&[speed, speed, speed, speed]);
                 }
             }
             Action::AttitudeTarget { q: _, thrust } => {
                 if self.armed {
-                    let speed = thrust * 1000.0;
-                    let _ = self.bridge.set_motor_speeds(&[speed as f64, speed as f64, speed as f64, speed as f64]);
+                    let speed = (*thrust * 1000.0) as f64;
+                    let _ = self.bridge.set_motor_speeds(&[speed, speed, speed, speed]);
                 }
             }
             Action::GoTo { position: _, heading: _ } => {
-                // Future: implement position control
+                // Position control requires FC
             }
         }
     }

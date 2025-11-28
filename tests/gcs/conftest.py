@@ -105,6 +105,78 @@ class MavConnection:
         """Wait for heartbeat from vehicle."""
         return self.conn.recv_match(type='HEARTBEAT', blocking=True, timeout=timeout)
 
+    def send_position_target(self, x: float, y: float, z: float,
+                              yaw: float = 0.0, type_mask: int = 0x0F8,
+                              target_system: int = 1, target_component: int = 1):
+        """
+        Send SET_POSITION_TARGET_LOCAL_NED message.
+
+        Args:
+            x, y, z: Position in NED frame (meters)
+            yaw: Heading (radians)
+            type_mask: Which fields to ignore (default: ignore velocity/accel)
+        """
+        self.conn.mav.set_position_target_local_ned_send(
+            self.time_boot_ms(),
+            target_system, target_component,
+            mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+            type_mask,
+            x, y, z,  # position
+            0, 0, 0,  # velocity (ignored by type_mask)
+            0, 0, 0,  # acceleration (ignored)
+            yaw, 0    # yaw, yaw_rate
+        )
+
+    def send_velocity_target(self, vx: float, vy: float, vz: float,
+                              yaw_rate: float = 0.0,
+                              target_system: int = 1, target_component: int = 1):
+        """
+        Send SET_POSITION_TARGET_LOCAL_NED for velocity control.
+
+        Args:
+            vx, vy, vz: Velocity in NED frame (m/s)
+            yaw_rate: Yaw rate (rad/s)
+        """
+        # Ignore position and acceleration, use velocity
+        type_mask = 0b0000_0111_1100_0111  # 0x07C7
+        self.conn.mav.set_position_target_local_ned_send(
+            self.time_boot_ms(),
+            target_system, target_component,
+            mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+            type_mask,
+            0, 0, 0,      # position (ignored)
+            vx, vy, vz,   # velocity
+            0, 0, 0,      # acceleration (ignored)
+            0, yaw_rate   # yaw (ignored), yaw_rate
+        )
+
+    def send_command_long(self, command: int, param1: float = 0, param2: float = 0,
+                          param3: float = 0, param4: float = 0, param5: float = 0,
+                          param6: float = 0, param7: float = 0,
+                          target_system: int = 1, target_component: int = 1) -> bool:
+        """Send generic COMMAND_LONG and wait for ACK."""
+        self.conn.mav.command_long_send(
+            target_system, target_component,
+            command, 0,  # confirmation
+            param1, param2, param3, param4, param5, param6, param7
+        )
+        return self._wait_for_command_ack(command)
+
+    def recv_actuator_controls(self, timeout: float = 1.0):
+        """Receive HIL_ACTUATOR_CONTROLS message."""
+        return self.conn.recv_match(type='HIL_ACTUATOR_CONTROLS', blocking=True, timeout=timeout)
+
+    def recv_any(self, timeout: float = 1.0):
+        """Receive any MAVLink message."""
+        return self.conn.recv_match(blocking=True, timeout=timeout)
+
+    def drain_messages(self, timeout: float = 0.1):
+        """Drain all pending messages from the receive buffer."""
+        while True:
+            msg = self.conn.recv_match(blocking=True, timeout=timeout)
+            if msg is None:
+                break
+
     def close(self):
         """Close connection."""
         self.conn.close()

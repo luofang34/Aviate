@@ -25,10 +25,14 @@ pub struct EnvelopeMargin {
     pub load_factor: Scalar,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct ProtectionStatus {
     pub limited_axes: AxisLimitFlags,
     pub saturated: bool,
+}
+
+impl Default for AxisLimitFlags {
+    fn default() -> Self { Self::empty() }
 }
 
 pub trait EnvelopeProtector {

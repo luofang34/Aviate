@@ -13,13 +13,14 @@ pub mod fault;
 pub mod hal;
 
 use crate::ekf::Ekf;
-use crate::control::{VehicleController, Command, ConfigMode, Limits, AuthorityProfile, ControlLaw};
-use crate::control::envelope::{SimpleEnvelopeProtector, EnvelopeProtector};
-use crate::mixer::{Mixer, Sanitizer, ActuatorCmd, ActuatorSanitizer, ModeConfig};
+use crate::control::{VehicleController, Command, ConfigMode, Limits, AuthorityProfile, ControlLaw, ControlMode};
+use crate::control::envelope::{SimpleEnvelopeProtector, EnvelopeProtector, ProtectionStatus};
+use crate::mixer::{Mixer, Sanitizer, ActuatorCmd, ActuatorSanitizer, ModeConfig, SanitizeReport};
 use crate::fault::{FaultFlags, FaultHandlingTable};
 use crate::time::Timestamp;
 use crate::sensor::SensorSet;
-use crate::types::Normalized;
+use crate::state::{StateEstimate, EstimateQuality};
+use crate::types::{Normalized, Radians, RadiansPerSecond, Meters, MetersPerSecond};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum InitState {
@@ -58,6 +59,187 @@ pub enum ArmError {
     Faulted,
     AlreadyArmed,
     ConfigInvalid,
+}
+
+// --- Spec §16: Channel & Redundancy Model ---
+
+/// Channel identifier for redundant flight controllers
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ChannelId(pub u8);
+
+impl ChannelId {
+    pub const PRIMARY: Self = Self(0);
+    pub const SECONDARY: Self = Self(1);
+    pub const TERTIARY: Self = Self(2);
+    pub const MAX_CHANNELS: usize = 3;
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ChannelHealth { Operative, Degraded, Failed, Testing }
+
+impl Default for ChannelHealth {
+    fn default() -> Self { Self::Operative }
+}
+
+// --- Spec §18: Timing ---
+
+/// Timing statistics for control loop
+#[derive(Copy, Clone, Debug, Default)]
+pub struct TimingStats {
+    pub last_cycle_us: u32,
+    pub max_cycle_us: u32,
+    pub min_cycle_us: u32,
+    pub deadline_violations: u32,
+    pub consecutive_violations: u32,
+    pub total_cycles: u64,
+}
+
+/// Per-cycle timing information
+#[derive(Copy, Clone, Debug)]
+pub struct CycleTiming {
+    pub cycle_start_us: u32,
+    pub cycle_end_us: u32,
+    pub duration_us: u32,
+    pub deadline_met: bool,
+}
+
+impl Default for CycleTiming {
+    fn default() -> Self {
+        Self {
+            cycle_start_us: 0,
+            cycle_end_us: 0,
+            duration_us: 0,
+            deadline_met: true,
+        }
+    }
+}
+
+// --- Spec §13: Envelope Margin ---
+
+/// Remaining margin before limit breach (positive = margin remaining)
+#[derive(Copy, Clone, Debug, Default)]
+pub struct EnvelopeMargin {
+    pub roll_rad: Radians,
+    pub pitch_rad: Radians,
+    pub yaw_rate_rad_s: RadiansPerSecond,
+    pub altitude_m: Meters,
+    pub airspeed_mps: MetersPerSecond,
+    pub load_factor: f32,
+}
+
+// --- Spec §14: Degradation ---
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DegradationReason {
+    SensorLoss,
+    ActuatorFault,
+    ActuatorNumericError,
+    EstimatorDivergence,
+    EnvelopeExceedance,
+    CommandTimeout,
+    TimingViolation,
+    NumericError,
+    ExplicitRequest,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct DegradationEvent {
+    pub from: ControlLaw,
+    pub to: ControlLaw,
+    pub reason: DegradationReason,
+    pub timestamp: Timestamp,
+}
+
+// --- Spec §4.4: Configuration Transition ---
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TransitionFailure {
+    ActuatorStuck,
+    Asymmetry,
+    Timeout,
+    UnsafeConditions,
+}
+
+/// Configuration transition state for morphing aircraft
+#[derive(Clone, Debug)]
+pub enum ConfigTransitionState {
+    /// Stable in a configuration mode
+    Stable(ConfigMode),
+    /// Actively transitioning between modes
+    Switching {
+        from: ConfigMode,
+        to: ConfigMode,
+        progress: f32,
+    },
+    /// Transition failed
+    Failed {
+        intended: ConfigMode,
+        actual: ConfigMode,
+        reason: TransitionFailure,
+    },
+}
+
+impl Default for ConfigTransitionState {
+    fn default() -> Self { Self::Stable(ConfigMode::Hover) }
+}
+
+// --- Spec §16: Channel Status ---
+
+/// Full per-cycle status from kernel
+#[derive(Clone, Debug)]
+pub struct ChannelStatus {
+    pub mode: ControlMode,
+    pub config_mode: ConfigMode,
+    pub transition_state: ConfigTransitionState,
+    pub law: ControlLaw,
+    pub health: ChannelHealth,
+    pub faults: FaultFlags,
+    pub confidence: EstimateQuality,
+    pub envelope_margin: EnvelopeMargin,
+    pub sequence: u32,
+    pub protection: ProtectionStatus,
+    pub sanitize_report: SanitizeReport,
+}
+
+impl Default for ChannelStatus {
+    fn default() -> Self {
+        Self {
+            mode: ControlMode::Rate,
+            config_mode: ConfigMode::Hover,
+            transition_state: ConfigTransitionState::default(),
+            law: ControlLaw::Normal,
+            health: ChannelHealth::Operative,
+            faults: FaultFlags::empty(),
+            confidence: EstimateQuality::Good,
+            envelope_margin: EnvelopeMargin::default(),
+            sequence: 0,
+            protection: ProtectionStatus::default(),
+            sanitize_report: SanitizeReport::default(),
+        }
+    }
+}
+
+// --- Spec §20: Core Interface ---
+
+/// Full result from kernel update() - spec §20
+#[derive(Clone, Debug)]
+pub struct UpdateResult {
+    pub actuator: ActuatorCmd,
+    pub status: ChannelStatus,
+    pub estimate: StateEstimate,
+    pub timing: CycleTiming,
+    pub degradation: Option<DegradationEvent>,
+}
+
+/// Lightweight health snapshot - spec §20
+#[derive(Clone, Debug)]
+pub struct HealthReport {
+    pub init_state: InitState,
+    pub control_law: ControlLaw,
+    pub config_mode: ConfigMode,
+    pub transition_state: ConfigTransitionState,
+    pub faults: FaultFlags,
+    pub channel_health: ChannelHealth,
 }
 
 pub struct AviateKernel<V: VehicleController, M: Mixer> {
