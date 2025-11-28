@@ -28,7 +28,7 @@ use crate::mission::{
 };
 
 #[cfg(feature = "gz-plugin")]
-use aviate_platform_sitl::gz_plugin::{GzPluginBridge, AviateModelState, enu_to_ned_f32};
+use aviate_backend_gz::{GzPluginBridge, AviateModelState, enu_to_ned_f32};
 
 #[cfg(feature = "gz-plugin")]
 use aviate_mavlink::{

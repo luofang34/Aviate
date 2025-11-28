@@ -17,14 +17,15 @@ name = "aviate_app_quadcopter_sitl"
 path = "src/lib.rs"
 
 [features]
-gz-plugin = ["aviate-platform-sitl/gz-plugin"]
+gz-plugin = ["aviate-backend-gz"]
 multi-vehicle = ["mavrouter"]
 default = []
 
 [dependencies]
 aviate-core = { path = "../../aviate-core" }
 aviate-mavlink = { path = "../../aviate-mavlink" }
-aviate-platform-sitl = { path = "../../aviate-platform/sitl" }
+aviate-platform-xil = { path = "../../aviate-platform/xil" }
+aviate-backend-gz = { path = "../../aviate-platform/backends/gz", optional = true }
 
 # Multi-vehicle routing (optional)
 # mavrouter 0.1.4 re-exports CancellationToken, RwLock, and brings tokio as transitive dep

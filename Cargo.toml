@@ -5,7 +5,6 @@ members = [
     "aviate-airframes/quadcopter",
     "aviate-airframes/fixed-wing",
     "aviate-platform/stm32h7",
-    "aviate-platform/sitl",
     "aviate-platform/xil",
     "aviate-platform/backends/gz",
     "aviate-apps/quadcopter-stm32h7",

@@ -6,7 +6,7 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use aviate_platform_sitl::gz_plugin::{GzPluginBridge, enu_to_ned};
+//! use aviate_backend_gz::{GzPluginBridge, enu_to_ned};
 //!
 //! // Connect to the plugin (requires AviateGzPlugin loaded in gz-sim)
 //! let bridge = GzPluginBridge::connect_with_retry(10, 500)?;

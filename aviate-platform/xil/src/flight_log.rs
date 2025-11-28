@@ -13,7 +13,7 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use aviate_platform_sitl::flight_log::{FlightLog, FlightLogConfig};
+//! use aviate_platform_xil::flight_log::{FlightLog, FlightLogConfig};
 //!
 //! let mut log = FlightLog::new(FlightLogConfig::default());
 //!

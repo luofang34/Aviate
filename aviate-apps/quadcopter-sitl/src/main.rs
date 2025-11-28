@@ -39,9 +39,9 @@ use aviate_core::mixer::{QuadXMixer, ModeConfig};
 use aviate_core::time::{Timestamp, TimeSource};
 use aviate_core::hal::{SensorHal, ActuatorHal, SystemHal, CommandHal, SystemCommand};
 use aviate_core::types::Normalized;
-use aviate_core::sensor::{SensorSet, SensorReading, ImuData, GnssData, MagData, BaroData, AirspeedData};
+use aviate_core::sensor::{SensorSet, SensorReading, ImuData, GnssData, MagData, BaroData};
 
-use aviate_platform_sitl::{SitlConfig, SitlHal, UdpMavlinkHal};
+use aviate_platform_xil::{SitlConfig, SitlHal, UdpMavlinkHal};
 
 fn sitl_timestamp() -> Timestamp {
     Timestamp { ticks: 0, source: TimeSource::Internal }
@@ -67,9 +67,10 @@ fn run_mock() {
     let mut kernel = create_kernel();
     let mut last_cmd = default_command();
     let mut last_imu_time = None;
+    let mut sensor_cache = SensorCache::new();
 
     loop {
-        run_loop_iteration(&mut hal, &mut kernel, &mut last_cmd, &mut last_imu_time);
+        run_loop_iteration(&mut hal, &mut kernel, &mut last_cmd, &mut last_imu_time, &mut sensor_cache);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
@@ -100,6 +101,7 @@ fn run_udp() {
     let mut kernel = create_kernel();
     let mut last_cmd = default_command();
     let mut last_imu_time = None;
+    let mut sensor_cache = SensorCache::new();
 
     // Main loop at ~1kHz
     let loop_period_us = 1000; // 1ms = 1kHz
@@ -111,7 +113,7 @@ fn run_udp() {
 
         if elapsed >= loop_period_us {
             last_tick = now;
-            run_loop_iteration(&mut hal, &mut kernel, &mut last_cmd, &mut last_imu_time);
+            run_loop_iteration(&mut hal, &mut kernel, &mut last_cmd, &mut last_imu_time, &mut sensor_cache);
         } else {
             // Sleep for remaining time (rough, not real-time precise)
             let remaining_us = loop_period_us - elapsed;
@@ -147,11 +149,50 @@ fn default_command() -> Command {
     }
 }
 
+/// Cached sensor readings for init_step
+struct SensorCache {
+    imu: Option<SensorReading<ImuData>>,
+    gnss: Option<SensorReading<GnssData>>,
+    baro: Option<SensorReading<BaroData>>,
+    mag: Option<SensorReading<MagData>>,
+}
+
+impl SensorCache {
+    fn new() -> Self {
+        Self { imu: None, gnss: None, baro: None, mag: None }
+    }
+
+    fn to_sensor_set(&self) -> SensorSet {
+        SensorSet {
+            imus: [
+                self.imu.clone().unwrap_or_default(),
+                SensorReading::default(),
+                SensorReading::default(),
+            ],
+            gnss: [
+                self.gnss.clone().unwrap_or_default(),
+                SensorReading::default(),
+            ],
+            mags: [
+                self.mag.clone().unwrap_or_default(),
+                SensorReading::default(),
+            ],
+            baros: [
+                self.baro.clone().unwrap_or_default(),
+                SensorReading::default(),
+            ],
+            airspeeds: [SensorReading::default(), SensorReading::default()],
+            geometry: None,
+        }
+    }
+}
+
 fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
     hal: &mut H,
     kernel: &mut AviateKernel<McController, QuadXMixer>,
     last_cmd: &mut Command,
     last_imu_time: &mut Option<u64>,
+    sensor_cache: &mut SensorCache,
 ) {
     // 1. Read sensors and update EKF
     if let Some(imu) = hal.read_imu() {
@@ -163,23 +204,27 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
             0.001 // Default 1ms for first sample
         };
         *last_imu_time = Some(current_time);
-        
+
         // Sanity check dt
         let dt = dt.clamp(0.0001, 0.1);
 
         kernel.ekf.predict(&imu.value, dt);
+        sensor_cache.imu = Some(imu);
     }
 
     if let Some(gnss) = hal.read_gnss() {
         kernel.ekf.update_gnss(&gnss);
+        sensor_cache.gnss = Some(gnss);
     }
 
     if let Some(baro) = hal.read_baro() {
         kernel.ekf.update_baro(&baro);
+        sensor_cache.baro = Some(baro);
     }
 
     if let Some(mag) = hal.read_mag() {
         kernel.ekf.update_mag(&mag);
+        sensor_cache.mag = Some(mag);
     }
 
     // 2. Receive Commands (GCS/RC)
@@ -187,6 +232,8 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
         match sys_cmd {
             SystemCommand::FlightControl(cmd) => {
                 debug!("FlightControl: thrust={:.2}", cmd.setpoint.collective_thrust.0);
+                // Update throttle check for pre-arm
+                kernel.checks.pre_arm.update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
                 *last_cmd = cmd;
             }
             SystemCommand::Arm => {
@@ -206,18 +253,9 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
         }
     }
 
-    // 3. Run init state machine
+    // 3. Run init state machine with actual sensor data
     if !kernel.is_ready() {
-        // Keep running init until ready
-        // SensorSet is not used in simple init, but required by the API
-        let sensors = SensorSet {
-            imus: [SensorReading::<ImuData>::default(); 3],
-            gnss: [SensorReading::<GnssData>::default(); 2],
-            mags: [SensorReading::<MagData>::default(); 2],
-            baros: [SensorReading::<BaroData>::default(); 2],
-            airspeeds: [SensorReading::<AirspeedData>::default(); 2],
-            geometry: None,
-        };
+        let sensors = sensor_cache.to_sensor_set();
         let ts = hal.now();
         kernel.init_step(&sensors, ts);
     }
