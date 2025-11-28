@@ -11,6 +11,7 @@ pub mod control;
 pub mod mixer;
 pub mod fault;
 pub mod hal;
+pub mod checks;
 
 use crate::ekf::Ekf;
 use crate::control::{VehicleController, Command, ConfigMode, Limits, AuthorityProfile, ControlLaw, ControlMode};
@@ -21,6 +22,7 @@ use crate::time::Timestamp;
 use crate::sensor::SensorSet;
 use crate::state::{StateEstimate, EstimateQuality};
 use crate::types::{Normalized, Radians, RadiansPerSecond, Meters, MetersPerSecond};
+use crate::checks::{KernelChecks, PreArmFlags};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum InitState {
@@ -251,13 +253,16 @@ pub struct AviateKernel<V: VehicleController, M: Mixer> {
     pub limits: Limits,
     pub mode: ConfigMode,
     pub mode_config: ModeConfig,
-    
+
     // State Machine
     pub init_state: InitState,
     pub faults: FaultFlags,
     pub fault_table: FaultHandlingTable,
     pub control_law: ControlLaw,
-    
+
+    // Unified Check System (§17, §14, §4.5)
+    pub checks: KernelChecks,
+
     // Safety
     pub safe_output: [Normalized; 16], // MAX_ACTUATORS = 16
 }
@@ -293,42 +298,120 @@ impl<V: VehicleController, M: Mixer> AviateKernel<V, M> {
             faults: FaultFlags::empty(),
             fault_table: FaultHandlingTable::DEFAULT,
             control_law: ControlLaw::Normal,
+            checks: KernelChecks::new(),
             safe_output: [Normalized(0.0); 16],
         }
     }
-    
-    pub fn init_step(&mut self, _sensors: &SensorSet, _time: Timestamp) -> InitResult {
-        // Simple placeholder initialization logic
+
+    /// Create kernel with custom pre-arm requirements
+    pub fn with_pre_arm_required(controller: V, mixer: M, mode_config: ModeConfig, required: PreArmFlags) -> Self {
+        let mut kernel = Self::new(controller, mixer, mode_config);
+        kernel.checks = KernelChecks::with_pre_arm_required(required);
+        kernel
+    }
+
+    pub fn init_step(&mut self, sensors: &SensorSet, _time: Timestamp) -> InitResult {
+        // 1. Update checks from sensor data (always, regardless of state)
+        self.checks.pre_arm.update_from_sensors(sensors);
+        self.checks.pre_arm.update_from_faults(self.faults);
+        self.checks.pre_arm.update_ekf(self.ekf.is_initialized());
+
+        // 2. Update faults from sensor health
+        self.update_sensor_faults(sensors);
+
+        // 3. State machine transitions
         match self.init_state {
-            InitState::PowerOn => self.init_state = InitState::ConfigLoading,
-            InitState::ConfigLoading => self.init_state = InitState::SensorInit,
-            InitState::SensorInit => self.init_state = InitState::EstimatorConverging,
+            InitState::PowerOn => {
+                self.init_state = InitState::ConfigLoading;
+            }
+            InitState::ConfigLoading => {
+                // Config loaded (placeholder - would check actual config validity)
+                self.checks.pre_arm.current.insert(PreArmFlags::CONFIG_VALID);
+                self.init_state = InitState::SensorInit;
+            }
+            InitState::SensorInit => {
+                // Wait for at least one valid sensor reading
+                let has_sensors = self.checks.pre_arm.current.contains(PreArmFlags::IMU_HEALTHY);
+                if has_sensors {
+                    self.init_state = InitState::EstimatorConverging;
+                }
+            }
             InitState::EstimatorConverging => {
-                if self.ekf.is_initialized() {
+                // Wait for sensor convergence and EKF initialization
+                let converged = self.checks.pre_arm.current.contains(PreArmFlags::IMU_CONVERGED)
+                    && self.checks.pre_arm.current.contains(PreArmFlags::EKF_CONVERGED);
+                if converged {
                     self.init_state = InitState::PreArm;
-                } else {
-                    // In real usage, we'd check convergence criteria
-                    // For now, assume immediate
-                     self.init_state = InitState::PreArm;
                 }
             }
             InitState::PreArm => {
-                if self.faults.is_empty() {
+                // Check all pre-arm requirements
+                if self.checks.pre_arm.is_satisfied() {
                     self.init_state = InitState::Ready;
                 }
             }
             InitState::Ready => {
-                if !self.faults.is_empty() {
-                    self.init_state = InitState::PreArm; // Fallback if fault appears
+                // Monitor for fault conditions
+                if !self.checks.pre_arm.is_satisfied() {
+                    self.init_state = InitState::PreArm;
                 }
             }
-            _ => {}
+            InitState::Armed => {
+                // Stay armed, monitor for critical faults
+                // Disarm handled separately via disarm()
+            }
+            InitState::Disarmed => {
+                // Transition back to PreArm for potential re-arm
+                // Reset sample counts for fresh convergence check
+                self.checks.pre_arm.samples.reset();
+                self.init_state = InitState::PreArm;
+            }
+            InitState::Fault => {
+                // Require explicit reset to exit fault state
+            }
         }
 
         InitResult {
             state: self.init_state,
             faults: self.faults,
             ready: self.init_state == InitState::Ready,
+        }
+    }
+
+    /// Update fault flags based on sensor health
+    fn update_sensor_faults(&mut self, sensors: &SensorSet) {
+        use crate::sensor::SensorHealth;
+
+        // IMU faults
+        let imu_ok = sensors.imus.iter().any(|s| s.valid && s.health == SensorHealth::Good);
+        if !imu_ok {
+            self.faults.insert(FaultFlags::ALL_IMU_FAILED);
+        } else {
+            self.faults.remove(FaultFlags::ALL_IMU_FAILED);
+        }
+
+        // Baro faults
+        let baro_ok = sensors.baros.iter().any(|s| s.valid && s.health == SensorHealth::Good);
+        if !baro_ok {
+            self.faults.insert(FaultFlags::BARO_FAILED);
+        } else {
+            self.faults.remove(FaultFlags::BARO_FAILED);
+        }
+
+        // Mag faults
+        let mag_ok = sensors.mags.iter().any(|s| s.valid && s.health == SensorHealth::Good);
+        if !mag_ok {
+            self.faults.insert(FaultFlags::MAG_FAILED);
+        } else {
+            self.faults.remove(FaultFlags::MAG_FAILED);
+        }
+
+        // GNSS faults
+        let gnss_ok = sensors.gnss.iter().any(|s| s.valid && s.health == SensorHealth::Good);
+        if !gnss_ok {
+            self.faults.insert(FaultFlags::ALL_GNSS_LOST);
+        } else {
+            self.faults.remove(FaultFlags::ALL_GNSS_LOST);
         }
     }
 

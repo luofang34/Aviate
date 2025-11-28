@@ -101,31 +101,115 @@ mod tests {
         assert!(est.position_ned[0].0 < 1.0, "Position should not overshoot measurement");
     }
 
+    /// Create valid sensor data for testing
+    /// Provides healthy IMU, baro, and mag readings
+    fn valid_test_sensors() -> aviate_core::sensor::SensorSet {
+        use aviate_core::sensor::SensorSet;
+        use aviate_core::types::Celsius;
+
+        let ts = Timestamp { ticks: 0, source: TimeSource::Internal };
+
+        // Valid IMU with gravity on Z axis
+        let valid_imu = SensorReading {
+            value: ImuData {
+                accel: [MetersPerSecondSquared(0.0), MetersPerSecondSquared(0.0), MetersPerSecondSquared(-9.81)],
+                gyro: [RadiansPerSecond(0.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)],
+            },
+            valid: true,
+            source_id: 0,
+            timestamp: ts,
+            health: SensorHealth::Good,
+        };
+
+        // Valid baro at sea level
+        let valid_baro = SensorReading {
+            value: BaroData {
+                altitude: Some(Meters(0.0)),
+                air: AirData {
+                    static_pressure: Some(Pascals(101325.0)),
+                    dynamic_pressure: None,
+                    total_pressure: None,
+                    temperature: Some(Celsius(20.0)),
+                    indicated_airspeed: None,
+                    true_airspeed: None,
+                },
+            },
+            valid: true,
+            source_id: 0,
+            timestamp: ts,
+            health: SensorHealth::Good,
+        };
+
+        // Valid mag
+        let valid_mag = SensorReading {
+            value: MagData {
+                field_ut: [Microtesla(20.0), Microtesla(0.0), Microtesla(40.0)],
+            },
+            valid: true,
+            source_id: 0,
+            timestamp: ts,
+            health: SensorHealth::Good,
+        };
+
+        // Valid GNSS (to avoid ALL_GNSS_LOST fault)
+        let valid_gnss = SensorReading {
+            value: GnssData {
+                position_ned: [Meters(0.0), Meters(0.0), Meters(0.0)],
+                velocity_ned: [MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)],
+                fix: GnssFix::ThreeD,
+                health: GnssHealth::Good,
+            },
+            valid: true,
+            source_id: 0,
+            timestamp: ts,
+            health: SensorHealth::Good,
+        };
+
+        SensorSet {
+            imus: [valid_imu, SensorReading::default(), SensorReading::default()],
+            gnss: [valid_gnss, SensorReading::default()],
+            mags: [valid_mag, SensorReading::default()],
+            baros: [valid_baro, SensorReading::default()],
+            airspeeds: [SensorReading::default(), SensorReading::default()],
+            geometry: None,
+        }
+    }
+
     #[test]
     fn test_kernel_mc() {
         use aviate_core::control::mc::McController;
         use aviate_core::mixer::{QuadXMixer, ModeConfig};
         use aviate_core::control::{ConfigMode, Setpoint, CommandSource, ControlMode};
-        use aviate_core::sensor::SensorSet;
-        
+        use aviate_core::checks::PreArmFlags;
+
         fn dummy_time() -> Timestamp { Timestamp { ticks: 0, source: TimeSource::Internal } }
         let mixer = QuadXMixer { timestamp_source: dummy_time };
-        
+
         let mode_config = ModeConfig {
             mode: ConfigMode::Hover,
             groups: &[],
         };
-        
-        let mut kernel = AviateKernel::new(McController::default(), mixer, mode_config);
-        
-        // Initialize EKF to ensure it's ready for transition (though current placeholder init_step is simple)
+
+        // Use minimal pre-arm requirements for testing
+        // Note: Don't require NO_FAULTS since we're not providing GPS (ALL_GNSS_LOST expected)
+        let test_required = PreArmFlags::IMU_HEALTHY
+            | PreArmFlags::IMU_CONVERGED
+            | PreArmFlags::EKF_CONVERGED
+            | PreArmFlags::THROTTLE_LOW
+            | PreArmFlags::CONFIG_VALID;
+
+        let mut kernel = AviateKernel::with_pre_arm_required(
+            McController::default(), mixer, mode_config, test_required
+        );
+
+        // Initialize EKF
         kernel.ekf.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
             Quaternion::IDENTITY
         );
 
-        let cmd = Command { 
+        let cmd = Command {
             mode: ControlMode::Attitude,
             setpoint: Setpoint {
                 collective_thrust: Normalized(0.5),
@@ -136,32 +220,24 @@ mod tests {
             sequence: 0,
             source: CommandSource::Pilot,
         };
-        
+
         // Before arming: Expect safe output (0.0)
         let act_cmd_safe = kernel.step(&cmd);
         for i in 0..4 {
             assert!((act_cmd_safe.outputs[i].0).abs() < 1e-5, "Should be zero when disarmed");
         }
 
-        // Cycle init state
-        // PowerOn -> ConfigLoading -> SensorInit -> EstimatorConverging -> PreArm -> Ready
-        // My implementation moves one state per call
-        
-        let empty_sensors = SensorSet {
-            imus: [SensorReading::default(), SensorReading::default(), SensorReading::default()],
-            gnss: [SensorReading::default(), SensorReading::default()],
-            mags: [SensorReading::default(), SensorReading::default()],
-            baros: [SensorReading::default(), SensorReading::default()],
-            airspeeds: [SensorReading::default(), SensorReading::default()],
-            geometry: None,
-        };
-        
-        // 5 transitions needed?
-        for _ in 0..10 {
-            kernel.init_step(&empty_sensors, dummy_time());
+        // Provide valid sensor data and set throttle low
+        let valid_sensors = valid_test_sensors();
+        kernel.checks.pre_arm.update_throttle(true); // Throttle low
+
+        // Cycle through init states with valid sensor data
+        // Need 100+ iterations for sensor convergence
+        for _ in 0..150 {
+            kernel.init_step(&valid_sensors, dummy_time());
             if kernel.is_ready() { break; }
         }
-        assert!(kernel.is_ready(), "Kernel failed to become ready");
+        assert!(kernel.is_ready(), "Kernel failed to become ready. Missing: {:?}", kernel.checks.pre_arm.missing());
         
         // Arm
         kernel.arm().expect("Failed to arm");
@@ -180,18 +256,28 @@ mod tests {
         use aviate_core::control::fw::FwController;
         use aviate_core::mixer::{QuadXMixer, ModeConfig};
         use aviate_core::control::{ConfigMode, Setpoint, CommandSource, ControlMode};
-        use aviate_core::sensor::SensorSet;
-        
+        use aviate_core::checks::PreArmFlags;
+
         fn dummy_time() -> Timestamp { Timestamp { ticks: 0, source: TimeSource::Internal } }
         let mixer = QuadXMixer { timestamp_source: dummy_time };
-        
+
         let mode_config = ModeConfig {
             mode: ConfigMode::Cruise,
             groups: &[],
         };
-        
-        let mut kernel = AviateKernel::new(FwController, mixer, mode_config);
-        
+
+        // Use minimal pre-arm requirements for testing
+        // Note: Don't require NO_FAULTS since we're not providing GPS (ALL_GNSS_LOST expected)
+        let test_required = PreArmFlags::IMU_HEALTHY
+            | PreArmFlags::IMU_CONVERGED
+            | PreArmFlags::EKF_CONVERGED
+            | PreArmFlags::THROTTLE_LOW
+            | PreArmFlags::CONFIG_VALID;
+
+        let mut kernel = AviateKernel::with_pre_arm_required(
+            FwController, mixer, mode_config, test_required
+        );
+
         // Init EKF
         kernel.ekf.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
@@ -199,7 +285,7 @@ mod tests {
             Quaternion::IDENTITY
         );
 
-        let cmd = Command { 
+        let cmd = Command {
             mode: ControlMode::Attitude,
             setpoint: Setpoint {
                 collective_thrust: Normalized(0.5),
@@ -210,22 +296,17 @@ mod tests {
             sequence: 0,
             source: CommandSource::Pilot,
         };
-        
-        // Cycle init state
-        let empty_sensors = SensorSet {
-            imus: [SensorReading::default(), SensorReading::default(), SensorReading::default()],
-            gnss: [SensorReading::default(), SensorReading::default()],
-            mags: [SensorReading::default(), SensorReading::default()],
-            baros: [SensorReading::default(), SensorReading::default()],
-            airspeeds: [SensorReading::default(), SensorReading::default()],
-            geometry: None,
-        };
 
-        for _ in 0..10 {
-            kernel.init_step(&empty_sensors, dummy_time());
+        // Provide valid sensor data and set throttle low
+        let valid_sensors = valid_test_sensors();
+        kernel.checks.pre_arm.update_throttle(true);
+
+        // Cycle through init states with valid sensor data
+        for _ in 0..150 {
+            kernel.init_step(&valid_sensors, dummy_time());
             if kernel.is_ready() { break; }
         }
-        assert!(kernel.is_ready(), "Kernel failed to become ready");
+        assert!(kernel.is_ready(), "Kernel failed to become ready. Missing: {:?}", kernel.checks.pre_arm.missing());
         
         kernel.arm().expect("Failed to arm");
         

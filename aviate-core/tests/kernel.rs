@@ -12,20 +12,20 @@ use aviate_core::{
     ChannelId, ChannelHealth, ChannelStatus,
     CycleTiming, TimingStats, EnvelopeMargin,
     DegradationReason, ConfigTransitionState, TransitionFailure,
-    HealthReport,
 };
 use aviate_core::control::{
     ConfigMode, ControlMode, ControlLaw, Setpoint, CommandSource, Command,
 };
 use aviate_core::control::mc::McController;
 use aviate_core::mixer::{QuadXMixer, ModeConfig};
-use aviate_core::sensor::SensorReading;
+use aviate_core::sensor::{SensorReading, SensorHealth, ImuData, BaroData, MagData, GnssData, GnssFix, GnssHealth, AirData};
 use aviate_core::math::{Quaternion, Vector3};
-use aviate_core::types::{Normalized, Meters, MetersPerSecond};
+use aviate_core::types::{Normalized, Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond, Pascals, Microtesla};
 use aviate_core::time::{Timestamp, TimeSource};
 use aviate_core::fault::FaultFlags;
 use aviate_core::sensor::SensorSet;
 use aviate_core::state::EstimateQuality;
+use aviate_core::checks::PreArmFlags;
 
 fn dummy_timestamp() -> Timestamp {
     Timestamp { ticks: 0, source: TimeSource::Internal }
@@ -37,19 +37,87 @@ fn make_kernel() -> AviateKernel<McController, QuadXMixer> {
         mode: ConfigMode::Hover,
         groups: &[],
     };
-    AviateKernel::new(McController::default(), mixer, mode_config)
+    // Use minimal pre-arm requirements for testing
+    let test_required = PreArmFlags::IMU_HEALTHY
+        | PreArmFlags::IMU_CONVERGED
+        | PreArmFlags::EKF_CONVERGED
+        | PreArmFlags::THROTTLE_LOW
+        | PreArmFlags::CONFIG_VALID;
+    let mut kernel = AviateKernel::with_pre_arm_required(
+        McController::default(), mixer, mode_config, test_required
+    );
+    // Set throttle low for tests
+    kernel.checks.pre_arm.update_throttle(true);
+    kernel
 }
 
-fn make_empty_sensors() -> SensorSet {
+/// Create valid sensor data for testing
+fn make_valid_sensors() -> SensorSet {
+    use aviate_core::types::Celsius;
+    let ts = dummy_timestamp();
+
+    let valid_imu = SensorReading {
+        value: ImuData {
+            accel: [MetersPerSecondSquared(0.0), MetersPerSecondSquared(0.0), MetersPerSecondSquared(-9.81)],
+            gyro: [RadiansPerSecond(0.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)],
+        },
+        valid: true,
+        source_id: 0,
+        timestamp: ts,
+        health: SensorHealth::Good,
+    };
+
+    let valid_baro = SensorReading {
+        value: BaroData {
+            altitude: Some(Meters(0.0)),
+            air: AirData {
+                static_pressure: Some(Pascals(101325.0)),
+                dynamic_pressure: None,
+                total_pressure: None,
+                temperature: Some(Celsius(20.0)),
+                indicated_airspeed: None,
+                true_airspeed: None,
+            },
+        },
+        valid: true,
+        source_id: 0,
+        timestamp: ts,
+        health: SensorHealth::Good,
+    };
+
+    let valid_mag = SensorReading {
+        value: MagData {
+            field_ut: [Microtesla(20.0), Microtesla(0.0), Microtesla(40.0)],
+        },
+        valid: true,
+        source_id: 0,
+        timestamp: ts,
+        health: SensorHealth::Good,
+    };
+
+    let valid_gnss = SensorReading {
+        value: GnssData {
+            position_ned: [Meters(0.0), Meters(0.0), Meters(0.0)],
+            velocity_ned: [MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)],
+            fix: GnssFix::ThreeD,
+            health: GnssHealth::Good,
+        },
+        valid: true,
+        source_id: 0,
+        timestamp: ts,
+        health: SensorHealth::Good,
+    };
+
     SensorSet {
-        imus: [SensorReading::default(), SensorReading::default(), SensorReading::default()],
-        gnss: [SensorReading::default(), SensorReading::default()],
-        mags: [SensorReading::default(), SensorReading::default()],
-        baros: [SensorReading::default(), SensorReading::default()],
+        imus: [valid_imu, SensorReading::default(), SensorReading::default()],
+        gnss: [valid_gnss, SensorReading::default()],
+        mags: [valid_mag, SensorReading::default()],
+        baros: [valid_baro, SensorReading::default()],
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
     }
 }
+
 
 // =============================================================================
 // InitState - allows_active_control()
@@ -125,7 +193,7 @@ fn kernel_starts_in_power_on() {
 #[test]
 fn kernel_transitions_through_init_states() {
     let mut kernel = make_kernel();
-    let sensors = make_empty_sensors();
+    let sensors = make_valid_sensors();
 
     // Initialize EKF first
     kernel.ekf.init(
@@ -134,8 +202,8 @@ fn kernel_transitions_through_init_states() {
         Quaternion::IDENTITY,
     );
 
-    // Step through init states
-    for _ in 0..10 {
+    // Step through init states (need 100+ iterations for sensor convergence)
+    for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
         if kernel.init_state == InitState::Ready {
             break;
@@ -148,7 +216,7 @@ fn kernel_transitions_through_init_states() {
 #[test]
 fn kernel_is_ready_returns_correct_value() {
     let mut kernel = make_kernel();
-    let sensors = make_empty_sensors();
+    let sensors = make_valid_sensors();
 
     assert!(!kernel.is_ready());
 
@@ -158,7 +226,7 @@ fn kernel_is_ready_returns_correct_value() {
         Quaternion::IDENTITY,
     );
 
-    for _ in 0..10 {
+    for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
 
@@ -172,7 +240,7 @@ fn kernel_is_ready_returns_correct_value() {
 #[test]
 fn kernel_arm_succeeds_when_ready() {
     let mut kernel = make_kernel();
-    let sensors = make_empty_sensors();
+    let sensors = make_valid_sensors();
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
@@ -180,7 +248,7 @@ fn kernel_arm_succeeds_when_ready() {
         Quaternion::IDENTITY,
     );
 
-    for _ in 0..10 {
+    for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
 
@@ -204,7 +272,7 @@ fn kernel_arm_fails_when_not_ready() {
 #[test]
 fn kernel_arm_fails_when_already_armed() {
     let mut kernel = make_kernel();
-    let sensors = make_empty_sensors();
+    let sensors = make_valid_sensors();
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
@@ -212,7 +280,7 @@ fn kernel_arm_fails_when_already_armed() {
         Quaternion::IDENTITY,
     );
 
-    for _ in 0..10 {
+    for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
 
@@ -225,7 +293,7 @@ fn kernel_arm_fails_when_already_armed() {
 #[test]
 fn kernel_arm_fails_when_faulted() {
     let mut kernel = make_kernel();
-    let sensors = make_empty_sensors();
+    let sensors = make_valid_sensors();
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
@@ -233,11 +301,11 @@ fn kernel_arm_fails_when_faulted() {
         Quaternion::IDENTITY,
     );
 
-    for _ in 0..10 {
+    for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
 
-    // Inject a fault
+    // Inject a fault after reaching Ready state
     kernel.faults = FaultFlags::IMU0_FAILED;
 
     let result = kernel.arm();
@@ -251,7 +319,7 @@ fn kernel_arm_fails_when_faulted() {
 #[test]
 fn kernel_disarm_transitions_to_disarmed() {
     let mut kernel = make_kernel();
-    let sensors = make_empty_sensors();
+    let sensors = make_valid_sensors();
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
@@ -259,7 +327,7 @@ fn kernel_disarm_transitions_to_disarmed() {
         Quaternion::IDENTITY,
     );
 
-    for _ in 0..10 {
+    for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
 
@@ -301,7 +369,7 @@ fn kernel_outputs_safe_when_not_armed() {
 #[test]
 fn kernel_outputs_control_when_armed() {
     let mut kernel = make_kernel();
-    let sensors = make_empty_sensors();
+    let sensors = make_valid_sensors();
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
@@ -309,7 +377,7 @@ fn kernel_outputs_control_when_armed() {
         Quaternion::IDENTITY,
     );
 
-    for _ in 0..10 {
+    for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
     kernel.arm().unwrap();

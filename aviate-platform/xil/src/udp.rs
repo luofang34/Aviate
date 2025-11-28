@@ -17,7 +17,8 @@ use aviate_core::types::{
 
 use aviate_mavlink::{
     parse_mavlink, serialize_mavlink, MavMessage, HilActuatorControls, HilSensor, HilGps,
-    Heartbeat, MavAutopilot, MavType, MavState, MavModeFlag, SetAttitudeTarget, CommandLong, mav_cmd,
+    Heartbeat, MavAutopilot, MavType, MavState, MavModeFlag, SetAttitudeTarget,
+    SetPositionTargetLocalNed, CommandLong, mav_cmd,
 };
 
 use crate::{XilConfig, bridge};
@@ -123,6 +124,7 @@ impl UdpMavlinkHal {
             MavMessage::HilSensor(sensor) => self.handle_hil_sensor(sensor, ts),
             MavMessage::HilGps(gps) => self.handle_hil_gps(gps, ts),
             MavMessage::SetAttitudeTarget(tgt) => self.handle_set_attitude_target(tgt),
+            MavMessage::SetPositionTargetLocalNed(tgt) => self.handle_set_position_target(tgt),
             MavMessage::CommandLong(cmd) => self.handle_command_long(cmd),
             _ => {
                 // Ignore other messages
@@ -225,7 +227,12 @@ impl UdpMavlinkHal {
         let cmd = bridge::mavlink_to_command(&tgt);
         self.command = Some(SystemCommand::FlightControl(cmd));
     }
-    
+
+    fn handle_set_position_target(&mut self, tgt: SetPositionTargetLocalNed) {
+        let cmd = bridge::mavlink_position_to_command(&tgt);
+        self.command = Some(SystemCommand::FlightControl(cmd));
+    }
+
     fn handle_command_long(&mut self, cmd: CommandLong) {
         if cmd.command == mav_cmd::COMPONENT_ARM_DISARM {
             if cmd.param1 == 1.0 {
