@@ -12,7 +12,7 @@
 
 use aviate_core::control::position::PositionController;
 use aviate_core::math::Vector3;
-use aviate_core::types::{Meters, MetersPerSecond};
+use aviate_core::types::Meters;
 
 // =============================================================================
 // Position Hold - Zero Error

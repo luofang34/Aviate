@@ -16,13 +16,25 @@ pub mod checks;
 use crate::ekf::Ekf;
 use crate::control::{VehicleController, Command, ConfigMode, Limits, AuthorityProfile, ControlLaw, ControlMode};
 use crate::control::envelope::{SimpleEnvelopeProtector, EnvelopeProtector, ProtectionStatus};
-use crate::mixer::{Mixer, Sanitizer, ActuatorCmd, ActuatorSanitizer, ModeConfig, SanitizeReport};
+use crate::mixer::{Mixer, Sanitizer, ActuatorCmd, ActuatorSanitizer, ModeConfig, SanitizeReport, ActuatorState};
 use crate::fault::{FaultFlags, FaultHandlingTable};
 use crate::time::Timestamp;
 use crate::sensor::SensorSet;
 use crate::state::{StateEstimate, EstimateQuality};
 use crate::types::{Normalized, Radians, RadiansPerSecond, Meters, MetersPerSecond};
-use crate::checks::{KernelChecks, PreArmFlags};
+use crate::checks::{KernelChecks, PreArmFlags, CheckInvariants};
+pub use crate::checks::{DegradationReason, TransitionFailure, TransitionLimits, InFlightFlags, TransitionFlags};
+
+/// Critical faults that trigger immediate fault state entry
+///
+/// These are faults that require the aircraft to enter a safe state immediately.
+/// The kernel will transition to InitState::Fault when any of these are detected.
+pub const CRITICAL_FAULTS: FaultFlags = FaultFlags::ALL_IMU_FAILED
+    .union(FaultFlags::NUMERIC_ERROR)
+    .union(FaultFlags::ESTIMATOR_DIVERGED);
+
+/// Default command timeout in milliseconds
+pub const DEFAULT_COMMAND_TIMEOUT_MS: u32 = 500;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum InitState {
@@ -61,6 +73,22 @@ pub enum ArmError {
     Faulted,
     AlreadyArmed,
     ConfigInvalid,
+    InFaultState,
+}
+
+/// Error returned when attempting a configuration mode transition
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TransitionError {
+    /// Not armed (transitions only allowed while armed)
+    NotArmed,
+    /// Already transitioning to another mode
+    AlreadyTransitioning,
+    /// Transition checks failed
+    ChecksFailed(TransitionFailure),
+    /// Target mode same as current mode
+    AlreadyInMode,
+    /// System in fault state
+    InFaultState,
 }
 
 // --- Spec §16: Channel & Redundancy Model ---
@@ -131,19 +159,6 @@ pub struct EnvelopeMargin {
 
 // --- Spec §14: Degradation ---
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum DegradationReason {
-    SensorLoss,
-    ActuatorFault,
-    ActuatorNumericError,
-    EstimatorDivergence,
-    EnvelopeExceedance,
-    CommandTimeout,
-    TimingViolation,
-    NumericError,
-    ExplicitRequest,
-}
-
 #[derive(Copy, Clone, Debug)]
 pub struct DegradationEvent {
     pub from: ControlLaw,
@@ -153,14 +168,7 @@ pub struct DegradationEvent {
 }
 
 // --- Spec §4.4: Configuration Transition ---
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum TransitionFailure {
-    ActuatorStuck,
-    Asymmetry,
-    Timeout,
-    UnsafeConditions,
-}
+// TransitionFailure is imported from checks.rs
 
 /// Configuration transition state for morphing aircraft
 #[derive(Clone, Debug)]
@@ -263,6 +271,12 @@ pub struct AviateKernel<V: VehicleController, M: Mixer> {
     // Unified Check System (§17, §14, §4.5)
     pub checks: KernelChecks,
 
+    // Actuator state tracking for transition checks
+    pub actuator_state: ActuatorState,
+
+    // Command timeout threshold (ms)
+    pub command_timeout_ms: u32,
+
     // Safety
     pub safe_output: [Normalized; 16], // MAX_ACTUATORS = 16
 }
@@ -299,6 +313,8 @@ impl<V: VehicleController, M: Mixer> AviateKernel<V, M> {
             fault_table: FaultHandlingTable::DEFAULT,
             control_law: ControlLaw::Normal,
             checks: KernelChecks::new(),
+            actuator_state: ActuatorState::default(),
+            command_timeout_ms: DEFAULT_COMMAND_TIMEOUT_MS,
             safe_output: [Normalized(0.0); 16],
         }
     }
@@ -436,39 +452,218 @@ impl<V: VehicleController, M: Mixer> AviateKernel<V, M> {
 
     pub fn disarm(&mut self) {
         self.init_state = InitState::Disarmed;
-        // In disarmed state, we might transition back to Ready or PreArm eventually,
-        // but spec says Disarmed. Usually requires reset or check to go back to Ready.
-        // For now, keep as Disarmed.
+        self.control_law = ControlLaw::Frozen;
+        self.checks.in_flight.reset();
     }
 
-    pub fn get_health(&self) {
-        // Placeholder for HealthReport
+    /// Check for critical faults and enter fault state if detected
+    ///
+    /// Returns true if fault state was entered.
+    pub fn check_critical_faults(&mut self) -> bool {
+        if self.faults.intersects(CRITICAL_FAULTS) {
+            self.init_state = InitState::Fault;
+            self.control_law = ControlLaw::Frozen;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check if the system can be reset from fault state
+    ///
+    /// Preconditions:
+    /// - No critical faults active
+    /// - IMU_HEALTHY (sensors recovered)
+    /// - THROTTLE_LOW (safety)
+    pub fn can_reset_from_fault(&self) -> bool {
+        if self.init_state != InitState::Fault {
+            return false;
+        }
+
+        // No critical faults remaining
+        let no_critical = !self.faults.intersects(CRITICAL_FAULTS);
+
+        // Sensors recovered
+        let imu_healthy = self.checks.pre_arm.current.contains(PreArmFlags::IMU_HEALTHY);
+
+        // Throttle low for safety
+        let throttle_low = self.checks.pre_arm.current.contains(PreArmFlags::THROTTLE_LOW);
+
+        no_critical && imu_healthy && throttle_low
+    }
+
+    /// Attempt to reset from fault state
+    ///
+    /// Returns Ok(()) if successfully reset to PreArm state.
+    pub fn reset_from_fault(&mut self) -> Result<(), ArmError> {
+        if self.init_state != InitState::Fault {
+            return Err(ArmError::NotReady);
+        }
+
+        if !self.can_reset_from_fault() {
+            return Err(ArmError::Faulted);
+        }
+
+        // Reset checks for fresh convergence
+        self.checks.pre_arm.samples.reset();
+        self.checks.in_flight.reset();
+
+        // Transition to PreArm
+        self.init_state = InitState::PreArm;
+        Ok(())
+    }
+
+    /// Handle degradation based on in-flight check trigger
+    ///
+    /// Updates control law based on the degradation reason.
+    /// Public for DO-178C MC/DC testing of all degradation paths.
+    pub fn handle_degradation(&mut self, reason: DegradationReason, timestamp: Timestamp) -> Option<DegradationEvent> {
+        let from = self.control_law;
+        let to = match reason {
+            DegradationReason::AttitudeLost => ControlLaw::Frozen,
+            DegradationReason::ImuDegraded => ControlLaw::Degraded,
+            DegradationReason::PositionLost => ControlLaw::Degraded,
+            DegradationReason::VelocityLost => ControlLaw::Degraded,
+            DegradationReason::CommandTimeout => ControlLaw::Failsafe,
+            DegradationReason::EnvelopeViolation => ControlLaw::Degraded,
+            DegradationReason::BaroDegraded => ControlLaw::Degraded,
+            DegradationReason::RcLost => ControlLaw::Failsafe,
+        };
+
+        // Only trigger if this is a degradation (worse state)
+        if to.severity() > from.severity() {
+            self.control_law = to;
+            Some(DegradationEvent {
+                from,
+                to,
+                reason,
+                timestamp,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Request a configuration mode transition
+    ///
+    /// Checks transition preconditions before starting the transition.
+    pub fn request_config_mode(&mut self, to: ConfigMode) -> Result<(), TransitionError> {
+        // Must be armed
+        if self.init_state != InitState::Armed {
+            return Err(TransitionError::NotArmed);
+        }
+
+        // Cannot be in fault state
+        if self.faults.intersects(CRITICAL_FAULTS) {
+            return Err(TransitionError::InFaultState);
+        }
+
+        // Check if already transitioning (Transition mode is the transition state)
+        if self.mode == ConfigMode::Transition {
+            return Err(TransitionError::AlreadyTransitioning);
+        }
+
+        // Check if already in requested mode
+        if self.mode == to {
+            return Err(TransitionError::AlreadyInMode);
+        }
+
+        // Update transition checks and verify
+        let state = self.ekf.get_estimate();
+        self.checks.transition.update_from_state(&state);
+        self.checks.transition.update_from_actuators(&self.actuator_state, 0b1111); // Quad mask
+
+        // Gate the transition
+        self.checks.transition.can_transition()
+            .map_err(TransitionError::ChecksFailed)?;
+
+        // Start the transition (caller manages progress)
+        // For now, just update the mode directly
+        self.mode = to;
+        Ok(())
+    }
+
+    pub fn get_health(&self) -> HealthReport {
+        HealthReport {
+            init_state: self.init_state,
+            control_law: self.control_law,
+            config_mode: self.mode,
+            transition_state: ConfigTransitionState::Stable(self.mode),
+            faults: self.faults,
+            channel_health: ChannelHealth::Operative,
+        }
     }
     
-    pub fn step(&mut self, cmd: &Command) -> ActuatorCmd {
-        // 1. Check InitState
+    /// Main control step with in-flight monitoring
+    ///
+    /// # Arguments
+    /// * `cmd` - The command to execute
+    /// * `sensors` - Current sensor readings for in-flight checks
+    /// * `command_age_ms` - Age of the command in milliseconds
+    pub fn step(&mut self, cmd: &Command, sensors: &SensorSet, command_age_ms: u32) -> ActuatorCmd {
+        let timestamp = crate::time::Timestamp { ticks: 0, source: crate::time::TimeSource::Internal };
+
+        // 1. Check InitState - return safe output if not armed
         if !self.init_state.allows_active_control() {
              return ActuatorCmd {
                  outputs: self.safe_output,
-                 active_mask: 0, // Or appropriate mask
+                 active_mask: 0,
                  sequence: cmd.sequence,
-                 timestamp: crate::time::Timestamp { ticks: 0, source: crate::time::TimeSource::Internal }, // Placeholder
+                 timestamp,
                  fallback_mask: 0,
                  sanitized: true,
              };
         }
 
-        // 2. EKF Update (usually happens before step in loop, but we get estimate here)
+        // 2. Update sensor faults and check for critical faults
+        self.update_sensor_faults(sensors);
+        if self.check_critical_faults() {
+            return ActuatorCmd {
+                outputs: self.safe_output,
+                active_mask: 0,
+                sequence: cmd.sequence,
+                timestamp,
+                fallback_mask: 0,
+                sanitized: true,
+            };
+        }
+
+        // 3. EKF Update (usually happens before step in loop, but we get estimate here)
         let state = self.ekf.get_estimate();
-        
-        // 3. Envelope Protection
-        let (constrained_sp, _protection_status) = self.protector.constrain(
-            &cmd.setpoint, 
-            &state, 
-            &self.limits, 
+
+        // 4. Update in-flight checks
+        self.checks.in_flight.update_from_state(&state);
+        self.checks.in_flight.update_from_sensors(sensors);
+        self.checks.in_flight.update_command_status(command_age_ms, self.command_timeout_ms);
+
+        // 5. Handle any degradation triggers
+        if let Some(reason) = self.checks.in_flight.get_degradation_trigger() {
+            let _event = self.handle_degradation(reason, timestamp);
+            // Could log or emit the event here
+        }
+
+        // 6. Debug invariant verification
+        #[cfg(debug_assertions)]
+        {
+            let _ok = CheckInvariants::verify_all(
+                self.faults,
+                &self.checks.pre_arm,
+                &self.checks.in_flight,
+            );
+            // In debug builds, could assert!(_ok) or log violations
+        }
+
+        // 7. Envelope Protection
+        let (constrained_sp, protection_status) = self.protector.constrain(
+            &cmd.setpoint,
+            &state,
+            &self.limits,
             AuthorityProfile::HardEnvelope
         );
-        
+
+        // Update envelope status for in-flight checks
+        self.checks.in_flight.update_from_envelope(&protection_status);
+
         let constrained_cmd = Command {
             setpoint: constrained_sp,
             mode: cmd.mode,
@@ -478,15 +673,29 @@ impl<V: VehicleController, M: Mixer> AviateKernel<V, M> {
             source: cmd.source,
         };
 
-        // 4. Control Step
+        // 8. Control Step - use frozen output if control law is Frozen
+        if self.control_law == ControlLaw::Frozen {
+            return ActuatorCmd {
+                outputs: self.safe_output,
+                active_mask: 0b1111,
+                sequence: cmd.sequence,
+                timestamp,
+                fallback_mask: 0xFF, // All fallback
+                sanitized: true,
+            };
+        }
+
         let axis_cmd = self.controller.step(&state, &constrained_cmd, self.mode, &self.limits);
-        
-        // 5. Mixing
+
+        // 9. Mixing
         let mut actuator_cmd = self.mixer.mix(&axis_cmd);
-        
-        // 6. Sanitization
+
+        // 10. Update actuator state for transition checks
+        self.actuator_state.update_commanded(&actuator_cmd, timestamp);
+
+        // 11. Sanitization
         self.sanitizer.sanitize(&mut actuator_cmd, &self.mode_config);
-        
+
         actuator_cmd
     }
 }

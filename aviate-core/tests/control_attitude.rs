@@ -12,7 +12,6 @@
 
 use aviate_core::control::attitude::AttitudeController;
 use aviate_core::math::{Quaternion, Vector3};
-use aviate_core::types::RadiansPerSecond;
 
 const DEG_TO_RAD: f32 = core::f32::consts::PI / 180.0;
 

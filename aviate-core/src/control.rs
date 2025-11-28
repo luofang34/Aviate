@@ -21,7 +21,26 @@ pub enum ControlLaw {
     Alternate1 = 1,
     Alternate2 = 2,
     Direct = 3,
-    Frozen = 4,
+    Degraded = 4,
+    Failsafe = 5,
+    Frozen = 6,
+}
+
+impl ControlLaw {
+    /// Get the severity level (higher = more degraded)
+    ///
+    /// Used to determine if a transition is a degradation.
+    pub fn severity(&self) -> u8 {
+        match self {
+            Self::Normal => 0,
+            Self::Alternate1 => 1,
+            Self::Alternate2 => 2,
+            Self::Direct => 3,
+            Self::Degraded => 4,
+            Self::Failsafe => 5,
+            Self::Frozen => 6,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

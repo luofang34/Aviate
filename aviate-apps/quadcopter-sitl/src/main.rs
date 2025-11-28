@@ -254,14 +254,14 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
     }
 
     // 3. Run init state machine with actual sensor data
+    let sensors = sensor_cache.to_sensor_set();
     if !kernel.is_ready() {
-        let sensors = sensor_cache.to_sensor_set();
         let ts = hal.now();
         kernel.init_step(&sensors, ts);
     }
 
-    // 4. Step kernel
-    let actuator_cmd = kernel.step(last_cmd);
+    // 4. Step kernel (command_age_ms=0 means command is fresh)
+    let actuator_cmd = kernel.step(last_cmd, &sensors, 0);
 
     // Debug output - print actuator commands when thrust command is non-zero
     if last_cmd.setpoint.collective_thrust.0 > 0.1 {

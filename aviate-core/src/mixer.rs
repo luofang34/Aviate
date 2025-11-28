@@ -196,10 +196,116 @@ impl Default for ActuatorCmd {
     }
 }
 
+/// Health status for individual actuators (DO-178C traceability)
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum ActuatorHealth {
+    /// Actuator operating normally
+    Good,
+    /// Actuator degraded but functional (e.g., reduced performance)
+    Degraded,
+    /// Actuator has failed completely
+    Failed,
+    /// Actuator is stuck at a fixed position
+    Stuck,
+    /// Health status cannot be determined
+    #[default]
+    Unknown,
+}
+
+/// Runtime actuator state with health monitoring
+///
+/// Used by TransitionStatus to gate configuration mode changes,
+/// ensuring actuator health before critical transitions.
 #[derive(Clone, Debug)]
 pub struct ActuatorState {
-    pub feedback: [Normalized; MAX_ACTUATORS],
+    /// Health status per actuator channel
+    pub health: [ActuatorHealth; MAX_ACTUATORS],
+    /// Last commanded output values
+    pub commanded: [Normalized; MAX_ACTUATORS],
+    /// Actual position/speed from feedback sensors (if available)
+    pub actual: Option<[Normalized; MAX_ACTUATORS]>,
+    /// Timestamp of last update
     pub timestamp: Timestamp,
+}
+
+impl Default for ActuatorState {
+    fn default() -> Self {
+        Self {
+            health: [ActuatorHealth::Unknown; MAX_ACTUATORS],
+            commanded: [Normalized(0.0); MAX_ACTUATORS],
+            actual: None,
+            timestamp: Timestamp::default(),
+        }
+    }
+}
+
+impl ActuatorState {
+    /// Create a new ActuatorState with all actuators in Unknown health
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Update commanded outputs from an ActuatorCmd
+    pub fn update_commanded(&mut self, cmd: &ActuatorCmd, timestamp: Timestamp) {
+        self.commanded = cmd.outputs;
+        self.timestamp = timestamp;
+    }
+
+    /// Update health status for a specific channel
+    pub fn set_health(&mut self, channel: usize, health: ActuatorHealth) {
+        if channel < MAX_ACTUATORS {
+            self.health[channel] = health;
+        }
+    }
+
+    /// Update actual feedback for a specific channel
+    pub fn set_actual(&mut self, channel: usize, value: Normalized) {
+        let actual = self.actual.get_or_insert([Normalized(0.0); MAX_ACTUATORS]);
+        if channel < MAX_ACTUATORS {
+            actual[channel] = value;
+        }
+    }
+
+    /// Check if all active actuators (by mask) are healthy
+    pub fn all_healthy(&self, active_mask: u16) -> bool {
+        for i in 0..MAX_ACTUATORS {
+            if (active_mask & (1 << i)) != 0 {
+                match self.health[i] {
+                    ActuatorHealth::Good | ActuatorHealth::Unknown => {}
+                    ActuatorHealth::Degraded | ActuatorHealth::Failed | ActuatorHealth::Stuck => {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// Check if actuators are symmetric (for transition safety)
+    /// Returns true if paired actuators have similar commanded/actual values
+    pub fn check_symmetric(&self, pairs: &[(usize, usize)], tolerance: f32) -> bool {
+        for &(a, b) in pairs {
+            if a >= MAX_ACTUATORS || b >= MAX_ACTUATORS {
+                continue;
+            }
+            let diff = (self.commanded[a].0 - self.commanded[b].0).abs();
+            if diff > tolerance {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Count actuators with a specific health status
+    pub fn count_by_health(&self, health: ActuatorHealth, active_mask: u16) -> usize {
+        let mut count = 0;
+        for i in 0..MAX_ACTUATORS {
+            if (active_mask & (1 << i)) != 0 && self.health[i] == health {
+                count += 1;
+            }
+        }
+        count
+    }
 }
 
 /// Tracks last-known-good actuator vectors per group

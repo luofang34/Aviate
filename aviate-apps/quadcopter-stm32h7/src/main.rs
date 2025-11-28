@@ -6,7 +6,7 @@ use aviate_core::control::mc::McController;
 use aviate_core::control::{Command, Setpoint, CommandSource, ControlMode, ConfigMode};
 use aviate_core::types::Normalized;
 use aviate_core::mixer::{Mixer, ActuatorCmd, ModeConfig};
-use aviate_core::time::Timestamp;
+use aviate_core::sensor::{SensorSet, SensorReading, ImuData, GnssData, MagData, BaroData, AirspeedData};
 use cortex_m_rt::entry;
 use panic_halt as _;
 
@@ -28,7 +28,7 @@ fn main() -> ! {
         groups: &[],
     };
     let mut kernel = AviateKernel::new(McController::default(), DummyMixer, mode_config);
-    let cmd = Command { 
+    let cmd = Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
             collective_thrust: Normalized(0.5),
@@ -39,10 +39,18 @@ fn main() -> ! {
         sequence: 0,
         source: CommandSource::Pilot,
     };
-    
+    let sensors = SensorSet {
+        imus: [SensorReading::<ImuData>::default(); 3],
+        gnss: [SensorReading::<GnssData>::default(); 2],
+        mags: [SensorReading::<MagData>::default(); 2],
+        baros: [SensorReading::<BaroData>::default(); 2],
+        airspeeds: [SensorReading::<AirspeedData>::default(); 2],
+        geometry: None,
+    };
+
     loop {
-        let output = kernel.step(&cmd);
-        
+        let output = kernel.step(&cmd, &sensors, 0);
+
         // Force side effect
         unsafe {
              // Accessing array elements for side effect

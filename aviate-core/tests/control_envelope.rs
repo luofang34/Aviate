@@ -372,3 +372,235 @@ fn negative_altitude_clamped_to_min() {
     assert!(status.saturated);
     assert_eq!(constrained.altitude.unwrap().0, 5.0); // Clamped to min
 }
+
+// =============================================================================
+// Attitude Limiting (Roll/Pitch from Quaternion)
+// =============================================================================
+
+#[test]
+fn attitude_roll_exceeds_positive_limit() {
+    let protector = SimpleEnvelopeProtector;
+    let limits = make_limits(); // max_roll = 0.5 rad
+    let state = make_state();
+
+    // Create quaternion with large roll (1.0 rad > 0.5 limit)
+    let roll_quat = Quaternion::from_axis_angle(
+        aviate_core::math::Vector3::new(1.0, 0.0, 0.0),
+        1.0 // rad, exceeds 0.5 limit
+    );
+
+    let setpoint = Setpoint {
+        attitude: Some(roll_quat),
+        ..Default::default()
+    };
+
+    let (constrained, status) = protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
+
+    assert!(status.limited_axes.contains(AxisLimitFlags::ROLL));
+
+    // Check that roll is clamped
+    if let Some(att) = constrained.attitude {
+        let (r, _p, _y) = att.to_euler();
+        assert!(r.abs() <= limits.max_roll.0 + 0.01, "Roll {} should be <= {}", r, limits.max_roll.0);
+    }
+}
+
+#[test]
+fn attitude_roll_exceeds_negative_limit() {
+    let protector = SimpleEnvelopeProtector;
+    let limits = make_limits();
+    let state = make_state();
+
+    // Create quaternion with large negative roll
+    let roll_quat = Quaternion::from_axis_angle(
+        aviate_core::math::Vector3::new(1.0, 0.0, 0.0),
+        -1.0 // rad, exceeds -0.5 limit
+    );
+
+    let setpoint = Setpoint {
+        attitude: Some(roll_quat),
+        ..Default::default()
+    };
+
+    let (constrained, status) = protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
+
+    assert!(status.limited_axes.contains(AxisLimitFlags::ROLL));
+
+    if let Some(att) = constrained.attitude {
+        let (r, _p, _y) = att.to_euler();
+        assert!(r.abs() <= limits.max_roll.0 + 0.01, "Roll {} should be within limit", r);
+    }
+}
+
+#[test]
+fn attitude_pitch_exceeds_positive_limit() {
+    let protector = SimpleEnvelopeProtector;
+    let limits = make_limits(); // max_pitch = 0.5 rad
+    let state = make_state();
+
+    // Create quaternion with large pitch
+    let pitch_quat = Quaternion::from_axis_angle(
+        aviate_core::math::Vector3::new(0.0, 1.0, 0.0),
+        1.0 // rad, exceeds 0.5 limit
+    );
+
+    let setpoint = Setpoint {
+        attitude: Some(pitch_quat),
+        ..Default::default()
+    };
+
+    let (constrained, status) = protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
+
+    assert!(status.limited_axes.contains(AxisLimitFlags::PITCH));
+
+    if let Some(att) = constrained.attitude {
+        let (_r, p, _y) = att.to_euler();
+        assert!(p.abs() <= limits.max_pitch.0 + 0.01, "Pitch {} should be <= {}", p, limits.max_pitch.0);
+    }
+}
+
+#[test]
+fn attitude_pitch_exceeds_negative_limit() {
+    let protector = SimpleEnvelopeProtector;
+    let limits = make_limits();
+    let state = make_state();
+
+    // Create quaternion with large negative pitch
+    let pitch_quat = Quaternion::from_axis_angle(
+        aviate_core::math::Vector3::new(0.0, 1.0, 0.0),
+        -1.0 // rad
+    );
+
+    let setpoint = Setpoint {
+        attitude: Some(pitch_quat),
+        ..Default::default()
+    };
+
+    let (_constrained, status) = protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
+
+    assert!(status.limited_axes.contains(AxisLimitFlags::PITCH));
+}
+
+#[test]
+fn attitude_within_limits_not_modified() {
+    let protector = SimpleEnvelopeProtector;
+    let limits = make_limits();
+    let state = make_state();
+
+    // Create quaternion with small roll/pitch within limits
+    let small_roll = Quaternion::from_axis_angle(
+        aviate_core::math::Vector3::new(1.0, 0.0, 0.0),
+        0.3 // rad, within 0.5 limit
+    );
+
+    let setpoint = Setpoint {
+        attitude: Some(small_roll),
+        ..Default::default()
+    };
+
+    let (constrained, status) = protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
+
+    // Should not be limited
+    assert!(!status.limited_axes.contains(AxisLimitFlags::ROLL));
+    assert!(!status.limited_axes.contains(AxisLimitFlags::PITCH));
+
+    // Attitude should be unchanged (within tolerance)
+    if let Some(att) = constrained.attitude {
+        let (r, _p, _y) = att.to_euler();
+        assert!((r - 0.3).abs() < 0.05, "Roll should be ~0.3, got {}", r);
+    }
+}
+
+#[test]
+fn attitude_roll_and_pitch_both_exceed() {
+    let protector = SimpleEnvelopeProtector;
+    let limits = make_limits();
+    let state = make_state();
+
+    // Create quaternion with both roll and pitch exceeding limits
+    // Use Euler angles to ensure both are clearly over limit
+    let qr = Quaternion::from_axis_angle(aviate_core::math::Vector3::new(1.0, 0.0, 0.0), 0.8);
+    let qp = Quaternion::from_axis_angle(aviate_core::math::Vector3::new(0.0, 1.0, 0.0), 0.8);
+    let combined = qp.mul(&qr); // Y then X rotation for proper Euler ordering
+
+    let setpoint = Setpoint {
+        attitude: Some(combined),
+        ..Default::default()
+    };
+
+    let (_, status) = protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
+
+    // At least one should be limited (combined angles may interact)
+    assert!(
+        status.limited_axes.contains(AxisLimitFlags::ROLL) ||
+        status.limited_axes.contains(AxisLimitFlags::PITCH),
+        "At least one axis should be limited"
+    );
+}
+
+// =============================================================================
+// Angular Rate Negative Limits
+// =============================================================================
+
+#[test]
+fn roll_rate_negative_exceeds_limit() {
+    let protector = SimpleEnvelopeProtector;
+    let limits = make_limits();
+    let state = make_state();
+
+    let setpoint = Setpoint {
+        angular_rate: Some([
+            RadiansPerSecond(-5.0), // Exceeds -max_roll_rate
+            RadiansPerSecond(0.0),
+            RadiansPerSecond(0.0),
+        ]),
+        ..Default::default()
+    };
+
+    let (constrained, status) = protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
+
+    assert!(status.limited_axes.contains(AxisLimitFlags::ROLL));
+    assert_eq!(constrained.angular_rate.unwrap()[0].0, -2.0);
+}
+
+#[test]
+fn pitch_rate_positive_exceeds_limit() {
+    let protector = SimpleEnvelopeProtector;
+    let limits = make_limits();
+    let state = make_state();
+
+    let setpoint = Setpoint {
+        angular_rate: Some([
+            RadiansPerSecond(0.0),
+            RadiansPerSecond(5.0), // Exceeds max_pitch_rate
+            RadiansPerSecond(0.0),
+        ]),
+        ..Default::default()
+    };
+
+    let (constrained, status) = protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
+
+    assert!(status.limited_axes.contains(AxisLimitFlags::PITCH));
+    assert_eq!(constrained.angular_rate.unwrap()[1].0, 2.0);
+}
+
+#[test]
+fn yaw_rate_negative_exceeds_limit() {
+    let protector = SimpleEnvelopeProtector;
+    let limits = make_limits();
+    let state = make_state();
+
+    let setpoint = Setpoint {
+        angular_rate: Some([
+            RadiansPerSecond(0.0),
+            RadiansPerSecond(0.0),
+            RadiansPerSecond(-3.0), // Exceeds -max_yaw_rate
+        ]),
+        ..Default::default()
+    };
+
+    let (constrained, status) = protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
+
+    assert!(status.limited_axes.contains(AxisLimitFlags::YAW));
+    assert_eq!(constrained.angular_rate.unwrap()[2].0, -1.5);
+}

@@ -222,7 +222,8 @@ mod tests {
         };
 
         // Before arming: Expect safe output (0.0)
-        let act_cmd_safe = kernel.step(&cmd);
+        let safe_sensors = valid_test_sensors();
+        let act_cmd_safe = kernel.step(&cmd, &safe_sensors, 0);
         for i in 0..4 {
             assert!((act_cmd_safe.outputs[i].0).abs() < 1e-5, "Should be zero when disarmed");
         }
@@ -243,8 +244,8 @@ mod tests {
         kernel.arm().expect("Failed to arm");
         
         // After arming: Expect control output
-        let act_cmd = kernel.step(&cmd);
-        
+        let act_cmd = kernel.step(&cmd, &valid_sensors, 0);
+
         // QuadXMixer with 0 R/P/Y should output collective on all 4 motors
         for i in 0..4 {
             assert!((act_cmd.outputs[i].0 - 0.5).abs() < 1e-5, "Should be 0.5 when armed");
@@ -309,9 +310,9 @@ mod tests {
         assert!(kernel.is_ready(), "Kernel failed to become ready. Missing: {:?}", kernel.checks.pre_arm.missing());
         
         kernel.arm().expect("Failed to arm");
-        
-        let act_cmd = kernel.step(&cmd);
-        
+
+        let act_cmd = kernel.step(&cmd, &valid_sensors, 0);
+
         // FwController currently outputs 0 R/P/Y and passes collective.
         // So QuadXMixer should still produce 0.5 on motors.
         for i in 0..4 {

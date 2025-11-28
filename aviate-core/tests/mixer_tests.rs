@@ -182,10 +182,210 @@ mod tests {
             yaw: NormalizedSigned(0.0),
             collective: Normalized(0.9),
         };
-        
+
         let cmd = mixer.mix(&axis);
-        
+
         assert!((cmd.outputs[1].0 - 1.0).abs() < 1e-5);
+    }
+
+    // =========================================================================
+    // EDGE CASE TESTS: Out-of-range values
+    // =========================================================================
+
+    #[test]
+    fn test_sanitizer_out_of_range_negative() {
+        let mut sanitizer = Sanitizer::default();
+        let mut cmd = make_cmd();
+        let mode = ModeConfig { mode: ConfigMode::Hover, groups: &STRONG_GROUP };
+
+        // Inject out-of-range negative value
+        cmd.outputs[0] = Normalized(-0.1);
+
+        let report = sanitizer.sanitize(&mut cmd, &mode);
+
+        // Should trigger fallback due to out-of-range
+        assert!(report.any_fallback);
+        // All channels should be safe pattern (0.1) since strong coupling
+        assert_eq!(cmd.outputs[0].0, 0.1);
+    }
+
+    #[test]
+    fn test_sanitizer_out_of_range_above_one() {
+        let mut sanitizer = Sanitizer::default();
+        let mut cmd = make_cmd();
+        let mode = ModeConfig { mode: ConfigMode::Hover, groups: &STRONG_GROUP };
+
+        // Inject out-of-range value > 1.0
+        cmd.outputs[2] = Normalized(1.5);
+
+        let report = sanitizer.sanitize(&mut cmd, &mode);
+
+        // Should trigger fallback due to out-of-range
+        assert!(report.any_fallback);
+        // All channels should be safe pattern due to strong coupling
+        assert_eq!(cmd.outputs[0].0, 0.1);
+        assert_eq!(cmd.outputs[2].0, 0.1);
+    }
+
+    // =========================================================================
+    // EDGE CASE TESTS: Critical failure (no fallback available)
+    // =========================================================================
+
+    static STRONG_GROUP_NO_SAFE: [ActuatorGroupConfig; 1] = [
+        ActuatorGroupConfig {
+            kind: GroupKind::Multirotor,
+            coupling: CouplingKind::Strong,
+            fallback: FallbackPolicy::HoldLastGood,
+            members: TEST_GROUP_MEMBERS,
+            safe_pattern: GroupVector {
+                outputs: [Normalized(0.0); MAX_ACTUATORS],
+                mask: 0,
+                valid: false, // No valid safe pattern!
+            },
+        }
+    ];
+
+    #[test]
+    fn test_sanitizer_critical_failure_zero_output() {
+        let mut sanitizer = Sanitizer::default();
+        let mut cmd = make_cmd();
+        let mode = ModeConfig { mode: ConfigMode::Hover, groups: &STRONG_GROUP_NO_SAFE };
+
+        // First invalid cycle (no last_good established, no safe pattern)
+        cmd.outputs[1] = Normalized(Scalar::NAN);
+
+        let report = sanitizer.sanitize(&mut cmd, &mode);
+
+        // Should be critical failure - FallbackUnavailable
+        assert!(report.critical_failure);
+        assert_eq!(report.group_results[0], GroupSanitizeResult::FallbackUnavailable);
+
+        // All channels should be zero (critical failure fallback)
+        for i in 0..4 {
+            assert_eq!(cmd.outputs[i].0, 0.0, "Channel {} should be 0.0", i);
+        }
+    }
+
+    // =========================================================================
+    // EDGE CASE TESTS: Weak coupling with last_good fallback
+    // =========================================================================
+
+    #[test]
+    fn test_sanitizer_weak_coupling_last_good_fallback() {
+        let mut sanitizer = Sanitizer::default();
+        let mode = ModeConfig { mode: ConfigMode::Cruise, groups: &WEAK_GROUP };
+
+        // 1. First valid cycle to establish last_good
+        let mut cmd1 = make_cmd();
+        cmd1.outputs[0] = Normalized(0.7);
+        cmd1.outputs[1] = Normalized(0.8);
+        cmd1.outputs[2] = Normalized(0.6);
+        cmd1.outputs[3] = Normalized(0.9);
+        sanitizer.sanitize(&mut cmd1, &mode);
+
+        // 2. Second cycle with NaN - should use last_good for bad channel
+        let mut cmd2 = make_cmd();
+        cmd2.outputs[0] = Normalized(0.5); // Valid, keep as-is
+        cmd2.outputs[1] = Normalized(Scalar::NAN); // Invalid, should fallback
+        cmd2.outputs[2] = Normalized(0.5); // Valid
+        cmd2.outputs[3] = Normalized(0.5); // Valid
+
+        let _report = sanitizer.sanitize(&mut cmd2, &mode);
+
+        // Channel 0 should keep its value
+        assert_eq!(cmd2.outputs[0].0, 0.5);
+        // Channel 1 uses last_good (0.8) since it's available and valid
+        // (weak coupling with HoldLastGood prefers last_good over safe_pattern)
+        assert_eq!(cmd2.outputs[1].0, 0.8);
+        // Channel 2 should keep its value
+        assert_eq!(cmd2.outputs[2].0, 0.5);
+    }
+
+    static WEAK_GROUP_NO_SAFE: [ActuatorGroupConfig; 1] = [
+        ActuatorGroupConfig {
+            kind: GroupKind::DistributedThrust,
+            coupling: CouplingKind::Weak,
+            fallback: FallbackPolicy::HoldLastGood,
+            members: TEST_GROUP_MEMBERS,
+            safe_pattern: GroupVector {
+                outputs: [Normalized(0.0); MAX_ACTUATORS],
+                mask: 0,
+                valid: false, // No safe pattern
+            },
+        }
+    ];
+
+    #[test]
+    fn test_sanitizer_weak_coupling_no_safe_uses_last_good() {
+        let mut sanitizer = Sanitizer::default();
+        let mode = ModeConfig { mode: ConfigMode::Cruise, groups: &WEAK_GROUP_NO_SAFE };
+
+        // 1. First valid cycle to establish last_good
+        let mut cmd1 = make_cmd();
+        cmd1.outputs[0] = Normalized(0.7);
+        cmd1.outputs[1] = Normalized(0.8);
+        sanitizer.sanitize(&mut cmd1, &mode);
+
+        // 2. Invalid cycle
+        let mut cmd2 = make_cmd();
+        cmd2.outputs[0] = Normalized(0.5);
+        cmd2.outputs[1] = Normalized(Scalar::NAN);
+
+        let _report = sanitizer.sanitize(&mut cmd2, &mode);
+
+        // Channel 0 stays valid
+        assert_eq!(cmd2.outputs[0].0, 0.5);
+        // Channel 1 should use last_good (0.8) since no safe pattern
+        assert_eq!(cmd2.outputs[1].0, 0.8);
+    }
+
+    #[test]
+    fn test_sanitizer_weak_coupling_no_safe_no_last_good_uses_zero() {
+        let mut sanitizer = Sanitizer::default();
+        let mode = ModeConfig { mode: ConfigMode::Cruise, groups: &WEAK_GROUP_NO_SAFE };
+
+        // First invalid cycle - no last_good, no safe pattern
+        let mut cmd = make_cmd();
+        cmd.outputs[1] = Normalized(Scalar::NAN);
+
+        let _report = sanitizer.sanitize(&mut cmd, &mode);
+
+        // Channel 0 stays valid
+        assert_eq!(cmd.outputs[0].0, 0.5);
+        // Channel 1 should be zero (last resort)
+        assert_eq!(cmd.outputs[1].0, 0.0);
+    }
+
+    // =========================================================================
+    // EDGE CASE TESTS: Infinity handling
+    // =========================================================================
+
+    #[test]
+    fn test_sanitizer_infinity_positive() {
+        let mut sanitizer = Sanitizer::default();
+        let mut cmd = make_cmd();
+        let mode = ModeConfig { mode: ConfigMode::Hover, groups: &STRONG_GROUP };
+
+        cmd.outputs[0] = Normalized(Scalar::INFINITY);
+
+        let report = sanitizer.sanitize(&mut cmd, &mode);
+
+        assert!(report.any_fallback);
+        assert_eq!(cmd.outputs[0].0, 0.1);
+    }
+
+    #[test]
+    fn test_sanitizer_infinity_negative() {
+        let mut sanitizer = Sanitizer::default();
+        let mut cmd = make_cmd();
+        let mode = ModeConfig { mode: ConfigMode::Hover, groups: &STRONG_GROUP };
+
+        cmd.outputs[0] = Normalized(Scalar::NEG_INFINITY);
+
+        let report = sanitizer.sanitize(&mut cmd, &mode);
+
+        assert!(report.any_fallback);
+        assert_eq!(cmd.outputs[0].0, 0.1);
     }
 
 }
