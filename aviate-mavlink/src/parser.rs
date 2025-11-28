@@ -104,6 +104,7 @@ fn parse_message_payload(msg_id: u32, payload: &[u8]) -> Result<MavMessage, Pars
         AttitudeQuaternion::MSG_ID => parse_attitude_quaternion(payload),
         LocalPositionNed::MSG_ID => parse_local_position_ned(payload),
         SetAttitudeTarget::MSG_ID => parse_set_attitude_target(payload),
+        SetPositionTargetLocalNed::MSG_ID => parse_set_position_target_local_ned(payload),
         CommandLong::MSG_ID => parse_command_long(payload),
         CommandAck::MSG_ID => parse_command_ack(payload),
         RcChannelsOverride::MSG_ID => parse_rc_channels_override(payload),
@@ -314,6 +315,33 @@ fn parse_set_attitude_target(payload: &[u8]) -> Result<MavMessage, ParseError> {
         target_component: payload[37],
         type_mask: payload[38],
         thrust_body,
+    }))
+}
+
+fn parse_set_position_target_local_ned(payload: &[u8]) -> Result<MavMessage, ParseError> {
+    // MAVLink wire format: 14 floats (56 bytes) + u32 (4) + u16 (2) + 3 u8s (3) = 51 bytes minimum
+    // Actual layout: time_boot_ms(4) + x/y/z/vx/vy/vz/afx/afy/afz/yaw/yaw_rate(44) + type_mask(2) + target_system(1) + target_component(1) + coordinate_frame(1) = 53
+    if payload.len() < 51 {
+        return Err(ParseError::InvalidPayload);
+    }
+
+    Ok(MavMessage::SetPositionTargetLocalNed(SetPositionTargetLocalNed {
+        time_boot_ms: read_u32_le(payload, 0),
+        x: read_f32_le(payload, 4),
+        y: read_f32_le(payload, 8),
+        z: read_f32_le(payload, 12),
+        vx: read_f32_le(payload, 16),
+        vy: read_f32_le(payload, 20),
+        vz: read_f32_le(payload, 24),
+        afx: read_f32_le(payload, 28),
+        afy: read_f32_le(payload, 32),
+        afz: read_f32_le(payload, 36),
+        yaw: read_f32_le(payload, 40),
+        yaw_rate: read_f32_le(payload, 44),
+        type_mask: read_u16_le(payload, 48),
+        target_system: payload[50],
+        target_component: if payload.len() > 51 { payload[51] } else { 0 },
+        coordinate_frame: if payload.len() > 52 { payload[52] } else { 1 }, // Default to LOCAL_NED
     }))
 }
 
@@ -544,6 +572,7 @@ fn get_crc_extra(msg_id: u32) -> u8 {
         76 => 152, // COMMAND_LONG
         77 => 143, // COMMAND_ACK
         82 => 49,  // SET_ATTITUDE_TARGET
+        84 => 143, // SET_POSITION_TARGET_LOCAL_NED
         93 => 47,  // HIL_ACTUATOR_CONTROLS
         107 => 108, // HIL_SENSOR
         113 => 124, // HIL_GPS

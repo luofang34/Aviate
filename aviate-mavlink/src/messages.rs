@@ -199,6 +199,49 @@ pub mod attitude_target_typemask {
     pub const ATTITUDE_IGNORE: u8 = 128;
 }
 
+/// SET_POSITION_TARGET_LOCAL_NED (MAVLink #84)
+/// Sets position/velocity/acceleration setpoints in local NED frame
+#[derive(Copy, Clone, Debug, Default)]
+pub struct SetPositionTargetLocalNed {
+    pub time_boot_ms: u32,
+    pub target_system: u8,
+    pub target_component: u8,
+    pub coordinate_frame: u8,
+    pub type_mask: u16,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub vx: f32,
+    pub vy: f32,
+    pub vz: f32,
+    pub afx: f32,
+    pub afy: f32,
+    pub afz: f32,
+    pub yaw: f32,
+    pub yaw_rate: f32,
+}
+
+impl SetPositionTargetLocalNed {
+    pub const MSG_ID: u32 = 84;
+    pub const PAYLOAD_LEN: usize = 53;
+}
+
+/// Type mask bits for SET_POSITION_TARGET_LOCAL_NED
+pub mod position_target_typemask {
+    pub const X_IGNORE: u16 = 1;
+    pub const Y_IGNORE: u16 = 2;
+    pub const Z_IGNORE: u16 = 4;
+    pub const VX_IGNORE: u16 = 8;
+    pub const VY_IGNORE: u16 = 16;
+    pub const VZ_IGNORE: u16 = 32;
+    pub const AX_IGNORE: u16 = 64;
+    pub const AY_IGNORE: u16 = 128;
+    pub const AZ_IGNORE: u16 = 256;
+    pub const FORCE_SET: u16 = 512;
+    pub const YAW_IGNORE: u16 = 1024;
+    pub const YAW_RATE_IGNORE: u16 = 2048;
+}
+
 /// COMMAND_LONG (MAVLink #76)
 #[derive(Copy, Clone, Debug, Default)]
 pub struct CommandLong {
@@ -355,13 +398,14 @@ pub enum MavMessage {
     AttitudeQuaternion(AttitudeQuaternion),
     LocalPositionNed(LocalPositionNed),
     SetAttitudeTarget(SetAttitudeTarget),
+    SetPositionTargetLocalNed(SetPositionTargetLocalNed),
     CommandLong(CommandLong),
     CommandAck(CommandAck),
     RcChannelsOverride(RcChannelsOverride),
     ManualControl(ManualControl),
     SysStatus(SysStatus),
     Statustext(Statustext),
-    
+
     Unknown { msg_id: u32 },
 }
 
@@ -378,6 +422,7 @@ impl MavMessage {
             MavMessage::AttitudeQuaternion(_) => AttitudeQuaternion::MSG_ID,
             MavMessage::LocalPositionNed(_) => LocalPositionNed::MSG_ID,
             MavMessage::SetAttitudeTarget(_) => SetAttitudeTarget::MSG_ID,
+            MavMessage::SetPositionTargetLocalNed(_) => SetPositionTargetLocalNed::MSG_ID,
             MavMessage::CommandLong(_) => CommandLong::MSG_ID,
             MavMessage::CommandAck(_) => CommandAck::MSG_ID,
             MavMessage::RcChannelsOverride(_) => RcChannelsOverride::MSG_ID,

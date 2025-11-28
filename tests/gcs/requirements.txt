@@ -1,0 +1,4 @@
+# Requirements for Aviate GCS tests
+pymavlink>=2.4.0
+pytest>=7.0.0
+tomli>=2.0.0  # For Python < 3.11 TOML parsing

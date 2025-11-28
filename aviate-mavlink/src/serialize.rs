@@ -20,6 +20,7 @@ pub fn serialize_mavlink(msg: &MavMessage, seq: u8, buf: &mut [u8]) -> Option<us
         MavMessage::AttitudeQuaternion(m) => serialize_attitude_quaternion(m, seq, buf),
         MavMessage::LocalPositionNed(m) => serialize_local_position_ned(m, seq, buf),
         MavMessage::SetAttitudeTarget(m) => serialize_set_attitude_target(m, seq, buf),
+        MavMessage::SetPositionTargetLocalNed(m) => serialize_set_position_target_local_ned(m, seq, buf),
         MavMessage::CommandLong(m) => serialize_command_long(m, seq, buf),
         MavMessage::CommandAck(m) => serialize_command_ack(m, seq, buf),
         MavMessage::RcChannelsOverride(m) => serialize_rc_channels_override(m, seq, buf),
@@ -254,6 +255,34 @@ fn serialize_set_attitude_target(msg: &SetAttitudeTarget, seq: u8, buf: &mut [u8
     write_f32_le(buf, offset + 47, msg.thrust_body[2]);
 
     Some(write_crc(buf, offset + SetAttitudeTarget::PAYLOAD_LEN, 49))
+}
+
+fn serialize_set_position_target_local_ned(msg: &SetPositionTargetLocalNed, seq: u8, buf: &mut [u8]) -> Option<usize> {
+    let frame_size = MavHeader::SIZE + SetPositionTargetLocalNed::PAYLOAD_LEN + 2;
+    if buf.len() < frame_size {
+        return None;
+    }
+
+    let offset = write_header(buf, SetPositionTargetLocalNed::PAYLOAD_LEN as u8, seq, SetPositionTargetLocalNed::MSG_ID);
+
+    write_u32_le(buf, offset, msg.time_boot_ms);
+    write_f32_le(buf, offset + 4, msg.x);
+    write_f32_le(buf, offset + 8, msg.y);
+    write_f32_le(buf, offset + 12, msg.z);
+    write_f32_le(buf, offset + 16, msg.vx);
+    write_f32_le(buf, offset + 20, msg.vy);
+    write_f32_le(buf, offset + 24, msg.vz);
+    write_f32_le(buf, offset + 28, msg.afx);
+    write_f32_le(buf, offset + 32, msg.afy);
+    write_f32_le(buf, offset + 36, msg.afz);
+    write_f32_le(buf, offset + 40, msg.yaw);
+    write_f32_le(buf, offset + 44, msg.yaw_rate);
+    write_u16_le(buf, offset + 48, msg.type_mask);
+    buf[offset + 50] = msg.target_system;
+    buf[offset + 51] = msg.target_component;
+    buf[offset + 52] = msg.coordinate_frame;
+
+    Some(write_crc(buf, offset + SetPositionTargetLocalNed::PAYLOAD_LEN, 143))
 }
 
 fn serialize_command_long(msg: &CommandLong, seq: u8, buf: &mut [u8]) -> Option<usize> {
@@ -633,6 +662,37 @@ mod tests {
             |m| if let MavMessage::Statustext(h) = m {
                 assert_eq!(h.severity, 6);
                 assert_eq!(h.text[0], b'H');
+            } else { panic!("Wrong message type") }
+        );
+    }
+
+    #[test]
+    fn test_set_position_target_local_ned() {
+        roundtrip(
+            || MavMessage::SetPositionTargetLocalNed(SetPositionTargetLocalNed {
+                time_boot_ms: 5000,
+                target_system: 1,
+                target_component: 1,
+                coordinate_frame: 1, // MAV_FRAME_LOCAL_NED
+                type_mask: 0b0000_1111_1111_1000, // Position only (ignore velocity, accel, yaw)
+                x: 10.0,
+                y: 20.0,
+                z: -5.0, // NED: negative = up
+                vx: 0.0,
+                vy: 0.0,
+                vz: 0.0,
+                afx: 0.0,
+                afy: 0.0,
+                afz: 0.0,
+                yaw: 0.0,
+                yaw_rate: 0.0,
+            }),
+            |m| if let MavMessage::SetPositionTargetLocalNed(p) = m {
+                assert_eq!(p.time_boot_ms, 5000);
+                assert!((p.x - 10.0).abs() < 1e-5);
+                assert!((p.y - 20.0).abs() < 1e-5);
+                assert!((p.z - (-5.0)).abs() < 1e-5);
+                assert_eq!(p.coordinate_frame, 1);
             } else { panic!("Wrong message type") }
         );
     }

@@ -37,3 +37,13 @@ Cargo.lock
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.eggs/

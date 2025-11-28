@@ -17,10 +17,60 @@ use aviate_core::types::{
 
 use aviate_mavlink::{
     parse_mavlink, serialize_mavlink, MavMessage, HilActuatorControls, HilSensor, HilGps,
-    Heartbeat, MavAutopilot, MavType, MavState, MavModeFlag, SetAttitudeTarget, CommandLong, mav_cmd,
+    Heartbeat, MavAutopilot, MavType, MavState, MavModeFlag, SetAttitudeTarget,
+    SetPositionTargetLocalNed, CommandLong, CommandAck, mav_cmd, mav_result,
 };
 
 use crate::{SitlConfig, bridge};
+
+/// Pre-arm check state for SITL
+///
+/// Tracks sensor health and readiness conditions required before arming.
+/// In SITL, these are verified by receiving valid HIL_SENSOR data.
+#[derive(Debug, Default)]
+pub struct PreArmState {
+    /// IMU healthy: HIL_SENSOR received with valid accel/gyro
+    pub imu_healthy: bool,
+    /// Barometer healthy: HIL_SENSOR received with valid pressure data
+    pub baro_healthy: bool,
+    /// Magnetometer healthy: HIL_SENSOR received with valid mag data
+    pub mag_healthy: bool,
+    /// Number of valid HIL_SENSOR messages received (for EKF convergence)
+    pub sensor_count: u32,
+    /// Last received thrust command (for throttle-low check)
+    pub last_thrust: f32,
+}
+
+impl PreArmState {
+    /// Minimum sensor readings required before arm (for EKF convergence)
+    const MIN_SENSOR_COUNT: u32 = 100; // ~100ms at 1kHz
+
+    /// Check if all pre-arm conditions are met
+    pub fn can_arm(&self) -> bool {
+        self.imu_healthy
+            && self.baro_healthy
+            && self.mag_healthy
+            && self.sensor_count >= Self::MIN_SENSOR_COUNT
+            && self.last_thrust < 0.1 // Throttle low check
+    }
+
+    /// Get failure reason if cannot arm
+    pub fn failure_reason(&self) -> Option<&'static str> {
+        if !self.imu_healthy {
+            Some("IMU not healthy")
+        } else if !self.baro_healthy {
+            Some("Barometer not healthy")
+        } else if !self.mag_healthy {
+            Some("Magnetometer not healthy")
+        } else if self.sensor_count < Self::MIN_SENSOR_COUNT {
+            Some("EKF not converged")
+        } else if self.last_thrust >= 0.1 {
+            Some("Throttle not low")
+        } else {
+            None
+        }
+    }
+}
 
 pub struct UdpMavlinkHal {
     recv_socket: UdpSocket,
@@ -35,9 +85,12 @@ pub struct UdpMavlinkHal {
     gnss_data: Option<SensorReading<GnssData>>,
     baro_data: Option<SensorReading<BaroData>>,
     mag_data: Option<SensorReading<MagData>>,
-    
+
     // Buffered command
     command: Option<SystemCommand>,
+
+    // Pre-arm state tracking
+    pre_arm: PreArmState,
 
     // Heartbeat timing
     last_heartbeat_us: u64,
@@ -69,6 +122,7 @@ impl UdpMavlinkHal {
             baro_data: None,
             mag_data: None,
             command: None,
+            pre_arm: PreArmState::default(),
             last_heartbeat_us: 0,
             rx_count: 0,
             tx_count: 0,
@@ -120,6 +174,7 @@ impl UdpMavlinkHal {
             MavMessage::HilSensor(sensor) => self.handle_hil_sensor(sensor, ts),
             MavMessage::HilGps(gps) => self.handle_hil_gps(gps, ts),
             MavMessage::SetAttitudeTarget(tgt) => self.handle_set_attitude_target(tgt),
+            MavMessage::SetPositionTargetLocalNed(tgt) => self.handle_set_position_target(tgt),
             MavMessage::CommandLong(cmd) => self.handle_command_long(cmd),
             _ => {
                 // Ignore other messages
@@ -182,6 +237,19 @@ impl UdpMavlinkHal {
             timestamp: ts,
             health: SensorHealth::Good,
         });
+
+        // Update pre-arm state based on received sensor data
+        let accel_valid = sensor.xacc.is_finite() && sensor.yacc.is_finite() && sensor.zacc.is_finite();
+        let gyro_valid = sensor.xgyro.is_finite() && sensor.ygyro.is_finite() && sensor.zgyro.is_finite();
+        self.pre_arm.imu_healthy = accel_valid && gyro_valid;
+
+        self.pre_arm.baro_healthy = sensor.abs_pressure > 100.0 && sensor.abs_pressure < 2000.0;
+
+        let mag_valid = sensor.xmag.is_finite() && sensor.ymag.is_finite() && sensor.zmag.is_finite();
+        self.pre_arm.mag_healthy = mag_valid;
+
+        // Increment sensor count for EKF convergence tracking
+        self.pre_arm.sensor_count = self.pre_arm.sensor_count.saturating_add(1);
     }
 
     fn handle_hil_gps(&mut self, gps: HilGps, ts: Timestamp) {
@@ -219,18 +287,56 @@ impl UdpMavlinkHal {
     }
     
     fn handle_set_attitude_target(&mut self, tgt: SetAttitudeTarget) {
+        // Track thrust for pre-arm throttle-low check
+        self.pre_arm.last_thrust = tgt.thrust;
+
         let cmd = bridge::mavlink_to_command(&tgt);
         self.command = Some(SystemCommand::FlightControl(cmd));
     }
-    
+
+    fn handle_set_position_target(&mut self, tgt: SetPositionTargetLocalNed) {
+        let cmd = bridge::mavlink_position_to_command(&tgt);
+        self.command = Some(SystemCommand::FlightControl(cmd));
+    }
+
     fn handle_command_long(&mut self, cmd: CommandLong) {
-        if cmd.command == mav_cmd::COMPONENT_ARM_DISARM {
-            if cmd.param1 == 1.0 {
-                self.command = Some(SystemCommand::Arm);
-            } else if cmd.param1 == 0.0 {
-                self.command = Some(SystemCommand::Disarm);
+        let result = match cmd.command {
+            mav_cmd::COMPONENT_ARM_DISARM => {
+                if cmd.param1 > 0.5 {
+                    // Arm request
+                    if !self.pre_arm.can_arm() {
+                        if let Some(reason) = self.pre_arm.failure_reason() {
+                            eprintln!("[WARN] Arm denied: {}", reason);
+                        }
+                        mav_result::DENIED
+                    } else {
+                        self.command = Some(SystemCommand::Arm);
+                        mav_result::ACCEPTED
+                    }
+                } else {
+                    // Disarm request
+                    self.command = Some(SystemCommand::Disarm);
+                    mav_result::ACCEPTED
+                }
             }
-        }
+            _ => mav_result::UNSUPPORTED,
+        };
+
+        // Send COMMAND_ACK response
+        self.send_command_ack(cmd.command, result, cmd.target_system, cmd.target_component);
+    }
+
+    /// Send COMMAND_ACK message
+    fn send_command_ack(&mut self, command: u16, result: u8, target_system: u8, target_component: u8) {
+        let ack = CommandAck {
+            command,
+            result,
+            progress: 0,
+            result_param2: 0,
+            target_system,
+            target_component,
+        };
+        self.send_message(&MavMessage::CommandAck(ack));
     }
 
     /// Send heartbeat message
