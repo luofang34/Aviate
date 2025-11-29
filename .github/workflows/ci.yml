@@ -24,7 +24,7 @@ jobs:
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
 
@@ -58,7 +58,7 @@ jobs:
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -85,7 +85,15 @@ jobs:
           rustup toolchain install nightly --profile minimal
           rustup component add llvm-tools-preview --toolchain nightly
 
+      - name: Cache grcov binary
+        id: cache-grcov
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/grcov
+          key: ${{ runner.os }}-grcov-0.10
+
       - name: Install grcov
+        if: steps.cache-grcov.outputs.cache-hit != 'true'
         run: cargo install grcov
 
       - name: Cache cargo registry
@@ -115,7 +123,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
 
@@ -131,7 +139,7 @@ jobs:
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Build documentation
         run: cargo doc --workspace --exclude quadcopter-stm32h7 --no-deps

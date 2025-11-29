@@ -99,6 +99,12 @@ fi
 echo ""
 echo "--- Phase 2: Generating Reports ---"
 
+# Determine LLVM tools path for grcov
+LLVM_PATH=""
+if [[ -d "$NIGHTLY_LLVM" ]]; then
+    LLVM_PATH="--llvm-path $NIGHTLY_LLVM"
+fi
+
 grcov . \
     --binary-path ./target/debug/ \
     --source-dir . \
@@ -111,6 +117,7 @@ grcov . \
     --ignore "aviate-apps/*" \
     --ignore "aviate-platform/*" \
     --keep-only "aviate-core/src/*" \
+    $LLVM_PATH \
     --output-path "$OUTPUT_DIR/html"
 
 grcov . \
@@ -125,6 +132,7 @@ grcov . \
     --ignore "aviate-apps/*" \
     --ignore "aviate-platform/*" \
     --keep-only "aviate-core/src/*" \
+    $LLVM_PATH \
     --output-path "$OUTPUT_DIR/lcov.info"
 
 echo "Reports: $OUTPUT_DIR/html/index.html"
