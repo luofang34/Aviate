@@ -4,17 +4,23 @@
 //! - Lines 8, 20: VtolController step method
 
 use aviate_core::control::vtol::VtolController;
-use aviate_core::control::{VehicleController, Command, Setpoint, ConfigMode, Limits, ControlMode, CommandSource};
-use aviate_core::state::{StateEstimate, EstimateQuality, StateValidFlags};
+use aviate_core::control::{
+    Command, CommandSource, ConfigMode, ControlMode, Limits, Setpoint, VehicleController,
+};
 use aviate_core::math::Quaternion;
-use aviate_core::types::{Normalized, Meters, MetersPerSecond, RadiansPerSecond, Radians};
+use aviate_core::state::{EstimateQuality, StateEstimate, StateValidFlags};
+use aviate_core::types::{Meters, MetersPerSecond, Normalized, Radians, RadiansPerSecond};
 
 fn make_state() -> StateEstimate {
     StateEstimate {
         attitude: Quaternion::IDENTITY,
         angular_velocity: [RadiansPerSecond(0.0); 3],
         position_ned: [Meters(0.0), Meters(0.0), Meters(-10.0)],
-        velocity_ned: [MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)],
+        velocity_ned: [
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ],
         quality: EstimateQuality::Good,
         valid_flags: StateValidFlags::all(),
     }

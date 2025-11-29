@@ -13,7 +13,7 @@ pub struct Radians(pub Scalar);
 #[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
 pub struct Seconds(pub Scalar);
 #[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
-pub struct Normalized(pub Scalar);      // [0.0, 1.0]
+pub struct Normalized(pub Scalar); // [0.0, 1.0]
 #[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
 pub struct NormalizedSigned(pub Scalar); // [-1.0, 1.0]
 #[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
@@ -35,9 +35,15 @@ pub trait Validated {
 }
 
 impl Validated for Scalar {
-    fn is_valid(&self) -> bool { self.is_finite() }
+    fn is_valid(&self) -> bool {
+        self.is_finite()
+    }
     fn sanitize_or_default(&self, default: Self) -> Self {
-        if self.is_finite() { *self } else { default }
+        if self.is_finite() {
+            *self
+        } else {
+            default
+        }
     }
 }
 
@@ -51,7 +57,7 @@ macro_rules! impl_validated {
                     if self.0.is_finite() { *self } else { default }
                 }
             }
-            
+
             // Allow adding scalar to newtype (if needed, mostly we want newtype algebra)
             // For now, we keep it minimal.
         )*
@@ -59,11 +65,20 @@ macro_rules! impl_validated {
 }
 
 impl_validated!(
-    Meters, MetersPerSecond, MetersPerSecondSquared, 
-    RadiansPerSecond, Radians, Seconds, 
-    Normalized, NormalizedSigned, 
-    Pascals, Celsius, Degrees, Microtesla, 
-    Kilograms, KilogramMeterSquared
+    Meters,
+    MetersPerSecond,
+    MetersPerSecondSquared,
+    RadiansPerSecond,
+    Radians,
+    Seconds,
+    Normalized,
+    NormalizedSigned,
+    Pascals,
+    Celsius,
+    Degrees,
+    Microtesla,
+    Kilograms,
+    KilogramMeterSquared
 );
 
 pub trait FloatExt {
@@ -76,12 +91,24 @@ pub trait FloatExt {
 }
 
 impl FloatExt for Scalar {
-    fn sqrt(self) -> Self { libm::sqrtf(self) }
-    fn sin(self) -> Self { libm::sinf(self) }
-    fn cos(self) -> Self { libm::cosf(self) }
-    fn asin(self) -> Self { libm::asinf(self) }
-    fn powf(self, exp: Self) -> Self { libm::powf(self, exp) }
-    fn atan2(self, other: Self) -> Self { libm::atan2f(self, other) }
+    fn sqrt(self) -> Self {
+        libm::sqrtf(self)
+    }
+    fn sin(self) -> Self {
+        libm::sinf(self)
+    }
+    fn cos(self) -> Self {
+        libm::cosf(self)
+    }
+    fn asin(self) -> Self {
+        libm::asinf(self)
+    }
+    fn powf(self, exp: Self) -> Self {
+        libm::powf(self, exp)
+    }
+    fn atan2(self, other: Self) -> Self {
+        libm::atan2f(self, other)
+    }
 }
 
 macro_rules! impl_arithmetic {
@@ -122,9 +149,18 @@ macro_rules! impl_arithmetic {
 }
 
 impl_arithmetic!(
-    Meters, MetersPerSecond, MetersPerSecondSquared,
-    RadiansPerSecond, Radians, Seconds,
-    Normalized, NormalizedSigned,
-    Pascals, Celsius, Degrees, Microtesla,
-    Kilograms, KilogramMeterSquared
+    Meters,
+    MetersPerSecond,
+    MetersPerSecondSquared,
+    RadiansPerSecond,
+    Radians,
+    Seconds,
+    Normalized,
+    NormalizedSigned,
+    Pascals,
+    Celsius,
+    Degrees,
+    Microtesla,
+    Kilograms,
+    KilogramMeterSquared
 );

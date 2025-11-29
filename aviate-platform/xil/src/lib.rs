@@ -24,17 +24,15 @@
 #![forbid(unsafe_code)]
 
 pub mod backend;
-pub mod world;
-pub mod mock;
-pub mod udp;
 pub mod bridge;
 pub mod flight_log;
+pub mod mock;
 pub mod test;
+pub mod udp;
+pub mod world;
 
 // Core exports
-pub use backend::{
-    BackendConfig, BackendError, KinematicsBackend, LockstepMode, TimingMode,
-};
+pub use backend::{BackendConfig, BackendError, KinematicsBackend, LockstepMode, TimingMode};
 pub use world::{
     AngularVelocity, Entity, EntityId, EntityState, Position, Quaternion, Velocity, World,
 };
@@ -47,11 +45,11 @@ pub use udp::UdpMavlinkHal;
 pub use flight_log::{FlightLog, FlightLogConfig, FlightSample, FlightStats};
 
 // Test infrastructure exports
-pub use test::{
-    Mission, Phase, Action, Criterion, CriterionResult, MissionResult, PhaseResult,
-    VehicleConfig, MultiVehicleMission, MultiVehiclePhase, MultiVehicleCriterion,
-};
 pub use test::config::{parse_test_config, parse_test_config_str, TestConfig, VehicleTestConfig};
+pub use test::{
+    Action, Criterion, CriterionResult, Mission, MissionResult, MultiVehicleCriterion,
+    MultiVehicleMission, MultiVehiclePhase, Phase, PhaseResult, VehicleConfig,
+};
 
 /// Default ports for MAVLink HIL communication
 pub const DEFAULT_SENSOR_PORT: u16 = 14560;

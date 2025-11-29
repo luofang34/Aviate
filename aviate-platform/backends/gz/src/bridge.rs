@@ -104,13 +104,13 @@ impl From<std::io::Error> for GzBridgeError {
 #[cfg(feature = "gz-plugin")]
 mod ffi_bridge {
     use super::*;
-    use std::net::UdpSocket;
-    use std::time::Instant;
+    use crate::plugin::{enu_to_ned_f32, enu_vel_to_ned_f32, GzPluginBridge, GzPluginError};
     use aviate_mavlink::{
-        serialize_mavlink, parse_mavlink, HilSensor, HilGps, HilActuatorControls, LocalPositionNed,
+        parse_mavlink, serialize_mavlink, HilActuatorControls, HilGps, HilSensor, LocalPositionNed,
         MavMessage,
     };
-    use crate::plugin::{GzPluginBridge, GzPluginError, enu_to_ned_f32, enu_vel_to_ned_f32};
+    use std::net::UdpSocket;
+    use std::time::Instant;
 
     /// Gazebo-MAVLink bridge using shared memory FFI
     pub struct GzBridge {
@@ -158,7 +158,10 @@ mod ffi_bridge {
         /// Waits for the AviateGzPlugin to initialize shared memory.
         pub fn connect(&mut self, timeout_ms: u64) -> Result<(), GzBridgeError> {
             let max_attempts = (timeout_ms / 500).max(1) as u32;
-            eprintln!("[GzBridge] Connecting to AviateGzPlugin ({}ms timeout)...", timeout_ms);
+            eprintln!(
+                "[GzBridge] Connecting to AviateGzPlugin ({}ms timeout)...",
+                timeout_ms
+            );
 
             match GzPluginBridge::connect_with_retry(max_attempts, 500) {
                 Ok(plugin) => {
@@ -173,7 +176,10 @@ mod ffi_bridge {
 
         /// Check if connected to the plugin
         pub fn is_connected(&self) -> bool {
-            self.plugin.as_ref().map(|p| p.is_connected()).unwrap_or(false)
+            self.plugin
+                .as_ref()
+                .map(|p| p.is_connected())
+                .unwrap_or(false)
         }
 
         /// Run one iteration of the bridge loop
@@ -204,7 +210,12 @@ mod ffi_bridge {
                     (accel, gyro, ned_pos, ned_vel)
                 } else {
                     // No valid data yet, use cached
-                    ([0.0, 0.0, -9.81], [0.0; 3], self.last_position, self.last_velocity)
+                    (
+                        [0.0, 0.0, -9.81],
+                        [0.0; 3],
+                        self.last_position,
+                        self.last_velocity,
+                    )
                 }
             } else {
                 // Plugin not connected
@@ -225,7 +236,7 @@ mod ffi_bridge {
                 zmag: 0.4,
                 abs_pressure: 1013.25,
                 diff_pressure: 0.0,
-                pressure_alt: -position[2],  // NED z is down, altitude is positive up
+                pressure_alt: -position[2], // NED z is down, altitude is positive up
                 temperature: 25.0,
                 fields_updated: 0x1FFF,
                 id: 0,
@@ -236,9 +247,15 @@ mod ffi_bridge {
 
             // Print stats every second (250 iterations at 250 Hz)
             if self.hil_sent % 250 == 0 {
-                eprintln!("[GzBridge] hil={}, motors={}, pos_sent={}, pos=[{:.2},{:.2},{:.2}]",
-                    self.hil_sent, self.motor_recv, self.pos_sent,
-                    position[0], position[1], position[2]);
+                eprintln!(
+                    "[GzBridge] hil={}, motors={}, pos_sent={}, pos=[{:.2},{:.2},{:.2}]",
+                    self.hil_sent,
+                    self.motor_recv,
+                    self.pos_sent,
+                    position[0],
+                    position[1],
+                    position[2]
+                );
             }
 
             // Send LOCAL_POSITION_NED to test client at 50Hz
@@ -340,8 +357,10 @@ mod ffi_bridge {
             if let Some(ref plugin) = self.plugin {
                 if plugin.set_motor_speeds(&velocities).is_ok() {
                     if self.motor_recv % 50 == 1 {
-                        eprintln!("[GzBridge] Motor cmd: [{:.1},{:.1},{:.1},{:.1}] rad/s",
-                            velocities[0], velocities[1], velocities[2], velocities[3]);
+                        eprintln!(
+                            "[GzBridge] Motor cmd: [{:.1},{:.1},{:.1},{:.1}] rad/s",
+                            velocities[0], velocities[1], velocities[2], velocities[3]
+                        );
                     }
                 } else if self.motor_recv % 250 == 1 {
                     eprintln!("[GzBridge] Warning: Failed to send motor command via shm");

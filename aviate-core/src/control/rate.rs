@@ -1,4 +1,4 @@
-use crate::types::{Scalar, RadiansPerSecond, NormalizedSigned};
+use crate::types::{NormalizedSigned, RadiansPerSecond, Scalar};
 
 #[derive(Clone, Debug)]
 pub struct RateController {

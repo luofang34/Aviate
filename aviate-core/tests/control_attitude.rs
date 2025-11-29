@@ -46,7 +46,10 @@ fn roll_error_produces_roll_rate_correction() {
     let rate_sp = ctrl.step(&setpoint, &current);
 
     // Should produce negative roll rate to correct back to level
-    assert!(rate_sp[0].0 < 0.0, "Roll rate should be negative to correct");
+    assert!(
+        rate_sp[0].0 < 0.0,
+        "Roll rate should be negative to correct"
+    );
     assert!((rate_sp[1].0).abs() < 1e-5, "Pitch rate should be ~zero");
     assert!((rate_sp[2].0).abs() < 1e-5, "Yaw rate should be ~zero");
 }
@@ -60,7 +63,10 @@ fn negative_roll_error_produces_positive_correction() {
 
     let rate_sp = ctrl.step(&setpoint, &current);
 
-    assert!(rate_sp[0].0 > 0.0, "Roll rate should be positive to correct");
+    assert!(
+        rate_sp[0].0 > 0.0,
+        "Roll rate should be positive to correct"
+    );
 }
 
 // =============================================================================
@@ -77,7 +83,10 @@ fn pitch_error_produces_pitch_rate_correction() {
     let rate_sp = ctrl.step(&setpoint, &current);
 
     assert!((rate_sp[0].0).abs() < 1e-5, "Roll rate should be ~zero");
-    assert!(rate_sp[1].0 < 0.0, "Pitch rate should be negative to correct");
+    assert!(
+        rate_sp[1].0 < 0.0,
+        "Pitch rate should be negative to correct"
+    );
     assert!((rate_sp[2].0).abs() < 1e-5, "Yaw rate should be ~zero");
 }
 
@@ -93,8 +102,12 @@ fn pitch_error_magnitude_check() {
     // For small angles: error ≈ 2 * sin(angle/2) ≈ angle
     // rate = error * gain = ~0.1745 * 6.0 ≈ 1.05
     let expected = -2.0 * (angle / 2.0).sin() * 6.0;
-    assert!((rate_sp[1].0 - expected).abs() < 0.1,
-            "Expected pitch rate ~{}, got {}", expected, rate_sp[1].0);
+    assert!(
+        (rate_sp[1].0 - expected).abs() < 0.1,
+        "Expected pitch rate ~{}, got {}",
+        expected,
+        rate_sp[1].0
+    );
 }
 
 // =============================================================================
@@ -129,7 +142,10 @@ fn inverted_roll_produces_large_correction() {
     let rate_sp = ctrl.step(&setpoint, &current);
 
     // Maximum error: 2 * 1.0 * 6.0 = -12.0
-    assert!((rate_sp[0].0 - (-12.0)).abs() < 1e-5, "Roll rate should be -12 rad/s");
+    assert!(
+        (rate_sp[0].0 - (-12.0)).abs() < 1e-5,
+        "Roll rate should be -12 rad/s"
+    );
     assert!((rate_sp[1].0).abs() < 1e-5);
     assert!((rate_sp[2].0).abs() < 1e-5);
 }
@@ -164,8 +180,10 @@ fn higher_gain_produces_larger_output() {
     let rate_low = ctrl_low.step(&setpoint, &current);
     let rate_high = ctrl_high.step(&setpoint, &current);
 
-    assert!((rate_high[0].0.abs() - 2.0 * rate_low[0].0.abs()).abs() < 0.1,
-            "Double gain should double output");
+    assert!(
+        (rate_high[0].0.abs() - 2.0 * rate_low[0].0.abs()).abs() < 0.1,
+        "Double gain should double output"
+    );
 }
 
 #[test]
@@ -238,6 +256,8 @@ fn quaternion_sign_ambiguity_handled() {
     let rate_neg_q = ctrl.step(&setpoint, &neg_q);
 
     // Should produce equivalent corrections (may differ by sign depending on implementation)
-    assert!((rate_q[0].0.abs() - rate_neg_q[0].0.abs()).abs() < 1e-5,
-            "q and -q should produce equivalent magnitude correction");
+    assert!(
+        (rate_q[0].0.abs() - rate_neg_q[0].0.abs()).abs() < 1e-5,
+        "q and -q should produce equivalent magnitude correction"
+    );
 }

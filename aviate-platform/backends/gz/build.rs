@@ -9,7 +9,7 @@ fn main() {
         // build: aviate-platform/aviate_gz_plugin/build
         let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
         let crate_dir = PathBuf::from(manifest_dir);
-        
+
         // Try new location first
         let build_dir_new = crate_dir
             .parent() // backends
@@ -33,15 +33,18 @@ fn main() {
         };
 
         if !build_dir.exists() {
-             println!("cargo:warning=AviateGzPlugin build directory not found at {:?}. FFI linking may fail.", build_dir);
-             println!("cargo:warning=Please build the plugin first: cd aviate-platform/aviate_gz_plugin/build && cmake .. && make");
+            println!("cargo:warning=AviateGzPlugin build directory not found at {:?}. FFI linking may fail.", build_dir);
+            println!("cargo:warning=Please build the plugin first: cd aviate-platform/aviate_gz_plugin/build && cmake .. && make");
         }
 
         // Link against the bridge library
         println!("cargo:rustc-link-search=native={}", build_dir.display());
         println!("cargo:rustc-link-lib=dylib=aviate_gz_bridge");
-        
+
         // Re-run if library changes
-        println!("cargo:rerun-if-changed={}/libaviate_gz_bridge.so", build_dir.display());
+        println!(
+            "cargo:rerun-if-changed={}/libaviate_gz_bridge.so",
+            build_dir.display()
+        );
     }
 }

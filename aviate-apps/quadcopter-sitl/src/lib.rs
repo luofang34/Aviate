@@ -25,15 +25,15 @@ pub use mission::{
     MultiVehicleMission, MultiVehiclePhase, Phase, PhaseResult, VehicleConfig,
 };
 
-pub use test_config::{parse_test_config, parse_test_config_str, TestConfig, VehicleTestConfig};
-pub use world_gen::{generate_world, generate_world_file, generate_temp_world, WorldParams};
 pub use router_gen::{
-    generate_router_config, generate_router_config_file, generate_temp_router_config,
-    RouterParams, vehicle_port, GCS_PORT, VEHICLE_BASE_PORT,
+    generate_router_config, generate_router_config_file, generate_temp_router_config, vehicle_port,
+    RouterParams, GCS_PORT, VEHICLE_BASE_PORT,
 };
+pub use test_config::{parse_test_config, parse_test_config_str, TestConfig, VehicleTestConfig};
+pub use world_gen::{generate_temp_world, generate_world, generate_world_file, WorldParams};
 
 #[cfg(feature = "gz-plugin")]
 pub use mission_runner::{run_mission_suite, run_mission_suite_for_instance, MissionRunner};
 
 #[cfg(feature = "multi-vehicle")]
-pub use multi_vehicle::{start_router, RouterHandle, RouterError};
+pub use multi_vehicle::{start_router, RouterError, RouterHandle};

@@ -39,7 +39,7 @@ impl Default for WorldParams {
             real_time_factor: 1.0,
             lockstep: true,
             lockstep_timeout_us: 50000,
-            latitude: 47.3977419,  // Zurich
+            latitude: 47.3977419, // Zurich
             longitude: 8.5455938,
             elevation: 488.0,
         }
@@ -93,8 +93,18 @@ pub fn generate_world(config: &TestConfig, params: &WorldParams) -> String {
 
 fn write_physics(sdf: &mut String, params: &WorldParams) {
     writeln!(sdf, r#"    <physics name="1ms" type="ignored">"#).unwrap();
-    writeln!(sdf, r#"      <max_step_size>{}</max_step_size>"#, params.step_size).unwrap();
-    writeln!(sdf, r#"      <real_time_factor>{}</real_time_factor>"#, params.real_time_factor).unwrap();
+    writeln!(
+        sdf,
+        r#"      <max_step_size>{}</max_step_size>"#,
+        params.step_size
+    )
+    .unwrap();
+    writeln!(
+        sdf,
+        r#"      <real_time_factor>{}</real_time_factor>"#,
+        params.real_time_factor
+    )
+    .unwrap();
     writeln!(sdf, r#"    </physics>"#).unwrap();
     writeln!(sdf).unwrap();
 }
@@ -104,11 +114,23 @@ fn write_system_plugins(sdf: &mut String) {
 
     let plugins = [
         ("gz-sim-physics-system", "gz::sim::systems::Physics"),
-        ("gz-sim-scene-broadcaster-system", "gz::sim::systems::SceneBroadcaster"),
-        ("gz-sim-user-commands-system", "gz::sim::systems::UserCommands"),
+        (
+            "gz-sim-scene-broadcaster-system",
+            "gz::sim::systems::SceneBroadcaster",
+        ),
+        (
+            "gz-sim-user-commands-system",
+            "gz::sim::systems::UserCommands",
+        ),
         ("gz-sim-imu-system", "gz::sim::systems::Imu"),
-        ("gz-sim-magnetometer-system", "gz::sim::systems::Magnetometer"),
-        ("gz-sim-air-pressure-system", "gz::sim::systems::AirPressure"),
+        (
+            "gz-sim-magnetometer-system",
+            "gz::sim::systems::Magnetometer",
+        ),
+        (
+            "gz-sim-air-pressure-system",
+            "gz::sim::systems::AirPressure",
+        ),
         ("gz-sim-navsat-system", "gz::sim::systems::NavSat"),
     ];
 
@@ -136,7 +158,12 @@ fn write_aviate_plugins(sdf: &mut String, config: &TestConfig, params: &WorldPar
         writeln!(sdf, r#"      <instance>{}</instance>"#, vehicle.instance).unwrap();
         writeln!(sdf, r#"      <lockstep>{}</lockstep>"#, params.lockstep).unwrap();
         if params.lockstep {
-            writeln!(sdf, r#"      <lockstep_timeout_us>{}</lockstep_timeout_us>"#, params.lockstep_timeout_us).unwrap();
+            writeln!(
+                sdf,
+                r#"      <lockstep_timeout_us>{}</lockstep_timeout_us>"#,
+                params.lockstep_timeout_us
+            )
+            .unwrap();
         }
         writeln!(sdf, r#"    </plugin>"#).unwrap();
     }
@@ -147,9 +174,23 @@ fn write_spherical_coords(sdf: &mut String, params: &WorldParams) {
     writeln!(sdf, r#"    <!-- Spherical coordinates for GPS -->"#).unwrap();
     writeln!(sdf, r#"    <spherical_coordinates>"#).unwrap();
     writeln!(sdf, r#"      <surface_model>EARTH_WGS84</surface_model>"#).unwrap();
-    writeln!(sdf, r#"      <world_frame_orientation>ENU</world_frame_orientation>"#).unwrap();
-    writeln!(sdf, r#"      <latitude_deg>{}</latitude_deg>"#, params.latitude).unwrap();
-    writeln!(sdf, r#"      <longitude_deg>{}</longitude_deg>"#, params.longitude).unwrap();
+    writeln!(
+        sdf,
+        r#"      <world_frame_orientation>ENU</world_frame_orientation>"#
+    )
+    .unwrap();
+    writeln!(
+        sdf,
+        r#"      <latitude_deg>{}</latitude_deg>"#,
+        params.latitude
+    )
+    .unwrap();
+    writeln!(
+        sdf,
+        r#"      <longitude_deg>{}</longitude_deg>"#,
+        params.longitude
+    )
+    .unwrap();
     writeln!(sdf, r#"      <elevation>{}</elevation>"#, params.elevation).unwrap();
     writeln!(sdf, r#"    </spherical_coordinates>"#).unwrap();
     writeln!(sdf).unwrap();
@@ -158,7 +199,11 @@ fn write_spherical_coords(sdf: &mut String, params: &WorldParams) {
 fn write_environment(sdf: &mut String) {
     // Magnetic field (Zurich, Switzerland)
     writeln!(sdf, r#"    <!-- Magnetic field for magnetometer -->"#).unwrap();
-    writeln!(sdf, r#"    <magnetic_field>6.0e-6 2.3e-5 -4.2e-5</magnetic_field>"#).unwrap();
+    writeln!(
+        sdf,
+        r#"    <magnetic_field>6.0e-6 2.3e-5 -4.2e-5</magnetic_field>"#
+    )
+    .unwrap();
     writeln!(sdf).unwrap();
 
     // Sunlight
@@ -214,17 +259,39 @@ fn write_vehicle(sdf: &mut String, vehicle: &VehicleTestConfig) {
     let [x, y, z] = vehicle.spawn_position;
     let heading = vehicle.spawn_heading;
 
-    writeln!(sdf, r#"    <!-- Vehicle: {} (instance {}) -->"#, vehicle.id, vehicle.instance).unwrap();
+    writeln!(
+        sdf,
+        r#"    <!-- Vehicle: {} (instance {}) -->"#,
+        vehicle.id, vehicle.instance
+    )
+    .unwrap();
     writeln!(sdf, r#"    <include>"#).unwrap();
     writeln!(sdf, r#"      <uri>model://{}</uri>"#, vehicle.model).unwrap();
     writeln!(sdf, r#"      <name>{}</name>"#, vehicle.id).unwrap();
-    writeln!(sdf, r#"      <pose>{} {} {} 0 0 {}</pose>"#, x, y, z, heading).unwrap();
+    writeln!(
+        sdf,
+        r#"      <pose>{} {} {} 0 0 {}</pose>"#,
+        x, y, z, heading
+    )
+    .unwrap();
     writeln!(sdf).unwrap();
     writeln!(sdf, r#"      <!-- Odometry publisher -->"#).unwrap();
-    writeln!(sdf, r#"      <plugin filename="gz-sim-odometry-publisher-system""#).unwrap();
-    writeln!(sdf, r#"              name="gz::sim::systems::OdometryPublisher">"#).unwrap();
+    writeln!(
+        sdf,
+        r#"      <plugin filename="gz-sim-odometry-publisher-system""#
+    )
+    .unwrap();
+    writeln!(
+        sdf,
+        r#"              name="gz::sim::systems::OdometryPublisher">"#
+    )
+    .unwrap();
     writeln!(sdf, r#"        <dimensions>3</dimensions>"#).unwrap();
-    writeln!(sdf, r#"        <odom_publish_frequency>250</odom_publish_frequency>"#).unwrap();
+    writeln!(
+        sdf,
+        r#"        <odom_publish_frequency>250</odom_publish_frequency>"#
+    )
+    .unwrap();
     writeln!(sdf, r#"      </plugin>"#).unwrap();
     writeln!(sdf, r#"    </include>"#).unwrap();
     writeln!(sdf).unwrap();
@@ -240,18 +307,19 @@ pub fn generate_world_file(
 
     // Ensure parent directory exists
     if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
     }
 
-    fs::write(output_path, &sdf)
-        .map_err(|e| format!("Failed to write world file: {}", e))?;
+    fs::write(output_path, &sdf).map_err(|e| format!("Failed to write world file: {}", e))?;
 
     Ok(())
 }
 
 /// Generate world file to a temporary location
-pub fn generate_temp_world(config: &TestConfig, params: &WorldParams) -> Result<std::path::PathBuf, String> {
+pub fn generate_temp_world(
+    config: &TestConfig,
+    params: &WorldParams,
+) -> Result<std::path::PathBuf, String> {
     let temp_dir = std::env::temp_dir();
     let filename = format!("aviate_test_{}.sdf", config.name);
     let path = temp_dir.join(filename);

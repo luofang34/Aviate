@@ -277,7 +277,11 @@ impl FlightLog {
         eprintln!("[FlightLog] Summary:");
         eprintln!("  Samples: {}", stats.sample_count);
         eprintln!("  Duration: {:.1}s", stats.duration_ms as f32 / 1000.0);
-        eprintln!("  Max altitude: {:.2}m @ {:.1}s", stats.max_altitude, stats.peak_time_ms as f32 / 1000.0);
+        eprintln!(
+            "  Max altitude: {:.2}m @ {:.1}s",
+            stats.max_altitude,
+            stats.peak_time_ms as f32 / 1000.0
+        );
         eprintln!("  Max h-speed: {:.2} m/s", stats.max_horizontal_speed);
         eprintln!("  Max v-speed: {:.2} m/s", stats.max_vertical_speed);
         eprintln!("  Final altitude: {:.2}m", stats.final_altitude);

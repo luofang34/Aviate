@@ -1,5 +1,5 @@
-use crate::types::{Scalar, Meters, MetersPerSecond};
 use crate::math::Vector3;
+use crate::types::{Meters, MetersPerSecond, Scalar};
 
 #[derive(Clone, Debug)]
 pub struct PositionController {

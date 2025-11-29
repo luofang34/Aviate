@@ -55,10 +55,20 @@ pub fn generate_router_config(config: &TestConfig, params: &RouterParams) -> Str
     writeln!(toml, "# Vehicles: {}", config.vehicles.len()).unwrap();
     writeln!(toml, "#").unwrap();
     writeln!(toml, "# Architecture:").unwrap();
-    writeln!(toml, "#   GCS <--> mavrouter (port {}) <--> Vehicle endpoints", GCS_PORT).unwrap();
+    writeln!(
+        toml,
+        "#   GCS <--> mavrouter (port {}) <--> Vehicle endpoints",
+        GCS_PORT
+    )
+    .unwrap();
     for vehicle in &config.vehicles {
         let port = VEHICLE_BASE_PORT + vehicle.instance as u16;
-        writeln!(toml, "#     {} (instance {}) on port {}", vehicle.id, vehicle.instance, port).unwrap();
+        writeln!(
+            toml,
+            "#     {} (instance {}) on port {}",
+            vehicle.id, vehicle.instance, port
+        )
+        .unwrap();
     }
     writeln!(toml).unwrap();
 
@@ -66,8 +76,18 @@ pub fn generate_router_config(config: &TestConfig, params: &RouterParams) -> Str
     writeln!(toml, "[general]").unwrap();
     writeln!(toml, "bus_capacity = {}", params.bus_capacity).unwrap();
     writeln!(toml, "dedup_period_ms = {}", params.dedup_period_ms).unwrap();
-    writeln!(toml, "routing_table_ttl_secs = {}", params.routing_table_ttl_secs).unwrap();
-    writeln!(toml, "routing_table_prune_interval_secs = {}", params.routing_table_prune_interval_secs).unwrap();
+    writeln!(
+        toml,
+        "routing_table_ttl_secs = {}",
+        params.routing_table_ttl_secs
+    )
+    .unwrap();
+    writeln!(
+        toml,
+        "routing_table_prune_interval_secs = {}",
+        params.routing_table_prune_interval_secs
+    )
+    .unwrap();
     writeln!(toml).unwrap();
 
     // GCS endpoint (server mode - accepts connections)
@@ -81,7 +101,13 @@ pub fn generate_router_config(config: &TestConfig, params: &RouterParams) -> Str
     // Vehicle endpoints (client mode - connects to SITL instances)
     for vehicle in &config.vehicles {
         let port = VEHICLE_BASE_PORT + vehicle.instance as u16;
-        writeln!(toml, "# {} (system_id = {})", vehicle.id, vehicle.instance + 1).unwrap();
+        writeln!(
+            toml,
+            "# {} (system_id = {})",
+            vehicle.id,
+            vehicle.instance + 1
+        )
+        .unwrap();
         writeln!(toml, "[[endpoint]]").unwrap();
         writeln!(toml, "type = \"udp\"").unwrap();
         writeln!(toml, "address = \"127.0.0.1:{}\"", port).unwrap();
@@ -102,18 +128,19 @@ pub fn generate_router_config_file(
 
     // Ensure parent directory exists
     if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
     }
 
-    fs::write(output_path, &toml)
-        .map_err(|e| format!("Failed to write router config: {}", e))?;
+    fs::write(output_path, &toml).map_err(|e| format!("Failed to write router config: {}", e))?;
 
     Ok(())
 }
 
 /// Generate router config to a temporary location
-pub fn generate_temp_router_config(config: &TestConfig, params: &RouterParams) -> Result<std::path::PathBuf, String> {
+pub fn generate_temp_router_config(
+    config: &TestConfig,
+    params: &RouterParams,
+) -> Result<std::path::PathBuf, String> {
     let temp_dir = std::env::temp_dir();
     let filename = format!("aviate_router_{}.toml", config.name);
     let path = temp_dir.join(filename);
@@ -223,8 +250,8 @@ verify = []
         assert!(toml.contains("address = \"0.0.0.0:14550\""));
 
         // Should have two vehicle endpoints with correct ports
-        assert!(toml.contains("address = \"127.0.0.1:14560\""));  // instance 0
-        assert!(toml.contains("address = \"127.0.0.1:14561\""));  // instance 1
+        assert!(toml.contains("address = \"127.0.0.1:14560\"")); // instance 0
+        assert!(toml.contains("address = \"127.0.0.1:14561\"")); // instance 1
 
         // Should have comments identifying vehicles
         assert!(toml.contains("x500_0"));

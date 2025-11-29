@@ -3,8 +3,8 @@
 //! Mission framework, test configuration parsing, and test runner.
 //! Backend-agnostic - works with any kinematics backend.
 
-pub mod mission;
 pub mod config;
+pub mod mission;
 
 // Re-export mission types
 pub use mission::{

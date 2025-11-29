@@ -1,14 +1,20 @@
-use crate::types::{
-    Meters, MetersPerSecond, MetersPerSecondSquared, 
-    RadiansPerSecond, Pascals, Celsius, Microtesla
-};
 use crate::time::Timestamp;
+use crate::types::{
+    Celsius, Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Pascals, RadiansPerSecond,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum SensorHealth { Good, Degraded, Failed, NotAvailable }
+pub enum SensorHealth {
+    Good,
+    Degraded,
+    Failed,
+    NotAvailable,
+}
 
 impl Default for SensorHealth {
-    fn default() -> Self { Self::NotAvailable }
+    fn default() -> Self {
+        Self::NotAvailable
+    }
 }
 
 #[derive(Copy, Clone, Debug)]

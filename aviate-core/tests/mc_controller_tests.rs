@@ -5,17 +5,23 @@
 //! - Velocity control path (lines 57-65)
 
 use aviate_core::control::mc::McController;
-use aviate_core::control::{VehicleController, Command, Setpoint, ConfigMode, Limits, ControlMode, CommandSource};
-use aviate_core::state::{StateEstimate, EstimateQuality, StateValidFlags};
+use aviate_core::control::{
+    Command, CommandSource, ConfigMode, ControlMode, Limits, Setpoint, VehicleController,
+};
 use aviate_core::math::Quaternion;
-use aviate_core::types::{Normalized, Meters, MetersPerSecond, RadiansPerSecond, Radians};
+use aviate_core::state::{EstimateQuality, StateEstimate, StateValidFlags};
+use aviate_core::types::{Meters, MetersPerSecond, Normalized, Radians, RadiansPerSecond};
 
 fn make_state() -> StateEstimate {
     StateEstimate {
         attitude: Quaternion::IDENTITY,
         angular_velocity: [RadiansPerSecond(0.0); 3],
         position_ned: [Meters(0.0), Meters(0.0), Meters(-10.0)],
-        velocity_ned: [MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)],
+        velocity_ned: [
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ],
         quality: EstimateQuality::Good,
         valid_flags: StateValidFlags::all(),
     }
@@ -69,7 +75,11 @@ fn mc_controller_position_control_path() {
     // Controller should produce output (position error -> velocity -> attitude -> rate)
     // Exact values depend on gains, but should be non-zero when there's position error
     let collective = axis_cmd.collective;
-    assert!(collective.0 >= 0.0 && collective.0 <= 1.0, "Collective should be valid: {}", collective.0);
+    assert!(
+        collective.0 >= 0.0 && collective.0 <= 1.0,
+        "Collective should be valid: {}",
+        collective.0
+    );
 }
 
 #[test]
@@ -116,7 +126,11 @@ fn mc_controller_velocity_control_path() {
     let cmd = Command {
         mode: ControlMode::VelocityControl,
         setpoint: Setpoint {
-            velocity: Some([MetersPerSecond(2.0), MetersPerSecond(0.0), MetersPerSecond(0.0)]),
+            velocity: Some([
+                MetersPerSecond(2.0),
+                MetersPerSecond(0.0),
+                MetersPerSecond(0.0),
+            ]),
             collective_thrust: Normalized(0.5),
             ..Default::default()
         },
@@ -142,7 +156,11 @@ fn mc_controller_velocity_control_vertical() {
     let cmd = Command {
         mode: ControlMode::VelocityControl,
         setpoint: Setpoint {
-            velocity: Some([MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(-2.0)]), // NED: -Z is up
+            velocity: Some([
+                MetersPerSecond(0.0),
+                MetersPerSecond(0.0),
+                MetersPerSecond(-2.0),
+            ]), // NED: -Z is up
             collective_thrust: Normalized(0.5),
             ..Default::default()
         },
@@ -170,10 +188,7 @@ fn mc_controller_attitude_only_path() {
     let limits = make_limits();
 
     // Command with only attitude and collective (no position or velocity)
-    let tilted = Quaternion::from_axis_angle(
-        aviate_core::math::Vector3::new(1.0, 0.0, 0.0),
-        0.2,
-    );
+    let tilted = Quaternion::from_axis_angle(aviate_core::math::Vector3::new(1.0, 0.0, 0.0), 0.2);
 
     let cmd = Command {
         mode: ControlMode::Attitude,
@@ -191,7 +206,11 @@ fn mc_controller_attitude_only_path() {
     let axis_cmd = controller.step(&state, &cmd, ConfigMode::Hover, &limits);
 
     // Collective should be passed through
-    assert!((axis_cmd.collective.0 - 0.6).abs() < 0.1, "Collective {} should be ~0.6", axis_cmd.collective.0);
+    assert!(
+        (axis_cmd.collective.0 - 0.6).abs() < 0.1,
+        "Collective {} should be ~0.6",
+        axis_cmd.collective.0
+    );
 }
 
 #[test]

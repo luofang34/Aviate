@@ -1,10 +1,10 @@
-use crate::control::{VehicleController, AxisCommand, Command, ConfigMode, Limits};
-use crate::control::rate::RateController;
 use crate::control::attitude::AttitudeController;
 use crate::control::position::PositionController;
+use crate::control::rate::RateController;
 use crate::control::velocity::VelocityController;
-use crate::state::StateEstimate;
+use crate::control::{AxisCommand, Command, ConfigMode, Limits, VehicleController};
 use crate::math::{Quaternion, Vector3};
+use crate::state::StateEstimate;
 
 pub struct McController {
     pub pos_ctrl: PositionController,
@@ -40,37 +40,48 @@ impl VehicleController for McController {
         // 1. Position Control (if active)
         if let Some(pos_sp_arr) = command.setpoint.position {
             let pos_sp = Vector3::new(pos_sp_arr[0], pos_sp_arr[1], pos_sp_arr[2]);
-            let vel_sp = self.pos_ctrl.step(pos_sp, Vector3 {
-                x: state.position_ned[0],
-                y: state.position_ned[1],
-                z: state.position_ned[2],
-            });
+            let vel_sp = self.pos_ctrl.step(
+                pos_sp,
+                Vector3 {
+                    x: state.position_ned[0],
+                    y: state.position_ned[1],
+                    z: state.position_ned[2],
+                },
+            );
             // 2. Velocity Control (from position control)
-            let (col, att) = self.vel_ctrl.step(vel_sp, Vector3 {
-                x: state.velocity_ned[0],
-                y: state.velocity_ned[1],
-                z: state.velocity_ned[2],
-            }, &state.attitude);
+            let (col, att) = self.vel_ctrl.step(
+                vel_sp,
+                Vector3 {
+                    x: state.velocity_ned[0],
+                    y: state.velocity_ned[1],
+                    z: state.velocity_ned[2],
+                },
+                &state.attitude,
+            );
             collective_sp = col;
             att_sp = att;
         } else if let Some(vel_sp_arr) = command.setpoint.velocity {
             let vel_sp = Vector3::new(vel_sp_arr[0], vel_sp_arr[1], vel_sp_arr[2]);
             // 2. Velocity Control (if active)
-            let (col, att) = self.vel_ctrl.step(vel_sp, Vector3 {
-                x: state.velocity_ned[0],
-                y: state.velocity_ned[1],
-                z: state.velocity_ned[2],
-            }, &state.attitude);
+            let (col, att) = self.vel_ctrl.step(
+                vel_sp,
+                Vector3 {
+                    x: state.velocity_ned[0],
+                    y: state.velocity_ned[1],
+                    z: state.velocity_ned[2],
+                },
+                &state.attitude,
+            );
             collective_sp = col;
             att_sp = att;
         }
-        
+
         // 3. Attitude Control
         let rate_sp = self.att_ctrl.step(&att_sp, &state.attitude);
-        
+
         // 4. Rate Control
         let torque_norm = self.rate_ctrl.step(rate_sp, state.angular_velocity);
-        
+
         // 5. Output
         AxisCommand {
             roll: torque_norm[0],

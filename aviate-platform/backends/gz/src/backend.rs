@@ -6,17 +6,15 @@ use std::time::Duration;
 
 #[cfg(feature = "gz-plugin")]
 use aviate_platform_xil::{
-    BackendConfig, BackendError, KinematicsBackend, LockstepMode, World,
-    Position, Velocity, Quaternion, AngularVelocity,
+    AngularVelocity, BackendConfig, BackendError, KinematicsBackend, LockstepMode, Position,
+    Quaternion, Velocity, World,
 };
 
 #[cfg(not(feature = "gz-plugin"))]
-use aviate_platform_xil::{
-    BackendConfig, BackendError, KinematicsBackend, World,
-};
+use aviate_platform_xil::{BackendConfig, BackendError, KinematicsBackend, World};
 
 #[cfg(feature = "gz-plugin")]
-use crate::plugin::{GzPluginBridge, enu_to_ned};
+use crate::plugin::{enu_to_ned, GzPluginBridge};
 
 /// Gazebo backend for XIL simulation
 ///
@@ -78,21 +76,27 @@ impl KinematicsBackend for GazeboBackend {
                     self.plugin = Some(plugin);
                     Ok(())
                 }
-                Err(_) => Err(BackendError::ConnectionFailed("Failed to connect to Gazebo plugin".into())),
+                Err(_) => Err(BackendError::ConnectionFailed(
+                    "Failed to connect to Gazebo plugin".into(),
+                )),
             }
         }
 
         #[cfg(not(feature = "gz-plugin"))]
         {
             let _ = cfg;
-            Err(BackendError::NotSupported("gz-plugin feature not enabled".into()))
+            Err(BackendError::NotSupported(
+                "gz-plugin feature not enabled".into(),
+            ))
         }
     }
 
     fn step(&mut self, world: &mut World) -> Result<Duration, BackendError> {
         #[cfg(feature = "gz-plugin")]
         {
-            let plugin = self.plugin.as_ref()
+            let plugin = self
+                .plugin
+                .as_ref()
                 .ok_or_else(|| BackendError::NotInitialized)?;
 
             // Wait for new step from Gazebo
@@ -108,7 +112,10 @@ impl KinematicsBackend for GazeboBackend {
                         entity.state.position = Position::new(ned_pos[0], ned_pos[1], ned_pos[2]);
                         entity.state.velocity = Velocity::new(ned_vel[0], ned_vel[1], ned_vel[2]);
                         entity.state.orientation = Quaternion::new(
-                            state.quat[0], state.quat[1], state.quat[2], state.quat[3]
+                            state.quat[0],
+                            state.quat[1],
+                            state.quat[2],
+                            state.quat[3],
                         );
                         entity.state.angular_velocity = AngularVelocity {
                             roll_rate: state.ang_vel[0],
@@ -134,14 +141,19 @@ impl KinematicsBackend for GazeboBackend {
         #[cfg(not(feature = "gz-plugin"))]
         {
             let _ = world;
-            Err(BackendError::NotSupported("gz-plugin feature not enabled".into()))
+            Err(BackendError::NotSupported(
+                "gz-plugin feature not enabled".into(),
+            ))
         }
     }
 
     fn poll_ready(&self) -> bool {
         #[cfg(feature = "gz-plugin")]
         {
-            self.plugin.as_ref().map(|p| p.is_connected()).unwrap_or(false)
+            self.plugin
+                .as_ref()
+                .map(|p| p.is_connected())
+                .unwrap_or(false)
         }
 
         #[cfg(not(feature = "gz-plugin"))]

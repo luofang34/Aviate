@@ -1,6 +1,8 @@
-use crate::state::StateEstimate;
-use crate::types::{Normalized, NormalizedSigned, Radians, RadiansPerSecond, Meters, MetersPerSecond};
 use crate::math::Quaternion;
+use crate::state::StateEstimate;
+use crate::types::{
+    Meters, MetersPerSecond, Normalized, NormalizedSigned, Radians, RadiansPerSecond,
+};
 
 // Re-exporting for submodules
 pub use crate::types::Scalar;
@@ -75,7 +77,12 @@ impl Default for Setpoint {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum CommandSource { Pilot, Autopilot, Gcs, Failsafe }
+pub enum CommandSource {
+    Pilot,
+    Autopilot,
+    Gcs,
+    Failsafe,
+}
 
 #[derive(Copy, Clone, Debug)]
 pub struct Timestamp {
@@ -84,7 +91,11 @@ pub struct Timestamp {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum TimeSource { Internal, Gps, Ptp }
+pub enum TimeSource {
+    Internal,
+    Gps,
+    Ptp,
+}
 
 #[derive(Copy, Clone, Debug)]
 pub struct SensorOverrides {
@@ -159,11 +170,11 @@ pub trait VehicleController {
     ) -> AxisCommand;
 }
 
-pub mod rate;
 pub mod attitude;
-pub mod position;
-pub mod velocity;
 pub mod envelope;
+pub mod position;
+pub mod rate;
+pub mod velocity;
 
 #[cfg(feature = "mc")]
 pub mod mc;

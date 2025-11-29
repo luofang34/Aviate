@@ -7,10 +7,10 @@
 //! - FaultHandlingTable lookups
 //! - ControlLaw degradation ordering
 
-use aviate_core::fault::{
-    FaultFlags, FaultCategory, FaultAction, FaultResponse, FaultHandlingTable,
-};
 use aviate_core::control::ControlLaw;
+use aviate_core::fault::{
+    FaultAction, FaultCategory, FaultFlags, FaultHandlingTable, FaultResponse,
+};
 
 // =============================================================================
 // FaultFlags - Empty/Single
@@ -234,7 +234,9 @@ fn fault_table_has_entries() {
 fn fault_table_imu_all_failed_emergency() {
     let table = FaultHandlingTable::DEFAULT;
 
-    let entry = table.entries.iter()
+    let entry = table
+        .entries
+        .iter()
         .find(|e| e.fault == FaultCategory::ImuAllFailed);
 
     assert!(entry.is_some(), "ImuAllFailed should have an entry");
@@ -248,7 +250,9 @@ fn fault_table_imu_all_failed_emergency() {
 fn fault_table_gnss_all_lost_degrade() {
     let table = FaultHandlingTable::DEFAULT;
 
-    let entry = table.entries.iter()
+    let entry = table
+        .entries
+        .iter()
         .find(|e| e.fault == FaultCategory::GnssAllLost);
 
     assert!(entry.is_some());
@@ -261,7 +265,9 @@ fn fault_table_gnss_all_lost_degrade() {
 fn fault_table_numeric_error_emergency() {
     let table = FaultHandlingTable::DEFAULT;
 
-    let entry = table.entries.iter()
+    let entry = table
+        .entries
+        .iter()
         .find(|e| e.fault == FaultCategory::NumericError);
 
     assert!(entry.is_some());
@@ -274,7 +280,9 @@ fn fault_table_numeric_error_emergency() {
 fn fault_table_imu_single_isolate() {
     let table = FaultHandlingTable::DEFAULT;
 
-    let entry = table.entries.iter()
+    let entry = table
+        .entries
+        .iter()
         .find(|e| e.fault == FaultCategory::ImuFailed);
 
     assert!(entry.is_some());
@@ -287,7 +295,9 @@ fn fault_table_imu_single_isolate() {
 fn fault_table_command_timeout_degrade() {
     let table = FaultHandlingTable::DEFAULT;
 
-    let entry = table.entries.iter()
+    let entry = table
+        .entries
+        .iter()
         .find(|e| e.fault == FaultCategory::CommandTimeout);
 
     assert!(entry.is_some());
@@ -299,7 +309,9 @@ fn fault_table_command_timeout_degrade() {
 fn fault_table_actuator_numeric_monitor() {
     let table = FaultHandlingTable::DEFAULT;
 
-    let entry = table.entries.iter()
+    let entry = table
+        .entries
+        .iter()
         .find(|e| e.fault == FaultCategory::ActuatorNumericError);
 
     assert!(entry.is_some());

@@ -19,11 +19,11 @@
 
 // Note: plugin.rs contains FFI to C++ shared memory, requires unsafe
 
-mod plugin;
-mod bridge;
 mod backend;
+mod bridge;
+mod plugin;
 
-pub use plugin::{GzPluginBridge, GzPluginError, AviateModelState, AviateMotorCommand};
-pub use plugin::{enu_to_ned, enu_to_ned_f32, enu_vel_to_ned, enu_vel_to_ned_f32};
-pub use bridge::{GzBridge, GzBridgeConfig, GzBridgeError};
 pub use backend::GazeboBackend;
+pub use bridge::{GzBridge, GzBridgeConfig, GzBridgeError};
+pub use plugin::{enu_to_ned, enu_to_ned_f32, enu_vel_to_ned, enu_vel_to_ned_f32};
+pub use plugin::{AviateModelState, AviateMotorCommand, GzPluginBridge, GzPluginError};

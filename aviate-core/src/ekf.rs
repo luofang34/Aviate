@@ -1,7 +1,11 @@
 use crate::math::{Matrix, Quaternion, Vector3};
-use crate::types::{Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond, Validated, FloatExt, Scalar};
-use crate::state::{StateEstimate, EstimateQuality, StateValidFlags};
-use crate::sensor::{ImuData, GnssData, SensorReading, SensorHealth, GnssFix, GnssHealth, BaroData, MagData};
+use crate::sensor::{
+    BaroData, GnssData, GnssFix, GnssHealth, ImuData, MagData, SensorHealth, SensorReading,
+};
+use crate::state::{EstimateQuality, StateEstimate, StateValidFlags};
+use crate::types::{
+    FloatExt, Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond, Scalar, Validated,
+};
 
 // State dimension: 3 pos, 3 vel, 3 att_err, 3 gyro_bias, 3 accel_bias = 15
 pub const STATE_DIM: usize = 15;
@@ -50,7 +54,7 @@ pub struct Ekf {
     vel: Vector3<MetersPerSecond>,
     gyro_bias: Vector3<RadiansPerSecond>,
     accel_bias: Vector3<MetersPerSecondSquared>,
-    
+
     last_gyro_body: Vector3<RadiansPerSecond>,
 
     // Covariance P (15x15)
@@ -58,7 +62,7 @@ pub struct Ekf {
 
     // Configuration
     config: EkfConfig,
-    
+
     initialized: bool,
 }
 
@@ -73,16 +77,32 @@ impl Ekf {
         Self {
             quat: Quaternion::IDENTITY,
             pos: Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-            vel: Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
-            gyro_bias: Vector3::new(RadiansPerSecond(0.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)),
-            accel_bias: Vector3::new(MetersPerSecondSquared(0.0), MetersPerSecondSquared(0.0), MetersPerSecondSquared(0.0)),
-            last_gyro_body: Vector3::new(RadiansPerSecond(0.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)),
+            vel: Vector3::new(
+                MetersPerSecond(0.0),
+                MetersPerSecond(0.0),
+                MetersPerSecond(0.0),
+            ),
+            gyro_bias: Vector3::new(
+                RadiansPerSecond(0.0),
+                RadiansPerSecond(0.0),
+                RadiansPerSecond(0.0),
+            ),
+            accel_bias: Vector3::new(
+                MetersPerSecondSquared(0.0),
+                MetersPerSecondSquared(0.0),
+                MetersPerSecondSquared(0.0),
+            ),
+            last_gyro_body: Vector3::new(
+                RadiansPerSecond(0.0),
+                RadiansPerSecond(0.0),
+                RadiansPerSecond(0.0),
+            ),
             p_cov: Matrix::identity().mul_scalar(0.1), // Initial uncertainty
             config,
             initialized: false,
         }
     }
-    
+
     pub fn is_initialized(&self) -> bool {
         self.initialized
     }
@@ -91,15 +111,27 @@ impl Ekf {
         self.pos = pos;
         self.vel = vel;
         self.quat = quat;
-        self.gyro_bias = Vector3::new(RadiansPerSecond(0.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0));
-        self.accel_bias = Vector3::new(MetersPerSecondSquared(0.0), MetersPerSecondSquared(0.0), MetersPerSecondSquared(0.0));
+        self.gyro_bias = Vector3::new(
+            RadiansPerSecond(0.0),
+            RadiansPerSecond(0.0),
+            RadiansPerSecond(0.0),
+        );
+        self.accel_bias = Vector3::new(
+            MetersPerSecondSquared(0.0),
+            MetersPerSecondSquared(0.0),
+            MetersPerSecondSquared(0.0),
+        );
         self.p_cov = Matrix::identity().mul_scalar(0.1);
         self.initialized = true;
     }
 
     pub fn predict(&mut self, imu: &ImuData, dt: Scalar) {
-        if !self.initialized { return; }
-        if !dt.is_finite() || dt <= 0.0 { return; }
+        if !self.initialized {
+            return;
+        }
+        if !dt.is_finite() || dt <= 0.0 {
+            return;
+        }
 
         // Optional: early bail if IMU clearly bad
         for c in 0..3 {
@@ -115,9 +147,9 @@ impl Ekf {
             y: imu.gyro[1] - self.gyro_bias.y,
             z: imu.gyro[2] - self.gyro_bias.z,
         };
-        
+
         self.last_gyro_body = gyro_corr;
-        
+
         let accel_corr = Vector3 {
             x: imu.accel[0] - self.accel_bias.x,
             y: imu.accel[1] - self.accel_bias.y,
@@ -125,16 +157,20 @@ impl Ekf {
         };
 
         // 2. Integrate State
-        
+
         // Rotate accel from Body to Earth (NED)
         // accel_corr is in body frame.
         // quat represents Body -> Earth rotation.
         // Rotate vector logic currently takes Vector3<Scalar>. Need to adapt or unwrap.
-        let accel_corr_scalar = Vector3 { x: accel_corr.x.0, y: accel_corr.y.0, z: accel_corr.z.0 };
+        let accel_corr_scalar = Vector3 {
+            x: accel_corr.x.0,
+            y: accel_corr.y.0,
+            z: accel_corr.z.0,
+        };
         let accel_earth_scalar = self.quat.rotate_vector(accel_corr_scalar);
-        
+
         // Gravity in NED frame (positive z is down)
-        let g = Vector3::new(0.0, 0.0, 9.81); 
+        let g = Vector3::new(0.0, 0.0, 9.81);
         // In NED, IMU measures proper acceleration. When at rest, IMU measures approx [0, 0, -9.81]
         // Adding gravity to this (kinematic_accel = proper_accel + gravity) results in zero kinematic acceleration.
         let accel_net_scalar = Vector3 {
@@ -142,7 +178,7 @@ impl Ekf {
             y: accel_earth_scalar.y,
             z: accel_earth_scalar.z + g.z,
         };
-        
+
         // Integrate Position & Velocity
         // pos = pos + vel * dt + 0.5 * acc * dt * dt
         self.pos.x = Meters(self.pos.x.0 + self.vel.x.0 * dt + 0.5 * accel_net_scalar.x * dt * dt);
@@ -156,15 +192,28 @@ impl Ekf {
         // Attitude (Quaternion integration)
         // dq = 0.5 * q * omega * dt
         // approximate rotation vector
-        let delta_angle = Vector3 { x: gyro_corr.x.0, y: gyro_corr.y.0, z: gyro_corr.z.0 };
-        let angle_mag = (delta_angle.x*delta_angle.x + delta_angle.y*delta_angle.y + delta_angle.z*delta_angle.z).sqrt();
+        let delta_angle = Vector3 {
+            x: gyro_corr.x.0,
+            y: gyro_corr.y.0,
+            z: gyro_corr.z.0,
+        };
+        let angle_mag = (delta_angle.x * delta_angle.x
+            + delta_angle.y * delta_angle.y
+            + delta_angle.z * delta_angle.z)
+            .sqrt();
         let dq = if angle_mag > 1e-6 {
-             Quaternion::from_axis_angle(Vector3::new(delta_angle.x/angle_mag, delta_angle.y/angle_mag, delta_angle.z/angle_mag), angle_mag * dt)
+            Quaternion::from_axis_angle(
+                Vector3::new(
+                    delta_angle.x / angle_mag,
+                    delta_angle.y / angle_mag,
+                    delta_angle.z / angle_mag,
+                ),
+                angle_mag * dt,
+            )
         } else {
-             Quaternion::IDENTITY
+            Quaternion::IDENTITY
         };
         self.quat = self.quat.mul(&dq).normalize();
-
 
         // 3. Propagate Covariance (P = F*P*F' + Q)
         // We need Jacobian F (15x15).
@@ -172,27 +221,27 @@ impl Ekf {
         // For simplicity/robustness in this initial version, we can use a simplified P propagation or full matrix if we can afford it.
         // Given strict limits, sparse logic is better but complex to write.
         // I'll implement a simplified F computation (Identity + small terms).
-        
+
         // F blocks:
         // Pos dot = Vel -> F_pos_vel = I * dt
         // Vel dot = R * Accel -> F_vel_att (skew symmetric term), F_vel_ab = -R
         // Att dot = -Omega * Att -> F_att_att, F_att_gb = -I
         // Bias dot = 0 -> I
-        
+
         // Let's build F explicitly as Matrix<15,15>.
         let mut f_mat = Matrix::<15, 15>::identity();
-        
+
         // dPos/dVel = I * dt
         f_mat.set(IDX_POS, IDX_VEL, dt);
-        f_mat.set(IDX_POS+1, IDX_VEL+1, dt);
-        f_mat.set(IDX_POS+2, IDX_VEL+2, dt);
-        
+        f_mat.set(IDX_POS + 1, IDX_VEL + 1, dt);
+        f_mat.set(IDX_POS + 2, IDX_VEL + 2, dt);
+
         // dVel/dAtt = -[R * a]x * dt
         // accel_earth_scalar is R * a (approximately, assuming a is accel_corr)
         // Note: accel_net_scalar includes gravity, but gravity is not affected by attitude error (it's in nav frame).
         // However, the linearization is of R * a_body.
         let rot_accel_skew = accel_earth_scalar.skew_symmetric();
-        
+
         // F[IDX_VEL][IDX_ATT] = -rot_accel_skew * dt
         // We need to copy this 3x3 block into F
         for r in 0..3 {
@@ -219,15 +268,41 @@ impl Ekf {
                 f_mat.set(IDX_ATT + r, IDX_GB + c, val);
             }
         }
-        
+
         // Q (Process Noise)
         let mut q_noise = Matrix::<15, 15>::zero();
         // Populate Q diagonal
-        for i in 0..3 { q_noise.set(IDX_POS+i, IDX_POS+i, 0.001); } // Small pos noise
-        for i in 0..3 { q_noise.set(IDX_VEL+i, IDX_VEL+i, self.config.process_noise_accel * dt * dt); }
-        for i in 0..3 { q_noise.set(IDX_ATT+i, IDX_ATT+i, self.config.process_noise_gyro * dt * dt); }
-        for i in 0..3 { q_noise.set(IDX_GB+i, IDX_GB+i, self.config.process_noise_gyro_bias * dt); }
-        for i in 0..3 { q_noise.set(IDX_AB+i, IDX_AB+i, self.config.process_noise_accel_bias * dt); }
+        for i in 0..3 {
+            q_noise.set(IDX_POS + i, IDX_POS + i, 0.001);
+        } // Small pos noise
+        for i in 0..3 {
+            q_noise.set(
+                IDX_VEL + i,
+                IDX_VEL + i,
+                self.config.process_noise_accel * dt * dt,
+            );
+        }
+        for i in 0..3 {
+            q_noise.set(
+                IDX_ATT + i,
+                IDX_ATT + i,
+                self.config.process_noise_gyro * dt * dt,
+            );
+        }
+        for i in 0..3 {
+            q_noise.set(
+                IDX_GB + i,
+                IDX_GB + i,
+                self.config.process_noise_gyro_bias * dt,
+            );
+        }
+        for i in 0..3 {
+            q_noise.set(
+                IDX_AB + i,
+                IDX_AB + i,
+                self.config.process_noise_accel_bias * dt,
+            );
+        }
 
         // P = F * P * F' + Q
         let fp = f_mat.mat_mul(&self.p_cov);
@@ -246,16 +321,22 @@ impl Ekf {
                 return;
             }
         }
-        
+
         // Check GnssData.health for specific fusion rules
         match gnss_reading.value.health {
             GnssHealth::Good => { /* continue */ }
-            GnssHealth::Suspect => { return; } // Do not fuse suspect data
-            GnssHealth::Lost => { return; }    // Do not fuse lost data
+            GnssHealth::Suspect => {
+                return;
+            } // Do not fuse suspect data
+            GnssHealth::Lost => {
+                return;
+            } // Do not fuse lost data
         }
 
         // Extra check for fix type if needed
-        if gnss_reading.value.fix == GnssFix::None { return; }
+        if gnss_reading.value.fix == GnssFix::None {
+            return;
+        }
 
         let gnss = &gnss_reading.value;
 
@@ -265,7 +346,7 @@ impl Ekf {
         self.update_scalar(IDX_POS, gnss.position_ned[0].0, r_pos);
         self.update_scalar(IDX_POS + 1, gnss.position_ned[1].0, r_pos);
         self.update_scalar(IDX_POS + 2, gnss.position_ned[2].0, r_pos);
-        
+
         // Update Velocity NED
         let r_vel = self.config.meas_noise_gnss_vel;
         self.update_scalar(IDX_VEL, gnss.velocity_ned[0].0, r_vel);
@@ -277,32 +358,36 @@ impl Ekf {
         // panic!("Entered update_baro");
         match baro_reading.health {
             SensorHealth::Good => { /* continue */ }
-            _ => { return; }
+            _ => {
+                return;
+            }
         }
-        
+
         if let Some(static_pressure) = baro_reading.value.air.static_pressure {
-             // Convert pressure to altitude. For a minimal v0.5, we use a very simplified model
-             // or assume a constant ground pressure and derive z_pos.
-             // Actual implementation would use a proper baro model or pass in ref_pressure.
-             // Here, let's use a simple linear relationship for demo or just use a known ground pressure.
-             // For now, derive altitude from a standard pressure to altitude formula (very basic)
-             // Altitude (m) = 44330.0 * (1.0 - (pressure / 101325.0)^0.1903)
-             let p0 = 101325.0; // Sea level standard pressure in Pascals
-             let altitude_from_pressure = 44330.0 * (1.0 - (static_pressure.0 / p0).powf(0.1903));
-             
-             // NED Z is negative altitude (down).
-             let z_meas = -altitude_from_pressure;
-             let r_baro = self.config.meas_noise_baro;
-             self.update_scalar(IDX_POS + 2, z_meas, r_baro);
+            // Convert pressure to altitude. For a minimal v0.5, we use a very simplified model
+            // or assume a constant ground pressure and derive z_pos.
+            // Actual implementation would use a proper baro model or pass in ref_pressure.
+            // Here, let's use a simple linear relationship for demo or just use a known ground pressure.
+            // For now, derive altitude from a standard pressure to altitude formula (very basic)
+            // Altitude (m) = 44330.0 * (1.0 - (pressure / 101325.0)^0.1903)
+            let p0 = 101325.0; // Sea level standard pressure in Pascals
+            let altitude_from_pressure = 44330.0 * (1.0 - (static_pressure.0 / p0).powf(0.1903));
+
+            // NED Z is negative altitude (down).
+            let z_meas = -altitude_from_pressure;
+            let r_baro = self.config.meas_noise_baro;
+            self.update_scalar(IDX_POS + 2, z_meas, r_baro);
         }
     }
-    
+
     pub fn update_mag(&mut self, mag_reading: &SensorReading<MagData>) {
         match mag_reading.health {
             SensorHealth::Good => { /* continue */ }
-            _ => { return; }
+            _ => {
+                return;
+            }
         }
-        
+
         // Placeholder for mag update
         let _mag = &mag_reading.value;
         // Real implementation would involve estimating heading/yaw from 3D mag + tilt
@@ -312,7 +397,7 @@ impl Ekf {
     pub fn update_scalar(&mut self, state_idx: usize, meas: Scalar, r_noise: Scalar) {
         // Standard EKF scalar update
         // H = [0, ..., 1, ... 0] at state_idx
-        
+
         // 1. Innovation
         let pred = match state_idx {
             0 => self.pos.x.0,
@@ -324,82 +409,85 @@ impl Ekf {
             _ => return, // Should not happen for this simple usage
         };
         let innov = meas - pred;
-        
+
         // Innovation Gating
         let s = self.p_cov.get(state_idx, state_idx) + r_noise;
-        
+
         // Prevent division by zero or negative variance
         if s < 1e-9 {
-            return; 
+            return;
         }
 
         let gate_sq = self.config.innovation_gate * self.config.innovation_gate;
         if (innov * innov) / s > gate_sq {
             return; // Reject measurement
         }
-        
+
         // 2. Kalman Gain K = PH' / S
         // PH' is the column of P at state_idx
         let k_gain_factor = 1.0 / s;
         // We can compute K and update state & P directly to avoid allocating K vector explicitly
-        
+
         // Update State: x = x + K * innov
         // K[i] = P[i][state_idx] / S
         let mut k_vector = [0.0; STATE_DIM];
         for (i, val) in k_vector.iter_mut().enumerate().take(STATE_DIM) {
             *val = self.p_cov.get(i, state_idx) * k_gain_factor;
         }
-        
+
         self.pos.x = Meters(self.pos.x.0 + k_vector[IDX_POS] * innov);
-        self.pos.y = Meters(self.pos.y.0 + k_vector[IDX_POS+1] * innov);
-        self.pos.z = Meters(self.pos.z.0 + k_vector[IDX_POS+2] * innov);
-        
+        self.pos.y = Meters(self.pos.y.0 + k_vector[IDX_POS + 1] * innov);
+        self.pos.z = Meters(self.pos.z.0 + k_vector[IDX_POS + 2] * innov);
+
         self.vel.x = MetersPerSecond(self.vel.x.0 + k_vector[IDX_VEL] * innov);
-        self.vel.y = MetersPerSecond(self.vel.y.0 + k_vector[IDX_VEL+1] * innov);
-        self.vel.z = MetersPerSecond(self.vel.z.0 + k_vector[IDX_VEL+2] * innov);
-        
+        self.vel.y = MetersPerSecond(self.vel.y.0 + k_vector[IDX_VEL + 1] * innov);
+        self.vel.z = MetersPerSecond(self.vel.z.0 + k_vector[IDX_VEL + 2] * innov);
+
         // Update other states (biases, etc.)
         self.gyro_bias.x = RadiansPerSecond(self.gyro_bias.x.0 + k_vector[IDX_GB] * innov);
-        self.gyro_bias.y = RadiansPerSecond(self.gyro_bias.y.0 + k_vector[IDX_GB+1] * innov);
-        self.gyro_bias.z = RadiansPerSecond(self.gyro_bias.z.0 + k_vector[IDX_GB+2] * innov);
-        
+        self.gyro_bias.y = RadiansPerSecond(self.gyro_bias.y.0 + k_vector[IDX_GB + 1] * innov);
+        self.gyro_bias.z = RadiansPerSecond(self.gyro_bias.z.0 + k_vector[IDX_GB + 2] * innov);
+
         self.accel_bias.x = MetersPerSecondSquared(self.accel_bias.x.0 + k_vector[IDX_AB] * innov);
-        self.accel_bias.y = MetersPerSecondSquared(self.accel_bias.y.0 + k_vector[IDX_AB+1] * innov);
-        self.accel_bias.z = MetersPerSecondSquared(self.accel_bias.z.0 + k_vector[IDX_AB+2] * innov);
-        
+        self.accel_bias.y =
+            MetersPerSecondSquared(self.accel_bias.y.0 + k_vector[IDX_AB + 1] * innov);
+        self.accel_bias.z =
+            MetersPerSecondSquared(self.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
+
         // Attitude update (linearized error)
         let d_ang = Vector3::new(
             k_vector[IDX_ATT] * innov,
-            k_vector[IDX_ATT+1] * innov,
-            k_vector[IDX_ATT+2] * innov
+            k_vector[IDX_ATT + 1] * innov,
+            k_vector[IDX_ATT + 2] * innov,
         );
         // Apply small angle rotation to quaternion
         // Better: use small angle approx dq = [1, dx/2, dy/2, dz/2]
-        let dq_small = Quaternion::new(1.0, d_ang.x * 0.5, d_ang.y * 0.5, d_ang.z * 0.5).normalize();
+        let dq_small =
+            Quaternion::new(1.0, d_ang.x * 0.5, d_ang.y * 0.5, d_ang.z * 0.5).normalize();
         self.quat = self.quat.mul(&dq_small).normalize();
 
         // 4. Update P = (I - KH) * P
         // P_new = P - K * H * P
         // H*P is row state_idx of P.
         // (K * (H*P))[r][c] = K[r] * P[state_idx][c]
-        
+
         // Create new P to avoid in-place corruption during calc?
         // P[r][c] -= K[r] * P[state_idx][c]
-        // This can be done in place safely if we iterate carefully? 
+        // This can be done in place safely if we iterate carefully?
         // Yes, P[state_idx][c] is constant for the row 'r' loop if we extract row first.
-        
+
         let mut p_row_h = [0.0; STATE_DIM];
         for (c, val) in p_row_h.iter_mut().enumerate().take(STATE_DIM) {
             *val = self.p_cov.get(state_idx, c);
         }
-        
+
         for (r, &k_val) in k_vector.iter().enumerate().take(STATE_DIM) {
             for (c, &p_val) in p_row_h.iter().enumerate().take(STATE_DIM) {
                 let val = self.p_cov.get(r, c) - k_val * p_val;
                 self.p_cov.set(r, c, val);
             }
         }
-        
+
         self.p_cov.make_symmetric();
     }
 
@@ -407,22 +495,22 @@ impl Ekf {
         StateEstimate {
             attitude: self.quat,
             angular_velocity: [
-                self.last_gyro_body.x, 
-                self.last_gyro_body.y, 
-                self.last_gyro_body.z
+                self.last_gyro_body.x,
+                self.last_gyro_body.y,
+                self.last_gyro_body.z,
             ],
-            position_ned: [
-                self.pos.x,
-                self.pos.y,
-                self.pos.z,
-            ],
-            velocity_ned: [
-                self.vel.x,
-                self.vel.y,
-                self.vel.z,
-            ],
-            quality: if self.initialized { EstimateQuality::Good } else { EstimateQuality::Unusable },
-            valid_flags: if self.initialized { StateValidFlags::all() } else { StateValidFlags::empty() },
+            position_ned: [self.pos.x, self.pos.y, self.pos.z],
+            velocity_ned: [self.vel.x, self.vel.y, self.vel.z],
+            quality: if self.initialized {
+                EstimateQuality::Good
+            } else {
+                EstimateQuality::Unusable
+            },
+            valid_flags: if self.initialized {
+                StateValidFlags::all()
+            } else {
+                StateValidFlags::empty()
+            },
         }
     }
 }

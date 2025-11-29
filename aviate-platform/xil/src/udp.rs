@@ -2,26 +2,26 @@
 //!
 //! Connects to external simulators (jMAVSim, Gazebo, AirSim) via UDP MAVLink.
 
-use std::net::UdpSocket;
 use std::io;
+use std::net::UdpSocket;
 
-use aviate_core::hal::{SensorHal, ActuatorHal, SystemHal, AviateHal, CommandHal, SystemCommand};
-use aviate_core::sensor::{
-    SensorReading, ImuData, GnssData, BaroData, MagData, SensorHealth, GnssHealth, GnssFix, AirData,
-};
+use aviate_core::hal::{ActuatorHal, AviateHal, CommandHal, SensorHal, SystemCommand, SystemHal};
 use aviate_core::mixer::ActuatorCmd;
-use aviate_core::time::{Timestamp, TimeSource};
+use aviate_core::sensor::{
+    AirData, BaroData, GnssData, GnssFix, GnssHealth, ImuData, MagData, SensorHealth, SensorReading,
+};
+use aviate_core::time::{TimeSource, Timestamp};
 use aviate_core::types::{
-    MetersPerSecondSquared, RadiansPerSecond, Meters, MetersPerSecond, Microtesla, Pascals, Celsius,
+    Celsius, Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Pascals, RadiansPerSecond,
 };
 
 use aviate_mavlink::{
-    parse_mavlink, serialize_mavlink, MavMessage, HilActuatorControls, HilSensor, HilGps,
-    Heartbeat, MavAutopilot, MavType, MavState, MavModeFlag, SetAttitudeTarget,
-    SetPositionTargetLocalNed, CommandLong, mav_cmd,
+    mav_cmd, parse_mavlink, serialize_mavlink, CommandLong, Heartbeat, HilActuatorControls, HilGps,
+    HilSensor, MavAutopilot, MavMessage, MavModeFlag, MavState, MavType, SetAttitudeTarget,
+    SetPositionTargetLocalNed,
 };
 
-use crate::{XilConfig, bridge};
+use crate::{bridge, XilConfig};
 
 // Alias for compatibility
 type SitlConfig = XilConfig;
@@ -39,7 +39,7 @@ pub struct UdpMavlinkHal {
     gnss_data: Option<SensorReading<GnssData>>,
     baro_data: Option<SensorReading<BaroData>>,
     mag_data: Option<SensorReading<MagData>>,
-    
+
     // Buffered command
     command: Option<SystemCommand>,
 
@@ -118,7 +118,10 @@ impl UdpMavlinkHal {
 
     /// Handle a parsed MAVLink message
     fn handle_message(&mut self, msg: MavMessage) {
-        let ts = Timestamp { ticks: self.now_us(), source: TimeSource::Internal };
+        let ts = Timestamp {
+            ticks: self.now_us(),
+            source: TimeSource::Internal,
+        };
 
         match msg {
             MavMessage::HilSensor(sensor) => self.handle_hil_sensor(sensor, ts),
@@ -207,7 +210,11 @@ impl UdpMavlinkHal {
         // Simplified NED position
         let position_ned = [Meters(0.0), Meters(0.0), Meters(-(gps.alt as f32) / 1000.0)];
 
-        let health = if fix == GnssFix::None { GnssHealth::Lost } else { GnssHealth::Good };
+        let health = if fix == GnssFix::None {
+            GnssHealth::Lost
+        } else {
+            GnssHealth::Good
+        };
 
         self.gnss_data = Some(SensorReading {
             value: GnssData {
@@ -219,10 +226,14 @@ impl UdpMavlinkHal {
             valid: fix != GnssFix::None,
             source_id: gps.id,
             timestamp: ts,
-            health: if health == GnssHealth::Good { SensorHealth::Good } else { SensorHealth::Failed },
+            health: if health == GnssHealth::Good {
+                SensorHealth::Good
+            } else {
+                SensorHealth::Failed
+            },
         });
     }
-    
+
     fn handle_set_attitude_target(&mut self, tgt: SetAttitudeTarget) {
         let cmd = bridge::mavlink_to_command(&tgt);
         self.command = Some(SystemCommand::FlightControl(cmd));
@@ -271,7 +282,11 @@ impl UdpMavlinkHal {
         let msg = HilActuatorControls {
             time_usec: self.now_us(),
             controls,
-            mode: if self.armed { MavModeFlag::SAFETY_ARMED.0 } else { 0 },
+            mode: if self.armed {
+                MavModeFlag::SAFETY_ARMED.0
+            } else {
+                0
+            },
             flags: 0,
         };
 
@@ -283,7 +298,9 @@ impl UdpMavlinkHal {
         let mut buf = [0u8; 300];
         if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
             self.seq = self.seq.wrapping_add(1);
-            let _ = self.send_socket.send_to(&buf[..len], self.config.simulator_addr);
+            let _ = self
+                .send_socket
+                .send_to(&buf[..len], self.config.simulator_addr);
             self.tx_count += 1;
         }
     }
@@ -368,7 +385,7 @@ impl SystemHal for UdpMavlinkHal {
 
 impl CommandHal for UdpMavlinkHal {
     fn recv_command(&mut self) -> Option<SystemCommand> {
-        self.poll(); 
+        self.poll();
         self.command.take()
     }
 }

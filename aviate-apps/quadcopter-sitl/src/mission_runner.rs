@@ -24,17 +24,16 @@ use std::time::{Duration, Instant};
 
 #[cfg(feature = "gz-plugin")]
 use crate::mission::{
-    Action, Criterion, Mission, MissionResult, Phase, PhaseResult, CriterionResult,
+    Action, Criterion, CriterionResult, Mission, MissionResult, Phase, PhaseResult,
 };
 
 #[cfg(feature = "gz-plugin")]
-use aviate_backend_gz::{GzPluginBridge, AviateModelState, enu_to_ned_f32};
+use aviate_backend_gz::{enu_to_ned_f32, AviateModelState, GzPluginBridge};
 
 #[cfg(feature = "gz-plugin")]
 use aviate_mavlink::{
-    serialize_mavlink, parse_mavlink, MavMessage, Heartbeat, CommandLong,
-    SetAttitudeTarget, SetPositionTargetLocalNed, HilSensor, mav_cmd,
-    MavType, MavAutopilot, MavState,
+    mav_cmd, parse_mavlink, serialize_mavlink, CommandLong, Heartbeat, HilSensor, MavAutopilot,
+    MavMessage, MavState, MavType, SetAttitudeTarget, SetPositionTargetLocalNed,
 };
 
 /// MAVLink GCS client for sending commands to the FC
@@ -60,7 +59,8 @@ impl MavClient {
         // Bind to ephemeral port (OS assigns)
         let socket = UdpSocket::bind("0.0.0.0:0")
             .map_err(|e| format!("Failed to bind UDP socket: {}", e))?;
-        socket.set_nonblocking(true)
+        socket
+            .set_nonblocking(true)
             .map_err(|e| format!("Failed to set nonblocking: {}", e))?;
 
         // FC address (each instance could have different port in multi-vehicle)
@@ -91,12 +91,10 @@ impl MavClient {
     fn recv(&mut self) -> Option<MavMessage> {
         let mut buf = [0u8; 512];
         match self.socket.recv_from(&mut buf) {
-            Ok((len, _src)) => {
-                match parse_mavlink(&buf[..len]) {
-                    Ok((msg, _)) => Some(msg),
-                    Err(_) => None,
-                }
-            }
+            Ok((len, _src)) => match parse_mavlink(&buf[..len]) {
+                Ok((msg, _)) => Some(msg),
+                Err(_) => None,
+            },
             Err(_) => None,
         }
     }
@@ -175,7 +173,7 @@ impl MavClient {
             target_system: self.target_system,
             target_component: self.target_component,
             coordinate_frame: 1, // MAV_FRAME_LOCAL_NED
-            type_mask: 0x0DF8, // Position + yaw only (ignore velocity, accel, yaw_rate)
+            type_mask: 0x0DF8,   // Position + yaw only (ignore velocity, accel, yaw_rate)
             x,
             y,
             z,
@@ -330,7 +328,10 @@ impl MissionRunner {
     pub fn run(&mut self, mission: &Mission) -> MissionResult {
         self.log(&format!("=== Mission: {} ===", mission.name));
         self.log(&format!("Description: {}", mission.description));
-        self.log(&format!("Lockstep: {}", if mission.lockstep { "YES" } else { "NO" }));
+        self.log(&format!(
+            "Lockstep: {}",
+            if mission.lockstep { "YES" } else { "NO" }
+        ));
         println!();
 
         // Try to connect to FC via MAVLink
@@ -361,7 +362,10 @@ impl MissionRunner {
                     self.start_position = enu_to_ned_f32(state.pos);
                     self.current_position = self.start_position;
                     found_model = true;
-                    self.log(&format!("Model state ready (time={}us, step={})", state.time_us, self.last_step));
+                    self.log(&format!(
+                        "Model state ready (time={}us, step={})",
+                        state.time_us, self.last_step
+                    ));
                     break;
                 }
             }
@@ -378,7 +382,12 @@ impl MissionRunner {
 
         // Execute each phase
         for (i, phase) in mission.phases.iter().enumerate() {
-            self.log(&format!("[Phase {}/{}] {}", i + 1, mission.phases.len(), phase.name));
+            self.log(&format!(
+                "[Phase {}/{}] {}",
+                i + 1,
+                mission.phases.len(),
+                phase.name
+            ));
 
             let result = self.run_phase(phase);
 
@@ -388,8 +397,10 @@ impl MissionRunner {
                 self.log("  FAILED");
                 for cr in &result.criteria_results {
                     if !cr.passed {
-                        self.log(&format!("    - {}: expected {}, got {}",
-                            cr.criterion, cr.expected, cr.actual_value));
+                        self.log(&format!(
+                            "    - {}: expected {}, got {}",
+                            cr.criterion, cr.expected, cr.actual_value
+                        ));
                     }
                 }
                 mission_passed = false;
@@ -406,7 +417,10 @@ impl MissionRunner {
         let total_duration = mission_start.elapsed();
 
         println!();
-        self.log(&format!("=== Mission {} ===", if mission_passed { "PASSED" } else { "FAILED" }));
+        self.log(&format!(
+            "=== Mission {} ===",
+            if mission_passed { "PASSED" } else { "FAILED" }
+        ));
         self.log(&format!("Duration: {:.2}s", total_duration.as_secs_f32()));
         self.log(&format!("Max altitude: {:.2}m", self.max_altitude));
 
@@ -454,7 +468,8 @@ impl MissionRunner {
         }
 
         // Verify criteria
-        let criteria_results: Vec<CriterionResult> = phase.verify
+        let criteria_results: Vec<CriterionResult> = phase
+            .verify
             .iter()
             .map(|c| self.verify_criterion(c, phase_max_altitude))
             .collect();
@@ -525,12 +540,8 @@ impl MissionRunner {
             }
             Action::GoTo { position, heading } => {
                 if self.armed {
-                    self.mav.send_position_target(
-                        position[0],
-                        position[1],
-                        position[2],
-                        *heading,
-                    );
+                    self.mav
+                        .send_position_target(position[0], position[1], position[2], *heading);
                 }
             }
         }
@@ -559,7 +570,10 @@ impl MissionRunner {
                     let _ = self.bridge.set_motor_speeds(&[speed, speed, speed, speed]);
                 }
             }
-            Action::GoTo { position: _, heading: _ } => {
+            Action::GoTo {
+                position: _,
+                heading: _,
+            } => {
                 // Position control requires FC
             }
         }
@@ -606,7 +620,7 @@ impl MissionRunner {
                 let dx = self.current_position[0] - target[0];
                 let dy = self.current_position[1] - target[1];
                 let dz = self.current_position[2] - target[2];
-                let error = (dx*dx + dy*dy + dz*dz).sqrt();
+                let error = (dx * dx + dy * dy + dz * dz).sqrt();
                 CriterionResult {
                     criterion: "position_hold".to_string(),
                     passed: error <= *tolerance,
@@ -617,7 +631,7 @@ impl MissionRunner {
             Criterion::MaxDrift(max) => {
                 let dx = self.current_position[0] - self.start_position[0];
                 let dy = self.current_position[1] - self.start_position[1];
-                let drift = (dx*dx + dy*dy).sqrt();
+                let drift = (dx * dx + dy * dy).sqrt();
                 CriterionResult {
                     criterion: "max_drift".to_string(),
                     passed: drift <= *max,
@@ -661,8 +675,10 @@ pub fn run_mission_suite_for_instance(
                 results.push(result);
             }
             Err(e) => {
-                eprintln!("[{}:{}] Failed to create runner for {}: {}",
-                    vehicle_id, instance, mission.name, e);
+                eprintln!(
+                    "[{}:{}] Failed to create runner for {}: {}",
+                    vehicle_id, instance, mission.name, e
+                );
                 results.push(MissionResult {
                     mission_name: mission.name.clone(),
                     passed: false,

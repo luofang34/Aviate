@@ -14,9 +14,7 @@ use std::env;
 use std::path::Path;
 use std::process::ExitCode;
 
-use aviate_app_quadcopter_sitl::{
-    parse_test_config, generate_world, WorldParams,
-};
+use aviate_app_quadcopter_sitl::{generate_world, parse_test_config, WorldParams};
 
 /// Environment variable to run in headless mode
 #[cfg(feature = "gz-plugin")]
@@ -57,16 +55,22 @@ fn main() -> ExitCode {
 
     // Print vehicle details
     for vehicle in &config.vehicles {
-        println!("  Vehicle: {} (model: {}, instance: {})",
-            vehicle.id, vehicle.model, vehicle.instance);
-        println!("    Spawn: [{:.1}, {:.1}, {:.1}] heading={:.1}",
+        println!(
+            "  Vehicle: {} (model: {}, instance: {})",
+            vehicle.id, vehicle.model, vehicle.instance
+        );
+        println!(
+            "    Spawn: [{:.1}, {:.1}, {:.1}] heading={:.1}",
             vehicle.spawn_position[0],
             vehicle.spawn_position[1],
             vehicle.spawn_position[2],
-            vehicle.spawn_heading);
-        println!("    Mission: {} ({} phases)",
+            vehicle.spawn_heading
+        );
+        println!(
+            "    Mission: {} ({} phases)",
             vehicle.mission.name,
-            vehicle.mission.phases.len());
+            vehicle.mission.phases.len()
+        );
     }
     println!();
 
@@ -114,11 +118,9 @@ fn run_test_with_gazebo(
     config: &aviate_app_quadcopter_sitl::TestConfig,
     params: &WorldParams,
 ) -> ExitCode {
+    use aviate_app_quadcopter_sitl::{generate_temp_world, MissionRunner};
     use std::thread;
     use std::time::Duration;
-    use aviate_app_quadcopter_sitl::{
-        generate_temp_world, MissionRunner,
-    };
 
     println!("=== Running Test with Gazebo ===");
 
@@ -170,18 +172,19 @@ fn run_test_with_gazebo(
         let instance = vehicle.instance;
         let mission = vehicle.mission.clone();
 
-        let handle = thread::spawn(move || {
-            match MissionRunner::for_instance(instance, &vehicle_id) {
-                Ok(mut runner) => {
-                    let result = runner.run(&mission);
-                    (vehicle_id, result.passed, Some(result))
-                }
-                Err(e) => {
-                    eprintln!("[{}:{}] Failed to connect: {}", vehicle_id, instance, e);
-                    (vehicle_id, false, None)
-                }
-            }
-        });
+        let handle =
+            thread::spawn(
+                move || match MissionRunner::for_instance(instance, &vehicle_id) {
+                    Ok(mut runner) => {
+                        let result = runner.run(&mission);
+                        (vehicle_id, result.passed, Some(result))
+                    }
+                    Err(e) => {
+                        eprintln!("[{}:{}] Failed to connect: {}", vehicle_id, instance, e);
+                        (vehicle_id, false, None)
+                    }
+                },
+            );
 
         handles.push(handle);
     }
@@ -235,13 +238,11 @@ fn run_test_with_gazebo(
 /// Clean up any existing Gazebo processes and shared memory
 #[cfg(feature = "gz-plugin")]
 fn cleanup_gazebo() {
-    use std::process::Command;
     use std::fs;
+    use std::process::Command;
 
     // Kill Gazebo processes
-    let _ = Command::new("pkill")
-        .args(["-9", "-f", "gz sim"])
-        .status();
+    let _ = Command::new("pkill").args(["-9", "-f", "gz sim"]).status();
 
     // Remove shared memory
     let _ = fs::remove_file("/dev/shm/aviate_gz_bridge");
@@ -343,8 +344,8 @@ fn launch_gazebo(
 /// Wait for shared memory to be created by the plugin
 #[cfg(feature = "gz-plugin")]
 fn wait_for_shm(timeout: std::time::Duration) -> bool {
-    use std::time::Instant;
     use std::path::Path;
+    use std::time::Instant;
 
     let shm_path = Path::new("/dev/shm/aviate_gz_bridge");
     let start = Instant::now();

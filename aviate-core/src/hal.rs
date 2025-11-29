@@ -3,10 +3,10 @@
 //! Platform crates (SITL, H7, etc.) implement these traits to connect
 //! aviate-core to hardware or simulation.
 
-use crate::sensor::{SensorReading, ImuData, GnssData, BaroData, MagData, AirspeedData};
-use crate::mixer::ActuatorCmd;
-use crate::time::Timestamp;
 use crate::control::Command;
+use crate::mixer::ActuatorCmd;
+use crate::sensor::{AirspeedData, BaroData, GnssData, ImuData, MagData, SensorReading};
+use crate::time::Timestamp;
 
 /// Sensor input interface
 ///

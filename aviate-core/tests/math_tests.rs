@@ -8,7 +8,7 @@
 //! - Quaternion::to_euler gimbal lock handling
 //! - Quaternion::default
 
-use aviate_core::math::{Vector3, Matrix, Quaternion};
+use aviate_core::math::{Matrix, Quaternion, Vector3};
 use aviate_core::types::Scalar;
 use core::f32::consts::FRAC_PI_2;
 
@@ -99,7 +99,12 @@ fn quaternion_default() {
 #[test]
 fn quaternion_normalize_identity_fallback() {
     // Create a zero-length quaternion
-    let q = Quaternion { w: 0.0, x: 0.0, y: 0.0, z: 0.0 };
+    let q = Quaternion {
+        w: 0.0,
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
 
     // normalize() should return IDENTITY when magnitude is too small
     let normalized = q.normalize();
@@ -114,7 +119,7 @@ fn quaternion_normalize_near_zero() {
         w: 1e-10,
         x: 1e-10,
         y: 1e-10,
-        z: 1e-10
+        z: 1e-10,
     };
 
     let normalized = q.normalize();
@@ -133,7 +138,11 @@ fn quaternion_to_euler_gimbal_lock_positive() {
     let (roll, pitch, yaw) = q.to_euler();
 
     // At gimbal lock, pitch should be ±π/2
-    assert!((pitch.abs() - FRAC_PI_2).abs() < 0.1, "Pitch {} should be near ±π/2", pitch);
+    assert!(
+        (pitch.abs() - FRAC_PI_2).abs() < 0.1,
+        "Pitch {} should be near ±π/2",
+        pitch
+    );
     let _ = (roll, yaw); // Suppress warnings
 }
 
@@ -145,7 +154,11 @@ fn quaternion_to_euler_gimbal_lock_negative() {
     let (_roll, pitch, _yaw) = q.to_euler();
 
     // Should be near -π/2
-    assert!((pitch.abs() - FRAC_PI_2).abs() < 0.1, "Pitch {} should be near ±π/2", pitch);
+    assert!(
+        (pitch.abs() - FRAC_PI_2).abs() < 0.1,
+        "Pitch {} should be near ±π/2",
+        pitch
+    );
 }
 
 #[test]
@@ -167,7 +180,11 @@ fn quaternion_to_euler_gimbal_lock_positive_explicit() {
 
     // sinp = 2 * 0.707 * 0.71 = 1.004 > 1.0, triggers positive gimbal lock
     // Pitch should be exactly +π/2
-    assert!((pitch - FRAC_PI_2).abs() < 0.01, "Pitch {} should be +π/2", pitch);
+    assert!(
+        (pitch - FRAC_PI_2).abs() < 0.01,
+        "Pitch {} should be +π/2",
+        pitch
+    );
 }
 
 #[test]
@@ -185,7 +202,11 @@ fn quaternion_to_euler_gimbal_lock_negative_explicit() {
 
     // sinp = 2 * 0.707 * (-0.71) = -1.004 < -1.0, triggers negative gimbal lock
     // Pitch should be exactly -π/2
-    assert!((pitch + FRAC_PI_2).abs() < 0.01, "Pitch {} should be -π/2", pitch);
+    assert!(
+        (pitch + FRAC_PI_2).abs() < 0.01,
+        "Pitch {} should be -π/2",
+        pitch
+    );
 }
 
 #[test]

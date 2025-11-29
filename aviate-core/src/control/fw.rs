@@ -1,4 +1,4 @@
-use crate::control::{VehicleController, AxisCommand, Command, ConfigMode, Limits};
+use crate::control::{AxisCommand, Command, ConfigMode, Limits, VehicleController};
 use crate::state::StateEstimate;
 use crate::types::NormalizedSigned;
 

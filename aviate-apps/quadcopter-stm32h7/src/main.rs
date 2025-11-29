@@ -1,13 +1,15 @@
 #![no_std]
 #![no_main]
 
-use aviate_core::AviateKernel;
 use aviate_core::control::mc::McController;
-use aviate_core::control::{Command, Setpoint, CommandSource, ControlMode, ConfigMode};
-use aviate_core::types::Normalized;
-use aviate_core::mixer::{Mixer, ActuatorCmd, ModeConfig};
-use aviate_core::sensor::{SensorSet, SensorReading, ImuData, GnssData, MagData, BaroData, AirspeedData};
+use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
+use aviate_core::mixer::{ActuatorCmd, Mixer, ModeConfig};
+use aviate_core::sensor::{
+    AirspeedData, BaroData, GnssData, ImuData, MagData, SensorReading, SensorSet,
+};
 use aviate_core::time::TimeDelta;
+use aviate_core::types::Normalized;
+use aviate_core::AviateKernel;
 use cortex_m_rt::entry;
 use panic_halt as _;
 
@@ -59,9 +61,9 @@ fn main() -> ! {
 
         // Force side effect
         unsafe {
-             // Accessing array elements for side effect
-             let val = output.outputs[0].0;
-             core::ptr::write_volatile(&raw mut SINK, val.to_bits());
+            // Accessing array elements for side effect
+            let val = output.outputs[0].0;
+            core::ptr::write_volatile(&raw mut SINK, val.to_bits());
         }
     }
 }

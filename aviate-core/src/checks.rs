@@ -16,11 +16,11 @@
 //! - Configurable `required` flags per vehicle type
 //! - `missing()` reports exactly what failed for diagnostics
 
-use crate::sensor::{SensorSet, SensorHealth};
+use crate::control::envelope::{EnvelopeMargin, ProtectionStatus};
 use crate::fault::FaultFlags;
+use crate::mixer::{ActuatorHealth, ActuatorState};
+use crate::sensor::{SensorHealth, SensorSet};
 use crate::state::{StateEstimate, StateValidFlags};
-use crate::control::envelope::{ProtectionStatus, EnvelopeMargin};
-use crate::mixer::{ActuatorState, ActuatorHealth};
 use crate::types::MetersPerSecond;
 
 // ============================================================================
@@ -319,15 +319,28 @@ impl PreArmStatus {
     /// Update checks from sensor data
     pub fn update_from_sensors(&mut self, sensors: &SensorSet) {
         // Update sensor health flags
-        let imu_healthy = sensors.imus.iter().any(|s| s.valid && s.health == SensorHealth::Good);
-        let baro_healthy = sensors.baros.iter().any(|s| s.valid && s.health == SensorHealth::Good);
-        let mag_healthy = sensors.mags.iter().any(|s| s.valid && s.health == SensorHealth::Good);
-        let gnss_available = sensors.gnss.iter().any(|s| s.valid && s.health == SensorHealth::Good);
+        let imu_healthy = sensors
+            .imus
+            .iter()
+            .any(|s| s.valid && s.health == SensorHealth::Good);
+        let baro_healthy = sensors
+            .baros
+            .iter()
+            .any(|s| s.valid && s.health == SensorHealth::Good);
+        let mag_healthy = sensors
+            .mags
+            .iter()
+            .any(|s| s.valid && s.health == SensorHealth::Good);
+        let gnss_available = sensors
+            .gnss
+            .iter()
+            .any(|s| s.valid && s.health == SensorHealth::Good);
 
         self.current.set(PreArmFlags::IMU_HEALTHY, imu_healthy);
         self.current.set(PreArmFlags::BARO_HEALTHY, baro_healthy);
         self.current.set(PreArmFlags::MAG_HEALTHY, mag_healthy);
-        self.current.set(PreArmFlags::GNSS_AVAILABLE, gnss_available);
+        self.current
+            .set(PreArmFlags::GNSS_AVAILABLE, gnss_available);
 
         // Update sample counts
         if imu_healthy {
@@ -344,15 +357,21 @@ impl PreArmStatus {
         }
 
         // Update convergence flags
-        self.current.set(PreArmFlags::IMU_CONVERGED, self.samples.imu_converged());
-        self.current.set(PreArmFlags::BARO_CONVERGED, self.samples.baro_converged());
-        self.current.set(PreArmFlags::MAG_CONVERGED, self.samples.mag_converged());
+        self.current
+            .set(PreArmFlags::IMU_CONVERGED, self.samples.imu_converged());
+        self.current
+            .set(PreArmFlags::BARO_CONVERGED, self.samples.baro_converged());
+        self.current
+            .set(PreArmFlags::MAG_CONVERGED, self.samples.mag_converged());
     }
 
     /// Update from fault flags
     pub fn update_from_faults(&mut self, faults: FaultFlags) {
         self.current.set(PreArmFlags::NO_FAULTS, faults.is_empty());
-        self.current.set(PreArmFlags::CONFIG_VALID, !faults.contains(FaultFlags::CONFIG_INVALID));
+        self.current.set(
+            PreArmFlags::CONFIG_VALID,
+            !faults.contains(FaultFlags::CONFIG_INVALID),
+        );
     }
 
     /// Update throttle check
@@ -432,8 +451,14 @@ impl InFlightStatus {
 
     /// Update sensor health flags
     pub fn update_from_sensors(&mut self, sensors: &SensorSet) {
-        let imu_ok = sensors.imus.iter().any(|s| s.valid && s.health == SensorHealth::Good);
-        let baro_ok = sensors.baros.iter().any(|s| s.valid && s.health == SensorHealth::Good);
+        let imu_ok = sensors
+            .imus
+            .iter()
+            .any(|s| s.valid && s.health == SensorHealth::Good);
+        let baro_ok = sensors
+            .baros
+            .iter()
+            .any(|s| s.valid && s.health == SensorHealth::Good);
 
         self.current.set(InFlightFlags::IMU_OK, imu_ok);
         self.current.set(InFlightFlags::BARO_OK, baro_ok);
@@ -443,7 +468,8 @@ impl InFlightStatus {
     pub fn update_from_envelope(&mut self, protection: &ProtectionStatus) {
         // Within envelope if no limiting is happening
         let within_envelope = protection.limited_axes.is_empty() && !protection.saturated;
-        self.current.set(InFlightFlags::WITHIN_ENVELOPE, within_envelope);
+        self.current
+            .set(InFlightFlags::WITHIN_ENVELOPE, within_envelope);
     }
 
     /// Update command timeout status
@@ -452,7 +478,8 @@ impl InFlightStatus {
     /// * `age_ms` - Age of last command in milliseconds
     /// * `timeout_ms` - Timeout threshold in milliseconds
     pub fn update_command_status(&mut self, age_ms: u32, timeout_ms: u32) {
-        self.current.set(InFlightFlags::COMMAND_RECENT, age_ms < timeout_ms);
+        self.current
+            .set(InFlightFlags::COMMAND_RECENT, age_ms < timeout_ms);
     }
 
     /// Update RC link status
@@ -558,10 +585,10 @@ pub struct TransitionLimits {
 impl Default for TransitionLimits {
     fn default() -> Self {
         Self {
-            min_altitude: 10.0,        // 10m AGL minimum
-            max_attitude_rate: 0.5,    // ~30 deg/s
-            min_airspeed: 15.0,        // 15 m/s for forward flight
-            max_asymmetry: 0.1,        // 10% max asymmetry
+            min_altitude: 10.0,     // 10m AGL minimum
+            max_attitude_rate: 0.5, // ~30 deg/s
+            min_airspeed: 15.0,     // 15 m/s for forward flight
+            max_asymmetry: 0.1,     // 10% max asymmetry
         }
     }
 }
@@ -620,7 +647,8 @@ impl TransitionStatus {
     pub fn update_from_actuators(&mut self, actuators: &ActuatorState, active_mask: u16) {
         // Check if all actuators are healthy (Good or Unknown)
         let actuators_ok = actuators.all_healthy(active_mask);
-        self.current.set(TransitionFlags::ACTUATORS_OK, actuators_ok);
+        self.current
+            .set(TransitionFlags::ACTUATORS_OK, actuators_ok);
 
         // Check for stuck actuators
         let none_stuck = actuators.count_by_health(ActuatorHealth::Stuck, active_mask) == 0;
@@ -628,11 +656,9 @@ impl TransitionStatus {
 
         // Check symmetry for quadrotor (pairs: front-left/front-right, rear-left/rear-right)
         // Default pairs for quad X config
-        let symmetric = actuators.check_symmetric(
-            &[(0, 1), (2, 3)],
-            self.limits.max_asymmetry,
-        );
-        self.current.set(TransitionFlags::SYMMETRIC, symmetric && none_stuck);
+        let symmetric = actuators.check_symmetric(&[(0, 1), (2, 3)], self.limits.max_asymmetry);
+        self.current
+            .set(TransitionFlags::SYMMETRIC, symmetric && none_stuck);
     }
 
     /// Update state-related flags from StateEstimate
@@ -907,9 +933,8 @@ mod tests {
 
     #[test]
     fn test_pre_arm_satisfied() {
-        let mut status = PreArmStatus::with_required(
-            PreArmFlags::IMU_HEALTHY | PreArmFlags::THROTTLE_LOW
-        );
+        let mut status =
+            PreArmStatus::with_required(PreArmFlags::IMU_HEALTHY | PreArmFlags::THROTTLE_LOW);
 
         assert!(!status.is_satisfied());
 
@@ -923,7 +948,7 @@ mod tests {
         // Inject a flag that isn't handled by specific checks (bit 30)
         let unknown_flag = TransitionFlags::from_bits_retain(1 << 30);
         status.required = unknown_flag;
-        
+
         let res = status.can_transition();
         assert_eq!(res, Err(TransitionFailure::MultipleFailures));
     }

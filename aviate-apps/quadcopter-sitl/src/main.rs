@@ -32,19 +32,22 @@ macro_rules! warn {
     };
 }
 
-use aviate_core::AviateKernel;
 use aviate_core::control::mc::McController;
-use aviate_core::control::{Command, Setpoint, CommandSource, ControlMode, ConfigMode};
-use aviate_core::mixer::{QuadXMixer, ModeConfig};
-use aviate_core::time::{Timestamp, TimeSource, TimeDelta};
-use aviate_core::hal::{SensorHal, ActuatorHal, SystemHal, CommandHal, SystemCommand};
+use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
+use aviate_core::hal::{ActuatorHal, CommandHal, SensorHal, SystemCommand, SystemHal};
+use aviate_core::mixer::{ModeConfig, QuadXMixer};
+use aviate_core::sensor::{BaroData, GnssData, ImuData, MagData, SensorReading, SensorSet};
+use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
 use aviate_core::types::Normalized;
-use aviate_core::sensor::{SensorSet, SensorReading, ImuData, GnssData, MagData, BaroData};
+use aviate_core::AviateKernel;
 
 use aviate_platform_xil::{SitlConfig, SitlHal, UdpMavlinkHal};
 
 fn sitl_timestamp() -> Timestamp {
-    Timestamp { ticks: 0, source: TimeSource::Internal }
+    Timestamp {
+        ticks: 0,
+        source: TimeSource::Internal,
+    }
 }
 
 fn main() {
@@ -70,7 +73,13 @@ fn run_mock() {
     let mut sensor_cache = SensorCache::new();
 
     loop {
-        run_loop_iteration(&mut hal, &mut kernel, &mut last_cmd, &mut last_imu_time, &mut sensor_cache);
+        run_loop_iteration(
+            &mut hal,
+            &mut kernel,
+            &mut last_cmd,
+            &mut last_imu_time,
+            &mut sensor_cache,
+        );
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
@@ -95,8 +104,9 @@ fn run_udp() {
             }
         }
     }
-    
-    let mut hal = hal.expect("Failed to initialize UDP HAL after retries. Is another autopilot running?");
+
+    let mut hal =
+        hal.expect("Failed to initialize UDP HAL after retries. Is another autopilot running?");
 
     let mut kernel = create_kernel();
     let mut last_cmd = default_command();
@@ -113,7 +123,13 @@ fn run_udp() {
 
         if elapsed >= loop_period_us {
             last_tick = now;
-            run_loop_iteration(&mut hal, &mut kernel, &mut last_cmd, &mut last_imu_time, &mut sensor_cache);
+            run_loop_iteration(
+                &mut hal,
+                &mut kernel,
+                &mut last_cmd,
+                &mut last_imu_time,
+                &mut sensor_cache,
+            );
         } else {
             // Sleep for remaining time (rough, not real-time precise)
             let remaining_us = loop_period_us - elapsed;
@@ -126,7 +142,9 @@ fn run_udp() {
 
 fn create_kernel() -> AviateKernel<McController, QuadXMixer> {
     let controller = McController::default();
-    let mixer = QuadXMixer { timestamp_source: sitl_timestamp };
+    let mixer = QuadXMixer {
+        timestamp_source: sitl_timestamp,
+    };
     let mode_config = ModeConfig {
         mode: ConfigMode::Hover,
         groups: &[],
@@ -159,7 +177,12 @@ struct SensorCache {
 
 impl SensorCache {
     fn new() -> Self {
-        Self { imu: None, gnss: None, baro: None, mag: None }
+        Self {
+            imu: None,
+            gnss: None,
+            baro: None,
+            mag: None,
+        }
     }
 
     fn to_sensor_set(&self) -> SensorSet {
@@ -169,18 +192,9 @@ impl SensorCache {
                 SensorReading::default(),
                 SensorReading::default(),
             ],
-            gnss: [
-                self.gnss.unwrap_or_default(),
-                SensorReading::default(),
-            ],
-            mags: [
-                self.mag.unwrap_or_default(),
-                SensorReading::default(),
-            ],
-            baros: [
-                self.baro.unwrap_or_default(),
-                SensorReading::default(),
-            ],
+            gnss: [self.gnss.unwrap_or_default(), SensorReading::default()],
+            mags: [self.mag.unwrap_or_default(), SensorReading::default()],
+            baros: [self.baro.unwrap_or_default(), SensorReading::default()],
             airspeeds: [SensorReading::default(), SensorReading::default()],
             geometry: None,
         }
@@ -230,7 +244,7 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
         // EKF update is now handled inside kernel.step
         sensor_cache.mag = Some(mag);
     }
-    
+
     // Construct TimeDelta
     let time_delta = TimeDelta {
         dt_sec: aviate_core::types::Seconds(current_dt),
@@ -241,9 +255,15 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
     if let Some(sys_cmd) = hal.recv_command() {
         match sys_cmd {
             SystemCommand::FlightControl(cmd) => {
-                debug!("FlightControl: thrust={:.2}", cmd.setpoint.collective_thrust.0);
+                debug!(
+                    "FlightControl: thrust={:.2}",
+                    cmd.setpoint.collective_thrust.0
+                );
                 // Update throttle check for pre-arm
-                kernel.checks.pre_arm.update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
+                kernel
+                    .checks
+                    .pre_arm
+                    .update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
                 *last_cmd = cmd;
             }
             SystemCommand::Arm => {
@@ -276,8 +296,10 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
     // Debug output - print actuator commands when thrust command is non-zero
     if last_cmd.setpoint.collective_thrust.0 > 0.1 {
         let sum: f32 = actuator_cmd.outputs.iter().map(|o| o.0).sum();
-        debug!("ActuatorCmd: sum={:.3}, thrust_in={:.2}, state={:?}",
-            sum, last_cmd.setpoint.collective_thrust.0, kernel.init_state);
+        debug!(
+            "ActuatorCmd: sum={:.3}, thrust_in={:.2}, state={:?}",
+            sum, last_cmd.setpoint.collective_thrust.0, kernel.init_state
+        );
     }
 
     // 5. Write outputs

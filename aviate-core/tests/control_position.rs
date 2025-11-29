@@ -144,7 +144,10 @@ fn large_error_clamps_velocity_negative() {
 
     let vel_sp = ctrl.step(setpoint, current);
 
-    assert!((vel_sp.x.0 - (-10.0)).abs() < 1e-6, "Should clamp to -10 m/s");
+    assert!(
+        (vel_sp.x.0 - (-10.0)).abs() < 1e-6,
+        "Should clamp to -10 m/s"
+    );
 }
 
 #[test]

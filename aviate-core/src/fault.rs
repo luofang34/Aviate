@@ -10,20 +10,20 @@ pub enum FaultCategory {
     BaroFailed,
     MagFailed,
     AirspeedFailed,
-    
+
     // Actuator faults
     ActuatorFailed,
     ActuatorSaturated,
     ActuatorDisagreement,
     ActuatorNumericError,
     ActuatorFallbackPersistent,
-    
+
     // Estimation faults
     EstimatorDiverged,
     AttitudeUncertain,
     PositionUncertain,
     NumericError,
-    
+
     // Command/timing faults
     CommandTimeout,
     CommandInvalid,
@@ -46,16 +46,16 @@ bitflags::bitflags! {
         const BARO_FAILED = 1 << 7;
         const MAG_FAILED = 1 << 8;
         const AIRSPEED_FAILED = 1 << 9;
-        
+
         const ACTUATOR_FAULT = 1 << 16;
         const ACTUATOR_NUMERIC = 1 << 17;
         const ACTUATOR_FALLBACK = 1 << 18;
-        
+
         const ESTIMATOR_DIVERGED = 1 << 24;
         const ATTITUDE_UNCERTAIN = 1 << 25;
         const POSITION_UNCERTAIN = 1 << 26;
         const NUMERIC_ERROR = 1 << 27;
-        
+
         const COMMAND_TIMEOUT = 1 << 32;
         const COMMAND_INVALID = 1 << 33;
         const TIMING_VIOLATION = 1 << 40;
@@ -89,63 +89,63 @@ pub struct FaultHandlingTable {
 impl FaultHandlingTable {
     pub const DEFAULT: Self = Self {
         entries: &[
-            FaultResponse { 
-                fault: FaultCategory::ImuFailed, 
-                action: FaultAction::Isolate, 
+            FaultResponse {
+                fault: FaultCategory::ImuFailed,
+                action: FaultAction::Isolate,
                 degrade_to: None,
                 max_response_time_ms: 10,
             },
-            FaultResponse { 
-                fault: FaultCategory::ImuAllFailed, 
-                action: FaultAction::Emergency, 
+            FaultResponse {
+                fault: FaultCategory::ImuAllFailed,
+                action: FaultAction::Emergency,
                 degrade_to: Some(ControlLaw::Frozen),
                 max_response_time_ms: 0,
             },
-            FaultResponse { 
-                fault: FaultCategory::GnssAllLost, 
-                action: FaultAction::Degrade, 
+            FaultResponse {
+                fault: FaultCategory::GnssAllLost,
+                action: FaultAction::Degrade,
                 degrade_to: Some(ControlLaw::Alternate1),
                 max_response_time_ms: 100,
             },
-            FaultResponse { 
-                fault: FaultCategory::EstimatorDiverged, 
-                action: FaultAction::Degrade, 
+            FaultResponse {
+                fault: FaultCategory::EstimatorDiverged,
+                action: FaultAction::Degrade,
                 degrade_to: Some(ControlLaw::Alternate2),
                 max_response_time_ms: 10,
             },
-            FaultResponse { 
-                fault: FaultCategory::NumericError, 
-                action: FaultAction::Emergency, 
+            FaultResponse {
+                fault: FaultCategory::NumericError,
+                action: FaultAction::Emergency,
                 degrade_to: Some(ControlLaw::Frozen),
                 max_response_time_ms: 0,
             },
-            FaultResponse { 
-                fault: FaultCategory::CommandTimeout, 
-                action: FaultAction::Degrade, 
+            FaultResponse {
+                fault: FaultCategory::CommandTimeout,
+                action: FaultAction::Degrade,
                 degrade_to: Some(ControlLaw::Alternate1),
                 max_response_time_ms: 100,
             },
-            FaultResponse { 
-                fault: FaultCategory::ActuatorNumericError, 
-                action: FaultAction::Monitor, 
+            FaultResponse {
+                fault: FaultCategory::ActuatorNumericError,
+                action: FaultAction::Monitor,
                 degrade_to: None,
                 max_response_time_ms: 0,
             },
-            FaultResponse { 
-                fault: FaultCategory::ActuatorFallbackPersistent, 
-                action: FaultAction::Degrade, 
+            FaultResponse {
+                fault: FaultCategory::ActuatorFallbackPersistent,
+                action: FaultAction::Degrade,
                 degrade_to: Some(ControlLaw::Alternate1),
                 max_response_time_ms: 10,
             },
-            FaultResponse { 
-                fault: FaultCategory::ConfigTransitionFailed, 
-                action: FaultAction::Degrade, 
+            FaultResponse {
+                fault: FaultCategory::ConfigTransitionFailed,
+                action: FaultAction::Degrade,
                 degrade_to: Some(ControlLaw::Alternate1),
                 max_response_time_ms: 0,
             },
-            FaultResponse { 
-                fault: FaultCategory::TimingViolationPersistent, 
-                action: FaultAction::Degrade, 
+            FaultResponse {
+                fault: FaultCategory::TimingViolationPersistent,
+                action: FaultAction::Degrade,
                 degrade_to: Some(ControlLaw::Alternate2),
                 max_response_time_ms: 50,
             },

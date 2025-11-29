@@ -127,7 +127,10 @@ impl GzPluginBridge {
     pub fn for_instance(instance: u8) -> Result<Self, GzPluginError> {
         let result = unsafe { aviate_gz_init_instance(instance as c_int) };
         match result {
-            0 => Ok(Self { initialized: true, instance }),
+            0 => Ok(Self {
+                initialized: true,
+                instance,
+            }),
             -1 => Err(GzPluginError::PluginNotRunning),
             _ => Err(GzPluginError::NotInitialized),
         }

@@ -7,36 +7,46 @@
 //! - Safe output when not armed
 //! - Spec types (ChannelId, ChannelHealth, ChannelStatus, etc.)
 
-use aviate_core::{
-    InitState, ArmError, AviateKernel, TransitionError,
-    ChannelId, ChannelHealth, ChannelStatus,
-    CycleTiming, TimingStats, EnvelopeMargin,
-    DegradationReason, ConfigTransitionState, TransitionFailure,
-};
-use aviate_core::control::{
-    ConfigMode, ControlMode, ControlLaw, Setpoint, CommandSource, Command,
-};
-use aviate_core::control::mc::McController;
-use aviate_core::mixer::{QuadXMixer, ModeConfig};
-use aviate_core::sensor::{SensorReading, SensorHealth, ImuData, BaroData, MagData, GnssData, GnssFix, GnssHealth, AirData};
-use aviate_core::math::{Quaternion, Vector3};
-use aviate_core::types::{Normalized, Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond, Pascals, Microtesla};
-use aviate_core::time::{Timestamp, TimeSource};
-use aviate_core::fault::FaultFlags;
-use aviate_core::sensor::SensorSet;
-use aviate_core::state::EstimateQuality;
 use aviate_core::checks::PreArmFlags;
+use aviate_core::control::mc::McController;
+use aviate_core::control::{Command, CommandSource, ConfigMode, ControlLaw, ControlMode, Setpoint};
+use aviate_core::fault::FaultFlags;
+use aviate_core::math::{Quaternion, Vector3};
+use aviate_core::mixer::{ModeConfig, QuadXMixer};
+use aviate_core::sensor::SensorSet;
+use aviate_core::sensor::{
+    AirData, BaroData, GnssData, GnssFix, GnssHealth, ImuData, MagData, SensorHealth, SensorReading,
+};
+use aviate_core::state::EstimateQuality;
+use aviate_core::time::{TimeSource, Timestamp};
+use aviate_core::types::{
+    Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Normalized, Pascals,
+    RadiansPerSecond,
+};
+use aviate_core::{
+    ArmError, AviateKernel, ChannelHealth, ChannelId, ChannelStatus, ConfigTransitionState,
+    CycleTiming, DegradationReason, EnvelopeMargin, InitState, TimingStats, TransitionError,
+    TransitionFailure,
+};
 
 fn dummy_timestamp() -> Timestamp {
-    Timestamp { ticks: 0, source: TimeSource::Internal }
+    Timestamp {
+        ticks: 0,
+        source: TimeSource::Internal,
+    }
 }
 
 fn dummy_time_delta() -> aviate_core::time::TimeDelta {
-    aviate_core::time::TimeDelta { dt_sec: aviate_core::types::Seconds(0.01), tick_delta: 10000 } // 100Hz update
+    aviate_core::time::TimeDelta {
+        dt_sec: aviate_core::types::Seconds(0.01),
+        tick_delta: 10000,
+    } // 100Hz update
 }
 
 fn make_kernel() -> AviateKernel<McController, QuadXMixer> {
-    let mixer = QuadXMixer { timestamp_source: dummy_timestamp };
+    let mixer = QuadXMixer {
+        timestamp_source: dummy_timestamp,
+    };
     let mode_config = ModeConfig {
         mode: ConfigMode::Hover,
         groups: &[],
@@ -48,7 +58,10 @@ fn make_kernel() -> AviateKernel<McController, QuadXMixer> {
         | PreArmFlags::THROTTLE_LOW
         | PreArmFlags::CONFIG_VALID;
     let mut kernel = AviateKernel::with_pre_arm_required(
-        McController::default(), mixer, mode_config, test_required
+        McController::default(),
+        mixer,
+        mode_config,
+        test_required,
     );
     // Set throttle low for tests
     kernel.checks.pre_arm.update_throttle(true);
@@ -62,8 +75,16 @@ fn make_valid_sensors() -> SensorSet {
 
     let valid_imu = SensorReading {
         value: ImuData {
-            accel: [MetersPerSecondSquared(0.0), MetersPerSecondSquared(0.0), MetersPerSecondSquared(-9.81)],
-            gyro: [RadiansPerSecond(0.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)],
+            accel: [
+                MetersPerSecondSquared(0.0),
+                MetersPerSecondSquared(0.0),
+                MetersPerSecondSquared(-9.81),
+            ],
+            gyro: [
+                RadiansPerSecond(0.0),
+                RadiansPerSecond(0.0),
+                RadiansPerSecond(0.0),
+            ],
         },
         valid: true,
         source_id: 0,
@@ -102,7 +123,11 @@ fn make_valid_sensors() -> SensorSet {
     let valid_gnss = SensorReading {
         value: GnssData {
             position_ned: [Meters(0.0), Meters(0.0), Meters(0.0)],
-            velocity_ned: [MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)],
+            velocity_ned: [
+                MetersPerSecond(0.0),
+                MetersPerSecond(0.0),
+                MetersPerSecond(0.0),
+            ],
             fix: GnssFix::ThreeD,
             health: GnssHealth::Good,
         },
@@ -113,7 +138,11 @@ fn make_valid_sensors() -> SensorSet {
     };
 
     SensorSet {
-        imus: [valid_imu, SensorReading::default(), SensorReading::default()],
+        imus: [
+            valid_imu,
+            SensorReading::default(),
+            SensorReading::default(),
+        ],
         gnss: [valid_gnss, SensorReading::default()],
         mags: [valid_mag, SensorReading::default()],
         baros: [valid_baro, SensorReading::default()],
@@ -121,7 +150,6 @@ fn make_valid_sensors() -> SensorSet {
         geometry: None,
     }
 }
-
 
 // =============================================================================
 // InitState - allows_active_control()
@@ -135,7 +163,10 @@ fn init_state_only_armed_allows_control() {
     assert!(!InitState::EstimatorConverging.allows_active_control());
     assert!(!InitState::PreArm.allows_active_control());
     assert!(!InitState::Ready.allows_active_control());
-    assert!(InitState::Armed.allows_active_control(), "Only Armed allows control");
+    assert!(
+        InitState::Armed.allows_active_control(),
+        "Only Armed allows control"
+    );
     assert!(!InitState::Disarmed.allows_active_control());
     assert!(!InitState::Fault.allows_active_control());
 }
@@ -146,10 +177,22 @@ fn init_state_only_armed_allows_control() {
 
 #[test]
 fn init_state_forces_frozen_when_not_armed() {
-    assert_eq!(InitState::PowerOn.forced_control_law(), Some(ControlLaw::Frozen));
-    assert_eq!(InitState::Ready.forced_control_law(), Some(ControlLaw::Frozen));
-    assert_eq!(InitState::Disarmed.forced_control_law(), Some(ControlLaw::Frozen));
-    assert_eq!(InitState::Fault.forced_control_law(), Some(ControlLaw::Frozen));
+    assert_eq!(
+        InitState::PowerOn.forced_control_law(),
+        Some(ControlLaw::Frozen)
+    );
+    assert_eq!(
+        InitState::Ready.forced_control_law(),
+        Some(ControlLaw::Frozen)
+    );
+    assert_eq!(
+        InitState::Disarmed.forced_control_law(),
+        Some(ControlLaw::Frozen)
+    );
+    assert_eq!(
+        InitState::Fault.forced_control_law(),
+        Some(ControlLaw::Frozen)
+    );
 }
 
 #[test]
@@ -202,7 +245,11 @@ fn kernel_transitions_through_init_states() {
     // Initialize EKF first
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -226,7 +273,11 @@ fn kernel_is_ready_returns_correct_value() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -248,7 +299,11 @@ fn kernel_arm_succeeds_when_ready() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -280,7 +335,11 @@ fn kernel_arm_fails_when_already_armed() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -301,7 +360,11 @@ fn kernel_arm_fails_when_faulted() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -327,7 +390,11 @@ fn kernel_disarm_transitions_to_disarmed() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -366,8 +433,11 @@ fn kernel_outputs_safe_when_not_armed() {
 
     // Should output safe values (0.0) when not armed
     for i in 0..4 {
-        assert!((output.outputs[i].0).abs() < 1e-5,
-                "Motor {} should be 0 when not armed", i);
+        assert!(
+            (output.outputs[i].0).abs() < 1e-5,
+            "Motor {} should be 0 when not armed",
+            i
+        );
     }
 }
 
@@ -378,7 +448,11 @@ fn kernel_outputs_control_when_armed() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -403,8 +477,11 @@ fn kernel_outputs_control_when_armed() {
 
     // Should output ~0.5 on all motors with zero R/P/Y
     for i in 0..4 {
-        assert!((output.outputs[i].0 - 0.5).abs() < 0.1,
-                "Motor {} should be ~0.5 when armed with 0.5 thrust", i);
+        assert!(
+            (output.outputs[i].0 - 0.5).abs() < 0.1,
+            "Motor {} should be ~0.5 when armed with 0.5 thrust",
+            i
+        );
     }
 }
 
@@ -574,7 +651,11 @@ fn config_transition_failed_state() {
     };
 
     match state {
-        ConfigTransitionState::Failed { intended, actual, reason } => {
+        ConfigTransitionState::Failed {
+            intended,
+            actual,
+            reason,
+        } => {
             assert_eq!(intended, ConfigMode::Cruise);
             assert_eq!(actual, ConfigMode::Hover);
             assert_eq!(reason, TransitionFailure::ActuatorStuck);
@@ -612,8 +693,16 @@ fn make_imu_only_sensors() -> SensorSet {
 
     let valid_imu = SensorReading {
         value: ImuData {
-            accel: [MetersPerSecondSquared(0.0), MetersPerSecondSquared(0.0), MetersPerSecondSquared(-9.81)],
-            gyro: [RadiansPerSecond(0.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)],
+            accel: [
+                MetersPerSecondSquared(0.0),
+                MetersPerSecondSquared(0.0),
+                MetersPerSecondSquared(-9.81),
+            ],
+            gyro: [
+                RadiansPerSecond(0.0),
+                RadiansPerSecond(0.0),
+                RadiansPerSecond(0.0),
+            ],
         },
         valid: true,
         source_id: 0,
@@ -622,7 +711,11 @@ fn make_imu_only_sensors() -> SensorSet {
     };
 
     SensorSet {
-        imus: [valid_imu, SensorReading::default(), SensorReading::default()],
+        imus: [
+            valid_imu,
+            SensorReading::default(),
+            SensorReading::default(),
+        ],
         gnss: [SensorReading::default(), SensorReading::default()],
         mags: [SensorReading::default(), SensorReading::default()],
         baros: [SensorReading::default(), SensorReading::default()],
@@ -637,17 +730,29 @@ fn make_failed_imu_sensors() -> SensorSet {
 
     let failed_imu = SensorReading {
         value: ImuData {
-            accel: [MetersPerSecondSquared(0.0), MetersPerSecondSquared(0.0), MetersPerSecondSquared(-9.81)],
-            gyro: [RadiansPerSecond(0.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)],
+            accel: [
+                MetersPerSecondSquared(0.0),
+                MetersPerSecondSquared(0.0),
+                MetersPerSecondSquared(-9.81),
+            ],
+            gyro: [
+                RadiansPerSecond(0.0),
+                RadiansPerSecond(0.0),
+                RadiansPerSecond(0.0),
+            ],
         },
-        valid: false,  // Invalid
+        valid: false, // Invalid
         source_id: 0,
         timestamp: ts,
-        health: SensorHealth::Failed,  // Failed health
+        health: SensorHealth::Failed, // Failed health
     };
 
     SensorSet {
-        imus: [failed_imu, SensorReading::default(), SensorReading::default()],
+        imus: [
+            failed_imu,
+            SensorReading::default(),
+            SensorReading::default(),
+        ],
         gnss: [SensorReading::default(), SensorReading::default()],
         mags: [SensorReading::default(), SensorReading::default()],
         baros: [SensorReading::default(), SensorReading::default()],
@@ -660,7 +765,11 @@ fn make_failed_imu_sensors() -> SensorSet {
 fn kernel_stays_in_sensor_init_with_no_sensors() {
     let mut kernel = make_kernel();
     let empty_sensors = SensorSet {
-        imus: [SensorReading::default(), SensorReading::default(), SensorReading::default()],
+        imus: [
+            SensorReading::default(),
+            SensorReading::default(),
+            SensorReading::default(),
+        ],
         gnss: [SensorReading::default(), SensorReading::default()],
         mags: [SensorReading::default(), SensorReading::default()],
         baros: [SensorReading::default(), SensorReading::default()],
@@ -675,7 +784,10 @@ fn kernel_stays_in_sensor_init_with_no_sensors() {
 
     // Without valid IMU, kernel should be stuck in SensorInit
     assert!(
-        matches!(kernel.init_state, InitState::SensorInit | InitState::ConfigLoading),
+        matches!(
+            kernel.init_state,
+            InitState::SensorInit | InitState::ConfigLoading
+        ),
         "Expected SensorInit or ConfigLoading with no sensors, got {:?}",
         kernel.init_state
     );
@@ -689,7 +801,11 @@ fn kernel_stays_in_sensor_init_with_failed_imu() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -724,7 +840,11 @@ fn kernel_arm_fails_with_missing_convergence() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -752,7 +872,11 @@ fn kernel_arm_fails_when_throttle_not_low() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -764,7 +888,10 @@ fn kernel_arm_fails_when_throttle_not_low() {
     }
 
     // Should not reach Ready because throttle check fails
-    assert!(!kernel.is_ready(), "Should not be ready with throttle not low");
+    assert!(
+        !kernel.is_ready(),
+        "Should not be ready with throttle not low"
+    );
 }
 
 #[test]
@@ -782,7 +909,8 @@ fn kernel_pre_arm_missing_flags_reported() {
 
     // Should be missing EKF_CONVERGED and IMU_CONVERGED (not enough samples)
     assert!(
-        missing.contains(PreArmFlags::EKF_CONVERGED) || missing.contains(PreArmFlags::IMU_CONVERGED),
+        missing.contains(PreArmFlags::EKF_CONVERGED)
+            || missing.contains(PreArmFlags::IMU_CONVERGED),
         "Expected convergence flags to be missing, got {:?}",
         missing
     );
@@ -815,7 +943,11 @@ fn kernel_disarm_resets_sample_counts() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -856,14 +988,19 @@ fn kernel_disarm_resets_sample_counts() {
 #[test]
 fn kernel_requires_all_pre_arm_flags() {
     // Create kernel with FULL pre-arm requirements (including GPS)
-    let mixer = QuadXMixer { timestamp_source: dummy_timestamp };
+    let mixer = QuadXMixer {
+        timestamp_source: dummy_timestamp,
+    };
     let mode_config = ModeConfig {
         mode: ConfigMode::Hover,
         groups: &[],
     };
     let full_required = PreArmFlags::QUAD_WITH_GPS;
     let mut kernel = AviateKernel::with_pre_arm_required(
-        McController::default(), mixer, mode_config, full_required
+        McController::default(),
+        mixer,
+        mode_config,
+        full_required,
     );
     kernel.checks.pre_arm.update_throttle(true);
 
@@ -872,7 +1009,11 @@ fn kernel_requires_all_pre_arm_flags() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -881,7 +1022,10 @@ fn kernel_requires_all_pre_arm_flags() {
     }
 
     // Should NOT be ready - missing GNSS
-    assert!(!kernel.is_ready(), "Should not be ready without GNSS when GPS is required");
+    assert!(
+        !kernel.is_ready(),
+        "Should not be ready without GNSS when GPS is required"
+    );
 
     // Verify GNSS is in missing flags
     let missing = kernel.checks.pre_arm.missing();
@@ -904,7 +1048,11 @@ fn boundary_imu_sample_count_99_not_converged() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
     kernel.checks.pre_arm.update_throttle(true);
@@ -921,7 +1069,11 @@ fn boundary_imu_sample_count_99_not_converged() {
         kernel.checks.pre_arm.samples.imu
     );
     assert!(
-        !kernel.checks.pre_arm.current.contains(PreArmFlags::IMU_CONVERGED),
+        !kernel
+            .checks
+            .pre_arm
+            .current
+            .contains(PreArmFlags::IMU_CONVERGED),
         "IMU_CONVERGED flag should NOT be set at 99 samples"
     );
 }
@@ -934,7 +1086,11 @@ fn boundary_imu_sample_count_100_converged() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
     kernel.checks.pre_arm.update_throttle(true);
@@ -951,7 +1107,11 @@ fn boundary_imu_sample_count_100_converged() {
         kernel.checks.pre_arm.samples.imu
     );
     assert!(
-        kernel.checks.pre_arm.current.contains(PreArmFlags::IMU_CONVERGED),
+        kernel
+            .checks
+            .pre_arm
+            .current
+            .contains(PreArmFlags::IMU_CONVERGED),
         "IMU_CONVERGED flag should be set at 100 samples"
     );
 }
@@ -964,7 +1124,11 @@ fn boundary_imu_sample_count_101_converged() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
     kernel.checks.pre_arm.update_throttle(true);
@@ -990,7 +1154,11 @@ fn boundary_baro_sample_count_99_not_converged() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1015,7 +1183,11 @@ fn boundary_baro_sample_count_100_converged() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1040,7 +1212,11 @@ fn boundary_mag_sample_count_99_not_converged() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1065,7 +1241,11 @@ fn boundary_mag_sample_count_100_converged() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1092,22 +1272,52 @@ fn production_config_quad_minimum_composition() {
     let required = PreArmFlags::QUAD_MINIMUM;
 
     // Must have sensor health
-    assert!(required.contains(PreArmFlags::IMU_HEALTHY), "QUAD_MINIMUM must require IMU_HEALTHY");
-    assert!(required.contains(PreArmFlags::BARO_HEALTHY), "QUAD_MINIMUM must require BARO_HEALTHY");
+    assert!(
+        required.contains(PreArmFlags::IMU_HEALTHY),
+        "QUAD_MINIMUM must require IMU_HEALTHY"
+    );
+    assert!(
+        required.contains(PreArmFlags::BARO_HEALTHY),
+        "QUAD_MINIMUM must require BARO_HEALTHY"
+    );
 
     // Must have convergence
-    assert!(required.contains(PreArmFlags::IMU_CONVERGED), "QUAD_MINIMUM must require IMU_CONVERGED");
-    assert!(required.contains(PreArmFlags::BARO_CONVERGED), "QUAD_MINIMUM must require BARO_CONVERGED");
-    assert!(required.contains(PreArmFlags::EKF_CONVERGED), "QUAD_MINIMUM must require EKF_CONVERGED");
+    assert!(
+        required.contains(PreArmFlags::IMU_CONVERGED),
+        "QUAD_MINIMUM must require IMU_CONVERGED"
+    );
+    assert!(
+        required.contains(PreArmFlags::BARO_CONVERGED),
+        "QUAD_MINIMUM must require BARO_CONVERGED"
+    );
+    assert!(
+        required.contains(PreArmFlags::EKF_CONVERGED),
+        "QUAD_MINIMUM must require EKF_CONVERGED"
+    );
 
     // Must have safety conditions
-    assert!(required.contains(PreArmFlags::THROTTLE_LOW), "QUAD_MINIMUM must require THROTTLE_LOW");
-    assert!(required.contains(PreArmFlags::CONFIG_VALID), "QUAD_MINIMUM must require CONFIG_VALID");
-    assert!(required.contains(PreArmFlags::NO_FAULTS), "QUAD_MINIMUM must require NO_FAULTS");
+    assert!(
+        required.contains(PreArmFlags::THROTTLE_LOW),
+        "QUAD_MINIMUM must require THROTTLE_LOW"
+    );
+    assert!(
+        required.contains(PreArmFlags::CONFIG_VALID),
+        "QUAD_MINIMUM must require CONFIG_VALID"
+    );
+    assert!(
+        required.contains(PreArmFlags::NO_FAULTS),
+        "QUAD_MINIMUM must require NO_FAULTS"
+    );
 
     // Must NOT require GPS (that's QUAD_WITH_GPS)
-    assert!(!required.contains(PreArmFlags::GNSS_AVAILABLE), "QUAD_MINIMUM should NOT require GNSS");
-    assert!(!required.contains(PreArmFlags::MAG_HEALTHY), "QUAD_MINIMUM should NOT require MAG");
+    assert!(
+        !required.contains(PreArmFlags::GNSS_AVAILABLE),
+        "QUAD_MINIMUM should NOT require GNSS"
+    );
+    assert!(
+        !required.contains(PreArmFlags::MAG_HEALTHY),
+        "QUAD_MINIMUM should NOT require MAG"
+    );
 }
 
 /// Test that QUAD_WITH_GPS extends QUAD_MINIMUM with GPS/MAG requirements
@@ -1123,9 +1333,18 @@ fn production_config_quad_with_gps_composition() {
     );
 
     // Additional GPS requirements
-    assert!(quad_gps.contains(PreArmFlags::GNSS_AVAILABLE), "QUAD_WITH_GPS must require GNSS");
-    assert!(quad_gps.contains(PreArmFlags::MAG_HEALTHY), "QUAD_WITH_GPS must require MAG");
-    assert!(quad_gps.contains(PreArmFlags::MAG_CONVERGED), "QUAD_WITH_GPS must require MAG_CONVERGED");
+    assert!(
+        quad_gps.contains(PreArmFlags::GNSS_AVAILABLE),
+        "QUAD_WITH_GPS must require GNSS"
+    );
+    assert!(
+        quad_gps.contains(PreArmFlags::MAG_HEALTHY),
+        "QUAD_WITH_GPS must require MAG"
+    );
+    assert!(
+        quad_gps.contains(PreArmFlags::MAG_CONVERGED),
+        "QUAD_WITH_GPS must require MAG_CONVERGED"
+    );
 }
 
 /// Test arming with minimal config succeeds when all required sensors are present
@@ -1140,13 +1359,18 @@ fn production_config_quad_minimum_arms_with_minimal_sensors() {
         | PreArmFlags::CONFIG_VALID;
     // Note: NO_FAULTS not required for this test
 
-    let mixer = QuadXMixer { timestamp_source: dummy_timestamp };
+    let mixer = QuadXMixer {
+        timestamp_source: dummy_timestamp,
+    };
     let mode_config = ModeConfig {
         mode: ConfigMode::Hover,
         groups: &[],
     };
     let mut kernel = AviateKernel::with_pre_arm_required(
-        McController::default(), mixer, mode_config, test_required
+        McController::default(),
+        mixer,
+        mode_config,
+        test_required,
     );
     kernel.checks.pre_arm.update_throttle(true);
 
@@ -1154,7 +1378,11 @@ fn production_config_quad_minimum_arms_with_minimal_sensors() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1163,11 +1391,18 @@ fn production_config_quad_minimum_arms_with_minimal_sensors() {
     }
 
     // Should reach Ready
-    assert!(kernel.is_ready(), "Should be ready with minimal sensor config");
+    assert!(
+        kernel.is_ready(),
+        "Should be ready with minimal sensor config"
+    );
 
     // Should arm successfully
     let result = kernel.arm();
-    assert!(result.is_ok(), "Should arm with minimal config: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Should arm with minimal config: {:?}",
+        result
+    );
 }
 
 // =============================================================================
@@ -1182,7 +1417,11 @@ fn fault_state_entered_on_critical_imu_failure_while_armed() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1198,13 +1437,19 @@ fn fault_state_entered_on_critical_imu_failure_while_armed() {
 
     // Check critical faults - should detect we need to enter fault state
     let has_critical = kernel.check_critical_faults();
-    assert!(has_critical, "ALL_IMU_FAILED should be detected as critical");
+    assert!(
+        has_critical,
+        "ALL_IMU_FAILED should be detected as critical"
+    );
 
     // Manually transition to Fault state (in real system this happens in step())
     kernel.init_state = InitState::Fault;
 
     assert_eq!(kernel.init_state, InitState::Fault);
-    assert!(!kernel.init_state.allows_active_control(), "Fault state should not allow control");
+    assert!(
+        !kernel.init_state.allows_active_control(),
+        "Fault state should not allow control"
+    );
 }
 
 /// Test that arm fails when kernel is in Fault state
@@ -1215,7 +1460,11 @@ fn fault_state_prevents_arming() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1231,7 +1480,11 @@ fn fault_state_prevents_arming() {
 
     // Arm should fail - Fault state is not Ready, so NotReady is returned
     let result = kernel.arm();
-    assert_eq!(result, Err(ArmError::NotReady), "Should not arm when in Fault state");
+    assert_eq!(
+        result,
+        Err(ArmError::NotReady),
+        "Should not arm when in Fault state"
+    );
 }
 
 /// Test can_reset_from_fault returns false when faults still active
@@ -1262,7 +1515,11 @@ fn fault_state_can_reset_when_faults_cleared() {
     // 1. No critical faults (empty faults satisfies this)
     // 2. IMU_HEALTHY flag set
     // 3. THROTTLE_LOW flag set
-    kernel.checks.pre_arm.current.insert(PreArmFlags::IMU_HEALTHY);
+    kernel
+        .checks
+        .pre_arm
+        .current
+        .insert(PreArmFlags::IMU_HEALTHY);
     kernel.checks.pre_arm.update_throttle(true);
 
     assert!(
@@ -1281,14 +1538,22 @@ fn fault_state_reset_transitions_to_prearm() {
     kernel.faults = FaultFlags::empty(); // Clear faults to allow reset
 
     // Set required pre-arm flags for reset
-    kernel.checks.pre_arm.current.insert(PreArmFlags::IMU_HEALTHY);
+    kernel
+        .checks
+        .pre_arm
+        .current
+        .insert(PreArmFlags::IMU_HEALTHY);
     kernel.checks.pre_arm.update_throttle(true);
 
     // Reset from fault
     let result = kernel.reset_from_fault();
 
     assert!(result.is_ok(), "reset_from_fault should succeed");
-    assert_eq!(kernel.init_state, InitState::PreArm, "Should transition to PreArm");
+    assert_eq!(
+        kernel.init_state,
+        InitState::PreArm,
+        "Should transition to PreArm"
+    );
 }
 
 /// Test reset_from_fault fails when faults still active
@@ -1303,8 +1568,15 @@ fn fault_state_reset_fails_with_active_faults() {
     // Reset should fail
     let result = kernel.reset_from_fault();
 
-    assert!(result.is_err(), "reset_from_fault should fail with active faults");
-    assert_eq!(kernel.init_state, InitState::Fault, "Should remain in Fault state");
+    assert!(
+        result.is_err(),
+        "reset_from_fault should fail with active faults"
+    );
+    assert_eq!(
+        kernel.init_state,
+        InitState::Fault,
+        "Should remain in Fault state"
+    );
 }
 
 /// Test reset_from_fault clears sample counts for fresh convergence
@@ -1316,7 +1588,11 @@ fn fault_state_reset_clears_convergence() {
     // Build up sample counts first
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1347,7 +1623,11 @@ fn fault_state_full_recovery_cycle() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1379,7 +1659,10 @@ fn fault_state_full_recovery_cycle() {
 
     // Phase 6: Should be able to arm again
     let result = kernel.arm();
-    assert!(result.is_ok(), "Should be able to re-arm after fault recovery");
+    assert!(
+        result.is_ok(),
+        "Should be able to re-arm after fault recovery"
+    );
     assert_eq!(kernel.init_state, InitState::Armed);
 }
 
@@ -1412,7 +1695,8 @@ fn fault_state_outputs_safe_values() {
         assert!(
             output.outputs[i].0.abs() < 1e-5,
             "Motor {} should be 0 in fault state (got {})",
-            i, output.outputs[i].0
+            i,
+            output.outputs[i].0
         );
     }
 }
@@ -1429,7 +1713,11 @@ fn request_config_mode_fails_when_not_armed() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1452,7 +1740,11 @@ fn request_config_mode_fails_in_fault_state() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1478,7 +1770,11 @@ fn request_config_mode_fails_already_in_mode() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1501,7 +1797,11 @@ fn request_config_mode_fails_already_transitioning() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1550,7 +1850,11 @@ fn kernel_get_health_returns_correct_state() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1680,7 +1984,11 @@ fn init_state_estimator_converging_to_prearm() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1710,7 +2018,11 @@ fn init_state_ready_to_prearm_fallback() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1736,7 +2048,11 @@ fn init_state_disarmed_to_prearm() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1761,7 +2077,11 @@ fn init_state_fault_stays_until_reset() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1816,7 +2136,11 @@ fn step_returns_safe_on_critical_fault() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1843,7 +2167,10 @@ fn step_returns_safe_on_critical_fault() {
     let output = kernel.step(dummy_time_delta(), &cmd, &failed_sensors, 0);
 
     // Should return safe output (active_mask = 0)
-    assert_eq!(output.active_mask, 0, "Critical fault should cause safe output");
+    assert_eq!(
+        output.active_mask, 0,
+        "Critical fault should cause safe output"
+    );
 }
 
 /// Test step with frozen control law
@@ -1854,7 +2181,11 @@ fn step_with_frozen_control_law() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1891,7 +2222,11 @@ fn step_performs_control_when_armed() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1927,7 +2262,11 @@ fn step_handles_degradation_trigger() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -1938,7 +2277,11 @@ fn step_handles_degradation_trigger() {
     kernel.arm().unwrap();
 
     // Clear attitude valid to trigger degradation
-    kernel.checks.in_flight.current.remove(aviate_core::checks::InFlightFlags::ATTITUDE_VALID);
+    kernel
+        .checks
+        .in_flight
+        .current
+        .remove(aviate_core::checks::InFlightFlags::ATTITUDE_VALID);
 
     let cmd = Command {
         mode: ControlMode::Attitude,
@@ -1982,7 +2325,11 @@ fn handle_degradation_all_reasons() {
 
         let event = kernel.handle_degradation(reason, dummy_timestamp());
 
-        assert!(event.is_some(), "Expected degradation event for {:?}", reason);
+        assert!(
+            event.is_some(),
+            "Expected degradation event for {:?}",
+            reason
+        );
         let event = event.unwrap();
         assert_eq!(event.to, expected_law, "Wrong law for {:?}", reason);
         assert_eq!(kernel.control_law, expected_law);
@@ -2029,7 +2376,11 @@ fn test_sensor_overrides_gnss_force_state() {
     // Step kernel (armed)
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
     for _ in 0..150 {
@@ -2038,8 +2389,8 @@ fn test_sensor_overrides_gnss_force_state() {
     kernel.arm().unwrap();
 
     kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
-    
-    // EKF should have updated with Suspect GNSS (internal EKF state not easily exposed, 
+
+    // EKF should have updated with Suspect GNSS (internal EKF state not easily exposed,
     // but we verify code path execution).
     // Cover other force states
     cmd.sensor_overrides = Some(aviate_core::control::SensorOverrides {
@@ -2051,7 +2402,7 @@ fn test_sensor_overrides_gnss_force_state() {
         gnss_force_state: Some(2), // Lost
     });
     kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
-    
+
     cmd.sensor_overrides = Some(aviate_core::control::SensorOverrides {
         gnss_force_state: Some(99), // Unknown -> Lost
     });
@@ -2099,7 +2450,10 @@ fn test_init_state_forced_control_law_coverage() {
     // Test Armed returns None (already covered by init_state_no_forced_law_when_armed, but ensuring path)
     assert_eq!(InitState::Armed.forced_control_law(), None);
     // Test non-armed returns Some(Frozen)
-    assert_eq!(InitState::PreArm.forced_control_law(), Some(ControlLaw::Frozen));
+    assert_eq!(
+        InitState::PreArm.forced_control_law(),
+        Some(ControlLaw::Frozen)
+    );
 }
 
 #[test]
@@ -2120,7 +2474,11 @@ fn request_config_mode_succeeds() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -2147,7 +2505,11 @@ fn request_config_mode_fails_checks() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -2163,7 +2525,11 @@ fn request_config_mode_fails_checks() {
 
     let result = kernel.request_config_mode(ConfigMode::Cruise);
     // Transition should fail due to checks
-    assert!(result.is_err(), "Expected error when transition checks fail, got {:?}", result);
+    assert!(
+        result.is_err(),
+        "Expected error when transition checks fail, got {:?}",
+        result
+    );
 }
 
 // =============================================================================
@@ -2188,8 +2554,16 @@ fn can_reset_from_fault_conditions_met() {
     // Set up fault state with recovery conditions
     kernel.init_state = InitState::Fault;
     kernel.faults = FaultFlags::empty(); // No critical faults
-    kernel.checks.pre_arm.current.insert(PreArmFlags::IMU_HEALTHY);
-    kernel.checks.pre_arm.current.insert(PreArmFlags::THROTTLE_LOW);
+    kernel
+        .checks
+        .pre_arm
+        .current
+        .insert(PreArmFlags::IMU_HEALTHY);
+    kernel
+        .checks
+        .pre_arm
+        .current
+        .insert(PreArmFlags::THROTTLE_LOW);
 
     // Init step to update sensors
     kernel.init_step(&sensors, dummy_timestamp());
@@ -2225,8 +2599,16 @@ fn reset_from_fault_succeeds() {
 
     kernel.init_state = InitState::Fault;
     kernel.faults = FaultFlags::empty();
-    kernel.checks.pre_arm.current.insert(PreArmFlags::IMU_HEALTHY);
-    kernel.checks.pre_arm.current.insert(PreArmFlags::THROTTLE_LOW);
+    kernel
+        .checks
+        .pre_arm
+        .current
+        .insert(PreArmFlags::IMU_HEALTHY);
+    kernel
+        .checks
+        .pre_arm
+        .current
+        .insert(PreArmFlags::THROTTLE_LOW);
 
     let result = kernel.reset_from_fault();
     assert!(result.is_ok());
@@ -2285,17 +2667,25 @@ fn test_ground_reset_clears_state() {
     // Get to Ready state with some accumulated state
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
     assert_eq!(kernel.init_state, InitState::Ready);
-    
+
     // Set some faults and check flags
     kernel.faults.insert(FaultFlags::BARO_FAILED);
-    kernel.checks.pre_arm.current.insert(PreArmFlags::THROTTLE_LOW);
+    kernel
+        .checks
+        .pre_arm
+        .current
+        .insert(PreArmFlags::THROTTLE_LOW);
 
     // Perform ground reset
     kernel.ground_reset();
@@ -2314,7 +2704,11 @@ fn test_ground_reset_ignored_when_armed() {
     // Get to Armed state
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
     for _ in 0..150 {
@@ -2333,18 +2727,26 @@ fn test_ground_reset_ignored_when_armed() {
 #[test]
 fn test_can_reset_from_fault_fails_checks() {
     let mut kernel = make_kernel();
-    
+
     // Enter Fault state
     kernel.init_state = InitState::Fault;
     kernel.faults = FaultFlags::empty(); // No active faults
 
     // 1. Fail throttle check
-    kernel.checks.pre_arm.current.insert(PreArmFlags::IMU_HEALTHY);
+    kernel
+        .checks
+        .pre_arm
+        .current
+        .insert(PreArmFlags::IMU_HEALTHY);
     kernel.checks.pre_arm.update_throttle(false); // Throttle HIGH
     assert!(!kernel.can_reset_from_fault());
 
     // 2. Fail IMU check
-    kernel.checks.pre_arm.current.remove(PreArmFlags::IMU_HEALTHY);
+    kernel
+        .checks
+        .pre_arm
+        .current
+        .remove(PreArmFlags::IMU_HEALTHY);
     kernel.checks.pre_arm.update_throttle(true); // Throttle LOW
     assert!(!kernel.can_reset_from_fault());
 }
@@ -2352,10 +2754,10 @@ fn test_can_reset_from_fault_fails_checks() {
 #[test]
 fn test_check_critical_faults_returns_true() {
     let mut kernel = make_kernel();
-    
+
     // Inject critical fault
     kernel.faults.insert(FaultFlags::NUMERIC_ERROR);
-    
+
     // Should return true and transition to Fault
     assert!(kernel.check_critical_faults());
     assert_eq!(kernel.init_state, InitState::Fault);
@@ -2385,7 +2787,11 @@ fn test_step_with_unhealthy_sensors() {
     // Initialize to Armed to allow step() to proceed past the first check
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
     // Force state to Armed directly to bypass init checks that would fail with bad sensors
@@ -2410,7 +2816,11 @@ fn step_with_sensor_overrides_no_gnss_force() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -2443,7 +2853,11 @@ fn init_state_ready_stays_when_satisfied() {
 
     kernel.ekf.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
         Quaternion::IDENTITY,
     );
 
@@ -2455,7 +2869,11 @@ fn init_state_ready_stays_when_satisfied() {
 
     // Another step with conditions still satisfied - should stay Ready
     kernel.init_step(&sensors, dummy_timestamp());
-    assert_eq!(kernel.init_state, InitState::Ready, "Should stay Ready when pre_arm satisfied");
+    assert_eq!(
+        kernel.init_state,
+        InitState::Ready,
+        "Should stay Ready when pre_arm satisfied"
+    );
 }
 
 /// Test handle_degradation when current law equals new law (no change case)

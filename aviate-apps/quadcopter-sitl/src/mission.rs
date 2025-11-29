@@ -65,10 +65,10 @@ pub struct Mission {
 /// Vehicle configuration for a mission
 #[derive(Debug, Clone)]
 pub struct VehicleConfig {
-    pub model: String,           // e.g., "x500", "x500_camera"
-    pub instance: u8,            // For multi-vehicle (0, 1, 2...)
+    pub model: String,            // e.g., "x500", "x500_camera"
+    pub instance: u8,             // For multi-vehicle (0, 1, 2...)
     pub spawn_position: [f32; 3], // Initial position [x, y, z]
-    pub spawn_heading: f32,      // Initial heading (radians)
+    pub spawn_heading: f32,       // Initial heading (radians)
 }
 
 impl Default for VehicleConfig {
@@ -104,14 +104,11 @@ pub enum Action {
     Thrust(f32),
     /// Set attitude target (quaternion + thrust)
     AttitudeTarget {
-        q: [f32; 4],  // Quaternion [w, x, y, z]
+        q: [f32; 4], // Quaternion [w, x, y, z]
         thrust: f32,
     },
     /// Go to position (NED)
-    GoTo {
-        position: [f32; 3],
-        heading: f32,
-    },
+    GoTo { position: [f32; 3], heading: f32 },
 }
 
 /// Verification criteria for a phase
@@ -188,7 +185,7 @@ impl Mission {
                     name: "land".to_string(),
                     duration: Duration::from_secs(3),
                     action: Action::Thrust(0.0),
-                    verify: vec![],  // Just wait for descent
+                    verify: vec![], // Just wait for descent
                 },
                 Phase {
                     name: "disarm".to_string(),
@@ -224,9 +221,12 @@ impl Mission {
                 Phase {
                     name: "hover".to_string(),
                     duration: Duration::from_secs(10),
-                    action: Action::Thrust(0.65),  // Hover thrust
+                    action: Action::Thrust(0.65), // Hover thrust
                     verify: vec![
-                        Criterion::AltitudeHold { target: 5.0, tolerance: 1.0 },
+                        Criterion::AltitudeHold {
+                            target: 5.0,
+                            tolerance: 1.0,
+                        },
                         Criterion::MaxDrift(2.0),
                     ],
                 },
@@ -281,7 +281,10 @@ pub enum MultiVehicleCriterion {
     /// Minimum separation between vehicles
     MinSeparation(f32),
     /// Formation shape maintained
-    FormationHold { offsets: Vec<[f32; 3]>, tolerance: f32 },
+    FormationHold {
+        offsets: Vec<[f32; 3]>,
+        tolerance: f32,
+    },
 }
 
 impl MultiVehicleMission {
@@ -301,7 +304,7 @@ impl MultiVehicleMission {
                 VehicleConfig {
                     model: "x500".to_string(),
                     instance: 1,
-                    spawn_position: [5.0, 0.0, 0.0],  // 5m east
+                    spawn_position: [5.0, 0.0, 0.0], // 5m east
                     spawn_heading: 0.0,
                 },
             ],

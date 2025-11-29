@@ -6,9 +6,8 @@
 //! - NaN/Inf handling across all newtypes
 
 use aviate_core::types::{
-    Scalar, Meters, MetersPerSecond, MetersPerSecondSquared,
-    RadiansPerSecond, Radians, Seconds, Normalized, NormalizedSigned,
-    Pascals, Celsius, Degrees, Microtesla, Validated,
+    Celsius, Degrees, Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Normalized,
+    NormalizedSigned, Pascals, Radians, RadiansPerSecond, Scalar, Seconds, Validated,
 };
 
 // =============================================================================

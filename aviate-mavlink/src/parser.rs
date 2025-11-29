@@ -163,7 +163,11 @@ fn parse_hil_sensor(payload: &[u8]) -> Result<MavMessage, ParseError> {
         diff_pressure: read_f32_le(payload, 48),
         pressure_alt: read_f32_le(payload, 52),
         temperature: read_f32_le(payload, 56),
-        fields_updated: if payload.len() >= 64 { read_u32_le(payload, 60) } else { 0xFFFF },
+        fields_updated: if payload.len() >= 64 {
+            read_u32_le(payload, 60)
+        } else {
+            0xFFFF
+        },
         id: if payload.len() > 64 { payload[64] } else { 0 },
     }))
 }
@@ -246,10 +250,11 @@ fn parse_hil_state_quaternion(payload: &[u8]) -> Result<MavMessage, ParseError> 
 }
 
 fn parse_attitude_quaternion(payload: &[u8]) -> Result<MavMessage, ParseError> {
-    if payload.len() < 32 { // Basic payload
+    if payload.len() < 32 {
+        // Basic payload
         return Err(ParseError::InvalidPayload);
     }
-    
+
     let mut offset_q = [0.0; 4];
     if payload.len() >= 48 {
         offset_q[0] = read_f32_le(payload, 32);
@@ -275,7 +280,7 @@ fn parse_local_position_ned(payload: &[u8]) -> Result<MavMessage, ParseError> {
     if payload.len() < LocalPositionNed::PAYLOAD_LEN {
         return Err(ParseError::InvalidPayload);
     }
-    
+
     Ok(MavMessage::LocalPositionNed(LocalPositionNed {
         time_boot_ms: read_u32_le(payload, 0),
         x: read_f32_le(payload, 4),
@@ -288,10 +293,11 @@ fn parse_local_position_ned(payload: &[u8]) -> Result<MavMessage, ParseError> {
 }
 
 fn parse_set_attitude_target(payload: &[u8]) -> Result<MavMessage, ParseError> {
-    if payload.len() < 39 { // Basic payload
+    if payload.len() < 39 {
+        // Basic payload
         return Err(ParseError::InvalidPayload);
     }
-    
+
     let mut thrust_body = [0.0; 3];
     if payload.len() >= 51 {
         thrust_body[0] = read_f32_le(payload, 39);
@@ -325,24 +331,26 @@ fn parse_set_position_target_local_ned(payload: &[u8]) -> Result<MavMessage, Par
         return Err(ParseError::InvalidPayload);
     }
 
-    Ok(MavMessage::SetPositionTargetLocalNed(SetPositionTargetLocalNed {
-        time_boot_ms: read_u32_le(payload, 0),
-        x: read_f32_le(payload, 4),
-        y: read_f32_le(payload, 8),
-        z: read_f32_le(payload, 12),
-        vx: read_f32_le(payload, 16),
-        vy: read_f32_le(payload, 20),
-        vz: read_f32_le(payload, 24),
-        afx: read_f32_le(payload, 28),
-        afy: read_f32_le(payload, 32),
-        afz: read_f32_le(payload, 36),
-        yaw: read_f32_le(payload, 40),
-        yaw_rate: read_f32_le(payload, 44),
-        type_mask: read_u16_le(payload, 48),
-        target_system: payload[50],
-        target_component: if payload.len() > 51 { payload[51] } else { 0 },
-        coordinate_frame: if payload.len() > 52 { payload[52] } else { 1 }, // Default to LOCAL_NED
-    }))
+    Ok(MavMessage::SetPositionTargetLocalNed(
+        SetPositionTargetLocalNed {
+            time_boot_ms: read_u32_le(payload, 0),
+            x: read_f32_le(payload, 4),
+            y: read_f32_le(payload, 8),
+            z: read_f32_le(payload, 12),
+            vx: read_f32_le(payload, 16),
+            vy: read_f32_le(payload, 20),
+            vz: read_f32_le(payload, 24),
+            afx: read_f32_le(payload, 28),
+            afy: read_f32_le(payload, 32),
+            afz: read_f32_le(payload, 36),
+            yaw: read_f32_le(payload, 40),
+            yaw_rate: read_f32_le(payload, 44),
+            type_mask: read_u16_le(payload, 48),
+            target_system: payload[50],
+            target_component: if payload.len() > 51 { payload[51] } else { 0 },
+            coordinate_frame: if payload.len() > 52 { payload[52] } else { 1 }, // Default to LOCAL_NED
+        },
+    ))
 }
 
 fn parse_command_long(payload: &[u8]) -> Result<MavMessage, ParseError> {
@@ -367,12 +375,17 @@ fn parse_command_long(payload: &[u8]) -> Result<MavMessage, ParseError> {
 }
 
 fn parse_command_ack(payload: &[u8]) -> Result<MavMessage, ParseError> {
-    if payload.len() < 3 { // Basic: command(2) + result(1)
+    if payload.len() < 3 {
+        // Basic: command(2) + result(1)
         return Err(ParseError::InvalidPayload);
     }
-    
+
     let progress = if payload.len() > 3 { payload[3] } else { 0 };
-    let result_param2 = if payload.len() > 7 { read_i32_le(payload, 4) } else { 0 };
+    let result_param2 = if payload.len() > 7 {
+        read_i32_le(payload, 4)
+    } else {
+        0
+    };
     let target_system = if payload.len() > 8 { payload[8] } else { 0 };
     let target_component = if payload.len() > 9 { payload[9] } else { 0 };
 
@@ -387,7 +400,8 @@ fn parse_command_ack(payload: &[u8]) -> Result<MavMessage, ParseError> {
 }
 
 fn parse_rc_channels_override(payload: &[u8]) -> Result<MavMessage, ParseError> {
-    if payload.len() < 18 { // Basic
+    if payload.len() < 18 {
+        // Basic
         return Err(ParseError::InvalidPayload);
     }
 
@@ -423,7 +437,8 @@ fn parse_rc_channels_override(payload: &[u8]) -> Result<MavMessage, ParseError> 
 }
 
 fn parse_manual_control(payload: &[u8]) -> Result<MavMessage, ParseError> {
-    if payload.len() < 11 { // Basic
+    if payload.len() < 11 {
+        // Basic
         return Err(ParseError::InvalidPayload);
     }
 
@@ -438,20 +453,37 @@ fn parse_manual_control(payload: &[u8]) -> Result<MavMessage, ParseError> {
     };
 
     let ext_start = 11;
-    if payload.len() >= ext_start + 2 { msg.s = read_i16_le(payload, ext_start); }
-    if payload.len() >= ext_start + 4 { msg.t = read_i16_le(payload, ext_start + 2); }
-    if payload.len() >= ext_start + 6 { msg.aux1 = read_i16_le(payload, ext_start + 4); }
-    if payload.len() >= ext_start + 8 { msg.aux2 = read_i16_le(payload, ext_start + 6); }
-    if payload.len() >= ext_start + 10 { msg.aux3 = read_i16_le(payload, ext_start + 8); }
-    if payload.len() >= ext_start + 12 { msg.aux4 = read_i16_le(payload, ext_start + 10); }
-    if payload.len() >= ext_start + 14 { msg.aux5 = read_i16_le(payload, ext_start + 12); }
-    if payload.len() >= ext_start + 16 { msg.aux6 = read_i16_le(payload, ext_start + 14); }
+    if payload.len() >= ext_start + 2 {
+        msg.s = read_i16_le(payload, ext_start);
+    }
+    if payload.len() >= ext_start + 4 {
+        msg.t = read_i16_le(payload, ext_start + 2);
+    }
+    if payload.len() >= ext_start + 6 {
+        msg.aux1 = read_i16_le(payload, ext_start + 4);
+    }
+    if payload.len() >= ext_start + 8 {
+        msg.aux2 = read_i16_le(payload, ext_start + 6);
+    }
+    if payload.len() >= ext_start + 10 {
+        msg.aux3 = read_i16_le(payload, ext_start + 8);
+    }
+    if payload.len() >= ext_start + 12 {
+        msg.aux4 = read_i16_le(payload, ext_start + 10);
+    }
+    if payload.len() >= ext_start + 14 {
+        msg.aux5 = read_i16_le(payload, ext_start + 12);
+    }
+    if payload.len() >= ext_start + 16 {
+        msg.aux6 = read_i16_le(payload, ext_start + 14);
+    }
 
     Ok(MavMessage::ManualControl(msg))
 }
 
 fn parse_sys_status(payload: &[u8]) -> Result<MavMessage, ParseError> {
-    if payload.len() < 31 { // Basic (43 in messages.rs but check wire size)
+    if payload.len() < 31 {
+        // Basic (43 in messages.rs but check wire size)
         return Err(ParseError::InvalidPayload);
     }
 
@@ -482,7 +514,8 @@ fn parse_sys_status(payload: &[u8]) -> Result<MavMessage, ParseError> {
 }
 
 fn parse_statustext(payload: &[u8]) -> Result<MavMessage, ParseError> {
-    if payload.len() < 51 { // Basic
+    if payload.len() < 51 {
+        // Basic
         return Err(ParseError::InvalidPayload);
     }
 
@@ -555,29 +588,29 @@ fn compute_crc(data: &[u8], crc_extra: u8) -> u16 {
 
 fn crc_accumulate(byte: u8, crc: u16) -> u16 {
     let tmp = (byte ^ (crc as u8)) as u16;
-    let tmp = tmp ^ ((tmp << 4) & 0xFF);  // Mask to 8 bits per X.25 CRC spec
+    let tmp = tmp ^ ((tmp << 4) & 0xFF); // Mask to 8 bits per X.25 CRC spec
     (crc >> 8) ^ (tmp << 8) ^ (tmp << 3) ^ (tmp >> 4)
 }
 
 /// Get CRC extra byte for message ID (from MAVLink XML definitions)
 fn get_crc_extra(msg_id: u32) -> u8 {
     match msg_id {
-        0 => 50,   // HEARTBEAT
-        1 => 124,  // SYS_STATUS
-        2 => 137,  // SYSTEM_TIME
-        31 => 246, // ATTITUDE_QUATERNION
-        32 => 185, // LOCAL_POSITION_NED
-        69 => 243, // MANUAL_CONTROL
-        70 => 124, // RC_CHANNELS_OVERRIDE
-        76 => 152, // COMMAND_LONG
-        77 => 143, // COMMAND_ACK
-        82 => 49,  // SET_ATTITUDE_TARGET
-        84 => 143, // SET_POSITION_TARGET_LOCAL_NED
-        93 => 47,  // HIL_ACTUATOR_CONTROLS
+        0 => 50,    // HEARTBEAT
+        1 => 124,   // SYS_STATUS
+        2 => 137,   // SYSTEM_TIME
+        31 => 246,  // ATTITUDE_QUATERNION
+        32 => 185,  // LOCAL_POSITION_NED
+        69 => 243,  // MANUAL_CONTROL
+        70 => 124,  // RC_CHANNELS_OVERRIDE
+        76 => 152,  // COMMAND_LONG
+        77 => 143,  // COMMAND_ACK
+        82 => 49,   // SET_ATTITUDE_TARGET
+        84 => 143,  // SET_POSITION_TARGET_LOCAL_NED
+        93 => 47,   // HIL_ACTUATOR_CONTROLS
         107 => 108, // HIL_SENSOR
         113 => 124, // HIL_GPS
-        115 => 4,  // HIL_STATE_QUATERNION
-        253 => 83, // STATUSTEXT
-        _ => 0,    // Unknown message
+        115 => 4,   // HIL_STATE_QUATERNION
+        253 => 83,  // STATUSTEXT
+        _ => 0,     // Unknown message
     }
 }

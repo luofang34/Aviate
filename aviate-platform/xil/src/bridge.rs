@@ -1,8 +1,10 @@
-use aviate_core::control::{Command, Setpoint, CommandSource, ControlMode};
-use aviate_core::state::StateEstimate;
+use aviate_core::control::{Command, CommandSource, ControlMode, Setpoint};
 use aviate_core::math::Quaternion;
-use aviate_core::types::{RadiansPerSecond, Normalized, Meters, MetersPerSecond, Radians};
-use aviate_mavlink::{SetAttitudeTarget, SetPositionTargetLocalNed, AttitudeQuaternion, position_target_typemask};
+use aviate_core::state::StateEstimate;
+use aviate_core::types::{Meters, MetersPerSecond, Normalized, Radians, RadiansPerSecond};
+use aviate_mavlink::{
+    position_target_typemask, AttitudeQuaternion, SetAttitudeTarget, SetPositionTargetLocalNed,
+};
 
 // MAVLink → Aviate Command
 pub fn mavlink_to_command(
@@ -10,7 +12,7 @@ pub fn mavlink_to_command(
     // set_pos: Option<&SetPositionTargetLocalNed>, // Not used yet
 ) -> Command {
     Command {
-        mode: ControlMode::Attitude,  // Basic mapping, ignoring type_mask for now
+        mode: ControlMode::Attitude, // Basic mapping, ignoring type_mask for now
         setpoint: Setpoint {
             attitude: Some(Quaternion {
                 w: set_att.q[0],
@@ -101,7 +103,10 @@ pub fn mavlink_position_to_command(set_pos: &SetPositionTargetLocalNed) -> Comma
 }
 
 // Aviate StateEstimate → MAVLink
-pub fn state_to_attitude_quaternion(state: &StateEstimate, time_boot_ms: u32) -> AttitudeQuaternion {
+pub fn state_to_attitude_quaternion(
+    state: &StateEstimate,
+    time_boot_ms: u32,
+) -> AttitudeQuaternion {
     AttitudeQuaternion {
         time_boot_ms,
         q1: state.attitude.w,

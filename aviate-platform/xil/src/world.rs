@@ -222,7 +222,9 @@ impl World {
 
     /// Get entity by name
     pub fn get_by_name(&self, name: &str) -> Option<&Entity> {
-        self.name_to_id.get(name).and_then(|id| self.entities.get(id))
+        self.name_to_id
+            .get(name)
+            .and_then(|id| self.entities.get(id))
     }
 
     /// Get mutable entity by name

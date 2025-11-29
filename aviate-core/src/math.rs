@@ -1,6 +1,5 @@
-use crate::types::Scalar;
 use crate::types::FloatExt;
-
+use crate::types::Scalar;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Vector3<T> {
@@ -19,15 +18,15 @@ impl Vector3<Scalar> {
     pub fn zero() -> Self {
         Self::new(0.0, 0.0, 0.0)
     }
-    
+
     pub fn skew_symmetric(&self) -> Matrix<3, 3> {
         let mut m = Matrix::<3, 3>::zero();
         m.data[0][1] = -self.z;
-        m.data[0][2] =  self.y;
-        m.data[1][0] =  self.z;
+        m.data[0][2] = self.y;
+        m.data[1][0] = self.z;
         m.data[1][2] = -self.x;
         m.data[2][0] = -self.y;
-        m.data[2][1] =  self.x;
+        m.data[2][1] = self.x;
         m
     }
 }
@@ -39,7 +38,9 @@ pub struct Matrix<const R: usize, const C: usize> {
 
 impl<const R: usize, const C: usize> Matrix<R, C> {
     pub fn zero() -> Self {
-        Self { data: [[0.0; C]; R] }
+        Self {
+            data: [[0.0; C]; R],
+        }
     }
 
     pub fn get(&self, r: usize, c: usize) -> Scalar {
@@ -59,7 +60,7 @@ impl<const N: usize> Matrix<N, N> {
         }
         m
     }
-    
+
     pub fn make_symmetric(&mut self) {
         for r in 0..N {
             for c in 0..r {
@@ -81,7 +82,7 @@ impl<const R: usize, const C: usize> Matrix<R, C> {
         }
         res
     }
-    
+
     pub fn add(&self, other: &Self) -> Self {
         let mut res = Self::zero();
         for r in 0..R {
@@ -101,7 +102,7 @@ impl<const R: usize, const C: usize> Matrix<R, C> {
         }
         res
     }
-    
+
     pub fn mul_scalar(&self, s: Scalar) -> Self {
         let mut res = Self::zero();
         for r in 0..R {
@@ -142,7 +143,6 @@ impl<const N: usize> Matrix<N, 1> {
     }
 }
 
-
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Quaternion {
     pub w: Scalar,
@@ -152,12 +152,17 @@ pub struct Quaternion {
 }
 
 impl Quaternion {
-    pub const IDENTITY: Self = Self { w: 1.0, x: 0.0, y: 0.0, z: 0.0 };
+    pub const IDENTITY: Self = Self {
+        w: 1.0,
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
 
     pub fn new(w: Scalar, x: Scalar, y: Scalar, z: Scalar) -> Self {
         Self { w, x, y, z }
     }
-    
+
     pub fn norm_sq(&self) -> Scalar {
         self.w * self.w + self.x * self.x + self.y * self.y + self.z * self.z
     }
@@ -175,7 +180,7 @@ impl Quaternion {
             Self::IDENTITY
         }
     }
-    
+
     pub fn rotate_vector(&self, v: Vector3<Scalar>) -> Vector3<Scalar> {
         // Standard quaternion rotation
         let qx = self.x;
@@ -194,17 +199,17 @@ impl Quaternion {
             z: iz * qw + iw * -qz + ix * -qy - iy * -qx,
         }
     }
-    
+
     // Quaternion multiplication
     pub fn mul(&self, other: &Self) -> Self {
-         Self {
+        Self {
             w: self.w * other.w - self.x * other.x - self.y * other.y - self.z * other.z,
             x: self.w * other.x + self.x * other.w + self.y * other.z - self.z * other.y,
             y: self.w * other.y - self.x * other.z + self.y * other.w + self.z * other.x,
             z: self.w * other.z + self.x * other.y - self.y * other.x + self.z * other.w,
         }
     }
-    
+
     // Create from axis-angle
     pub fn from_axis_angle(axis: Vector3<Scalar>, angle: Scalar) -> Self {
         let half_angle = angle * 0.5;
@@ -227,7 +232,11 @@ impl Quaternion {
         let sinp = 2.0 * (self.w * self.y - self.z * self.x);
         let pitch = if sinp.abs() >= 1.0 {
             // use 90 degrees if out of range
-            if sinp > 0.0 { core::f32::consts::FRAC_PI_2 } else { -core::f32::consts::FRAC_PI_2 }
+            if sinp > 0.0 {
+                core::f32::consts::FRAC_PI_2
+            } else {
+                -core::f32::consts::FRAC_PI_2
+            }
         } else {
             sinp.asin()
         };
@@ -255,7 +264,7 @@ impl Quaternion {
         let wz = self.w * z2;
 
         let mut m = Matrix::<3, 3>::zero();
-        
+
         m.data[0][0] = 1.0 - (yy + zz);
         m.data[0][1] = xy - wz;
         m.data[0][2] = xz + wy;
@@ -267,7 +276,7 @@ impl Quaternion {
         m.data[2][0] = xz - wy;
         m.data[2][1] = yz + wx;
         m.data[2][2] = 1.0 - (xx + yy);
-        
+
         m
     }
 }

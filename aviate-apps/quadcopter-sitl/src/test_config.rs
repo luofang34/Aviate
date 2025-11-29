@@ -38,8 +38,8 @@ pub struct GlobalVerification {
 
 /// Parse a test configuration from a TOML file
 pub fn parse_test_config(path: &Path) -> Result<TestConfig, String> {
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read config file: {}", e))?;
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read config file: {}", e))?;
 
     parse_test_config_str(&content)
 }
@@ -74,7 +74,7 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
         // Section headers
         if line.starts_with("[[") && line.ends_with("]]") {
             // Array table (e.g., [[vehicles]], [[vehicles.mission.phases]])
-            let section = &line[2..line.len()-2];
+            let section = &line[2..line.len() - 2];
 
             // Save any pending phase
             if let Some(phase) = current_phase.take() {
@@ -114,7 +114,7 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
 
         if line.starts_with('[') && line.ends_with(']') {
             // Regular table
-            let section = &line[1..line.len()-1];
+            let section = &line[1..line.len() - 1];
 
             // Save any pending phase
             if let Some(phase) = current_phase.take() {
@@ -128,14 +128,12 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
         // Key-value pairs
         if let Some((key, value)) = parse_kv(line) {
             match current_section.as_str() {
-                "test" => {
-                    match key.as_str() {
-                        "name" => config.name = value,
-                        "description" => config.description = value,
-                        "lockstep" => config.lockstep = value == "true",
-                        _ => {}
-                    }
-                }
+                "test" => match key.as_str() {
+                    "name" => config.name = value,
+                    "description" => config.description = value,
+                    "lockstep" => config.lockstep = value == "true",
+                    _ => {}
+                },
                 "world" => {
                     if key == "file" {
                         config.world_file = value;
@@ -172,9 +170,11 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
                     }
                 }
                 "verification" => {
-                    let verif = config.global_verification.get_or_insert(GlobalVerification {
-                        min_separation: None,
-                    });
+                    let verif = config
+                        .global_verification
+                        .get_or_insert(GlobalVerification {
+                            min_separation: None,
+                        });
                     if key == "min_separation" {
                         verif.min_separation = value.parse().ok();
                     }
@@ -211,7 +211,7 @@ fn parse_kv(line: &str) -> Option<(String, String)> {
 
     // Remove quotes
     if value.starts_with('"') && value.ends_with('"') {
-        value = value[1..value.len()-1].to_string();
+        value = value[1..value.len() - 1].to_string();
     }
 
     Some((key, value))
@@ -220,7 +220,8 @@ fn parse_kv(line: &str) -> Option<(String, String)> {
 /// Parse a [x, y, z] vector
 fn parse_vec3(s: &str) -> [f32; 3] {
     let s = s.trim().trim_start_matches('[').trim_end_matches(']');
-    let parts: Vec<f32> = s.split(',')
+    let parts: Vec<f32> = s
+        .split(',')
         .map(|p| p.trim().parse().unwrap_or(0.0))
         .collect();
 
@@ -298,7 +299,8 @@ fn parse_action(s: &str) -> Action {
 /// Parse a quaternion [w, x, y, z]
 fn parse_quat(s: &str) -> [f32; 4] {
     let s = s.trim().trim_start_matches('[').trim_end_matches(']');
-    let parts: Vec<f32> = s.split(',')
+    let parts: Vec<f32> = s
+        .split(',')
         .map(|p| p.trim().parse().unwrap_or(0.0))
         .collect();
 
@@ -357,7 +359,10 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
             "max_altitude" => Criterion::MaxAltitude(value),
             "max_drift" => Criterion::MaxDrift(value),
             "altitude_hold" => Criterion::AltitudeHold { target, tolerance },
-            "position_hold" => Criterion::PositionHold { target: position, tolerance },
+            "position_hold" => Criterion::PositionHold {
+                target: position,
+                tolerance,
+            },
             "sensor_data" => Criterion::SensorDataReceived,
             _ => continue,
         };
@@ -508,6 +513,9 @@ min_separation = 4.0
 
         // Global verification
         assert!(config.global_verification.is_some());
-        assert_eq!(config.global_verification.unwrap().min_separation, Some(4.0));
+        assert_eq!(
+            config.global_verification.unwrap().min_separation,
+            Some(4.0)
+        );
     }
 }

@@ -1,6 +1,6 @@
-use crate::types::{Normalized, Validated};
-use crate::time::Timestamp;
 use crate::control::ConfigMode;
+use crate::time::Timestamp;
+use crate::types::{Normalized, Validated};
 
 use crate::control::AxisCommand;
 
@@ -22,10 +22,10 @@ pub struct QuadXMixer {
 
 impl Mixer for QuadXMixer {
     fn mix(&self, axis: &AxisCommand) -> ActuatorCmd {
-        let t = axis.collective.0;      // [0, 1]
-        let r = axis.roll.0;            // [-1, 1]
-        let p = axis.pitch.0;           // [-1, 1]
-        let y = axis.yaw.0;             // [-1, 1]
+        let t = axis.collective.0; // [0, 1]
+        let r = axis.roll.0; // [-1, 1]
+        let p = axis.pitch.0; // [-1, 1]
+        let y = axis.yaw.0; // [-1, 1]
 
         // Standard X-config mixing:
         // M0 (front-right, CW):  +roll -pitch +yaw
@@ -34,41 +34,41 @@ impl Mixer for QuadXMixer {
         // M3 (rear-right, CCW):  +roll +pitch -yaw
 
         let _m0 = t - r + p + y; // M0: Front Right (CW) -> -Roll, +Pitch, +Yaw (Wait, standard is +Roll? FR is +X +Y? No, FR is +X -Y (NED?))
-        // Spec does not define motor mapping explicitly yet.
-        // Standard PX4/ArduPilot Quad X:
-        // 1 (FR, CCW) - 3 (RL, CCW)
-        //    \ /
-        //    / \
-        // 2 (FL, CW) - 4 (RR, CW)
-        // Let's stick to the layout in the prompt comment:
-        //   0(CW)   1(CCW)  (Front)
-        //      \   /
-        //       [X]
-        //      /   \
-        //   2(CCW)  3(CW)   (Rear)
-        //
-        // Roll (+ right):  M0(Right) down/up?, M3(Right) down/up?
-        // Right roll -> Right side down (thrust decrease), Left side up (thrust increase).
-        // M0 (FR), M3 (RR) -> Decrease. (- roll)
-        // M1 (FL), M2 (RL) -> Increase. (+ roll)
-        //
-        // Pitch (+ nose up): Front up, Rear down.
-        // M0 (FR), M1 (FL) -> Increase (+ pitch)
-        // M2 (RL), M3 (RR) -> Decrease (- pitch)
-        //
-        // Yaw (+ CW): CW motors torque left (anti-torque right). To yaw right (CW), increase CCW motors, decrease CW?
-        // No, to yaw right (CW), body torque must be CW. Motors apply torque opposite to spin.
-        // CW motors (0, 3) apply CCW torque. CCW motors (1, 2) apply CW torque.
-        // To yaw CW (positive), we need net CW torque. So increase CCW motors (1, 2), decrease CW motors (0, 3).
-        //
-        // Summary:
-        // M0 (FR, CW):  -roll +pitch -yaw
-        // M1 (FL, CCW): +roll +pitch +yaw
-        // M2 (RL, CCW): +roll -pitch +yaw
-        // M3 (RR, CW):  -roll -pitch -yaw
-        
+                                 // Spec does not define motor mapping explicitly yet.
+                                 // Standard PX4/ArduPilot Quad X:
+                                 // 1 (FR, CCW) - 3 (RL, CCW)
+                                 //    \ /
+                                 //    / \
+                                 // 2 (FL, CW) - 4 (RR, CW)
+                                 // Let's stick to the layout in the prompt comment:
+                                 //   0(CW)   1(CCW)  (Front)
+                                 //      \   /
+                                 //       [X]
+                                 //      /   \
+                                 //   2(CCW)  3(CW)   (Rear)
+                                 //
+                                 // Roll (+ right):  M0(Right) down/up?, M3(Right) down/up?
+                                 // Right roll -> Right side down (thrust decrease), Left side up (thrust increase).
+                                 // M0 (FR), M3 (RR) -> Decrease. (- roll)
+                                 // M1 (FL), M2 (RL) -> Increase. (+ roll)
+                                 //
+                                 // Pitch (+ nose up): Front up, Rear down.
+                                 // M0 (FR), M1 (FL) -> Increase (+ pitch)
+                                 // M2 (RL), M3 (RR) -> Decrease (- pitch)
+                                 //
+                                 // Yaw (+ CW): CW motors torque left (anti-torque right). To yaw right (CW), increase CCW motors, decrease CW?
+                                 // No, to yaw right (CW), body torque must be CW. Motors apply torque opposite to spin.
+                                 // CW motors (0, 3) apply CCW torque. CCW motors (1, 2) apply CW torque.
+                                 // To yaw CW (positive), we need net CW torque. So increase CCW motors (1, 2), decrease CW motors (0, 3).
+                                 //
+                                 // Summary:
+                                 // M0 (FR, CW):  -roll +pitch -yaw
+                                 // M1 (FL, CCW): +roll +pitch +yaw
+                                 // M2 (RL, CCW): +roll -pitch +yaw
+                                 // M3 (RR, CW):  -roll -pitch -yaw
+
         // Let's implement THIS logic.
-        
+
         let m0 = t - r + p - y;
         let m1 = t + r + p + y;
         let m2 = t + r - p + y;
@@ -363,11 +363,7 @@ impl Default for SanitizeReport {
 pub const MAX_FALLBACK_AGE_CYCLES: u16 = 100;
 
 pub trait ActuatorSanitizer {
-    fn sanitize(
-        &mut self,
-        cmd: &mut ActuatorCmd,
-        mode: &ModeConfig,
-    ) -> SanitizeReport;
+    fn sanitize(&mut self, cmd: &mut ActuatorCmd, mode: &ModeConfig) -> SanitizeReport;
 }
 
 #[derive(Default)]
@@ -376,30 +372,30 @@ pub struct Sanitizer {
 }
 
 impl ActuatorSanitizer for Sanitizer {
-    fn sanitize(
-        &mut self,
-        cmd: &mut ActuatorCmd,
-        mode: &ModeConfig,
-    ) -> SanitizeReport {
+    fn sanitize(&mut self, cmd: &mut ActuatorCmd, mode: &ModeConfig) -> SanitizeReport {
         let mut report = SanitizeReport::default();
         cmd.sanitized = true;
         cmd.fallback_mask = 0;
 
         for (i, group) in mode.groups.iter().enumerate() {
-            if i >= MAX_GROUPS { break; }
+            if i >= MAX_GROUPS {
+                break;
+            }
 
             let mut group_valid = true;
             // Check all members of the group
             for &channel_idx in group.members {
                 let idx = channel_idx as usize;
-                if idx >= MAX_ACTUATORS { continue; }
-                
+                if idx >= MAX_ACTUATORS {
+                    continue;
+                }
+
                 let val = cmd.outputs[idx];
                 if !val.is_valid() {
                     group_valid = false;
-                    break; 
+                    break;
                 }
-                // range check [0,1] implied by Normalized? 
+                // range check [0,1] implied by Normalized?
                 // Normalized wraps f32, we should check bounds if strict
                 if val.0 < 0.0 || val.0 > 1.0 {
                     group_valid = false;
@@ -428,11 +424,12 @@ impl ActuatorSanitizer for Sanitizer {
                 // Fallback Logic
                 report.any_fallback = true;
                 cmd.fallback_mask |= 1 << i;
-                
+
                 if group.coupling == CouplingKind::Strong {
                     // Strong coupling: Reject ENTIRE group vector
                     // 1. Try Last Good
-                    if self.state.last_good[i].valid && self.state.age[i] < MAX_FALLBACK_AGE_CYCLES {
+                    if self.state.last_good[i].valid && self.state.age[i] < MAX_FALLBACK_AGE_CYCLES
+                    {
                         let last = &self.state.last_good[i];
                         for &channel_idx in group.members {
                             let idx = channel_idx as usize;
@@ -441,7 +438,7 @@ impl ActuatorSanitizer for Sanitizer {
                             }
                         }
                         report.group_results[i] = GroupSanitizeResult::FallbackLastGood;
-                    } 
+                    }
                     // 2. Try Safe Pattern
                     else if group.safe_pattern.valid {
                         let safe = &group.safe_pattern;
@@ -473,22 +470,26 @@ impl ActuatorSanitizer for Sanitizer {
                     // Implementation simplified: use SafePattern for invalid ones.
                     for &channel_idx in group.members {
                         let idx = channel_idx as usize;
-                        if idx >= MAX_ACTUATORS { continue; }
+                        if idx >= MAX_ACTUATORS {
+                            continue;
+                        }
                         let val = cmd.outputs[idx];
-                        
+
                         if !val.is_valid() || val.0 < 0.0 || val.0 > 1.0 {
-                             // Fallback this single channel
-                             // Try last good
-                             if self.state.last_good[i].valid && self.state.age[i] < MAX_FALLBACK_AGE_CYCLES {
-                                 cmd.outputs[idx] = self.state.last_good[i].outputs[idx];
-                             } else {
-                                 // Safe or zero
-                                 if group.safe_pattern.valid {
-                                     cmd.outputs[idx] = group.safe_pattern.outputs[idx];
-                                 } else {
-                                     cmd.outputs[idx] = Normalized(0.0);
-                                 }
-                             }
+                            // Fallback this single channel
+                            // Try last good
+                            if self.state.last_good[i].valid
+                                && self.state.age[i] < MAX_FALLBACK_AGE_CYCLES
+                            {
+                                cmd.outputs[idx] = self.state.last_good[i].outputs[idx];
+                            } else {
+                                // Safe or zero
+                                if group.safe_pattern.valid {
+                                    cmd.outputs[idx] = group.safe_pattern.outputs[idx];
+                                } else {
+                                    cmd.outputs[idx] = Normalized(0.0);
+                                }
+                            }
                         }
                     }
                     // We don't mark the whole group as invalid in 'last_good' if weak?
@@ -496,11 +497,11 @@ impl ActuatorSanitizer for Sanitizer {
                     // For now, we increment age if ANY invalid?
                     report.group_results[i] = GroupSanitizeResult::Clamped; // Approximate status
                 }
-                
+
                 self.state.age[i] = self.state.age[i].saturating_add(1);
             }
         }
-        
+
         report
     }
 }

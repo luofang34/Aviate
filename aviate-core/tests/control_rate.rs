@@ -33,8 +33,16 @@ fn zero_error_produces_zero_output() {
 #[test]
 fn matching_setpoint_and_current_produces_zero() {
     let ctrl = RateController::new([2.0, 2.0, 2.0]);
-    let setpoint = [RadiansPerSecond(1.5), RadiansPerSecond(-0.5), RadiansPerSecond(0.3)];
-    let current = [RadiansPerSecond(1.5), RadiansPerSecond(-0.5), RadiansPerSecond(0.3)];
+    let setpoint = [
+        RadiansPerSecond(1.5),
+        RadiansPerSecond(-0.5),
+        RadiansPerSecond(0.3),
+    ];
+    let current = [
+        RadiansPerSecond(1.5),
+        RadiansPerSecond(-0.5),
+        RadiansPerSecond(0.3),
+    ];
 
     let output = ctrl.step(setpoint, current);
 
@@ -50,19 +58,33 @@ fn matching_setpoint_and_current_produces_zero() {
 #[test]
 fn positive_roll_error_produces_positive_output() {
     let ctrl = RateController::new([1.0, 1.0, 1.0]);
-    let setpoint = [RadiansPerSecond(1.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)];
+    let setpoint = [
+        RadiansPerSecond(1.0),
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(0.0),
+    ];
     let current = [RadiansPerSecond(0.0); 3];
 
     let output = ctrl.step(setpoint, current);
 
-    assert!(output[0].0 > 0.0, "Positive error should produce positive output");
-    assert!((output[0].0 - 1.0).abs() < 1e-6, "Output should equal error * gain");
+    assert!(
+        output[0].0 > 0.0,
+        "Positive error should produce positive output"
+    );
+    assert!(
+        (output[0].0 - 1.0).abs() < 1e-6,
+        "Output should equal error * gain"
+    );
 }
 
 #[test]
 fn positive_error_scales_with_gain() {
     let ctrl = RateController::new([0.5, 0.5, 0.5]);
-    let setpoint = [RadiansPerSecond(2.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)];
+    let setpoint = [
+        RadiansPerSecond(2.0),
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(0.0),
+    ];
     let current = [RadiansPerSecond(0.0); 3];
 
     let output = ctrl.step(setpoint, current);
@@ -79,19 +101,34 @@ fn positive_error_scales_with_gain() {
 fn negative_roll_error_produces_negative_output() {
     let ctrl = RateController::new([1.0, 1.0, 1.0]);
     let setpoint = [RadiansPerSecond(0.0); 3];
-    let current = [RadiansPerSecond(1.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)];
+    let current = [
+        RadiansPerSecond(1.0),
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(0.0),
+    ];
 
     let output = ctrl.step(setpoint, current);
 
-    assert!(output[0].0 < 0.0, "Negative error should produce negative output");
+    assert!(
+        output[0].0 < 0.0,
+        "Negative error should produce negative output"
+    );
     assert!((output[0].0 - (-1.0)).abs() < 1e-6);
 }
 
 #[test]
 fn negative_pitch_error() {
     let ctrl = RateController::new([1.0, 0.8, 1.0]);
-    let setpoint = [RadiansPerSecond(0.0), RadiansPerSecond(-1.0), RadiansPerSecond(0.0)];
-    let current = [RadiansPerSecond(0.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)];
+    let setpoint = [
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(-1.0),
+        RadiansPerSecond(0.0),
+    ];
+    let current = [
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(0.0),
+    ];
 
     let output = ctrl.step(setpoint, current);
 
@@ -106,29 +143,47 @@ fn negative_pitch_error() {
 #[test]
 fn output_saturates_at_positive_one() {
     let ctrl = RateController::new([1.0, 1.0, 1.0]);
-    let setpoint = [RadiansPerSecond(5.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)];
+    let setpoint = [
+        RadiansPerSecond(5.0),
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(0.0),
+    ];
     let current = [RadiansPerSecond(0.0); 3];
 
     let output = ctrl.step(setpoint, current);
 
-    assert!((output[0].0 - 1.0).abs() < 1e-6, "Output should clamp to 1.0");
+    assert!(
+        (output[0].0 - 1.0).abs() < 1e-6,
+        "Output should clamp to 1.0"
+    );
 }
 
 #[test]
 fn output_saturates_at_negative_one() {
     let ctrl = RateController::new([1.0, 1.0, 1.0]);
-    let setpoint = [RadiansPerSecond(-5.0), RadiansPerSecond(0.0), RadiansPerSecond(0.0)];
+    let setpoint = [
+        RadiansPerSecond(-5.0),
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(0.0),
+    ];
     let current = [RadiansPerSecond(0.0); 3];
 
     let output = ctrl.step(setpoint, current);
 
-    assert!((output[0].0 - (-1.0)).abs() < 1e-6, "Output should clamp to -1.0");
+    assert!(
+        (output[0].0 - (-1.0)).abs() < 1e-6,
+        "Output should clamp to -1.0"
+    );
 }
 
 #[test]
 fn high_gain_saturates_earlier() {
     let ctrl = RateController::new([10.0, 10.0, 10.0]);
-    let setpoint = [RadiansPerSecond(0.2), RadiansPerSecond(0.0), RadiansPerSecond(0.0)];
+    let setpoint = [
+        RadiansPerSecond(0.2),
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(0.0),
+    ];
     let current = [RadiansPerSecond(0.0); 3];
 
     let output = ctrl.step(setpoint, current);
@@ -144,7 +199,11 @@ fn high_gain_saturates_earlier() {
 #[test]
 fn axes_are_independent() {
     let ctrl = RateController::new([1.0, 2.0, 3.0]);
-    let setpoint = [RadiansPerSecond(0.5), RadiansPerSecond(0.25), RadiansPerSecond(0.1)];
+    let setpoint = [
+        RadiansPerSecond(0.5),
+        RadiansPerSecond(0.25),
+        RadiansPerSecond(0.1),
+    ];
     let current = [RadiansPerSecond(0.0); 3];
 
     let output = ctrl.step(setpoint, current);
@@ -157,7 +216,11 @@ fn axes_are_independent() {
 #[test]
 fn different_gains_per_axis() {
     let ctrl = RateController::new([0.1, 0.2, 0.3]);
-    let setpoint = [RadiansPerSecond(1.0), RadiansPerSecond(1.0), RadiansPerSecond(1.0)];
+    let setpoint = [
+        RadiansPerSecond(1.0),
+        RadiansPerSecond(1.0),
+        RadiansPerSecond(1.0),
+    ];
     let current = [RadiansPerSecond(0.0); 3];
 
     let output = ctrl.step(setpoint, current);
@@ -174,7 +237,11 @@ fn different_gains_per_axis() {
 #[test]
 fn very_small_error() {
     let ctrl = RateController::new([1.0, 1.0, 1.0]);
-    let setpoint = [RadiansPerSecond(1e-6), RadiansPerSecond(0.0), RadiansPerSecond(0.0)];
+    let setpoint = [
+        RadiansPerSecond(1e-6),
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(0.0),
+    ];
     let current = [RadiansPerSecond(0.0); 3];
 
     let output = ctrl.step(setpoint, current);
@@ -185,8 +252,16 @@ fn very_small_error() {
 #[test]
 fn mixed_positive_and_negative_errors() {
     let ctrl = RateController::new([1.0, 1.0, 1.0]);
-    let setpoint = [RadiansPerSecond(0.5), RadiansPerSecond(-0.3), RadiansPerSecond(0.0)];
-    let current = [RadiansPerSecond(0.0), RadiansPerSecond(0.2), RadiansPerSecond(-0.1)];
+    let setpoint = [
+        RadiansPerSecond(0.5),
+        RadiansPerSecond(-0.3),
+        RadiansPerSecond(0.0),
+    ];
+    let current = [
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(0.2),
+        RadiansPerSecond(-0.1),
+    ];
 
     let output = ctrl.step(setpoint, current);
 

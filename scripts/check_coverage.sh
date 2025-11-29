@@ -227,9 +227,9 @@ else
     BRANCH_COV="0.0"
 fi
 
-echo "  Lines:     ${LINE_COV}% (${LINE_HIT}/${LINE_TOTAL})"
-echo "  Adjusted:  ${ADJUSTED_COV}% (excluding ${EXCLUDED_UNCOVERED} documented lines)"
-echo "  Branches:  ${BRANCH_COV}% (${BRANCH_HIT}/${BRANCH_TOTAL})"
+echo "  Lines:    ${LINE_HIT}/${LINE_TOTAL} + ${EXCLUDED_UNCOVERED} excluded (see $EXCLUDE_FILE)"
+echo "  Adjusted: ${ADJUSTED_COV}%"
+echo "  Branches: ${BRANCH_HIT}/${BRANCH_TOTAL}"
 
 # 7. Report undocumented uncovered lines
 if [[ "$ADJUSTED_UNCOVERED" -gt 0 ]]; then
