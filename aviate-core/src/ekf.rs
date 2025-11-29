@@ -1,5 +1,5 @@
 use crate::math::{Matrix, Quaternion, Vector3};
-use crate::types::{Scalar, Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond, Validated, FloatExt};
+use crate::types::{Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond, Validated, FloatExt, Scalar};
 use crate::state::{StateEstimate, EstimateQuality, StateValidFlags};
 use crate::sensor::{ImuData, GnssData, SensorReading, SensorHealth, GnssFix, GnssHealth, BaroData, MagData};
 
@@ -308,7 +308,8 @@ impl Ekf {
         // Real implementation would involve estimating heading/yaw from 3D mag + tilt
     }
 
-    fn update_scalar(&mut self, state_idx: usize, meas: Scalar, r_noise: Scalar) {
+    #[doc(hidden)]
+    pub fn update_scalar(&mut self, state_idx: usize, meas: Scalar, r_noise: Scalar) {
         // Standard EKF scalar update
         // H = [0, ..., 1, ... 0] at state_idx
         

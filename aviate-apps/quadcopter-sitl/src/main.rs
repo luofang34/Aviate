@@ -36,7 +36,7 @@ use aviate_core::AviateKernel;
 use aviate_core::control::mc::McController;
 use aviate_core::control::{Command, Setpoint, CommandSource, ControlMode, ConfigMode};
 use aviate_core::mixer::{QuadXMixer, ModeConfig};
-use aviate_core::time::{Timestamp, TimeSource};
+use aviate_core::time::{Timestamp, TimeSource, TimeDelta};
 use aviate_core::hal::{SensorHal, ActuatorHal, SystemHal, CommandHal, SystemCommand};
 use aviate_core::types::Normalized;
 use aviate_core::sensor::{SensorSet, SensorReading, ImuData, GnssData, MagData, BaroData};
@@ -165,20 +165,20 @@ impl SensorCache {
     fn to_sensor_set(&self) -> SensorSet {
         SensorSet {
             imus: [
-                self.imu.clone().unwrap_or_default(),
+                self.imu.unwrap_or_default(),
                 SensorReading::default(),
                 SensorReading::default(),
             ],
             gnss: [
-                self.gnss.clone().unwrap_or_default(),
+                self.gnss.unwrap_or_default(),
                 SensorReading::default(),
             ],
             mags: [
-                self.mag.clone().unwrap_or_default(),
+                self.mag.unwrap_or_default(),
                 SensorReading::default(),
             ],
             baros: [
-                self.baro.clone().unwrap_or_default(),
+                self.baro.unwrap_or_default(),
                 SensorReading::default(),
             ],
             airspeeds: [SensorReading::default(), SensorReading::default()],
@@ -195,37 +195,47 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
     sensor_cache: &mut SensorCache,
 ) {
     // 1. Read sensors and update EKF
+    let mut current_dt = 0.001; // Default to 1ms if no IMU yet
+    let mut current_delta_us = 1000;
+
     if let Some(imu) = hal.read_imu() {
         let current_time = imu.timestamp.ticks;
-        let dt = if let Some(last) = *last_imu_time {
-            let delta_us = current_time.saturating_sub(last);
-            (delta_us as f32) * 1e-6
+        let delta_us_val = if let Some(last) = *last_imu_time {
+            current_time.saturating_sub(last)
         } else {
-            0.001 // Default 1ms for first sample
+            1000 // Default 1ms for first sample
         };
+        current_dt = (delta_us_val as f32) * 1e-6;
+        current_delta_us = delta_us_val;
         *last_imu_time = Some(current_time);
 
         // Sanity check dt
-        let dt = dt.clamp(0.0001, 0.1);
+        current_dt = current_dt.clamp(0.0001, 0.1);
 
-        kernel.ekf.predict(&imu.value, dt);
+        // EKF predict is now handled inside kernel.step
         sensor_cache.imu = Some(imu);
     }
 
     if let Some(gnss) = hal.read_gnss() {
-        kernel.ekf.update_gnss(&gnss);
+        // EKF update is now handled inside kernel.step
         sensor_cache.gnss = Some(gnss);
     }
 
     if let Some(baro) = hal.read_baro() {
-        kernel.ekf.update_baro(&baro);
+        // EKF update is now handled inside kernel.step
         sensor_cache.baro = Some(baro);
     }
 
     if let Some(mag) = hal.read_mag() {
-        kernel.ekf.update_mag(&mag);
+        // EKF update is now handled inside kernel.step
         sensor_cache.mag = Some(mag);
     }
+    
+    // Construct TimeDelta
+    let time_delta = TimeDelta {
+        dt_sec: aviate_core::types::Seconds(current_dt),
+        tick_delta: current_delta_us,
+    };
 
     // 2. Receive Commands (GCS/RC)
     if let Some(sys_cmd) = hal.recv_command() {
@@ -261,7 +271,7 @@ fn run_loop_iteration<H: SensorHal + ActuatorHal + SystemHal + CommandHal>(
     }
 
     // 4. Step kernel (command_age_ms=0 means command is fresh)
-    let actuator_cmd = kernel.step(last_cmd, &sensors, 0);
+    let actuator_cmd = kernel.step(time_delta, last_cmd, &sensors, 0);
 
     // Debug output - print actuator commands when thrust command is non-zero
     if last_cmd.setpoint.collective_thrust.0 > 0.1 {

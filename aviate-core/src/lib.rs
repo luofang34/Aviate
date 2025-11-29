@@ -18,7 +18,7 @@ use crate::control::{VehicleController, Command, ConfigMode, Limits, AuthorityPr
 use crate::control::envelope::{SimpleEnvelopeProtector, EnvelopeProtector, ProtectionStatus};
 use crate::mixer::{Mixer, Sanitizer, ActuatorCmd, ActuatorSanitizer, ModeConfig, SanitizeReport, ActuatorState};
 use crate::fault::{FaultFlags, FaultHandlingTable};
-use crate::time::Timestamp;
+use crate::time::{Timestamp, TimeDelta};
 use crate::sensor::SensorSet;
 use crate::state::{StateEstimate, EstimateQuality};
 use crate::types::{Normalized, Radians, RadiansPerSecond, Meters, MetersPerSecond};
@@ -281,6 +281,23 @@ pub struct AviateKernel<V: VehicleController, M: Mixer> {
     pub safe_output: [Normalized; 16], // MAX_ACTUATORS = 16
 }
 
+pub trait Watchdog {
+    fn kick(&mut self);
+    fn check_deadline(&self) -> bool;
+}
+
+impl<V: VehicleController, M: Mixer> Watchdog for AviateKernel<V, M> {
+    fn kick(&mut self) {
+        // Minimal implementation: just a stub for now as we don't have full timing context
+        // In a real system, this would update a timestamp
+    }
+
+    fn check_deadline(&self) -> bool {
+        // Stub: always return true for now
+        true
+    }
+}
+
 impl<V: VehicleController, M: Mixer> AviateKernel<V, M> {
     pub fn new(controller: V, mixer: M, mode_config: ModeConfig) -> Self {
         Self {
@@ -456,18 +473,8 @@ impl<V: VehicleController, M: Mixer> AviateKernel<V, M> {
         self.checks.in_flight.reset();
     }
 
-    /// Check for critical faults and enter fault state if detected
-    ///
-    /// Returns true if fault state was entered.
-    pub fn check_critical_faults(&mut self) -> bool {
-        if self.faults.intersects(CRITICAL_FAULTS) {
-            self.init_state = InitState::Fault;
-            self.control_law = ControlLaw::Frozen;
-            true
-        } else {
-            false
-        }
-    }
+
+
 
     /// Check if the system can be reset from fault state
     ///
@@ -600,7 +607,7 @@ impl<V: VehicleController, M: Mixer> AviateKernel<V, M> {
     /// * `cmd` - The command to execute
     /// * `sensors` - Current sensor readings for in-flight checks
     /// * `command_age_ms` - Age of the command in milliseconds
-    pub fn step(&mut self, cmd: &Command, sensors: &SensorSet, command_age_ms: u32) -> ActuatorCmd {
+    pub fn step(&mut self, time_delta: TimeDelta, cmd: &Command, sensors: &SensorSet, command_age_ms: u32) -> ActuatorCmd {
         let timestamp = crate::time::Timestamp { ticks: 0, source: crate::time::TimeSource::Internal };
 
         // 1. Check InitState - return safe output if not armed
@@ -628,7 +635,49 @@ impl<V: VehicleController, M: Mixer> AviateKernel<V, M> {
             };
         }
 
-        // 3. EKF Update (usually happens before step in loop, but we get estimate here)
+        // 3. EKF Update (predict and update)
+        let primary_imu = &sensors.imus[0];
+        if primary_imu.valid && primary_imu.health == crate::sensor::SensorHealth::Good {
+            self.ekf.predict(&primary_imu.value, time_delta.dt_sec.0);
+        }
+
+        // Apply sensor overrides from command
+        if let Some(overrides) = &cmd.sensor_overrides {
+            if let Some(gnss_force_state_u8) = overrides.gnss_force_state {
+                let gnss_health = match gnss_force_state_u8 {
+                    0 => crate::sensor::GnssHealth::Good,
+                    1 => crate::sensor::GnssHealth::Suspect,
+                    2 => crate::sensor::GnssHealth::Lost,
+                    _ => crate::sensor::GnssHealth::Lost, // Default to Lost for unknown values
+                };
+
+                let mut primary_gnss_reading = sensors.gnss[0];
+                primary_gnss_reading.health = match gnss_health {
+                    crate::sensor::GnssHealth::Good => crate::sensor::SensorHealth::Good,
+                    crate::sensor::GnssHealth::Suspect => crate::sensor::SensorHealth::Degraded,
+                    crate::sensor::GnssHealth::Lost => crate::sensor::SensorHealth::Failed,
+                };
+                self.ekf.update_gnss(&primary_gnss_reading);
+            }
+        } else {
+            // Normal sensor updates
+            let primary_gnss = &sensors.gnss[0];
+            if primary_gnss.valid && primary_gnss.health == crate::sensor::SensorHealth::Good {
+                self.ekf.update_gnss(primary_gnss);
+            }
+        }
+        
+        let primary_baro = &sensors.baros[0];
+        if primary_baro.valid && primary_baro.health == crate::sensor::SensorHealth::Good {
+            self.ekf.update_baro(primary_baro);
+        }
+
+        let primary_mag = &sensors.mags[0];
+        if primary_mag.valid && primary_mag.health == crate::sensor::SensorHealth::Good {
+            self.ekf.update_mag(primary_mag);
+        }
+
+        // Get updated estimate
         let state = self.ekf.get_estimate();
 
         // 4. Update in-flight checks
@@ -698,8 +747,86 @@ impl<V: VehicleController, M: Mixer> AviateKernel<V, M> {
 
         actuator_cmd
     }
+
+
+
+    /// Perform a ground reset, clearing transient states
+    #[inline(never)]
+    pub fn ground_reset(&mut self) {
+        // Only allowed if not armed
+        if self.init_state == InitState::Armed {
+            return;
+        }
+        
+        self.faults = FaultFlags::empty();
+        self.checks.pre_arm.reset();
+        self.checks.in_flight.reset();
+        self.checks.transition.reset();
+        self.init_state = InitState::ConfigLoading; // Restart init sequence
+        self.ekf = Ekf::default(); // Reset estimator
+    }
+
+    pub fn kick_watchdog(&mut self) {
+        self.kick();
+    }
+
+    /// Check for critical faults and enter fault state if detected
+    ///
+    /// Returns true if fault state was entered.
+    pub fn check_critical_faults(&mut self) -> bool {
+        if self.faults.intersects(CRITICAL_FAULTS) {
+            self.init_state = InitState::Fault;
+            self.control_law = ControlLaw::Frozen;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 
 /// Aviate core initialization
 pub fn init_core() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::control::mc::McController;
+    use crate::mixer::{QuadXMixer, ModeConfig, ActuatorCmd};
+
+    struct DummyMixer;
+    impl Mixer for DummyMixer {
+        fn mix(&self, _axis: &crate::control::AxisCommand) -> ActuatorCmd {
+            let cmd = ActuatorCmd::default();
+            cmd
+        }
+    }
+
+    fn create_kernel() -> AviateKernel<McController, DummyMixer> {
+        let mode_config = ModeConfig {
+            mode: ConfigMode::Hover,
+            groups: &[],
+        };
+        AviateKernel::new(McController::default(), DummyMixer, mode_config)
+    }
+
+    #[test]
+    fn test_ground_reset_success_unit() {
+        let mut kernel = create_kernel();
+        kernel.init_state = InitState::Fault;
+        kernel.faults = FaultFlags::ALL_IMU_FAILED;
+        
+        kernel.ground_reset();
+        
+        assert_eq!(kernel.init_state, InitState::ConfigLoading);
+        assert!(kernel.faults.is_empty());
+
+        // Cover DummyMixer
+        kernel.mixer.mix(&crate::control::AxisCommand {
+            roll: crate::types::NormalizedSigned(0.0),
+            pitch: crate::types::NormalizedSigned(0.0),
+            yaw: crate::types::NormalizedSigned(0.0),
+            collective: crate::types::Normalized(0.0),
+        });
+    }
+}

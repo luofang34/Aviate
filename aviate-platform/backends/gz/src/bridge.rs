@@ -39,7 +39,7 @@ impl GzBridgeConfig {
     /// Create config for a specific instance ID
     ///
     /// Instance-based naming:
-    /// - model_name: x500_<instance> (or just x500 for instance 0)
+    /// - model_name: `x500_<instance>` (or just x500 for instance 0)
     /// - motor_topic: /<model_name>/command/motor_speed
     /// - ports: base + instance * 10
     pub fn for_instance(instance: u8) -> Self {

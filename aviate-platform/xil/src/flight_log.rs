@@ -195,8 +195,10 @@ impl FlightLog {
             return FlightStats::default();
         }
 
-        let mut stats = FlightStats::default();
-        stats.sample_count = self.count;
+        let mut stats = FlightStats {
+            sample_count: self.count,
+            ..Default::default()
+        };
 
         let mut first_time_ms = u32::MAX;
         let mut last_time_ms = 0u32;

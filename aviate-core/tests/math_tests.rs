@@ -125,8 +125,9 @@ fn quaternion_normalize_near_zero() {
 
 #[test]
 fn quaternion_to_euler_gimbal_lock_positive() {
-    // Create a quaternion at positive gimbal lock (pitch = +90 degrees)
-    // When sinp >= 1.0, should use FRAC_PI_2
+    // Create a quaternion that forces sinp > 1.0 (or exactly 1.0 via clamp)
+    // For gimbal lock at +90° pitch: q = (cos(45°), 0, sin(45°), 0) = (0.707, 0, 0.707, 0)
+    // sinp = 2 * (w * y - z * x) = 2 * 0.707 * 0.707 = 1.0
     let q = Quaternion::from_axis_angle(Vector3::new(0.0, 1.0, 0.0), FRAC_PI_2);
 
     let (roll, pitch, yaw) = q.to_euler();
@@ -145,6 +146,46 @@ fn quaternion_to_euler_gimbal_lock_negative() {
 
     // Should be near -π/2
     assert!((pitch.abs() - FRAC_PI_2).abs() < 0.1, "Pitch {} should be near ±π/2", pitch);
+}
+
+#[test]
+fn quaternion_to_euler_gimbal_lock_positive_explicit() {
+    // Construct a quaternion where sinp is forced to be > 1.0 (will be clamped)
+    // We artificially create non-normalized quaternion that when calculated
+    // gives sinp = 2 * (w * y - z * x) >= 1.0
+    // Pure pitch +90°: w=cos(45°)≈0.707, y=sin(45°)≈0.707, x=z=0
+    // sinp = 2 * 0.707 * 0.707 ≈ 1.0
+    // To guarantee > 1.0, we slightly increase y
+    let q = Quaternion {
+        w: 0.707,
+        x: 0.0,
+        y: 0.71, // Slightly larger than normalized
+        z: 0.0,
+    };
+
+    let (_roll, pitch, _yaw) = q.to_euler();
+
+    // sinp = 2 * 0.707 * 0.71 = 1.004 > 1.0, triggers positive gimbal lock
+    // Pitch should be exactly +π/2
+    assert!((pitch - FRAC_PI_2).abs() < 0.01, "Pitch {} should be +π/2", pitch);
+}
+
+#[test]
+fn quaternion_to_euler_gimbal_lock_negative_explicit() {
+    // Construct quaternion where sinp <= -1.0
+    // Pure pitch -90°: w=cos(-45°)=cos(45°)≈0.707, y=sin(-45°)=-0.707
+    let q = Quaternion {
+        w: 0.707,
+        x: 0.0,
+        y: -0.71, // Slightly more negative
+        z: 0.0,
+    };
+
+    let (_roll, pitch, _yaw) = q.to_euler();
+
+    // sinp = 2 * 0.707 * (-0.71) = -1.004 < -1.0, triggers negative gimbal lock
+    // Pitch should be exactly -π/2
+    assert!((pitch + FRAC_PI_2).abs() < 0.01, "Pitch {} should be -π/2", pitch);
 }
 
 #[test]

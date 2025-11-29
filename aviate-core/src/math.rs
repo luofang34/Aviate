@@ -1,6 +1,7 @@
 use crate::types::Scalar;
 use crate::types::FloatExt;
 
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Vector3<T> {
     pub x: T,

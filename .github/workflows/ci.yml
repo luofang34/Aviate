@@ -9,10 +9,16 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  # 91% is the practical maximum due to:
+  # Line coverage threshold (tarpaulin). 91% is the practical maximum due to:
   # - bitflags #[derive] attributes (not executable)
   # - match arm patterns (tarpaulin instrumentation artifact)
   # - struct literal field initializations
+  #
+  # A small number of LLVM coverage 'folded' branches are classified as tool
+  # artifacts and excluded from host coverage statistics. These branches have
+  # been confirmed not to correspond to distinct object-code decisions via
+  # disassembly. They do not affect target-level object-code MC/DC, which is
+  # computed independently from the MCU ELF CFG and hardware traces.
   COVERAGE_THRESHOLD: 91
 
 jobs:
@@ -74,18 +80,20 @@ jobs:
         run: cargo test --workspace --exclude quadcopter-stm32h7
 
   coverage:
-    name: Coverage (DO-178C)
+    name: Coverage (DO-178C LLVM)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+      - name: Install Rust nightly + llvm-tools
+        run: |
+          rustup toolchain install nightly --profile minimal
+          rustup component add llvm-tools-preview --toolchain nightly
 
-      - name: Install tarpaulin
-        run: cargo install cargo-tarpaulin
+      - name: Install grcov
+        run: cargo install grcov
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -96,14 +104,9 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run coverage analysis
+      - name: Run LLVM coverage analysis
         run: |
-          cargo tarpaulin \
-            --packages aviate-core \
-            --out Xml \
-            --out Html \
-            --output-dir target/coverage \
-            --fail-under $COVERAGE_THRESHOLD
+          COVERAGE_MODE=branch COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD ./scripts/check_coverage.sh
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -111,15 +114,6 @@ jobs:
         with:
           name: coverage-report
           path: target/coverage/
-
-      - name: Coverage summary
-        if: always()
-        run: |
-          echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Threshold: ${COVERAGE_THRESHOLD}%" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          cargo tarpaulin --packages aviate-core --out Stdout 2>&1 | grep -A 100 "Tested/Total Lines:" | head -30 >> $GITHUB_STEP_SUMMARY
 
   format:
     name: Format

@@ -31,6 +31,10 @@ fn dummy_timestamp() -> Timestamp {
     Timestamp { ticks: 0, source: TimeSource::Internal }
 }
 
+fn dummy_time_delta() -> aviate_core::time::TimeDelta {
+    aviate_core::time::TimeDelta { dt_sec: aviate_core::types::Seconds(0.01), tick_delta: 10000 } // 100Hz update
+}
+
 fn make_kernel() -> AviateKernel<McController, QuadXMixer> {
     let mixer = QuadXMixer { timestamp_source: dummy_timestamp };
     let mode_config = ModeConfig {
@@ -358,7 +362,7 @@ fn kernel_outputs_safe_when_not_armed() {
     };
 
     let sensors = make_valid_sensors();
-    let output = kernel.step(&cmd, &sensors, 0);
+    let output = kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Should output safe values (0.0) when not armed
     for i in 0..4 {
@@ -395,7 +399,7 @@ fn kernel_outputs_control_when_armed() {
         source: CommandSource::Pilot,
     };
 
-    let output = kernel.step(&cmd, &sensors, 0);
+    let output = kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Should output ~0.5 on all motors with zero R/P/Y
     for i in 0..4 {
@@ -1401,7 +1405,7 @@ fn fault_state_outputs_safe_values() {
         source: CommandSource::Pilot,
     };
 
-    let output = kernel.step(&cmd, &sensors, 0);
+    let output = kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
 
     // All outputs should be safe (0.0) in fault state
     for i in 0..4 {
@@ -1797,7 +1801,7 @@ fn step_returns_safe_when_not_armed() {
     };
 
     // Not armed - step should return safe output
-    let output = kernel.step(&cmd, &sensors, 0);
+    let output = kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Safe output should have active_mask = 0
     assert_eq!(output.active_mask, 0);
@@ -1836,7 +1840,7 @@ fn step_returns_safe_on_critical_fault() {
     };
 
     // Step with failed sensors should detect critical fault
-    let output = kernel.step(&cmd, &failed_sensors, 0);
+    let output = kernel.step(dummy_time_delta(), &cmd, &failed_sensors, 0);
 
     // Should return safe output (active_mask = 0)
     assert_eq!(output.active_mask, 0, "Critical fault should cause safe output");
@@ -1872,7 +1876,7 @@ fn step_with_frozen_control_law() {
         source: CommandSource::Pilot,
     };
 
-    let output = kernel.step(&cmd, &sensors, 0);
+    let output = kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Frozen law should have fallback_mask set
     assert_eq!(output.fallback_mask, 0xFF);
@@ -1909,7 +1913,7 @@ fn step_performs_control_when_armed() {
         source: CommandSource::Pilot,
     };
 
-    let output = kernel.step(&cmd, &sensors, 0);
+    let output = kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Should have active outputs
     assert!(output.sanitized);
@@ -1946,7 +1950,7 @@ fn step_handles_degradation_trigger() {
     };
 
     // Run step - should handle degradation
-    let _output = kernel.step(&cmd, &sensors, 0);
+    let _output = kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Control law may have changed due to degradation
     // (exact behavior depends on get_degradation_trigger logic)
@@ -1999,6 +2003,109 @@ fn handle_degradation_no_event_when_not_worse() {
     // Should not trigger - already worse
     assert!(event.is_none());
     assert_eq!(kernel.control_law, ControlLaw::Frozen);
+}
+
+// =============================================================================
+// Coverage Tests: Sensor Overrides & Faults
+// =============================================================================
+
+#[test]
+fn test_sensor_overrides_gnss_force_state() {
+    let mut kernel = make_kernel();
+    let sensors = make_valid_sensors();
+
+    // Force GNSS state to Suspect (1) via command
+    let mut cmd = Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint::default(),
+        config_mode_request: None,
+        sensor_overrides: Some(aviate_core::control::SensorOverrides {
+            gnss_force_state: Some(1), // Suspect
+        }),
+        sequence: 0,
+        source: CommandSource::Pilot,
+    };
+
+    // Step kernel (armed)
+    kernel.ekf.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Quaternion::IDENTITY,
+    );
+    for _ in 0..150 {
+        kernel.init_step(&sensors, dummy_timestamp());
+    }
+    kernel.arm().unwrap();
+
+    kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    
+    // EKF should have updated with Suspect GNSS (internal EKF state not easily exposed, 
+    // but we verify code path execution).
+    // Cover other force states
+    cmd.sensor_overrides = Some(aviate_core::control::SensorOverrides {
+        gnss_force_state: Some(0), // Good
+    });
+    kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+
+    cmd.sensor_overrides = Some(aviate_core::control::SensorOverrides {
+        gnss_force_state: Some(2), // Lost
+    });
+    kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    
+    cmd.sensor_overrides = Some(aviate_core::control::SensorOverrides {
+        gnss_force_state: Some(99), // Unknown -> Lost
+    });
+    kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+}
+
+#[test]
+fn test_update_sensor_faults_all_sensors() {
+    let mut kernel = make_kernel();
+    let mut sensors = make_valid_sensors();
+
+    // 1. Fail Baro
+    sensors.baros[0].health = SensorHealth::Failed;
+    kernel.init_step(&sensors, dummy_timestamp());
+    assert!(kernel.faults.contains(FaultFlags::BARO_FAILED));
+
+    // Recover Baro
+    sensors.baros[0].health = SensorHealth::Good;
+    kernel.init_step(&sensors, dummy_timestamp());
+    assert!(!kernel.faults.contains(FaultFlags::BARO_FAILED));
+
+    // 2. Fail Mag
+    sensors.mags[0].health = SensorHealth::Failed;
+    kernel.init_step(&sensors, dummy_timestamp());
+    assert!(kernel.faults.contains(FaultFlags::MAG_FAILED));
+
+    // Recover Mag
+    sensors.mags[0].health = SensorHealth::Good;
+    kernel.init_step(&sensors, dummy_timestamp());
+    assert!(!kernel.faults.contains(FaultFlags::MAG_FAILED));
+
+    // 3. Fail GNSS
+    sensors.gnss[0].health = SensorHealth::Failed;
+    kernel.init_step(&sensors, dummy_timestamp());
+    assert!(kernel.faults.contains(FaultFlags::ALL_GNSS_LOST));
+
+    // Recover GNSS
+    sensors.gnss[0].health = SensorHealth::Good;
+    kernel.init_step(&sensors, dummy_timestamp());
+    assert!(!kernel.faults.contains(FaultFlags::ALL_GNSS_LOST));
+}
+
+#[test]
+fn test_init_state_forced_control_law_coverage() {
+    // Test Armed returns None (already covered by init_state_no_forced_law_when_armed, but ensuring path)
+    assert_eq!(InitState::Armed.forced_control_law(), None);
+    // Test non-armed returns Some(Frozen)
+    assert_eq!(InitState::PreArm.forced_control_law(), Some(ControlLaw::Frozen));
+}
+
+#[test]
+fn test_check_critical_faults_returns_false() {
+    let mut kernel = make_kernel();
+    assert_eq!(kernel.check_critical_faults(), false);
 }
 
 // =============================================================================
@@ -2157,4 +2264,245 @@ fn get_health_report() {
 fn init_core_callable() {
     aviate_core::init_core();
     // Function does nothing but should exist for coverage
+}
+
+// =============================================================================
+// Coverage Tests: Watchdog & Ground Reset
+// =============================================================================
+
+#[test]
+fn test_watchdog_kick() {
+    let mut kernel = make_kernel();
+    kernel.kick_watchdog();
+    // Currently a stub, but ensures method is reachable
+}
+
+#[test]
+fn test_ground_reset_clears_state() {
+    let mut kernel = make_kernel();
+    let sensors = make_valid_sensors();
+
+    // Get to Ready state with some accumulated state
+    kernel.ekf.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Quaternion::IDENTITY,
+    );
+    for _ in 0..150 {
+        kernel.init_step(&sensors, dummy_timestamp());
+    }
+    assert_eq!(kernel.init_state, InitState::Ready);
+    
+    // Set some faults and check flags
+    kernel.faults.insert(FaultFlags::BARO_FAILED);
+    kernel.checks.pre_arm.current.insert(PreArmFlags::THROTTLE_LOW);
+
+    // Perform ground reset
+    kernel.ground_reset();
+
+    // Should revert to ConfigLoading and clear faults/checks
+    assert_eq!(kernel.init_state, InitState::ConfigLoading);
+    assert!(kernel.faults.is_empty());
+    assert!(kernel.checks.pre_arm.current.is_empty());
+}
+
+#[test]
+fn test_ground_reset_ignored_when_armed() {
+    let mut kernel = make_kernel();
+    let sensors = make_valid_sensors();
+
+    // Get to Armed state
+    kernel.ekf.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Quaternion::IDENTITY,
+    );
+    for _ in 0..150 {
+        kernel.init_step(&sensors, dummy_timestamp());
+    }
+    kernel.arm().unwrap();
+    assert_eq!(kernel.init_state, InitState::Armed);
+
+    // Attempt ground reset
+    kernel.ground_reset();
+
+    // Should remain Armed
+    assert_eq!(kernel.init_state, InitState::Armed);
+}
+
+#[test]
+fn test_can_reset_from_fault_fails_checks() {
+    let mut kernel = make_kernel();
+    
+    // Enter Fault state
+    kernel.init_state = InitState::Fault;
+    kernel.faults = FaultFlags::empty(); // No active faults
+
+    // 1. Fail throttle check
+    kernel.checks.pre_arm.current.insert(PreArmFlags::IMU_HEALTHY);
+    kernel.checks.pre_arm.update_throttle(false); // Throttle HIGH
+    assert!(!kernel.can_reset_from_fault());
+
+    // 2. Fail IMU check
+    kernel.checks.pre_arm.current.remove(PreArmFlags::IMU_HEALTHY);
+    kernel.checks.pre_arm.update_throttle(true); // Throttle LOW
+    assert!(!kernel.can_reset_from_fault());
+}
+
+#[test]
+fn test_check_critical_faults_returns_true() {
+    let mut kernel = make_kernel();
+    
+    // Inject critical fault
+    kernel.faults.insert(FaultFlags::NUMERIC_ERROR);
+    
+    // Should return true and transition to Fault
+    assert!(kernel.check_critical_faults());
+    assert_eq!(kernel.init_state, InitState::Fault);
+    assert_eq!(kernel.control_law, ControlLaw::Frozen);
+}
+
+#[test]
+fn test_step_with_unhealthy_sensors() {
+    let mut kernel = make_kernel();
+    let mut sensors = make_valid_sensors();
+
+    // Mark all sensors as failed/invalid to skip EKF updates
+    sensors.imus[0].valid = false;
+    sensors.gnss[0].health = SensorHealth::Failed;
+    sensors.baros[0].valid = false;
+    sensors.mags[0].health = SensorHealth::Failed;
+
+    let cmd = Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint::default(),
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 0,
+        source: CommandSource::Pilot,
+    };
+
+    // Initialize to Armed to allow step() to proceed past the first check
+    kernel.ekf.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Quaternion::IDENTITY,
+    );
+    // Force state to Armed directly to bypass init checks that would fail with bad sensors
+    kernel.init_state = InitState::Armed;
+
+    // Run step
+    kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+
+    // Verify no panic and logic executed (coverage should hit the 'else'/skip paths)
+}
+
+// =============================================================================
+// Branch Coverage: Edge Cases for 100% Branch Coverage
+// =============================================================================
+
+/// Test sensor_overrides with Some(overrides) but gnss_force_state = None
+/// This hits the "None" branch of the nested if let at lib.rs:646
+#[test]
+fn step_with_sensor_overrides_no_gnss_force() {
+    let mut kernel = make_kernel();
+    let sensors = make_valid_sensors();
+
+    kernel.ekf.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Quaternion::IDENTITY,
+    );
+
+    for _ in 0..150 {
+        kernel.init_step(&sensors, dummy_timestamp());
+    }
+    kernel.arm().unwrap();
+
+    // Provide sensor_overrides but with gnss_force_state = None
+    let cmd = Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint::default(),
+        config_mode_request: None,
+        sensor_overrides: Some(aviate_core::control::SensorOverrides {
+            gnss_force_state: None, // This is the key - Some(overrides) but no GNSS force
+        }),
+        sequence: 0,
+        source: CommandSource::Pilot,
+    };
+
+    kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    // Code path executed - gnss_force_state None branch hit
+}
+
+/// Test that Ready state stays Ready when pre_arm IS satisfied (lib.rs:388 false branch)
+#[test]
+fn init_state_ready_stays_when_satisfied() {
+    let mut kernel = make_kernel();
+    let sensors = make_valid_sensors();
+
+    kernel.ekf.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+        Quaternion::IDENTITY,
+    );
+
+    // Run to Ready
+    for _ in 0..150 {
+        kernel.init_step(&sensors, dummy_timestamp());
+    }
+    assert_eq!(kernel.init_state, InitState::Ready);
+
+    // Another step with conditions still satisfied - should stay Ready
+    kernel.init_step(&sensors, dummy_timestamp());
+    assert_eq!(kernel.init_state, InitState::Ready, "Should stay Ready when pre_arm satisfied");
+}
+
+/// Test handle_degradation when current law equals new law (no change case)
+/// This tests line 541's case where severity is NOT greater
+#[test]
+fn handle_degradation_same_severity_no_event() {
+    let mut kernel = make_kernel();
+
+    // Start with Degraded
+    kernel.control_law = ControlLaw::Degraded;
+
+    // Try to "degrade" to Degraded again (same severity)
+    let event = kernel.handle_degradation(DegradationReason::ImuDegraded, dummy_timestamp());
+
+    // No event - same severity
+    assert!(event.is_none(), "Same severity should not produce event");
+    assert_eq!(kernel.control_law, ControlLaw::Degraded);
+}
+
+/// Test handle_degradation from Failsafe to Degraded (lower severity) - no event
+#[test]
+fn handle_degradation_lower_severity_no_event() {
+    let mut kernel = make_kernel();
+
+    // Start with Failsafe
+    kernel.control_law = ControlLaw::Failsafe;
+
+    // Try to "degrade" to Degraded (lower severity)
+    let event = kernel.handle_degradation(DegradationReason::ImuDegraded, dummy_timestamp());
+
+    // No event - trying to go to lower severity
+    assert!(event.is_none());
+    assert_eq!(kernel.control_law, ControlLaw::Failsafe);
+}
+
+/// Test handle_degradation from Normal to Degraded (higher severity) - produces event
+#[test]
+fn handle_degradation_higher_severity_produces_event() {
+    let mut kernel = make_kernel();
+
+    // Start with Normal
+    kernel.control_law = ControlLaw::Normal;
+
+    // Degrade to Degraded (higher severity)
+    let event = kernel.handle_degradation(DegradationReason::ImuDegraded, dummy_timestamp());
+
+    // Event produced
+    assert!(event.is_some());
+    assert_eq!(kernel.control_law, ControlLaw::Degraded);
 }

@@ -4,11 +4,10 @@ members = [
     "aviate-mavlink",
     "aviate-airframes/quadcopter",
     "aviate-airframes/fixed-wing",
-    "aviate-platform/stm32h7",
     "aviate-platform/xil",
     "aviate-platform/backends/gz",
-    "aviate-apps/quadcopter-stm32h7",
     "aviate-apps/quadcopter-sitl",
+    "aviate-apps/quadcopter-stm32h7",
     "tests/lint-verification",
 ]
 resolver = "2"

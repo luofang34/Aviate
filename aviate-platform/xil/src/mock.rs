@@ -13,7 +13,6 @@ use aviate_core::time::{Timestamp, TimeSource};
 
 
 /// Mock SITL HAL for testing
-
 pub struct SitlHal {
 
     start_time: std::time::Instant,

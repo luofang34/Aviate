@@ -13,7 +13,7 @@ pub trait Mixer {
 /// Motor layout:
 ///   0(CW)   1(CCW)
 ///      \   /
-///       [X]
+///       \[X\]
 ///      /   \
 ///   2(CCW)  3(CW)
 pub struct QuadXMixer {

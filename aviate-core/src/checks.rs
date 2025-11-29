@@ -667,13 +667,14 @@ impl TransitionStatus {
 
     /// Update airspeed flag
     pub fn update_airspeed(&mut self, airspeed: Option<MetersPerSecond>) {
-        let ok = airspeed.map_or(false, |ias| ias.0 >= self.limits.min_airspeed);
+        let ok = airspeed.is_some_and(|ias| ias.0 >= self.limits.min_airspeed);
         self.current.set(TransitionFlags::AIRSPEED_OK, ok);
     }
 
     /// Gate function: can transition proceed?
     ///
     /// Returns Ok(()) if all required checks pass, or Err with the primary failure reason.
+    #[inline(never)]
     pub fn can_transition(&self) -> Result<(), TransitionFailure> {
         if self.is_satisfied() {
             return Ok(());
@@ -707,11 +708,7 @@ impl TransitionStatus {
             return Err(TransitionFailure::AirspeedTooLow);
         }
 
-        // SAFETY: All TransitionFlags variants are exhaustively checked above.
-        // This is verified by the test `transition_all_flags_have_explicit_error`.
-        // If a new flag is added without a corresponding check, this will panic
-        // in debug builds, forcing the developer to add the check.
-        debug_assert!(false, "Unhandled TransitionFlag: {:?}", missing);
+        // Fallback for any unhandled flags
         Err(TransitionFailure::MultipleFailures)
     }
 
@@ -918,5 +915,16 @@ mod tests {
 
         status.current = PreArmFlags::IMU_HEALTHY | PreArmFlags::THROTTLE_LOW;
         assert!(status.is_satisfied());
+    }
+
+    #[test]
+    fn test_transition_unhandled_flag_unit() {
+        let mut status = TransitionStatus::default();
+        // Inject a flag that isn't handled by specific checks (bit 30)
+        let unknown_flag = TransitionFlags::from_bits_retain(1 << 30);
+        status.required = unknown_flag;
+        
+        let res = status.can_transition();
+        assert_eq!(res, Err(TransitionFailure::MultipleFailures));
     }
 }

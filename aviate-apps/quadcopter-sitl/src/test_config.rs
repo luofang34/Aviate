@@ -137,9 +137,8 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
                     }
                 }
                 "world" => {
-                    match key.as_str() {
-                        "file" => config.world_file = value,
-                        _ => {}
+                    if key == "file" {
+                        config.world_file = value;
                     }
                 }
                 "vehicles" => {
@@ -156,9 +155,8 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
                 }
                 "vehicles.mission" => {
                     if let Some(ref mut vehicle) = current_vehicle {
-                        match key.as_str() {
-                            "name" => vehicle.mission.name = value,
-                            _ => {}
+                        if key == "name" {
+                            vehicle.mission.name = value;
                         }
                     }
                 }
@@ -177,9 +175,8 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
                     let verif = config.global_verification.get_or_insert(GlobalVerification {
                         min_separation: None,
                     });
-                    match key.as_str() {
-                        "min_separation" => verif.min_separation = value.parse().ok(),
-                        _ => {}
+                    if key == "min_separation" {
+                        verif.min_separation = value.parse().ok();
                     }
                 }
                 _ => {}
@@ -228,7 +225,7 @@ fn parse_vec3(s: &str) -> [f32; 3] {
         .collect();
 
     [
-        parts.get(0).copied().unwrap_or(0.0),
+        parts.first().copied().unwrap_or(0.0),
         parts.get(1).copied().unwrap_or(0.0),
         parts.get(2).copied().unwrap_or(0.0),
     ]

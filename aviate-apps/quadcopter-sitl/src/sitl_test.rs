@@ -19,6 +19,7 @@ use aviate_app_quadcopter_sitl::{
 };
 
 /// Environment variable to run in headless mode
+#[cfg(feature = "gz-plugin")]
 const HEADLESS_ENV: &str = "HEADLESS";
 
 fn main() -> ExitCode {
@@ -26,7 +27,7 @@ fn main() -> ExitCode {
 
     if args.len() < 2 {
         eprintln!("Usage: {} <config.toml>", args[0]);
-        eprintln!("");
+        eprintln!();
         eprintln!("Examples:");
         eprintln!("  {} tests/basic_flight.toml", args[0]);
         eprintln!("  {} tests/two_vehicle_formation.toml", args[0]);

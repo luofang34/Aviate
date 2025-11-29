@@ -10,7 +10,7 @@ echo "========================================"
 
 # 1. Run Tests
 echo ">> Running Test Suite..."
-cargo test --workspace --exclude quadcopter-stm32h7
+cargo test --workspace
 
 # 2. Check Coverage (DO-178C requirement)
 echo ">> Running Coverage Analysis..."

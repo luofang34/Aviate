@@ -6,12 +6,14 @@ mod tests {
     use aviate_core::math::{Vector3, Quaternion};
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond, Meters, MetersPerSecond, Normalized, Scalar, Pascals, Microtesla};
     use aviate_core::sensor::{ImuData, GnssData, GnssFix, SensorReading, SensorHealth, GnssHealth, BaroData, AirData, MagData};
-    use aviate_core::time::{Timestamp, TimeSource};
+    use aviate_core::time::{Timestamp, TimeSource, TimeDelta};
     use aviate_core::AviateKernel;
     use aviate_core::control::Command;
     use aviate_core::control::rate::RateController;
     use aviate_core::control::attitude::AttitudeController;
+    use aviate_core::types::Seconds;
 
+    fn dummy_time_delta() -> TimeDelta { TimeDelta { dt_sec: Seconds(0.01), tick_delta: 10000 } }
 
     #[test]
     fn test_ekf_init_predict() {
@@ -223,7 +225,7 @@ mod tests {
 
         // Before arming: Expect safe output (0.0)
         let safe_sensors = valid_test_sensors();
-        let act_cmd_safe = kernel.step(&cmd, &safe_sensors, 0);
+        let act_cmd_safe = kernel.step(dummy_time_delta(), &cmd, &safe_sensors, 0);
         for i in 0..4 {
             assert!((act_cmd_safe.outputs[i].0).abs() < 1e-5, "Should be zero when disarmed");
         }
@@ -243,8 +245,7 @@ mod tests {
         // Arm
         kernel.arm().expect("Failed to arm");
         
-        // After arming: Expect control output
-        let act_cmd = kernel.step(&cmd, &valid_sensors, 0);
+        let act_cmd = kernel.step(dummy_time_delta(), &cmd, &valid_sensors, 0);
 
         // QuadXMixer with 0 R/P/Y should output collective on all 4 motors
         for i in 0..4 {
@@ -311,7 +312,7 @@ mod tests {
         
         kernel.arm().expect("Failed to arm");
 
-        let act_cmd = kernel.step(&cmd, &valid_sensors, 0);
+        let act_cmd = kernel.step(dummy_time_delta(), &cmd, &valid_sensors, 0);
 
         // FwController currently outputs 0 R/P/Y and passes collective.
         // So QuadXMixer should still produce 0.5 on motors.
