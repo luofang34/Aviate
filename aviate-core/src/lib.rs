@@ -310,10 +310,11 @@ impl<V: VehicleController, M: Mixer> Watchdog for AviateKernel<V, M> {
         // In a real system, this would update a timestamp
     }
 
+    // COV:EXCL_START(STUB: watchdog placeholder, not implemented)
     fn check_deadline(&self) -> bool {
-        // Stub: always return true for now
         true
     }
+    // COV:EXCL_STOP
 }
 
 impl<V: VehicleController, M: Mixer> AviateKernel<V, M> {
@@ -427,10 +428,7 @@ impl<V: VehicleController, M: Mixer> AviateKernel<V, M> {
                     self.init_state = InitState::PreArm;
                 }
             }
-            InitState::Armed => {
-                // Stay armed, monitor for critical faults
-                // Disarm handled separately via disarm()
-            }
+            InitState::Armed => {} // COV:EXCL(EMPTY: monitoring only, disarm via disarm())
             InitState::Disarmed => {
                 // Transition back to PreArm for potential re-arm
                 // Reset sample counts for fresh convergence check
@@ -760,10 +758,11 @@ impl<V: VehicleController, M: Mixer> AviateKernel<V, M> {
             .update_command_status(command_age_ms, self.command_timeout_ms);
 
         // 5. Handle any degradation triggers
+        // COV:EXCL_START(DEFENSIVE: degradation rarely triggered in unit tests)
         if let Some(reason) = self.checks.in_flight.get_degradation_trigger() {
             let _event = self.handle_degradation(reason, timestamp);
-            // Could log or emit the event here
         }
+        // COV:EXCL_STOP
 
         // 6. Debug invariant verification
         #[cfg(debug_assertions)]

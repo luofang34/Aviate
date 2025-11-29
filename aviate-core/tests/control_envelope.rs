@@ -647,3 +647,16 @@ fn yaw_rate_negative_exceeds_limit() {
     assert!(status.limited_axes.contains(AxisLimitFlags::YAW));
     assert_eq!(constrained.angular_rate.unwrap()[2].0, -1.5);
 }
+
+// =============================================================================
+// AxisLimitFlags Default
+// =============================================================================
+
+#[test]
+fn axis_limit_flags_default_is_empty() {
+    let flags = AxisLimitFlags::default();
+    assert!(flags.is_empty());
+    assert!(!flags.contains(AxisLimitFlags::ROLL));
+    assert!(!flags.contains(AxisLimitFlags::PITCH));
+    assert!(!flags.contains(AxisLimitFlags::YAW));
+}

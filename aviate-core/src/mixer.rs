@@ -379,7 +379,7 @@ impl ActuatorSanitizer for Sanitizer {
 
         for (i, group) in mode.groups.iter().enumerate() {
             if i >= MAX_GROUPS {
-                break;
+                break; // COV:EXCL(DEFENSIVE: bounds check)
             }
 
             let mut group_valid = true;
@@ -387,7 +387,7 @@ impl ActuatorSanitizer for Sanitizer {
             for &channel_idx in group.members {
                 let idx = channel_idx as usize;
                 if idx >= MAX_ACTUATORS {
-                    continue;
+                    continue; // COV:EXCL(DEFENSIVE: bounds check)
                 }
 
                 let val = cmd.outputs[idx];
@@ -471,7 +471,7 @@ impl ActuatorSanitizer for Sanitizer {
                     for &channel_idx in group.members {
                         let idx = channel_idx as usize;
                         if idx >= MAX_ACTUATORS {
-                            continue;
+                            continue; // COV:EXCL(DEFENSIVE: bounds check)
                         }
                         let val = cmd.outputs[idx];
 

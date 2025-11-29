@@ -26,9 +26,11 @@ pub trait SensorHal {
     fn read_mag(&mut self) -> Option<SensorReading<MagData>>;
 
     /// Read airspeed data (optional, for fixed-wing)
+    // COV:EXCL_START(DEFAULT: optional sensor for fixed-wing only)
     fn read_airspeed(&mut self) -> Option<SensorReading<AirspeedData>> {
-        None // Default: not available
+        None
     }
+    // COV:EXCL_STOP
 }
 
 /// Actuator output interface

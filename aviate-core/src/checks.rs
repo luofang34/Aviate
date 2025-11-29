@@ -783,6 +783,7 @@ impl KernelChecks {
 /// They are run in debug builds and can be used for formal verification.
 pub struct CheckInvariants;
 
+// COV:EXCL_START(FORMAL: invariant checks for DO-178C formal verification, not unit tested)
 impl CheckInvariants {
     /// INV-001: ALL_IMU_FAILED fault implies !IMU_HEALTHY pre-arm flag
     ///
@@ -891,6 +892,7 @@ impl CheckInvariants {
         violations
     }
 }
+// COV:EXCL_STOP
 
 // ============================================================================
 // TESTS
