@@ -9,17 +9,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  # Line coverage threshold (tarpaulin). 91% is the practical maximum due to:
-  # - bitflags #[derive] attributes (not executable)
-  # - match arm patterns (tarpaulin instrumentation artifact)
-  # - struct literal field initializations
-  #
-  # A small number of LLVM coverage 'folded' branches are classified as tool
-  # artifacts and excluded from host coverage statistics. These branches have
-  # been confirmed not to correspond to distinct object-code decisions via
-  # disassembly. They do not affect target-level object-code MC/DC, which is
-  # computed independently from the MCU ELF CFG and hardware traces.
-  COVERAGE_THRESHOLD: 91
+  # Coverage threshold is 100% after documented exclusions.
+  # See aviate-core/coverage.exclude for exclusion list with justifications.
+  # This ensures new code cannot be introduced without tests.
+  COVERAGE_THRESHOLD: 100
 
 jobs:
   check:
