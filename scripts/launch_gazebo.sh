@@ -16,8 +16,6 @@ export LOCKSTEP=${LOCKSTEP:-0}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AVIATE_DIR="$(dirname "$SCRIPT_DIR")"
 SITL_DIR="${AVIATE_DIR}/aviate-apps/quadcopter-sitl"
-# Local models override PX4-gazebo-models (e.g., x500 without MotorFailurePlugin)
-LOCAL_MODELS_DIR="${AVIATE_DIR}/models"
 PX4_MODELS_DIR="${AVIATE_DIR}/external/PX4-gazebo-models/models"
 
 # Select world file based on LOCKSTEP mode
@@ -36,8 +34,8 @@ if [ ! -d "$PX4_MODELS_DIR" ]; then
     exit 1
 fi
 
-# Export model path - local models first (override), then PX4-gazebo-models (for x500_base, etc.)
-export GZ_SIM_RESOURCE_PATH="${LOCAL_MODELS_DIR}:${PX4_MODELS_DIR}:${GZ_SIM_RESOURCE_PATH:-}"
+# Export model path for PX4-gazebo-models (x500, x500_base, etc.)
+export GZ_SIM_RESOURCE_PATH="${PX4_MODELS_DIR}:${GZ_SIM_RESOURCE_PATH:-}"
 
 # Export plugin path so Gazebo can find AviateGzPlugin
 # Check new location first, then legacy location

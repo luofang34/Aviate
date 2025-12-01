@@ -39,6 +39,28 @@ install(TARGETS AviateGzPlugin
 )
 
 #------------------------------------------------------------------------------
+# MotorFailurePlugin (PX4-compatible motor failure simulation)
+#------------------------------------------------------------------------------
+add_library(MotorFailurePlugin SHARED
+    MotorFailurePlugin.cc
+)
+
+target_link_libraries(MotorFailurePlugin
+    gz-sim${GZ_SIM_VER}::gz-sim${GZ_SIM_VER}
+    gz-plugin2::register
+    gz-transport13::gz-transport13
+    gz-msgs10::gz-msgs10
+)
+
+target_include_directories(MotorFailurePlugin PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+install(TARGETS MotorFailurePlugin
+    LIBRARY DESTINATION lib/gz-sim-${GZ_SIM_VER}/plugins
+)
+
+#------------------------------------------------------------------------------
 # C Bridge Library (for Rust FFI)
 #------------------------------------------------------------------------------
 add_library(aviate_gz_bridge SHARED
