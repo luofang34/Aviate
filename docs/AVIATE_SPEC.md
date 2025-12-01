@@ -1,4 +1,4 @@
-# Aviate Spec v0.5 (Architecture-Complete)
+# Aviate Spec v0.5.1 (Architecture-Complete)
 
 **Minimal Deterministic Vehicle Motion Control Core**
 
@@ -13,6 +13,7 @@
 | v0.3 | - | Complete type definitions |
 | v0.4 | - | Behavioral semantics, fault binding |
 | v0.5 | - | Language profile, vector safety, morphing support |
+| v0.5.1 | - | Control-law/safety split; SafetyLevelV1 and ChannelHealthV1 semantics; 16-bit center-code; SEU resilience rules; FCR/frame integrity; TMR/lockstep support; command authority; record/replay; HAL boundary (§3.3); time monotonicity (§7); sensor/command buffering (§8,12); invariants 31-37 |
 
 **Companion Documents**:
 - `AVIATE_LANGUAGE_PROFILE.md` — LLM/CI constraint specification
@@ -67,6 +68,21 @@ Aviate is a minimal, deterministic, hard-real-time motion control kernel respons
 - Base type: `Scalar = f32`
 - Physical quantities: Dimensional newtypes only
 - NaN/Inf: Never propagate, trigger fault on detection
+
+### 3.3 Hardware Abstraction Boundary
+
+The Aviate core does not own or manage hardware resources directly. All interaction
+with physical devices (sensors, actuators, buses, timers, DMA, interrupts) occurs
+through platform-specific HAL or OS layers outside this specification.
+
+The only interfaces between Aviate and hardware are the typed data structures defined
+in this document (e.g., `SensorSet`, `ActuatorCmd`, `ActuatorState`, `CycleTiming`) and
+the `AviateKernel` trait. Implementations SHALL NOT introduce hidden, hardware-specific
+side effects inside the core beyond these interfaces.
+
+Reference HAL implementations SHOULD use `embedded-hal` traits where available, but this
+is not normative for the core specification. The spec remains platform-agnostic and may
+have implementations in other languages (e.g., C).
 
 ---
 
@@ -223,7 +239,7 @@ pub enum AuthorityProfile {
 #[derive(Clone, Debug)]
 pub struct LawProfile {
     pub authority: AuthorityProfile,
-    pub chain: &'static [ControlLaw],
+    pub chain: &'static [ControlLawV1],
     pub capabilities: &'static [LawCapabilities],
 }
 
@@ -323,6 +339,25 @@ pub struct TimeDelta {
     pub tick_delta: u64,
 }
 ```
+
+**Time monotonicity and wrap-around:**
+
+Within a flight segment, `Timestamp.ticks` and control-loop timing fields
+(e.g., `CycleTiming.cycle_start_us`, `cycle_end_us`, `duration_us`) SHOULD form
+monotonic sequences as observed by the Aviate core. The HAL or platform layer is
+responsible for handling any hardware timer wrap-around behavior and presenting
+values to the core such that:
+
+- `TimeDelta.tick_delta` is non-negative and represents the elapsed ticks between
+  consecutive `update()` calls, and
+- `TimeDelta.dt_sec` is consistent with `tick_delta` and the configured
+  `TICK_FREQUENCY_HZ`.
+
+Implementations SHALL NOT pass negative or zero-duration `TimeDelta` values into
+`update()` except during explicitly defined initialization sequences. Large,
+unexpected jumps in timing (e.g., due to wrap-around mis-handling) SHALL be treated
+as timing faults and mapped to appropriate `FaultCategory::TimingViolation` /
+`FaultCategory::NumericError` responses.
 
 ---
 
@@ -437,6 +472,33 @@ pub struct SensorOverrides {
 - For BaroData used in EKF, `air.static_pressure` MUST be `Some`; invalid/missing static pressure is a config/init fault.
 - If both `dynamic_pressure` and `indicated_airspeed` are present, EKF shall treat `dynamic_pressure` as authoritative and may recompute IAS to check consistency; disagreements beyond tolerance raise `FaultCategory::AirspeedFailed`.
 
+**Data trust levels:**
+
+All external inputs (Command, sensor streams, cross-channel data) SHALL be conceptually
+classified by trust level (e.g., trusted hardware path, untrusted network, diagnostic-only).
+Only inputs from trusted paths MAY directly influence inner control loops; untrusted or
+diagnostic-only data MUST go through additional validation / gating logic before affecting
+setpoints or state estimates.
+
+Existing mechanisms such as GnssHealth::Suspect and SensorOverrides are examples of this
+gating: they prevent low-trust inputs from directly affecting estimator or controller state.
+
+**Sampling and buffering model:**
+
+Aviate's core consumes at most one `SensorSet` snapshot per control cycle. It is the
+responsibility of the HAL or upper layers to provide the latest available measurements
+in each cycle; the core SHALL NOT depend on draining historical queues of sensor samples
+inside `update()`.
+
+Sensor producers (drivers, HAL tasks, DMA handlers) MAY overwrite older samples with newer
+ones in their own buffers (mailbox semantics). From the core's perspective, each element
+of `SensorSet` represents the most recent valid reading for that sensor class at the time
+the control cycle begins.
+
+Temporal filtering, resampling, or ring-buffer management (e.g., IMU sample queues) are
+implementation details of the HAL and estimator; they SHALL NOT change the Aviate core's
+contract of "latest-value" consumption per control cycle.
+
 ---
 
 ## 9. Actuator Model
@@ -453,7 +515,7 @@ pub enum ActuatorKind {
     Wheel,
     Flap,
     Spoiler,
-    MorphingJoint,  // NEW: for folding mechanisms
+    MorphingJoint,
     Custom(u8),
 }
 
@@ -711,7 +773,7 @@ pub const MAX_FALLBACK_AGE_CYCLES: u16 = 100;  // 100ms at 1kHz
 /// Maximum consecutive fallback cycles before triggering degradation
 pub const MAX_CONSECUTIVE_FALLBACK: u16 = 10;  // 10ms
 
-/// After MAX_CONSECUTIVE_FALLBACK, force ControlLaw degradation
+/// After MAX_CONSECUTIVE_FALLBACK, force ControlLawV1 degradation
 /// to prevent indefinite operation on stale/safe vectors
 ```
 
@@ -883,6 +945,54 @@ pub struct Command {
 pub enum CommandSource { Pilot, Autopilot, Gcs, Failsafe }
 ```
 
+**Command buffering and freshness:**
+
+External command sources may produce commands at rates different from the control-loop
+period. Implementations SHOULD treat per-source command buffers as single-element
+mailboxes: newer commands overwrite older ones, and the Aviate core consumes at most one
+`Command` instance per control cycle.
+
+When multiple commands from different `CommandSource` values are available for the same
+cycle, the active command for that cycle SHALL be selected according to:
+
+1. `CommandSource` precedence (see *Command authority* below), and
+2. Freshness criteria (e.g., largest `sequence` value within an acceptable age window).
+
+The core SHALL NOT depend on draining long queues of historical commands inside `update()`.
+Intermediate commands that are overwritten before a cycle begins are considered never
+applied.
+
+The age of the selected `Command` for a cycle SHALL still be checked against
+`COMMAND_TIMEOUT_MS` (or an equivalent configured timeout); a mailbox that stops
+receiving fresh commands SHALL therefore lead to `FaultCategory::CommandTimeout`,
+even if it continues to hold an old value.
+
+**Command authority:**
+
+Implementations SHOULD define a simple, static precedence between CommandSource values
+(e.g., Pilot > Autopilot > Gcs > Failsafe). Lower-precedence sources MUST NOT override
+higher-precedence commands within the same time window.
+
+The precedence mapping between CommandSource values SHOULD be part of configuration or
+system design data, not hard-coded magic behavior.
+
+Any command or configuration change that affects arming state, ConfigMode, or control law
+selection SHALL only be accepted from trusted command sources. Generic GCS or network-linked
+sources MUST NOT be allowed to arm/disarm or change configuration modes without an
+out-of-band authorization mechanism.
+
+**Command consistency validation:**
+
+For each Command, implementations SHALL validate that the setpoint fields are consistent
+with mode (e.g., no conflicting attitude/position requests) and within configured physical
+limits. Violations (including impossible combinations that may result from SEU) SHALL be
+treated as FaultCategory::CommandInvalid and handled according to InvalidCommandPolicy,
+not applied to the control loop.
+
+When FaultCategory::CommandInvalid is raised due to inconsistency, the resulting behavior
+(reject / clamp / freeze) SHALL follow the configured InvalidCommandPolicy and SHALL be
+observable via FaultFlags and ChannelStatus.
+
 ---
 
 ## 13. Envelope Protection
@@ -950,19 +1060,46 @@ pub trait EnvelopeProtector {
 ## 14. Control Law Degradation
 
 ```rust
+/// Control law capability: what control strategies are available.
+/// NOTE: ControlLawV1 describes flight control capability, NOT safety/risk level.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ControlLaw {
-    Normal = 0,
-    Alternate1 = 1,
-    Alternate2 = 2,
-    Direct = 3,
-    Frozen = 4,
+pub enum ControlLawV1 {
+    /// Full envelope protection, all loops active
+    Primary = 0,
+    /// Reduced protections, degraded but flyable
+    Alternate = 1,
+    /// Manual with minimal augmentation
+    Direct = 2,
+    /// Last-ditch stability only
+    Backup = 3,
 }
 
+/// Safety level: whole-aircraft situational risk assessment.
+/// Orthogonal to control law capability and channel health.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SafetyLevelV1 {
+    /// Normal flight with adequate margins (altitude, fuel, divert options)
+    FlightNormal,
+    /// Margins noticeably reduced (takeoff/landing, config change, oceanic, low fuel)
+    FlightMarginal,
+    /// Urgent but controllable, analogous to "PAN-PAN"
+    FlightUrgent,
+    /// Life/platform threatening, analogous to "MAYDAY"
+    FlightEmergency,
+}
+```
+
+Implementations MAY derive and maintain a `SafetyLevelV1` from envelope margins, energy state
+(altitude + speed + configuration), sensor/plant health, and external cues (e.g., GPWS). This
+label is advisory and intended for higher-level decisions and mode selection. It MUST NOT replace
+proper envelope protection or fault/degradation logic, and it SHALL NOT directly trigger control-law
+degradation.
+
+```rust
 #[derive(Copy, Clone, Debug)]
 pub struct DegradationEvent {
-    pub from: ControlLaw,
-    pub to: ControlLaw,
+    pub from: ControlLawV1,
+    pub to: ControlLawV1,
     pub reason: DegradationReason,
     pub timestamp: Timestamp,
 }
@@ -980,6 +1117,55 @@ pub enum DegradationReason {
     ExplicitRequest,
 }
 ```
+
+### 14.1 Recommended 16-bit center-code scheme
+
+For implementations that share buses between different Aviate versions or independent control boxes, a 16-bit center-code scheme is RECOMMENDED:
+
+- Assign four 16-bit center codewords with pairwise Hamming distance ≥ 7 for each of `ControlLawV1` and `SafetyLevelV1`.
+- These center codewords define Voronoi regions in the 16-bit space; future versions MAY add finer codewords within each region.
+
+**Decoding rules for v1 decoders:**
+
+1. Map any received 16-bit value to the nearest center codeword (minimum Hamming distance).
+2. If the distance is 0–2:
+   - Treat as a valid code; an implementation MAY correct the bits and record that a 1–2 bit error occurred.
+3. If the distance is ≥ 3:
+   - Raise a protocol/numeric fault; but still map to the corresponding coarse enum value (`ControlLawV1` / `SafetyLevelV1`) associated with the nearest center.
+
+Under these rules, for the v1 center codewords, a d_min ≥ 7 yields double-error-correcting and triple-error-detecting behavior: any 1–2 bit error is decoded back to the original center codeword; any 3+ bit error is detected and flagged as a fault.
+
+**Forward compatibility:**
+
+Future profiles MAY define additional "fine" codewords within each center's Voronoi region, provided that any such codeword remains strictly closer to its own center than to any other center. V1 decoders will automatically project such fine codewords back to the correct coarse value, while still being able to flag them as non-center (implementation choice).
+
+**Example center codewords (non-normative):**
+
+| `ControlLawV1` | 16-bit center |
+|----------------|---------------|
+| Primary        | 0x0000        |
+| Alternate      | 0x00FF        |
+| Direct         | 0x0F0F        |
+| Backup         | 0xFFFF        |
+
+| `SafetyLevelV1`  | 16-bit center |
+|------------------|---------------|
+| FlightNormal     | 0x0000        |
+| FlightMarginal   | 0x00FF        |
+| FlightUrgent     | 0x0F0F        |
+| FlightEmergency  | 0xFFFF        |
+
+(These example codewords have pairwise Hamming distance 8 ≥ 7; they are non-normative and may be replaced by any set satisfying the constraints.)
+
+**Enum wire encoding:**
+
+For ControlLawV1 and SafetyLevelV1, the 16-bit center-code scheme in §14.1 defines their
+normative on-wire representation for safety-critical links. Implementations MAY still use
+different in-memory representations internally, but on-wire encodings SHALL follow §14.1.
+
+For all other enums, this specification does not fix in-memory discriminant values.
+Any on-wire or cross-chip protocol MUST define its own explicit encoding (with checksum/CRC)
+and MUST NOT rely on Rust enum discriminants.
 
 ---
 
@@ -1003,8 +1189,8 @@ pub enum FaultCategory {
     ActuatorFailed,
     ActuatorSaturated,
     ActuatorDisagreement,
-    ActuatorNumericError,       // NEW: NaN/Inf in actuator path
-    ActuatorFallbackPersistent, // NEW: too many consecutive fallbacks
+    ActuatorNumericError,
+    ActuatorFallbackPersistent,
     
     // Estimation faults
     EstimatorDiverged,
@@ -1019,6 +1205,10 @@ pub enum FaultCategory {
     TimingViolationPersistent,
     ConfigInvalid,
     ConfigTransitionFailed,
+
+    // Memory/integrity faults (for future ECC/lockstep reporting)
+    MemoryError,
+    EnumInvalid,
 }
 
 bitflags::bitflags! {
@@ -1035,8 +1225,8 @@ bitflags::bitflags! {
         const AIRSPEED_FAILED = 1 << 9;
         
         const ACTUATOR_FAULT = 1 << 16;
-        const ACTUATOR_NUMERIC = 1 << 17;      // NEW
-        const ACTUATOR_FALLBACK = 1 << 18;     // NEW
+        const ACTUATOR_NUMERIC = 1 << 17;
+        const ACTUATOR_FALLBACK = 1 << 18;
         
         const ESTIMATOR_DIVERGED = 1 << 24;
         const ATTITUDE_UNCERTAIN = 1 << 25;
@@ -1049,6 +1239,9 @@ bitflags::bitflags! {
         const TIMING_PERSISTENT = 1 << 41;
         const CONFIG_INVALID = 1 << 48;
         const CONFIG_TRANSITION_FAILED = 1 << 49;
+
+        const MEMORY_ERROR = 1 << 56;
+        const ENUM_INVALID = 1 << 57;
     }
 }
 
@@ -1064,7 +1257,7 @@ pub enum FaultAction {
 pub struct FaultResponse {
     pub fault: FaultCategory,
     pub action: FaultAction,
-    pub degrade_to: Option<ControlLaw>,
+    pub degrade_to: Option<ControlLawV1>,
     pub max_response_time_ms: u32,
 }
 
@@ -1082,24 +1275,24 @@ impl FaultHandlingTable {
         entries: &[
             // ... existing entries ...
             
-            // NEW: Actuator numeric error (single occurrence)
+            // Actuator numeric error (single occurrence)
             FaultResponse { 
                 fault: FaultCategory::ActuatorNumericError, 
                 action: FaultAction::Monitor,  // Just log, fallback handles it
                 degrade_to: None,
                 max_response_time_ms: 0,
             },
-            // NEW: Persistent actuator fallback
+            // Persistent actuator fallback
             FaultResponse { 
                 fault: FaultCategory::ActuatorFallbackPersistent, 
                 action: FaultAction::Degrade, 
-                degrade_to: Some(ControlLaw::Alternate1),
+                degrade_to: Some(ControlLawV1::Alternate),
                 max_response_time_ms: 10,
             },
-            FaultResponse { 
-                fault: FaultCategory::ConfigTransitionFailed, 
-                action: FaultAction::Degrade, 
-                degrade_to: Some(ControlLaw::Alternate1),
+            FaultResponse {
+                fault: FaultCategory::ConfigTransitionFailed,
+                action: FaultAction::Degrade,
+                degrade_to: Some(ControlLawV1::Alternate),
                 max_response_time_ms: 0,
             },
         ],
@@ -1107,11 +1300,90 @@ impl FaultHandlingTable {
 }
 ```
 
+### 15.3 SEU Resilience Rules
+
+Single Event Upsets (SEU) can flip bits in RAM, registers, or flash, potentially causing enum fields to become invalid values or "valid but wrong" values. The following rules establish defense-in-depth against SEU-induced mode confusion.
+
+**Enum validation (all control-plane enums):**
+
+Any enum field received from off-chip memory, non-ECC RAM, or external buses MUST be checked for "known variant". Unknown or out-of-range values SHALL be treated as `FaultCategory::EnumInvalid` and trigger:
+- `FaultFlags::ENUM_INVALID`
+- Immediate fallback to `ControlLawV1::Backup` + safe actuator output
+- The invalid value SHALL NOT be silently interpreted as a different valid mode
+
+This rule applies to: `ControlLawV1`, `SafetyLevelV1`, `ChannelHealthV1`, `ConfigMode`, `ControlMode`, `CommandSource`, `InitState`, `VehicleType`, and any future control-plane enums.
+
+**FaultFlags pessimistic semantics:**
+
+FaultFlags and similar safety-critical bitfields SHALL be designed with pessimistic semantics:
+1. **Set-only during flight**: Safety-critical fault bits (e.g., `ALL_IMU_FAILED`, `ESTIMATOR_DIVERGED`) SHALL only be cleared through an explicit recovery sequence or ground maintenance action, never solely because the bit reads as 0.
+2. **SEU bias toward conservatism**: If an SEU flips a bit to indicate "fault present" when none exists, the system becomes more conservative (acceptable). If an SEU clears a fault bit, the explicit recovery requirement prevents false "all clear" states.
+3. **Monotonic counters**: Fields like `deadline_violations`, `consecutive_violations`, and `sequence` SHALL only increase monotonically during flight. A decrease or large jump SHALL raise `FaultCategory::NumericError`.
+
+**Numeric validation frequency:**
+
+All `Scalar` and dimensional newtype values participating in control loops MUST be validated (`is_finite()`) every control cycle. Any validation failure triggers the appropriate fault category and actuator fallback. This catches SEU-induced NaN/Inf/extreme values before they propagate.
+
+**Internal numeric self-checks:**
+
+Estimation and control algorithms SHALL include internal numeric self-checks (e.g.,
+positive-definiteness of covariance matrices, bounded gains, condition-number checks).
+Violations SHALL be mapped to FaultCategory::EstimatorDiverged or FaultCategory::NumericError,
+never silently ignored.
+
 ---
 
 ## 16. Channel & Redundancy Model
 
+A "channel" in Aviate denotes a single end-to-end control path:
+
+- the sensor inputs as seen by one MCU/flight controller instance,
+- that channel's estimator and control logic,
+- and that channel's actuator command outputs onto its connected buses.
+
+Multiple channels MAY drive the same physical actuators (e.g., via cross-strapped buses). `ChannelHealthV1` describes the internal health and capability of one channel, not the whole vehicle and not individual actuators.
+
+**Frame integrity for cross-channel / external links:**
+
+Any serialization of Command, UpdateResult, CrossChannelData, or related control-plane
+structures onto off-chip links or shared buses MUST:
+- include an end-to-end integrity check (e.g., CRC-32 or stronger), and
+- include a monotonically increasing sequence number or equivalent freshness indicator.
+
+Sequence numbers SHOULD be chosen large enough to avoid wraparound during a single flight.
+If wraparound is possible, implementations SHALL define an explicit comparison rule
+(e.g., modular arithmetic with bounded reordering window) to distinguish fresh from stale
+frames.
+
+Implementations MAY maintain a small acceptance window to tolerate limited reordering but
+SHALL reject frames with sequence numbers older than the last accepted value beyond that
+window.
+
+Frames that fail integrity or freshness checks SHALL be treated as unavailable data from
+that source (i.e., ignored for voting / control), not as evidence that the source is
+healthier or less healthy than other channels.
+
+`CrossChannelData.sequences[i]` represents the last accepted sequence number from channel i
+after integrity checks.
+
+**Fault containment regions (FCR):**
+
+A fault-containment region (FCR) is the smallest unit within which a single software or
+hardware fault may arbitrarily corrupt all state. In Aviate deployments, each MCU + its
+local memory + its local I/O are treated as one FCR. Cross-FCR corruption is assumed
+impossible except via defined communication links.
+
+Cross-FCR influence SHALL only occur through explicitly defined data structures (Command,
+CrossChannelData, UpdateResult, etc.) and SHALL be subject to the integrity and freshness
+checks described in §15.3 and this section.
+
+Shared-memory mechanisms between FCRs (including MMU-mapped regions or DMA-accessible RAM)
+SHALL NOT be used for safety-related data exchange.
+
 ```rust
+/// A "channel" is one end-to-end control path:
+///   sensors/inputs → one Aviate core instance on one MCU/FC → output buses.
+/// Multiple channels may exist in parallel for redundancy and voting.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ChannelId(pub u8);
 
@@ -1125,27 +1397,58 @@ impl ChannelId {
 #[derive(Clone, Debug)]
 pub struct CrossChannelData {
     pub estimates: [Option<StateEstimate>; ChannelId::MAX_CHANNELS],
-    pub health: [Option<ChannelHealth>; ChannelId::MAX_CHANNELS],
+    pub health: [Option<ChannelHealthV1>; ChannelId::MAX_CHANNELS],
     pub commands: [Option<ActuatorCmd>; ChannelId::MAX_CHANNELS],
     pub sequences: [Option<u32>; ChannelId::MAX_CHANNELS],
 }
 
+/// Health of one end-to-end control channel:
+///   sensors/inputs → Aviate core on one MCU/FC → output buses.
+///
+/// ChannelHealthV1 reflects only this channel's compute and local I/O capability.
+/// External actuator failures (motors/servos/structure) SHALL NOT directly cause
+/// ChannelHealthV1::Failed — use FaultFlags / ActuatorStatus / SafetyLevelV1 instead.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ChannelHealth { Operative, Degraded, Failed, Testing }
+pub enum ChannelHealthV1 {
+    /// Channel fully capable:
+    /// - Required local sensors available within spec;
+    /// - Control-loop timing within limits;
+    /// - At least one output bus reachable.
+    Operative,
+    /// Channel degraded but can still safely close a control loop:
+    /// - Some local sensors/buses lost, but at least one inertial reference
+    ///   and one output path remain; or
+    /// - Persistent but bounded timing issues; or
+    /// - Permanent estimator/controller degradation.
+    Degraded,
+    /// Channel cannot safely close a control loop under any law:
+    /// - No valid inertial reference for this channel; or
+    /// - All its output paths are unavailable; or
+    /// - Severe timing or numeric failure.
+    ///
+    /// Failed channels SHALL NOT be selected as active and SHALL NOT drive
+    /// any actuator bus.
+    Failed,
+    /// Channel in self-test / maintenance / explicitly offline:
+    /// - Power-on self-test, ground testing, or administratively offlined;
+    /// - May run EKF/control on test data, but MUST NOT drive actuators
+    ///   or be eligible for active voting.
+    Offline,
+}
 
 #[derive(Clone, Debug)]
 pub struct ChannelStatus {
     pub mode: ControlMode,
     pub config_mode: ConfigMode,
     pub transition_state: ConfigTransitionState,
-    pub law: ControlLaw,
-    pub health: ChannelHealth,
+    pub law: ControlLawV1,
+    pub health: ChannelHealthV1,
     pub faults: FaultFlags,
     pub confidence: EstimateQuality,
     pub envelope_margin: EnvelopeMargin,
     pub sequence: u32,
     pub protection: ProtectionStatus,
-    pub sanitize_report: SanitizeReport,  // NEW: sanitization status
+    pub sanitize_report: SanitizeReport,
 }
 ```
 
@@ -1168,15 +1471,15 @@ pub enum InitState {
 }
 
 /// Init ↔ Update coupling:
-/// Non-Armed states → ControlLaw::Frozen → safe_output only
+/// Non-Armed states → ControlLawV1::Backup → safe_output only
 impl InitState {
     pub fn allows_active_control(&self) -> bool {
         matches!(self, InitState::Armed)
     }
-    
-    pub fn forced_control_law(&self) -> Option<ControlLaw> {
-        if self.allows_active_control() { None } 
-        else { Some(ControlLaw::Frozen) }
+
+    pub fn forced_control_law(&self) -> Option<ControlLawV1> {
+        if self.allows_active_control() { None }
+        else { Some(ControlLawV1::Backup) }
     }
 }
 
@@ -1195,6 +1498,16 @@ pub enum ArmError {
     ConfigInvalid,
 }
 ```
+
+**Reset contract:**
+
+In-flight software reset of the Aviate core SHALL only be initiated by an external
+supervisory function and SHALL treat the core as unavailable until it re-enters
+InitState::Ready. Aviate itself SHALL NOT autonomously perform a full reset; instead
+it transitions to Backup law and safe outputs, awaiting external intervention.
+
+External supervisory functions are expected to monitor HealthReport, FaultFlags, and
+SafetyLevelV1 and decide when a reset or channel handover is appropriate.
 
 ---
 
@@ -1230,6 +1543,15 @@ pub trait Watchdog {
     fn check_deadline(&self) -> bool;
 }
 ```
+
+**Overload handling:**
+
+The control loop SHALL maintain a fixed period; overload handling is performed by reducing
+functionality (e.g., selecting a lower ControlLawV1 or disabling optional LawCapabilities-
+flagged features) rather than stretching the control-loop period. For production builds,
+each ControlLawV1 / LawCapabilities profile SHOULD have a documented worst-case execution
+time (WCET) budget. Degradation from Primary → Alternate → Direct → Backup MAY reduce
+computational load to guarantee deadlines under fault or overload.
 
 ---
 
@@ -1302,6 +1624,8 @@ pub struct ConfigBlock {
     /// Raw serialized config blob (e.g., from flash)
     pub data: &'static [u8],
     pub version: u16,
+    /// CRC-32 or stronger checksum over data
+    pub checksum: u32,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1309,6 +1633,7 @@ pub enum ConfigError {
     InvalidFormat,
     UnsupportedVersion,
     OutOfRange,
+    ChecksumMismatch,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1325,6 +1650,26 @@ pub enum VehicleType { Multirotor, FixedWing, VTOL, MorphingVTOL, Rover, Boat }
 **ModeConfig precedence**:
 - If `airframe.modes` is non-empty, the active `ModeConfig` selected by `ConfigMode` SHALL provide the authoritative `mixer`, `groups`, `limits`, and `law_profile`. The top-level `Config.limits` and `Config.law_profile` serve only as defaults for non-morphing/single-mode vehicles and SHALL NOT conflict with any `ModeConfig`; conflicts are `ConfigError::InvalidFormat`.
 - Each `ConfigMode` SHALL appear at most once in `airframe.modes`; missing mandatory modes (e.g., `Degraded` when morphing is enabled) are `ConfigError::InvalidFormat`.
+
+**Configuration integrity (SEU/flash protection)**:
+
+1. **Mandatory checksum**: All configuration blocks MUST include a CRC-32 (or stronger) checksum. Checksum mismatch SHALL raise `ConfigError::ChecksumMismatch` and prevent arming.
+
+2. **Recommended mirroring**: Implementations SHOULD store at least two independent copies of configuration in non-volatile memory and verify consistency at boot. On mismatch between copies, the core SHALL treat configuration as invalid and refuse to arm.
+
+3. **Calibration bounds checking**: Sensor calibration data (e.g., IMU biases, magnetometer offsets, barometric pressure offsets) SHALL be validated against physically reasonable bounds at load time. Out-of-range calibration values are `ConfigError::OutOfRange`.
+
+4. **Read-only at runtime**: Once loaded and validated, configuration data SHALL be treated as read-only during flight. Any detected modification to configuration memory during flight SHALL raise `FaultCategory::MemoryError`.
+
+**Spec extension strategy:**
+
+Future extensions to structs in this spec SHOULD follow a "reserved/extension" pattern
+(e.g., adding optional fields, reserved bits, or versioned payloads) rather than
+reinterpreting existing fields. Existing fields SHALL NOT change meaning between minor
+spec versions.
+
+Reserved or extension fields SHALL have well-defined default semantics (e.g., treated as
+zero/None when absent) so that older implementations can safely ignore them.
 
 ---
 
@@ -1343,11 +1688,11 @@ pub struct UpdateResult {
 #[derive(Clone, Debug)]
 pub struct HealthReport {
     pub init_state: InitState,
-    pub control_law: ControlLaw,
+    pub control_law: ControlLawV1,
     pub config_mode: ConfigMode,
     pub transition_state: ConfigTransitionState,
     pub faults: FaultFlags,
-    pub channel_health: ChannelHealth,
+    pub channel_health: ChannelHealthV1,
 }
 // HealthReport is a lightweight snapshot API; ChannelStatus is the per-cycle detailed status returned by update().
 
@@ -1384,7 +1729,7 @@ pub trait AviateKernel {
     fn get_config(&self) -> &Config;
     fn get_health(&self) -> HealthReport;
     fn get_faults(&self) -> FaultFlags;
-    fn get_control_law(&self) -> ControlLaw;
+    fn get_control_law(&self) -> ControlLawV1;
     fn kick_watchdog(&mut self);
     fn ground_reset(&mut self);
     
@@ -1394,6 +1739,21 @@ pub trait AviateKernel {
     fn inject_fault(&mut self, fault: FaultCategory);
 }
 ```
+
+**Record/replay facility:**
+
+Implementations SHOULD provide a record/replay facility where a time-ordered log of
+SensorSet, Command, and ActuatorState (plus configuration snapshot) can be fed into
+the core to deterministically reproduce UpdateResult sequences for debugging and
+verification.
+
+Replay logs SHOULD contain enough information (configuration snapshot, version identifiers,
+and all external inputs) to reproduce UpdateResult sequences bit-for-bit for a given core
+implementation.
+
+All internal safety-related decisions (law changes, sanitization fallback, major fault
+transitions) SHALL be observable via ChannelStatus and/or HealthReport, so that external
+monitors and verification tools do not need to infer behavior from actuator outputs alone.
 
 ---
 
@@ -1426,19 +1786,29 @@ pub trait AviateKernel {
 25. Core control/estimation uses dimensional newtypes (no bare Scalar) and obeys the language profile summary in §3 (no unsafe, no panics, bounded loops, no alloc, no recursion)
 26. GNSS SHALL NOT drive inner attitude/rate loops; its effect on position/velocity estimates SHALL be bounded over finite time windows and may be removed entirely without destabilizing the control core
 27. Quaternions used in StateEstimate/Setpoint SHALL be normalized to unit length within tolerance ε; violation is a numeric fault (e.g., NumericError/EstimatorDiverged)
+28. Control-law capability (ControlLawV1) and whole-aircraft safety level (SafetyLevelV1) are orthogonal: changing SafetyLevelV1 SHALL NOT implicitly force control-law degradation, and changing ControlLawV1 SHALL NOT, by itself, declare an Emergency safety level.
+29. ChannelHealthV1 applies only to a single end-to-end control channel; multiple channels may disagree. External voters and higher layers MUST NOT confuse ChannelHealthV1 with SafetyLevelV1 or ControlLawV1, and SHOULD consider all three dimensions when selecting which channel and law to grant authority.
+30. The 16-bit encoding for ControlLawV1 / SafetyLevelV1 SHALL be designed such that future profiles can add finer-grain states as additional codewords within the Voronoi region of each v1 center codeword, and v1 decoders will still project any such codeword to the same coarse ControlLawV1 / SafetyLevelV1 value via nearest-center mapping.
+31. All control-plane enum fields received from external memory or buses SHALL be validated for known variants; unknown values trigger `FaultCategory::EnumInvalid` and immediate fallback to safe state, never silent reinterpretation as a different valid mode.
+32. Safety-critical fault flags SHALL only be cleared through explicit recovery sequences, not by reading a zero value; monotonic counters SHALL only increase during flight, and decreases or large jumps trigger `FaultCategory::NumericError`.
+33. Aviate core SHALL be deterministic, side-effect free, and idempotent over a single control cycle with respect to its public interfaces: given identical inputs at the same logical time (including configuration, InitState, and any internal mode flags encoded in the inputs), multiple independent instances SHALL produce identical outputs. Implementations MAY therefore wrap the core in higher-level redundancy (e.g., TMR, lockstep, hardware ECC) without changing functional behavior.
+34. Cross-FCR influence SHALL only occur through explicitly defined interfaces subject to integrity and freshness checks; shared memory or implicit global state between FCRs is forbidden.
+35. The control loop SHALL maintain a fixed period; overload is handled by functionality degradation, not by stretching the loop period.
+36. Aviate core SHALL NOT autonomously perform a full software reset in flight; it transitions to Backup law and safe outputs, awaiting external supervisory action.
+37. All persistent state relevant to control or estimation SHALL be owned by explicit Aviate core instances (e.g., an `AviateKernel` implementation) or documented modules referenced through their interfaces; hidden global mutable state or implicit singleton patterns inside the core are forbidden. Hardware-facing resources (timers, buses, interrupts, DMA) are managed exclusively by HAL/OS layers outside the core boundary.
 
 ---
 
 ## 22. Minimal Implementation Strategy
 
-| Component | v0.5 Minimal Implementation |
+| Component | v0.5.1 Minimal Implementation |
 |-----------|----------------------------|
 | Channels | Only `ChannelId(0)` |
 | Sensors | Only `imus[0]` |
 | Cross-channel | Always `None` |
 | ConfigMode | Single mode (no morphing) |
 | Envelope | Simple clamping |
-| Control law | Always `Normal` |
+| Control law | Always `Primary` |
 | Coupling groups | All motors in single Strong group |
 | Fallback | Last good vector only |
 | Geometry | Static (no morphing) |
@@ -1460,15 +1830,15 @@ pub trait AviateKernel {
 | Fault | Action | Degrade To | Response Time |
 |-------|--------|------------|---------------|
 | Single IMU failed | Isolate | - | 10 ms |
-| All IMU failed | Emergency | Frozen | 0 ms |
-| All GNSS lost | Degrade | Alternate1 | 100 ms |
-| Estimator diverged | Degrade | Alternate2 | 10 ms |
-| Numeric error | Emergency | Frozen | 0 ms |
-| Command timeout | Degrade | Alternate1 | 100 ms |
+| All IMU failed | Emergency | Backup | 0 ms |
+| All GNSS lost | Degrade | Alternate | 100 ms |
+| Estimator diverged | Degrade | Alternate | 10 ms |
+| Numeric error | Emergency | Backup | 0 ms |
+| Command timeout | Degrade | Alternate | 100 ms |
 | Actuator numeric | Monitor | - | 0 ms |
-| Actuator fallback persistent | Degrade | Alternate1 | 10 ms |
-| Config transition failed | Degrade | Alternate1 | 0 ms |
-| Timing violation (persistent) | Degrade | Alternate2 | 50 ms |
+| Actuator fallback persistent | Degrade | Alternate | 10 ms |
+| Config transition failed | Degrade | Alternate | 0 ms |
+| Timing violation (persistent) | Degrade | Alternate | 50 ms |
 
 ---
 
@@ -1494,7 +1864,8 @@ pub trait AviateKernel {
 | v0.3 | Complete type definitions |
 | v0.4 | Behavioral semantics locked |
 | v0.5 | Language profile, per-mode coupling, morphing support |
+| v0.5.1 | ControlLawV1 / SafetyLevelV1 split; 16-bit center-code; ChannelHealthV1 semantics; SEU resilience (§15.3); FCR/frame integrity (§16); TMR/lockstep support (invariant 33); overload/reset contracts (§17-18); data trust/command authority (§8,12); record/replay (§20); extension strategy (§19); HAL boundary (§3.3); time monotonicity (§7); sensor/command buffering (§8,12); invariants 31-37 |
 
 ---
 
-*End of Spec v0.5*
+*End of Spec v0.5.1*
