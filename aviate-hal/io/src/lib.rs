@@ -125,6 +125,9 @@
 
 #![no_std]
 #![forbid(unsafe_code)]
+#![deny(clippy::panic)]
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
 
 pub mod board_hal;
 pub mod error;
