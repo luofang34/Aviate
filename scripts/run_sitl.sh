@@ -110,14 +110,11 @@ echo "Building SITL test binary..."
 cargo build -p aviate-app-quadcopter-sitl --features gz-plugin 2>&1 | tail -5
 
 # Check plugin is available
-PLUGIN_DIR="${AVIATE_DIR}/aviate-platform/aviate_gz_plugin/build"
-if [ ! -f "${PLUGIN_DIR}/libAviateGzPlugin.so" ]; then
-    PLUGIN_DIR="${AVIATE_DIR}/aviate-platform/sitl/aviate_gz_plugin/build"
-fi
+PLUGIN_DIR="${AVIATE_DIR}/aviate-hal/xil/backends/gz/plugin/build"
 
 if [ ! -f "${PLUGIN_DIR}/libAviateGzPlugin.so" ]; then
     echo "Error: AviateGzPlugin not found."
-    echo "Build it first: cd aviate-platform/aviate_gz_plugin/build && cmake .. && make"
+    echo "Build it first: cd aviate-hal/xil/backends/gz/plugin/build && cmake .. && make"
     exit 1
 fi
 

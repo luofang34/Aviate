@@ -1,17 +1,17 @@
 //! Gazebo Backend Implementation
 //!
-//! Implements the `KinematicsBackend` trait from aviate-platform-xil for Gazebo Sim.
+//! Implements the `KinematicsBackend` trait from aviate-hal-xil for Gazebo Sim.
 
 use std::time::Duration;
 
 #[cfg(feature = "gz-plugin")]
-use aviate_platform_xil::{
+use aviate_hal_xil::{
     AngularVelocity, BackendConfig, BackendError, KinematicsBackend, LockstepMode, Position,
     Quaternion, Velocity, World,
 };
 
 #[cfg(not(feature = "gz-plugin"))]
-use aviate_platform_xil::{BackendConfig, BackendError, KinematicsBackend, World};
+use aviate_hal_xil::{BackendConfig, BackendError, KinematicsBackend, World};
 
 #[cfg(feature = "gz-plugin")]
 use crate::plugin::{enu_to_ned, GzPluginBridge};

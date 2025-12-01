@@ -54,7 +54,7 @@ export LLVM_PROFILE_FILE="$PROF_DIR/cov-%p-%m.profraw"
 # Run Tests
 echo ""
 echo "--- Running Tests ---"
-cargo $TOOLCHAIN test --workspace --exclude aviate-app-quadcopter-stm32h7
+cargo $TOOLCHAIN test --workspace
 
 # Merge Profiles
 echo ""
@@ -77,7 +77,7 @@ grcov . \
     --ignore "tests/*" \
     --ignore "external/*" \
     --ignore "aviate-apps/*" \
-    --ignore "aviate-platform/*" \
+    --ignore "aviate-hal/*" \
     --keep-only "aviate-core/src/*" \
     --excl-line "COV:EXCL" \
     --excl-start "COV:EXCL_START" \
@@ -99,7 +99,7 @@ grcov . \
     --ignore "tests/*" \
     --ignore "external/*" \
     --ignore "aviate-apps/*" \
-    --ignore "aviate-platform/*" \
+    --ignore "aviate-hal/*" \
     --keep-only "aviate-core/src/*" \
     --excl-line "COV:EXCL" \
     --excl-start "COV:EXCL_START" \

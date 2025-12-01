@@ -1,0 +1,25 @@
+[package]
+name = "aviate-hal-io"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "I/O device traits for Aviate - sensors (input) and actuators (output)"
+
+[features]
+default = []
+# Enable when using async embedded-hal
+async = ["dep:embedded-hal-async"]
+
+[dependencies]
+aviate-core = { path = "../../aviate-core" }
+
+# Math for no_std (powf, etc.)
+libm = "0.2"
+
+# embedded-hal traits (1.0 stable) - for real hardware drivers
+embedded-hal = "1.0"
+embedded-hal-async = { version = "1.0", optional = true }
+
+[dev-dependencies]
+# For testing with mock I2C
+embedded-hal-mock = "0.11"

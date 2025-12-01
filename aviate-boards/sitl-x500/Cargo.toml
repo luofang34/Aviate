@@ -1,0 +1,20 @@
+[package]
+name = "aviate-board-sitl-x500"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Aviate board configuration for x500 quadcopter in SITL"
+
+[lib]
+name = "aviate_board_sitl_x500"
+path = "src/lib.rs"
+
+[features]
+default = []
+gz-plugin = ["aviate-backend-gz/gz-plugin"]
+
+[dependencies]
+aviate-core = { path = "../../aviate-core" }
+aviate-hal-xil = { path = "../../aviate-hal/xil" }
+aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", optional = true }
+aviate-airframe-quadcopter = { path = "../../aviate-airframes/quadcopter" }

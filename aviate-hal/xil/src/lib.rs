@@ -11,7 +11,7 @@
 //! ## Architecture
 //!
 //! ```text
-//! aviate-platform-xil (this crate, no backend deps)
+//! aviate-hal-xil (this crate, no backend deps)
 //!        ↑
 //! aviate-backend-gz (implements KinematicsBackend)
 //!        ↑ (FFI/IPC)

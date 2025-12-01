@@ -160,7 +160,21 @@ fn run_test_with_gazebo(
         return ExitCode::from(1);
     }
 
-    println!("Gazebo ready, connecting to vehicles...");
+    println!("Gazebo ready.");
+
+    // Launch gz-bridge (Gazebo-MAVLink bridge) for each vehicle
+    let bridge_children = launch_gz_bridges(config, &gz_plugin_path);
+
+    // Give bridge time to connect to shared memory
+    thread::sleep(Duration::from_millis(500));
+
+    // Launch FC (Flight Controller) for each vehicle
+    let fc_children = launch_flight_controllers(config, &gz_plugin_path);
+
+    // Give FC time to initialize and connect to bridge
+    thread::sleep(Duration::from_secs(2));
+
+    println!("Connecting to vehicles...");
     println!();
 
     let mut all_passed = true;
@@ -221,6 +235,16 @@ fn run_test_with_gazebo(
         println!();
     }
 
+    // Cleanup FC processes
+    for mut fc in fc_children {
+        let _ = fc.kill();
+    }
+
+    // Cleanup bridge processes
+    for mut bridge in bridge_children {
+        let _ = bridge.kill();
+    }
+
     // Cleanup Gazebo
     drop(gz_child);
     cleanup_gazebo();
@@ -235,7 +259,106 @@ fn run_test_with_gazebo(
     }
 }
 
-/// Clean up any existing Gazebo processes and shared memory
+/// Launch gz-bridge processes for each vehicle (Gazebo-MAVLink bridge)
+#[cfg(feature = "gz-plugin")]
+fn launch_gz_bridges(
+    config: &aviate_app_quadcopter_sitl::TestConfig,
+    plugin_path: &str,
+) -> Vec<std::process::Child> {
+    use std::process::{Command, Stdio};
+
+    let mut children = Vec::new();
+    let aviate_dir = env::current_dir().unwrap_or_default();
+    let bridge_binary = aviate_dir.join("target/debug/gz-bridge");
+
+    // Check if bridge binary exists
+    if !bridge_binary.exists() {
+        println!(
+            "gz-bridge binary not found at {:?}, skipping bridge launch",
+            bridge_binary
+        );
+        println!("Build it with: cargo build -p aviate-backend-gz --features gz-plugin");
+        return children;
+    }
+
+    for vehicle in &config.vehicles {
+        println!(
+            "Launching gz-bridge for vehicle {} (instance {})...",
+            vehicle.id, vehicle.instance
+        );
+
+        let child = Command::new(&bridge_binary)
+            .env("LD_LIBRARY_PATH", plugin_path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+
+        match child {
+            Ok(c) => {
+                println!("  gz-bridge started (PID: {})", c.id());
+                children.push(c);
+            }
+            Err(e) => {
+                eprintln!("  Failed to launch gz-bridge: {}", e);
+            }
+        }
+    }
+
+    children
+}
+
+/// Launch flight controller processes for each vehicle
+#[cfg(feature = "gz-plugin")]
+fn launch_flight_controllers(
+    config: &aviate_app_quadcopter_sitl::TestConfig,
+    plugin_path: &str,
+) -> Vec<std::process::Child> {
+    use std::process::{Command, Stdio};
+
+    let mut children = Vec::new();
+    let aviate_dir = env::current_dir().unwrap_or_default();
+    let fc_binary = aviate_dir.join("target/debug/aviate-app-quadcopter-sitl");
+
+    // Check if FC binary exists
+    if !fc_binary.exists() {
+        println!("FC binary not found at {:?}, skipping FC launch", fc_binary);
+        println!("Tests will run in direct mode (bypassing FC)");
+        return children;
+    }
+
+    for vehicle in &config.vehicles {
+        println!(
+            "Launching FC for vehicle {} (instance {})...",
+            vehicle.id, vehicle.instance
+        );
+
+        // Each instance needs different ports
+        // Instance 0: sensor_port=14560, actuator_port=14561
+        // Instance N: sensor_port=14560+N*10, actuator_port=14561+N*10
+        let _sensor_port = 14560 + vehicle.instance as u16 * 10;
+
+        let child = Command::new(&fc_binary)
+            .env("LD_LIBRARY_PATH", plugin_path)
+            // Future: pass instance-specific config via env or args
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+
+        match child {
+            Ok(c) => {
+                println!("  FC started (PID: {})", c.id());
+                children.push(c);
+            }
+            Err(e) => {
+                eprintln!("  Failed to launch FC: {}", e);
+            }
+        }
+    }
+
+    children
+}
+
+/// Clean up any existing Gazebo, bridge, and FC processes and shared memory
 #[cfg(feature = "gz-plugin")]
 fn cleanup_gazebo() {
     use std::fs;
@@ -243,6 +366,16 @@ fn cleanup_gazebo() {
 
     // Kill Gazebo processes
     let _ = Command::new("pkill").args(["-9", "-f", "gz sim"]).status();
+
+    // Kill gz-bridge processes
+    let _ = Command::new("pkill")
+        .args(["-9", "-f", "gz-bridge"])
+        .status();
+
+    // Kill FC processes
+    let _ = Command::new("pkill")
+        .args(["-9", "-f", "aviate-app-quadcopter-sitl"])
+        .status();
 
     // Remove shared memory
     let _ = fs::remove_file("/dev/shm/aviate_gz_bridge");
@@ -271,9 +404,8 @@ fn setup_gz_environment() -> (String, String) {
     let gz_resource_path = paths.join(":");
 
     // Set up plugin path for AviateGzPlugin
-    // Check new location first, then legacy
-    let new_plugin_dir = aviate_dir.join("aviate-platform/aviate_gz_plugin/build");
-    let legacy_plugin_dir = aviate_dir.join("aviate-platform/sitl/aviate_gz_plugin/build");
+    let new_plugin_dir = aviate_dir.join("aviate-hal/xil/backends/gz/plugin/build");
+    let legacy_plugin_dir = aviate_dir.join("aviate-platform/aviate_gz_plugin/build");
 
     let plugin_dir = if new_plugin_dir.join("libAviateGzPlugin.so").exists() {
         new_plugin_dir

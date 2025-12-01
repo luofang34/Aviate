@@ -38,18 +38,13 @@ fi
 export GZ_SIM_RESOURCE_PATH="${PX4_MODELS_DIR}:${GZ_SIM_RESOURCE_PATH:-}"
 
 # Export plugin path so Gazebo can find AviateGzPlugin
-# Check new location first, then legacy location
-PLUGIN_DIR="${AVIATE_DIR}/aviate-platform/aviate_gz_plugin/build"
-if [ ! -f "${PLUGIN_DIR}/libAviateGzPlugin.so" ]; then
-    # Fallback to legacy location
-    PLUGIN_DIR="${AVIATE_DIR}/aviate-platform/sitl/aviate_gz_plugin/build"
-fi
+PLUGIN_DIR="${AVIATE_DIR}/aviate-hal/xil/backends/gz/plugin/build"
 
 if [ -f "${PLUGIN_DIR}/libAviateGzPlugin.so" ]; then
     export GZ_SIM_SYSTEM_PLUGIN_PATH="${PLUGIN_DIR}:${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
     echo "AviateGzPlugin found at ${PLUGIN_DIR}"
 else
-    echo "Warning: AviateGzPlugin not built. Run: cd aviate-platform/aviate_gz_plugin/build && cmake .. && make"
+    echo "Warning: AviateGzPlugin not built. Run: cd aviate-hal/xil/backends/gz/plugin/build && cmake .. && make"
 fi
 
 if [ ! -f "$WORLD_FILE" ]; then

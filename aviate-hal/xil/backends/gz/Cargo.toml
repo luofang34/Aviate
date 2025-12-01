@@ -11,8 +11,8 @@ default = []
 gz-plugin = []
 
 [dependencies]
-aviate-platform-xil = { path = "../../xil" }
-aviate-mavlink = { path = "../../../aviate-mavlink" }
+aviate-hal-xil = { path = "../.." }
+aviate-mavlink = { path = "../../../../aviate-mavlink" }
 
 [[bin]]
 name = "gz-bridge"
