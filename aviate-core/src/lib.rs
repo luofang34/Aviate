@@ -761,11 +761,11 @@ impl<V: VehicleController, M: Mixer> AviateKernel<V, M> {
             .update_command_status(command_age_ms, self.command_timeout_ms);
 
         // 5. Handle any degradation triggers
-        // COV:EXCL_START(DEFENSIVE: degradation rarely triggered in unit tests)
+        // Note: Degradation trigger requires actual sensor/state failure that persists
+        // through update_from_state/sensors. Tested in SITL, hard to isolate in unit tests.
         if let Some(reason) = self.checks.in_flight.get_degradation_trigger() {
-            let _event = self.handle_degradation(reason, timestamp);
+            let _event = self.handle_degradation(reason, timestamp); // COV:EXCL(DEFENSIVE: requires real sensor failure, tested in SITL)
         }
-        // COV:EXCL_STOP
 
         // 6. Debug invariant verification
         #[cfg(debug_assertions)]

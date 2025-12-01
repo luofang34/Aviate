@@ -181,8 +181,25 @@ impl Quaternion {
         }
     }
 
+    /// Rotate a vector using this quaternion.
+    ///
+    /// # Frame Convention
+    ///
+    /// In Aviate, the quaternion represents the **Body → NED** transformation.
+    /// This method computes `v' = q ⊗ v ⊗ q*` (Hamilton product convention).
+    ///
+    /// - Input: `v` in Body frame
+    /// - Output: `v'` in NED (Earth) frame
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Accelerometer reads [0, 0, -9.81] in body frame when level
+    /// let accel_body = Vector3::new(0.0, 0.0, -9.81);
+    /// let accel_ned = quat.rotate_vector(accel_body);
+    /// // accel_ned ≈ [0, 0, -9.81] when attitude is level
+    /// ```
     pub fn rotate_vector(&self, v: Vector3<Scalar>) -> Vector3<Scalar> {
-        // Standard quaternion rotation
+        // Hamilton product: v' = q ⊗ v ⊗ q*
         let qx = self.x;
         let qy = self.y;
         let qz = self.z;
@@ -222,7 +239,28 @@ impl Quaternion {
         }
     }
 
+    /// Extract Euler angles (roll, pitch, yaw) from this quaternion.
+    ///
+    /// # Frame Convention
+    ///
+    /// Uses **ZYX (yaw-pitch-roll)** Euler sequence in NED frame:
+    /// - Roll (φ): rotation about X-axis (North), positive = right wing down
+    /// - Pitch (θ): rotation about Y-axis (East), positive = nose up
+    /// - Yaw (ψ): rotation about Z-axis (Down), positive = clockwise from above
+    ///
+    /// # Returns
+    ///
+    /// `(roll, pitch, yaw)` in radians, range:
+    /// - roll: [-π, π]
+    /// - pitch: [-π/2, π/2] (gimbal lock protected)
+    /// - yaw: [-π, π]
+    ///
+    /// # Note
+    ///
+    /// Gimbal lock occurs at pitch = ±90°. This implementation clamps pitch
+    /// to avoid numerical issues near the singularity.
     pub fn to_euler(&self) -> (Scalar, Scalar, Scalar) {
+        // ZYX convention: R = Rz(yaw) * Ry(pitch) * Rx(roll)
         // Roll (x-axis rotation)
         let sinr_cosp = 2.0 * (self.w * self.x + self.y * self.z);
         let cosr_cosp = 1.0 - 2.0 * (self.x * self.x + self.y * self.y);
@@ -249,6 +287,31 @@ impl Quaternion {
         (roll, pitch, yaw)
     }
 
+    /// Convert this quaternion to a 3×3 rotation matrix.
+    ///
+    /// # Frame Convention
+    ///
+    /// The returned matrix R transforms vectors from **Body frame to NED frame**:
+    /// ```ignore
+    /// v_ned = R * v_body
+    /// ```
+    ///
+    /// This is consistent with `rotate_vector()`:
+    /// ```ignore
+    /// let v_ned_a = quat.rotate_vector(v_body);
+    /// let v_ned_b = quat.to_rotation_matrix() * v_body;
+    /// // v_ned_a ≈ v_ned_b
+    /// ```
+    ///
+    /// # Matrix Layout
+    ///
+    /// ```text
+    /// R = | R[0][0]  R[0][1]  R[0][2] |   | r_n·b_x  r_n·b_y  r_n·b_z |
+    ///     | R[1][0]  R[1][1]  R[1][2] | = | r_e·b_x  r_e·b_y  r_e·b_z |
+    ///     | R[2][0]  R[2][1]  R[2][2] |   | r_d·b_x  r_d·b_y  r_d·b_z |
+    /// ```
+    ///
+    /// Where `r_n`, `r_e`, `r_d` are NED basis vectors expressed in body frame.
     pub fn to_rotation_matrix(&self) -> Matrix<3, 3> {
         let x2 = self.x + self.x;
         let y2 = self.y + self.y;

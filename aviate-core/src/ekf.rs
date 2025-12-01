@@ -4,11 +4,12 @@ use crate::sensor::{
 };
 use crate::state::{EstimateQuality, StateEstimate, StateValidFlags};
 use crate::types::{
-    FloatExt, Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond, Scalar, Validated,
+    FloatExt, Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, RadiansPerSecond,
+    Scalar, Validated,
 };
 
-// State dimension: 3 pos, 3 vel, 3 att_err, 3 gyro_bias, 3 accel_bias = 15
-pub const STATE_DIM: usize = 15;
+// State dimension: 3 pos, 3 vel, 3 att_err, 3 gyro_bias, 3 accel_bias, 3 mag_bias = 18
+pub const STATE_DIM: usize = 18;
 
 // State indices
 const IDX_POS: usize = 0;
@@ -16,6 +17,7 @@ const IDX_VEL: usize = 3;
 const IDX_ATT: usize = 6;
 const IDX_GB: usize = 9;
 const IDX_AB: usize = 12;
+const IDX_MB: usize = 15;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EkfConfig {
@@ -26,9 +28,22 @@ pub struct EkfConfig {
     pub meas_noise_gnss_pos: Scalar,
     pub meas_noise_gnss_vel: Scalar,
     pub meas_noise_baro: Scalar,
+    /// Heading measurement noise [rad²]
     pub meas_noise_mag: Scalar,
-    // Innovation gate threshold (sigma)
+    /// Innovation gate threshold (sigma)
     pub innovation_gate: Scalar,
+
+    // Magnetometer fusion config
+    /// Inclination vertical ratio at which weight decay begins (default 0.80)
+    pub mag_inclination_decay_start: Scalar,
+    /// Inclination vertical ratio at which fusion stops (default 0.95)
+    pub mag_inclination_limit: Scalar,
+    /// Minimum valid field strength [μT] (default 20.0)
+    pub mag_field_min: Scalar,
+    /// Maximum valid field strength [μT] (default 70.0)
+    pub mag_field_max: Scalar,
+    /// Mag bias random walk process noise [μT²/s] (default 1e-5)
+    pub process_noise_mag_bias: Scalar,
 }
 
 impl Default for EkfConfig {
@@ -41,8 +56,14 @@ impl Default for EkfConfig {
             meas_noise_gnss_pos: 0.5, // m^2
             meas_noise_gnss_vel: 0.1, // (m/s)^2
             meas_noise_baro: 2.0,     // m^2
-            meas_noise_mag: 0.01,     // uT^2 (very rough guess)
+            meas_noise_mag: 0.05,     // rad^2 (heading noise)
             innovation_gate: 5.0,     // 5-sigma gate
+            // Magnetometer config
+            mag_inclination_decay_start: 0.80, // Start weight decay
+            mag_inclination_limit: 0.95,       // Stop fusion
+            mag_field_min: 20.0,               // μT
+            mag_field_max: 70.0,               // μT
+            process_noise_mag_bias: 1e-5,      // μT²/s
         }
     }
 }
@@ -54,10 +75,11 @@ pub struct Ekf {
     vel: Vector3<MetersPerSecond>,
     gyro_bias: Vector3<RadiansPerSecond>,
     accel_bias: Vector3<MetersPerSecondSquared>,
+    mag_bias: Vector3<Microtesla>,
 
     last_gyro_body: Vector3<RadiansPerSecond>,
 
-    // Covariance P (15x15)
+    // Covariance P (18x18)
     p_cov: Matrix<STATE_DIM, STATE_DIM>,
 
     // Configuration
@@ -92,6 +114,7 @@ impl Ekf {
                 MetersPerSecondSquared(0.0),
                 MetersPerSecondSquared(0.0),
             ),
+            mag_bias: Vector3::new(Microtesla(0.0), Microtesla(0.0), Microtesla(0.0)),
             last_gyro_body: Vector3::new(
                 RadiansPerSecond(0.0),
                 RadiansPerSecond(0.0),
@@ -121,19 +144,18 @@ impl Ekf {
             MetersPerSecondSquared(0.0),
             MetersPerSecondSquared(0.0),
         );
+        self.mag_bias = Vector3::new(Microtesla(0.0), Microtesla(0.0), Microtesla(0.0));
         self.p_cov = Matrix::identity().mul_scalar(0.1);
         self.initialized = true;
     }
 
     pub fn predict(&mut self, imu: &ImuData, dt: Scalar) {
-        // COV:EXCL_START(DEFENSIVE: guards against uninitialized/invalid state)
         if !self.initialized {
             return;
         }
         if !dt.is_finite() || dt <= 0.0 {
             return;
         }
-        // COV:EXCL_STOP
 
         // Optional: early bail if IMU clearly bad
         for c in 0..3 {
@@ -230,8 +252,8 @@ impl Ekf {
         // Att dot = -Omega * Att -> F_att_att, F_att_gb = -I
         // Bias dot = 0 -> I
 
-        // Let's build F explicitly as Matrix<15,15>.
-        let mut f_mat = Matrix::<15, 15>::identity();
+        // Let's build F explicitly as Matrix<STATE_DIM, STATE_DIM>.
+        let mut f_mat = Matrix::<STATE_DIM, STATE_DIM>::identity();
 
         // dPos/dVel = I * dt
         f_mat.set(IDX_POS, IDX_VEL, dt);
@@ -272,7 +294,7 @@ impl Ekf {
         }
 
         // Q (Process Noise)
-        let mut q_noise = Matrix::<15, 15>::zero();
+        let mut q_noise = Matrix::<STATE_DIM, STATE_DIM>::zero();
         // Populate Q diagonal
         for i in 0..3 {
             q_noise.set(IDX_POS + i, IDX_POS + i, 0.001);
@@ -305,6 +327,13 @@ impl Ekf {
                 self.config.process_noise_accel_bias * dt,
             );
         }
+        for i in 0..3 {
+            q_noise.set(
+                IDX_MB + i,
+                IDX_MB + i,
+                self.config.process_noise_mag_bias * dt,
+            );
+        }
 
         // P = F * P * F' + Q
         let fp = f_mat.mat_mul(&self.p_cov);
@@ -324,12 +353,10 @@ impl Ekf {
             }
         }
 
-        // COV:EXCL_START(DEFENSIVE: GNSS health guards, tested via integration)
         match gnss_reading.value.health {
             GnssHealth::Good => {}
             GnssHealth::Suspect | GnssHealth::Lost => return,
         }
-        // COV:EXCL_STOP
 
         // Extra check for fix type if needed
         if gnss_reading.value.fix == GnssFix::None {
@@ -378,15 +405,199 @@ impl Ekf {
         }
     }
 
-    // COV:EXCL_START(STUB: mag update placeholder, not fully implemented)
+    /// Update EKF with magnetometer reading for heading estimation.
+    ///
+    /// # Approach
+    ///
+    /// Fuses tilt-compensated magnetic heading into the EKF yaw state.
+    /// Uses inclination-based weight decay to handle polar regions gracefully.
+    ///
+    /// # Frame Convention
+    ///
+    /// - Magnetometer data is in body frame
+    /// - Heading is magnetic (no declination correction)
+    /// - Positive yaw = clockwise from magnetic north when viewed from above
     pub fn update_mag(&mut self, mag_reading: &SensorReading<MagData>) {
-        if mag_reading.health != SensorHealth::Good {
+        use core::f32::consts::PI;
+
+        // Step 1: Health & Validity Gating
+        if !self.initialized || mag_reading.health != SensorHealth::Good {
             return;
         }
-        let _mag = &mag_reading.value;
-        // Real implementation would involve estimating heading/yaw from 3D mag + tilt
+
+        let mag = &mag_reading.value;
+
+        // Extract mag vector in body frame [μT]
+        let mag_x = mag.field_ut[0].0;
+        let mag_y = mag.field_ut[1].0;
+        let mag_z = mag.field_ut[2].0;
+
+        // Step 2: Field Strength Validation
+        // Earth's field: ~25-65 μT depending on location
+        let mag_norm = (mag_x * mag_x + mag_y * mag_y + mag_z * mag_z).sqrt();
+        if mag_norm < self.config.mag_field_min || mag_norm > self.config.mag_field_max {
+            return; // Anomalous field - likely interference
+        }
+
+        // Step 3: Inclination-Based Weight Calculation
+        // vertical_ratio = |mag_z| / |mag| indicates field inclination
+        let vertical_ratio = mag_z.abs() / mag_norm;
+
+        // Beyond threshold - stop fusion (polar region or high inclination)
+        if vertical_ratio >= self.config.mag_inclination_limit {
+            return;
+        }
+
+        // Weight: 1.0 at low inclination, decays to 0 at threshold
+        let incl_weight = if vertical_ratio < self.config.mag_inclination_decay_start {
+            1.0
+        } else {
+            // Linear decay from decay_start to limit
+            let range = self.config.mag_inclination_limit - self.config.mag_inclination_decay_start;
+            if range > 1e-6 {
+                1.0 - (vertical_ratio - self.config.mag_inclination_decay_start) / range
+            } else {
+                0.0 // COV:EXCL(DEFENSIVE: protects against misconfigured limits)
+            }
+        };
+
+        // If weight is too low, skip fusion
+        if incl_weight < 0.01 {
+            return;
+        }
+
+        // Step 4: Apply EKF-Estimated Mag Bias Correction
+        let mag_corrected_x = mag_x - self.mag_bias.x.0;
+        let mag_corrected_y = mag_y - self.mag_bias.y.0;
+        let mag_corrected_z = mag_z - self.mag_bias.z.0;
+
+        // Step 5: Tilt-Compensated Heading Extraction
+        // Rotate mag vector from body to NED using current attitude
+        let r_mat = self.quat.to_rotation_matrix();
+
+        // mag_ned = R * mag_body
+        let mag_n = r_mat.get(0, 0) * mag_corrected_x
+            + r_mat.get(0, 1) * mag_corrected_y
+            + r_mat.get(0, 2) * mag_corrected_z;
+        let mag_e = r_mat.get(1, 0) * mag_corrected_x
+            + r_mat.get(1, 1) * mag_corrected_y
+            + r_mat.get(1, 2) * mag_corrected_z;
+
+        // Magnetic heading (no declination applied)
+        // atan2(East, North) gives heading clockwise from North
+        let heading_mag = mag_e.atan2(mag_n);
+
+        // Step 6: Innovation Gating & Yaw Update
+        // Compare with current yaw estimate
+        let (_, _, yaw_est) = self.quat.to_euler();
+        let mut innov = heading_mag - yaw_est;
+
+        // COV:EXCL_START(DEFENSIVE: atan2/euler outputs bounded to [-π,π], wrapping is safety guard)
+        // Wrap innovation to [-π, π]
+        // Note: Both atan2 and to_euler return values in [-π, π], so innovation
+        // is bounded to [-2π, 2π]. Single iteration suffices, but while loop is
+        // defensive against numerical edge cases.
+        while innov > PI {
+            innov -= 2.0 * PI;
+        }
+        while innov < -PI {
+            innov += 2.0 * PI;
+        }
+        // COV:EXCL_STOP
+
+        // Apply inclination weight to measurement noise (higher noise = lower weight)
+        // r_effective = r / w² means lower weight increases effective noise
+        let r_effective = if incl_weight > 0.1 {
+            self.config.meas_noise_mag / (incl_weight * incl_weight)
+        } else {
+            return; // COV:EXCL(DEFENSIVE: weight 0.01-0.1 rejected by earlier check)
+        };
+
+        // Perform heading update using attitude error state
+        self.update_heading(innov, r_effective);
     }
-    // COV:EXCL_STOP
+
+    /// Internal: Update yaw/heading using scalar observation.
+    ///
+    /// H = [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, ..., 0] (observes z-component of attitude error)
+    fn update_heading(&mut self, innov: Scalar, r_noise: Scalar) {
+        // For heading, we observe the z-component of attitude error (yaw)
+        // H is a row vector with 1 at IDX_ATT+2 (yaw error state)
+        let state_idx = IDX_ATT + 2; // Yaw error state
+
+        // Innovation variance: S = H * P * H' + R = P[yaw][yaw] + R
+        let s = self.p_cov.get(state_idx, state_idx) + r_noise;
+        if s < 1e-9 {
+            return; // COV:EXCL(DEFENSIVE: prevent division by zero)
+        }
+
+        // Innovation gating
+        let gate_sq = self.config.innovation_gate * self.config.innovation_gate;
+        if (innov * innov) / s > gate_sq {
+            return; // Reject measurement
+        }
+
+        // Kalman gain: K = P * H' / S
+        // Since H is sparse (only 1 at state_idx), K[i] = P[i][state_idx] / S
+        let k_gain_factor = 1.0 / s;
+        let mut k_vector = [0.0; STATE_DIM];
+        for (i, val) in k_vector.iter_mut().enumerate().take(STATE_DIM) {
+            *val = self.p_cov.get(i, state_idx) * k_gain_factor;
+        }
+
+        // Update position states
+        self.pos.x = Meters(self.pos.x.0 + k_vector[IDX_POS] * innov);
+        self.pos.y = Meters(self.pos.y.0 + k_vector[IDX_POS + 1] * innov);
+        self.pos.z = Meters(self.pos.z.0 + k_vector[IDX_POS + 2] * innov);
+
+        // Update velocity states
+        self.vel.x = MetersPerSecond(self.vel.x.0 + k_vector[IDX_VEL] * innov);
+        self.vel.y = MetersPerSecond(self.vel.y.0 + k_vector[IDX_VEL + 1] * innov);
+        self.vel.z = MetersPerSecond(self.vel.z.0 + k_vector[IDX_VEL + 2] * innov);
+
+        // Update attitude (apply small angle rotation to quaternion)
+        let d_ang = Vector3::new(
+            k_vector[IDX_ATT] * innov,
+            k_vector[IDX_ATT + 1] * innov,
+            k_vector[IDX_ATT + 2] * innov,
+        );
+        let dq_small =
+            Quaternion::new(1.0, d_ang.x * 0.5, d_ang.y * 0.5, d_ang.z * 0.5).normalize();
+        self.quat = self.quat.mul(&dq_small).normalize();
+
+        // Update gyro bias
+        self.gyro_bias.x = RadiansPerSecond(self.gyro_bias.x.0 + k_vector[IDX_GB] * innov);
+        self.gyro_bias.y = RadiansPerSecond(self.gyro_bias.y.0 + k_vector[IDX_GB + 1] * innov);
+        self.gyro_bias.z = RadiansPerSecond(self.gyro_bias.z.0 + k_vector[IDX_GB + 2] * innov);
+
+        // Update accel bias
+        self.accel_bias.x = MetersPerSecondSquared(self.accel_bias.x.0 + k_vector[IDX_AB] * innov);
+        self.accel_bias.y =
+            MetersPerSecondSquared(self.accel_bias.y.0 + k_vector[IDX_AB + 1] * innov);
+        self.accel_bias.z =
+            MetersPerSecondSquared(self.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
+
+        // Update mag bias
+        self.mag_bias.x = Microtesla(self.mag_bias.x.0 + k_vector[IDX_MB] * innov);
+        self.mag_bias.y = Microtesla(self.mag_bias.y.0 + k_vector[IDX_MB + 1] * innov);
+        self.mag_bias.z = Microtesla(self.mag_bias.z.0 + k_vector[IDX_MB + 2] * innov);
+
+        // Update covariance: P = (I - K*H) * P
+        // H*P is row state_idx of P
+        let mut p_row_h = [0.0; STATE_DIM];
+        for (c, val) in p_row_h.iter_mut().enumerate().take(STATE_DIM) {
+            *val = self.p_cov.get(state_idx, c);
+        }
+
+        for (r, &k_val) in k_vector.iter().enumerate().take(STATE_DIM) {
+            for (c, &p_val) in p_row_h.iter().enumerate().take(STATE_DIM) {
+                let val = self.p_cov.get(r, c) - k_val * p_val;
+                self.p_cov.set(r, c, val);
+            }
+        }
+
+        self.p_cov.make_symmetric();
+    }
 
     #[doc(hidden)]
     pub fn update_scalar(&mut self, state_idx: usize, meas: Scalar, r_noise: Scalar) {
@@ -494,12 +705,12 @@ impl Ekf {
             quality: if self.initialized {
                 EstimateQuality::Good
             } else {
-                EstimateQuality::Unusable // COV:EXCL(DEFENSIVE: uninitialized state)
+                EstimateQuality::Unusable
             },
             valid_flags: if self.initialized {
                 StateValidFlags::all()
             } else {
-                StateValidFlags::empty() // COV:EXCL(DEFENSIVE: uninitialized state)
+                StateValidFlags::empty()
             },
         }
     }

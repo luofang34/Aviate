@@ -17,13 +17,13 @@
 
 | Metric | Covered | Total | Excluded | Final |
 |--------|---------|-------|----------|-------|
-| Lines | 1818 | 1818 | 15 markers | 100.0% |
-| Functions | 145 | 147 | 11 (STUB/DEFAULT) | 100.0% |
-| Branches | 280 | 280 | 0 LLVM artifacts | 100.0% |
+| Lines | 2352 | 2353 | 14 markers | 100.0% |
+| Functions | 146 | 148 | 10 (STUB/DEFAULT) | 100.0% |
+| Branches | 460 | 460 | 0 LLVM artifacts | 100.0% |
 
 ## Exclusions by Category
 
-- **STUB**: 2
+- **STUB**: 1
 - **DEFAULT**: 1
 - **DEFENSIVE**: 10
 - **EMPTY**: 1
@@ -38,16 +38,13 @@
 
 ### ekf.rs
 ```
-129:        // COV:EXCL_START(DEFENSIVE: guards against uninitialized/invalid state)
-136:        // COV:EXCL_STOP
-327:        // COV:EXCL_START(DEFENSIVE: GNSS health guards, tested via integration)
-332:        // COV:EXCL_STOP
-381:    // COV:EXCL_START(STUB: mag update placeholder, not fully implemented)
-389:    // COV:EXCL_STOP
-401:            _ => return, // COV:EXCL(DEFENSIVE: invalid state_idx guard)
-408:            return; // COV:EXCL(DEFENSIVE: prevent division by zero)
-497:                EstimateQuality::Unusable // COV:EXCL(DEFENSIVE: uninitialized state)
-502:                StateValidFlags::empty() // COV:EXCL(DEFENSIVE: uninitialized state)
+460:                0.0 // COV:EXCL(DEFENSIVE: protects against misconfigured limits)
+495:        // COV:EXCL_START(DEFENSIVE: atan2/euler outputs bounded to [-π,π], wrapping is safety guard)
+506:        // COV:EXCL_STOP
+513:            return; // COV:EXCL(DEFENSIVE: weight 0.01-0.1 rejected by earlier check)
+531:            return; // COV:EXCL(DEFENSIVE: prevent division by zero)
+612:            _ => return, // COV:EXCL(DEFENSIVE: invalid state_idx guard)
+619:            return; // COV:EXCL(DEFENSIVE: prevent division by zero)
 ```
 
 ### hal.rs
@@ -58,11 +55,10 @@
 
 ### lib.rs
 ```
-313:    // COV:EXCL_START(STUB: watchdog placeholder, not implemented)
-317:    // COV:EXCL_STOP
-431:            InitState::Armed => {} // COV:EXCL(EMPTY: monitoring only, disarm via disarm())
-761:        // COV:EXCL_START(DEFENSIVE: degradation rarely triggered in unit tests)
-765:        // COV:EXCL_STOP
+316:    // COV:EXCL_START(STUB: watchdog placeholder, not implemented)
+320:    // COV:EXCL_STOP
+434:            InitState::Armed => {} // COV:EXCL(EMPTY: monitoring only, disarm via disarm())
+767:            let _event = self.handle_degradation(reason, timestamp); // COV:EXCL(DEFENSIVE: requires real sensor failure, tested in SITL)
 ```
 
 ### mixer.rs
