@@ -12,43 +12,50 @@ Hardware Abstraction Layer for Aviate flight systems.
 ## Architecture
 
 ```
-┌─────────────────────────────────────┐
-│  aviate-apps / aviate-boards        │  Application layer
-│  (flight controller main loop)      │
-└─────────────────────────────────────┘
-                  ↓
-┌─────────────────────────────────────┐
-│  BoardHal<I, B, M, G, T>            │  HAL composition layer
-│  (implements SensorHal from core)   │
-└─────────────────────────────────────┘
-                  ↓
-┌──────────────────┬──────────────────┐
-│  Real Drivers    │  Fake Drivers    │  Driver layer
-│  (embedded-hal)  │  (SITL / XIL)    │
-└──────────────────┴──────────────────┘
-                  ↓
-┌──────────────────┬──────────────────┐
-│  MCU Peripherals │  Simulator       │  Hardware/Simulation layer
-│  (SPI/I2C/UART)  │  (Gazebo)        │
-└──────────────────┴──────────────────┘
+┌─────────────────────────────────────────────────┐
+│  aviate-apps / aviate-boards                    │  Application layer
+│  (flight controller main loop)                  │
+└─────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────┐
+│  BoardHal<I, B, M, G, T, A>                     │  HAL composition layer
+│  (implements SensorHal + ActuatorHal from core) │
+└─────────────────────────────────────────────────┘
+                        ↓
+┌────────────────────────┬────────────────────────┐
+│  Real Drivers          │  Fake Drivers          │  Driver layer
+│  (embedded-hal)        │  (SITL / XIL)          │
+│  - Icm426xx, Bmp390    │  - FakeImu, FakeBaro   │
+│  - DshotEscs, PwmMotors│  - FakeActuator        │
+└────────────────────────┴────────────────────────┘
+                        ↓
+┌────────────────────────┬────────────────────────┐
+│  MCU Peripherals       │  Simulator Transport   │  Hardware/Transport layer
+│  (SPI/I2C/PWM/DShot)   │  (SitlIO → Gazebo)     │
+└────────────────────────┴────────────────────────┘
 ```
 
 ## Design Philosophy
 
 **Same BoardHal for SITL and real hardware.**
 
-The `BoardHal<I, B, M, G, T>` is generic over driver types:
-- For SITL: `BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, SitlTime>`
-- For real hardware: `BoardHal<Icm426xx<I2C>, Bmp390<SPI>, Qmc5883l<I2C>, UbloxGnss<UART>, HwTime>`
+The `BoardHal<I, B, M, G, T, A>` is generic over driver types:
+- For SITL: `BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, SitlTime, FakeActuator>`
+- For real hardware: `BoardHal<Icm426xx<I2C>, Bmp390<SPI>, Qmc5883l<I2C>, UbloxGnss<UART>, HwTime, DshotEscs>`
 
-Both instantiations implement `SensorHal`, allowing the flight controller kernel to remain
-completely unaware of whether it's running in simulation or on real hardware.
+Both instantiations implement `SensorHal` and `ActuatorHal`, allowing the flight controller
+kernel to remain completely unaware of whether it's running in simulation or on real hardware.
 
 ```
+SENSORS (Input):
 Real HW:  SPI/I2C → Driver → BoardHal → SensorHal → Kernel
-SITL:     MAVLink → FakeDriver → BoardHal → SensorHal → Kernel
-                    ↑
-          Same code path from here onward
+SITL:     Transport → FakeDriver → BoardHal → SensorHal → Kernel
+
+ACTUATORS (Output + Optional Telemetry):
+Real HW:  Kernel → ActuatorHal → BoardHal → Driver → PWM/DShot
+SITL:     Kernel → ActuatorHal → BoardHal → FakeActuator → Transport → Gazebo
+                                                    ↑
+                                    Same code path up to here
 ```
 
 ## DO-178C Boundary

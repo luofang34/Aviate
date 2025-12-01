@@ -1,23 +1,56 @@
-//! SITL MAVLink I/O
+//! SITL Transport Layer
 //!
-//! Handles MAVLink network communication for SITL without implementing SensorHal.
-//! This module is responsible for:
-//! - Receiving HIL_SENSOR and HIL_GPS messages from simulators
-//! - Sending HIL_ACTUATOR_CONTROLS to simulators
-//! - Sending heartbeats
-//! - Receiving commands (arm/disarm, setpoints)
+//! Handles network communication between the flight controller and simulator.
+//! This is the transport layer for SITL - it moves data between the FC and simulator,
+//! but does NOT implement HAL traits. HAL abstraction lives in `aviate-hal-io`.
 //!
-//! The board layer uses this for I/O, then feeds the data to fake sensors
-//! which are wrapped by BoardHal to implement SensorHal.
+//! ## Responsibilities
+//!
+//! - **Sensor input**: Receives sensor data from simulator, buffers for BoardHal
+//! - **Actuator output**: Sends actuator commands to simulator
+//! - **Command input**: Receives arm/disarm and setpoint commands
+//! - **Heartbeat**: Maintains connection with simulator
+//!
+//! ## Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────────────────┐
+//! │                            aviate-hal-io                                │
+//! │  BoardHal<I,B,M,G,T,A> implements SensorHal + ActuatorHal              │
+//! │  - FakeImu, FakeBaro, FakeMag, FakeGnss (sensor drivers)              │
+//! │  - FakeActuator (actuator driver)                                      │
+//! └─────────────────────────────────────────────────────────────────────────┘
+//!                    ↑ feed()                      ↓ take_cmd()
+//! ┌─────────────────────────────────────────────────────────────────────────┐
+//! │                     aviate-hal-xil (this module)                        │
+//! │  SitlIO - Transport layer using MAVLink/UDP                            │
+//! │  - take_sensor_data() → feeds fake sensors                             │
+//! │  - send_actuator() ← reads from fake actuator                          │
+//! └─────────────────────────────────────────────────────────────────────────┘
+//!                    ↑ UDP                         ↓ UDP
+//! ┌─────────────────────────────────────────────────────────────────────────┐
+//! │                          Simulator (Gazebo)                             │
+//! │  HIL_SENSOR, HIL_GPS → sensor data                                     │
+//! │  HIL_ACTUATOR_CONTROLS ← actuator commands                             │
+//! └─────────────────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! ## Note on MAVLink
+//!
+//! MAVLink is used as the wire protocol because it's the standard for HIL simulation.
+//! However, the actuator and sensor abstractions in `aviate-hal-io` are completely
+//! transport-agnostic. A different transport (e.g., shared memory, custom UDP) could
+//! be used by implementing a different transport layer.
 
 use std::io;
 use std::net::UdpSocket;
 
-use aviate_core::hal::{ActuatorHal, CommandHal, SystemCommand, SystemHal};
-use aviate_core::mixer::ActuatorCmd;
+use aviate_core::hal::{CommandHal, SystemCommand, SystemHal};
 use aviate_core::time::{TimeSource, Timestamp};
 
-use aviate_hal_io::{GnssFix, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading};
+use aviate_hal_io::{
+    GnssFix, RawActuatorCmd, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading,
+};
 
 use aviate_mavlink::{
     mav_cmd, parse_mavlink, serialize_mavlink, CommandLong, Heartbeat, HilActuatorControls, HilGps,
@@ -41,11 +74,28 @@ pub struct HilGpsData {
     pub gnss: RawGnssReading,
 }
 
-/// SITL MAVLink transceiver
+/// SITL I/O transport layer
 ///
-/// Handles all MAVLink I/O for SITL simulation. Does NOT implement SensorHal -
-/// that's done by BoardHal wrapping fake sensors that are fed from this data.
-pub struct SitlMavlink {
+/// Handles communication with the simulator. Does NOT implement HAL traits -
+/// those are implemented by `BoardHal` in `aviate-hal-io` using fake drivers.
+///
+/// ## Data Flow
+///
+/// **Sensors (input):**
+/// ```text
+/// Simulator → SitlIO.poll() → take_sensor_data() → board feeds fake sensors
+/// ```
+///
+/// **Actuators (output):**
+/// ```text
+/// BoardHal.write() → FakeActuator → board takes cmd → SitlIO.send_actuator()
+/// ```
+///
+/// **Commands (input):**
+/// ```text
+/// GCS → SitlIO.recv_command() → board processes arm/disarm/setpoints
+/// ```
+pub struct SitlIO {
     recv_socket: UdpSocket,
     send_socket: UdpSocket,
     config: XilConfig,
@@ -71,8 +121,8 @@ pub struct SitlMavlink {
     tx_count: u64,
 }
 
-impl SitlMavlink {
-    /// Create a new SITL MAVLink transceiver
+impl SitlIO {
+    /// Create a new SITL I/O transport
     pub fn new(config: XilConfig) -> io::Result<Self> {
         // Socket to receive sensor data from simulator
         let recv_socket = UdpSocket::bind(("0.0.0.0", config.sensor_port))?;
@@ -277,16 +327,26 @@ impl SitlMavlink {
         }
     }
 
-    /// Send HIL_ACTUATOR_CONTROLS message
-    fn send_actuator_controls(&mut self, cmd: &ActuatorCmd) {
-        let mut controls = [0.0f32; 16];
-        for (i, output) in cmd.outputs.iter().enumerate().take(16) {
-            controls[i] = output.0;
-        }
-
+    /// Send actuator command to simulator via HIL_ACTUATOR_CONTROLS
+    ///
+    /// This is the MAVLink output for actuator commands. The board layer calls this
+    /// after reading from FakeActuator (via BoardHal's ActuatorHal implementation).
+    ///
+    /// ## Data Flow
+    ///
+    /// ```text
+    /// Kernel → BoardHal.write(&ActuatorCmd) → FakeActuator
+    ///                                              ↓
+    ///                            board reads via actuator_mut().take_cmd()
+    ///                                              ↓
+    ///                            SitlMavlink.send_actuator(&RawActuatorCmd)
+    ///                                              ↓
+    ///                            HIL_ACTUATOR_CONTROLS → Gazebo
+    /// ```
+    pub fn send_actuator(&mut self, cmd: &RawActuatorCmd) {
         let msg = HilActuatorControls {
             time_usec: self.now_us(),
-            controls,
+            controls: cmd.outputs,
             mode: if self.armed {
                 MavModeFlag::SAFETY_ARMED.0
             } else {
@@ -296,6 +356,21 @@ impl SitlMavlink {
         };
 
         self.send_message(&MavMessage::HilActuatorControls(msg));
+    }
+
+    /// Set armed state (for MAVLink mode flags)
+    pub fn set_armed(&mut self, armed: bool) {
+        self.armed = armed;
+        if armed {
+            eprintln!("[INFO] MAVLink armed");
+        } else {
+            eprintln!("[INFO] MAVLink disarmed");
+        }
+    }
+
+    /// Check if armed
+    pub fn is_armed(&self) -> bool {
+        self.armed
     }
 
     /// Send a MAVLink message to simulator
@@ -316,29 +391,8 @@ impl SitlMavlink {
     }
 }
 
-// Implement ActuatorHal - sends commands to simulator
-impl ActuatorHal for SitlMavlink {
-    fn write(&mut self, cmd: &ActuatorCmd) {
-        self.send_actuator_controls(cmd);
-    }
-
-    fn arm(&mut self) {
-        self.armed = true;
-        eprintln!("[INFO] HAL armed");
-    }
-
-    fn disarm(&mut self) {
-        self.armed = false;
-        eprintln!("[INFO] HAL disarmed");
-    }
-
-    fn is_armed(&self) -> bool {
-        true // SITL always hardware-armed (safety switch)
-    }
-}
-
 // Implement SystemHal - timing and system functions
-impl SystemHal for SitlMavlink {
+impl SystemHal for SitlIO {
     fn now(&self) -> Timestamp {
         Timestamp {
             ticks: self.now_us(),
@@ -368,7 +422,7 @@ impl SystemHal for SitlMavlink {
 }
 
 // Implement CommandHal - receives commands from GCS
-impl CommandHal for SitlMavlink {
+impl CommandHal for SitlIO {
     fn recv_command(&mut self) -> Option<SystemCommand> {
         self.poll();
         self.command.take()

@@ -6,7 +6,7 @@
 //! - **Backend trait**: Interface for kinematics backends (Gazebo, Unity, Chrono, etc.)
 //! - **World state**: Backend-agnostic representation of simulation world
 //! - **Test infrastructure**: Mission framework, test runner, config parsing
-//! - **HAL implementations**: Mock and UDP MAVLink HAL for testing
+//! - **SITL transport**: Network communication with simulators (MAVLink/UDP)
 //!
 //! ## Architecture
 //!
@@ -26,8 +26,8 @@
 pub mod backend;
 pub mod bridge;
 pub mod flight_log;
-pub mod mavlink_io;
 pub mod mock;
+pub mod sitl_io;
 pub mod test;
 pub mod udp;
 pub mod world;
@@ -38,10 +38,13 @@ pub use world::{
     AngularVelocity, Entity, EntityId, EntityState, Position, Quaternion, Velocity, World,
 };
 
-// HAL exports
-pub use mavlink_io::{HilGpsData, HilSensorData, SitlMavlink};
+// Transport exports
 pub use mock::SitlHal;
+pub use sitl_io::{HilGpsData, HilSensorData, SitlIO};
 pub use udp::UdpMavlinkHal;
+
+// Re-export legacy name for compatibility
+pub use SitlIO as SitlMavlink;
 
 // Flight log exports
 pub use flight_log::{FlightLog, FlightLogConfig, FlightSample, FlightStats};

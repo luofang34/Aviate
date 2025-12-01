@@ -206,6 +206,255 @@ pub trait GnssDriver {
 }
 
 // ============================================================================
+// Actuator Driver
+// ============================================================================
+
+/// Maximum number of actuator outputs
+pub const MAX_ACTUATOR_OUTPUTS: usize = 16;
+
+/// Raw actuator command (group of outputs)
+///
+/// Contains normalized outputs [0.0, 1.0] for each actuator channel.
+/// For motors: 0.0 = stopped, 1.0 = full throttle
+/// For servos: 0.0 = min position, 1.0 = max position
+#[derive(Debug, Clone, Copy)]
+pub struct RawActuatorCmd {
+    /// Normalized outputs [0.0, 1.0] for each actuator
+    pub outputs: [f32; MAX_ACTUATOR_OUTPUTS],
+    /// Number of active outputs
+    pub count: u8,
+}
+
+impl Default for RawActuatorCmd {
+    fn default() -> Self {
+        Self {
+            outputs: [0.0; MAX_ACTUATOR_OUTPUTS],
+            count: 0,
+        }
+    }
+}
+
+// ============================================================================
+// Actuator Telemetry (feedback from ESCs, servos, etc.)
+// ============================================================================
+
+/// Error flags for a single actuator channel
+///
+/// These flags indicate fault conditions reported by the actuator.
+/// Multiple flags can be set simultaneously.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ActuatorErrorFlags(pub u8);
+
+impl ActuatorErrorFlags {
+    pub const NONE: Self = Self(0);
+    pub const OVERCURRENT: Self = Self(1 << 0);
+    pub const OVERTEMPERATURE: Self = Self(1 << 1);
+    pub const STALL: Self = Self(1 << 2);
+    pub const VOLTAGE_LOW: Self = Self(1 << 3);
+    pub const VOLTAGE_HIGH: Self = Self(1 << 4);
+    pub const COMM_ERROR: Self = Self(1 << 5);
+    pub const HARDWARE_FAULT: Self = Self(1 << 6);
+
+    /// Check if any error flag is set
+    pub fn has_error(self) -> bool {
+        self.0 != 0
+    }
+
+    /// Check if a specific flag is set
+    pub fn contains(self, flag: Self) -> bool {
+        (self.0 & flag.0) != 0
+    }
+}
+
+/// Telemetry for a single actuator channel
+///
+/// This structure represents feedback from a single actuator (motor, servo, etc.).
+/// All fields are optional since different actuator types report different data:
+///
+/// - **ESCs**: RPM, current, temperature, voltage
+/// - **Servos**: Position, current, temperature
+/// - **Simple PWM**: No feedback (all None)
+/// - **CAN ESCs**: Full telemetry suite
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ActuatorTelemetry {
+    /// Measured speed in RPM (motors) or position in normalized units (servos)
+    ///
+    /// For motors: rotational speed in RPM
+    /// For servos: actual position as normalized [0.0, 1.0]
+    pub speed_or_position: Option<f32>,
+
+    /// Current draw in amperes
+    pub current_a: Option<f32>,
+
+    /// Temperature in Celsius (ESC or motor temperature)
+    pub temperature_c: Option<f32>,
+
+    /// Voltage at the actuator in volts
+    pub voltage_v: Option<f32>,
+
+    /// Error/fault flags
+    pub errors: ActuatorErrorFlags,
+}
+
+impl ActuatorTelemetry {
+    /// Check if this channel reports any telemetry data
+    pub fn has_data(&self) -> bool {
+        self.speed_or_position.is_some()
+            || self.current_a.is_some()
+            || self.temperature_c.is_some()
+            || self.voltage_v.is_some()
+    }
+
+    /// Check if this channel has any errors
+    pub fn has_error(&self) -> bool {
+        self.errors.has_error()
+    }
+}
+
+/// Aggregate actuator status for all channels
+///
+/// Contains telemetry from all actuator channels plus system-level information.
+/// Use this to get a complete picture of actuator health and performance.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ActuatorStatus {
+    /// Per-channel telemetry
+    pub channels: [ActuatorTelemetry; MAX_ACTUATOR_OUTPUTS],
+
+    /// Number of channels with valid telemetry
+    pub channel_count: u8,
+
+    /// Overall bus/battery voltage (from ESC telemetry)
+    pub bus_voltage_v: Option<f32>,
+
+    /// Total current draw across all actuators
+    pub total_current_a: Option<f32>,
+}
+
+impl ActuatorStatus {
+    /// Check if any actuator is reporting errors
+    pub fn has_errors(&self) -> bool {
+        self.channels[..self.channel_count as usize]
+            .iter()
+            .any(|ch| ch.has_error())
+    }
+
+    /// Get the maximum temperature across all channels
+    pub fn max_temperature_c(&self) -> Option<f32> {
+        self.channels[..self.channel_count as usize]
+            .iter()
+            .filter_map(|ch| ch.temperature_c)
+            .fold(None, |max, temp| {
+                Some(max.map_or(temp, |m: f32| m.max(temp)))
+            })
+    }
+}
+
+/// Actuator driver trait
+///
+/// Implement this for any actuator output driver:
+/// - **Simple**: PWM motors without feedback
+/// - **Medium**: DShot ESCs with telemetry
+/// - **Advanced**: CAN ESCs (BLHeli32, DroneCAN) with full status reporting
+/// - **Other**: Servos, rocket engines, airbrakes, parachutes, etc.
+/// - **SITL**: FakeActuator (buffered for transport layer)
+///
+/// ## Design
+///
+/// Actuators are bidirectional I/O devices:
+/// - **Output**: Commands (normalized [0.0, 1.0])
+/// - **Input**: Telemetry/status (optional, depends on hardware)
+///
+/// Unlike sensors which have individual traits (ImuDriver, BaroDriver, etc.),
+/// actuators use a single trait that handles all outputs as a group. This reflects
+/// how actuator hardware typically works (all PWM channels updated together).
+///
+/// ## Telemetry Support
+///
+/// Telemetry is optional. Simple PWM drivers return `None` for `read_status()`,
+/// while advanced ESCs can report RPM, current, temperature, and errors.
+///
+/// ## Example
+///
+/// ```ignore
+/// // Simple PWM motor group (no telemetry)
+/// impl ActuatorDriver for PwmMotorGroup<TIM1> {
+///     fn write(&mut self, cmd: &RawActuatorCmd) -> ActuatorResult<()> {
+///         for (i, &output) in cmd.outputs[..cmd.count as usize].iter().enumerate() {
+///             self.set_duty(i, output);
+///         }
+///         Ok(())
+///     }
+///     // read_status() defaults to None
+///     // ...
+/// }
+///
+/// // DShot ESC with telemetry
+/// impl ActuatorDriver for DshotEscGroup {
+///     fn write(&mut self, cmd: &RawActuatorCmd) -> ActuatorResult<()> { ... }
+///
+///     fn read_status(&mut self) -> Option<ActuatorStatus> {
+///         // Return RPM, current, temperature from ESC telemetry
+///         Some(self.telemetry.take()?)
+///     }
+///
+///     fn status_ready(&mut self) -> bool {
+///         self.telemetry.is_some()
+///     }
+/// }
+///
+/// // SITL: FakeActuator buffers commands and receives telemetry from simulator
+/// impl ActuatorDriver for FakeActuator {
+///     fn write(&mut self, cmd: &RawActuatorCmd) -> ActuatorResult<()> {
+///         self.buffered_cmd = Some(*cmd);
+///         Ok(())
+///     }
+///
+///     fn read_status(&mut self) -> Option<ActuatorStatus> {
+///         self.buffered_status.take()
+///     }
+/// }
+/// ```
+pub trait ActuatorDriver {
+    /// Write actuator outputs
+    ///
+    /// Outputs are normalized [0.0, 1.0]. The driver is responsible for
+    /// converting to hardware-specific values (PWM duty cycle, DShot commands, etc.)
+    fn write(&mut self, cmd: &RawActuatorCmd) -> ActuatorResult<()>;
+
+    /// Read actuator telemetry/status
+    ///
+    /// Returns telemetry data if available and supported by the hardware.
+    /// Simple drivers (plain PWM) return `None` - this is normal and expected.
+    ///
+    /// For ESCs with telemetry: RPM, current, temperature, errors
+    /// For servos with feedback: position, current
+    fn read_status(&mut self) -> Option<ActuatorStatus> {
+        None // Default: no telemetry support
+    }
+
+    /// Check if new telemetry/status is available
+    ///
+    /// Returns `false` for drivers without telemetry support.
+    fn status_ready(&mut self) -> bool {
+        false // Default: no telemetry
+    }
+
+    /// Enable actuator outputs (arm)
+    ///
+    /// After calling arm(), write() commands will be applied to hardware.
+    /// Before arming, outputs should remain at safe/disarmed values.
+    fn arm(&mut self);
+
+    /// Disable actuator outputs (disarm/safe)
+    ///
+    /// Immediately sets all outputs to safe values (typically 0 for motors).
+    fn disarm(&mut self);
+
+    /// Check if outputs are enabled
+    fn is_armed(&self) -> bool;
+}
+
+// ============================================================================
 // Calibration Data
 // ============================================================================
 

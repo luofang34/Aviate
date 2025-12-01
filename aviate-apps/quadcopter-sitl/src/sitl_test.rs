@@ -296,7 +296,11 @@ fn launch_gz_bridges(
 
         match child {
             Ok(c) => {
-                println!("  gz-bridge started (PID: {}, instance {})", c.id(), vehicle.instance);
+                println!(
+                    "  gz-bridge started (PID: {}, instance {})",
+                    c.id(),
+                    vehicle.instance
+                );
                 children.push(c);
             }
             Err(e) => {
@@ -347,7 +351,12 @@ fn launch_flight_controllers(
 
         match child {
             Ok(c) => {
-                println!("  FC started (PID: {}, instance {}, port {})", c.id(), vehicle.instance, sensor_port);
+                println!(
+                    "  FC started (PID: {}, instance {}, port {})",
+                    c.id(),
+                    vehicle.instance,
+                    sensor_port
+                );
                 children.push(c);
             }
             Err(e) => {

@@ -6,13 +6,18 @@
 //! ## Architecture
 //!
 //! This board uses the same `BoardHal` that real hardware boards use,
-//! ensuring the sensor dataflow is identical between SITL and real hardware:
+//! ensuring the dataflow is identical between SITL and real hardware:
 //!
 //! ```text
-//! SITL:  Gazebo → HIL_SENSOR → SitlMavlink → FakeImu/Baro/... → BoardHal → SensorHal
+//! SENSORS (Input):
+//! SITL:  Gazebo → HIL_SENSOR → SitlIO → FakeImu/Baro/... → BoardHal → SensorHal
 //! Real:  SPI/I2C → BMI088/BMP390/... → BoardHal → SensorHal
 //!                                           ↓
 //!                                    Same kernel code
+//!                                           ↓
+//! ACTUATORS (Output):
+//! SITL:  Kernel → BoardHal → FakeActuator → SitlIO → HIL_ACTUATOR_CONTROLS → Gazebo
+//! Real:  Kernel → BoardHal → PwmMotors → PWM signals → ESCs
 //! ```
 //!
 //! ## Sensor Configuration (simulated)
@@ -50,11 +55,11 @@ use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
 use aviate_core::types::{Meters, MetersPerSecond, Normalized, Seconds};
 use aviate_core::AviateKernel;
 
-use aviate_hal_io::{BoardHal, FakeBaro, FakeGnss, FakeImu, FakeMag};
-use aviate_hal_xil::{SitlConfig, SitlMavlink};
+use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
+use aviate_hal_xil::{SitlConfig, SitlIO};
 
 /// Time source for SITL using std::time
-struct SitlTime {
+pub struct SitlTime {
     start: std::time::Instant,
 }
 
@@ -72,19 +77,20 @@ impl aviate_hal_io::TimeSource for SitlTime {
     }
 }
 
-/// Type alias for the SITL board's sensor HAL
+/// Type alias for the SITL board's HAL
 ///
 /// This is the same BoardHal that real hardware would use, just with
-/// fake sensor drivers instead of real hardware drivers.
-pub type SitlBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, SitlTime>;
+/// fake sensor/actuator drivers instead of real hardware drivers.
+/// Implements both SensorHal and ActuatorHal.
+pub type SitlBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, SitlTime, FakeActuator>;
 
 /// X500 SITL board configuration
 ///
 /// Uses the same BoardHal abstraction as real hardware boards, ensuring
 /// that SITL tests exercise the same code paths as real hardware.
 pub struct X500SitlBoard {
-    /// MAVLink I/O (receives HIL messages, sends actuator commands)
-    mavlink: SitlMavlink,
+    /// SITL transport (receives sensor data, sends actuator commands)
+    transport: SitlIO,
 
     /// Board HAL with fake sensors (same interface as real hardware)
     /// This implements SensorHal via the generic BoardHal implementation
@@ -148,24 +154,32 @@ impl X500SitlBoard {
 
     /// Create a new X500 SITL board with custom configuration
     pub fn with_config(config: SitlConfig) -> io::Result<Self> {
-        let mavlink = SitlMavlink::new(config)?;
+        let transport = SitlIO::new(config)?;
 
-        // Create fake sensors - same interface as real hardware drivers
+        // Create fake sensors and actuator - same interface as real hardware drivers
         let fake_imu = FakeImu::new();
         let fake_baro = FakeBaro::new();
         let fake_mag = FakeMag::new();
         let fake_gnss = FakeGnss::new();
         let time = SitlTime::new();
+        let fake_actuator = FakeActuator::new();
 
-        // Create BoardHal with fake sensors
+        // Create BoardHal with fake sensors and actuator
         // This is the SAME BoardHal that real hardware would use!
-        let board_hal = BoardHal::new(fake_imu, fake_baro, fake_mag, fake_gnss, time);
+        let board_hal = BoardHal::new(
+            fake_imu,
+            fake_baro,
+            fake_mag,
+            fake_gnss,
+            time,
+            fake_actuator,
+        );
 
         let kernel = Self::create_kernel();
         let last_cmd = Self::default_command();
 
         Ok(Self {
-            mavlink,
+            transport,
             board_hal,
             kernel,
             last_cmd,
@@ -249,11 +263,11 @@ impl X500SitlBoard {
     /// Returns the actuator command that was sent.
     pub fn step(&mut self) -> ActuatorCmd {
         // 1. Poll MAVLink for incoming messages
-        self.mavlink.poll();
+        self.transport.poll();
 
         // 2. Feed fake sensors with HIL data (via BoardHal accessors)
         //    This is the key integration point - same pattern as real HW feeding real sensors
-        if let Some(sensor_data) = self.mavlink.take_sensor_data() {
+        if let Some(sensor_data) = self.transport.take_sensor_data() {
             // Feed IMU
             self.board_hal.imu_mut().feed(sensor_data.imu);
             // Feed Baro
@@ -262,7 +276,7 @@ impl X500SitlBoard {
             self.board_hal.mag_mut().feed(sensor_data.mag);
         }
 
-        if let Some(gps_data) = self.mavlink.take_gps_data() {
+        if let Some(gps_data) = self.transport.take_gps_data() {
             // Feed GNSS
             self.board_hal.gnss_mut().feed(gps_data.gnss);
         }
@@ -304,7 +318,7 @@ impl X500SitlBoard {
         };
 
         // 4. Receive commands via MAVLink
-        if let Some(sys_cmd) = self.mavlink.recv_command() {
+        if let Some(sys_cmd) = self.transport.recv_command() {
             match sys_cmd {
                 SystemCommand::FlightControl(cmd) => {
                     self.kernel
@@ -322,12 +336,16 @@ impl X500SitlBoard {
                     } else {
                         eprintln!("[INFO] Armed successfully");
                     }
-                    self.mavlink.arm();
+                    // Arm through BoardHal (which arms FakeActuator) and notify MAVLink
+                    self.board_hal.arm();
+                    self.transport.set_armed(true);
                 }
                 SystemCommand::Disarm => {
                     eprintln!("[INFO] Disarm command");
                     self.kernel.disarm();
-                    self.mavlink.disarm();
+                    // Disarm through BoardHal and notify MAVLink
+                    self.board_hal.disarm();
+                    self.transport.set_armed(false);
                 }
             }
         }
@@ -350,18 +368,25 @@ impl X500SitlBoard {
         // 6. Run init state machine
         let sensors = self.sensor_cache.to_sensor_set();
         if !self.kernel.is_ready() {
-            let ts = self.mavlink.now();
+            let ts = self.transport.now();
             self.kernel.init_step(&sensors, ts);
         }
 
         // 7. Step kernel
         let actuator_cmd = self.kernel.step(time_delta, &self.last_cmd, &sensors, 0);
 
-        // 8. Write outputs via MAVLink
-        self.mavlink.write(&actuator_cmd);
+        // 8. Write outputs via BoardHal (ActuatorHal implementation)
+        //    This writes to FakeActuator, same path as real hardware
+        self.board_hal.write(&actuator_cmd);
 
-        // 9. Watchdog
-        self.mavlink.kick_watchdog();
+        // 9. Forward actuator command to simulator via MAVLink
+        //    Take command from FakeActuator and send to Gazebo
+        if let Some(raw_cmd) = self.board_hal.actuator_mut().take_cmd() {
+            self.transport.send_actuator(&raw_cmd);
+        }
+
+        // 10. Watchdog
+        self.transport.kick_watchdog();
 
         actuator_cmd
     }
@@ -369,10 +394,10 @@ impl X500SitlBoard {
     /// Run the main control loop indefinitely
     pub fn run(&mut self) -> ! {
         let loop_period_us = 1000; // 1kHz
-        let mut last_tick = self.mavlink.now_us();
+        let mut last_tick = self.transport.now_us();
 
         loop {
-            let now = self.mavlink.now_us();
+            let now = self.transport.now_us();
             let elapsed = now.saturating_sub(last_tick);
 
             if elapsed >= loop_period_us {
@@ -409,7 +434,7 @@ impl X500SitlBoard {
 
     /// Get current timestamp in microseconds
     pub fn now_us(&self) -> u64 {
-        self.mavlink.now_us()
+        self.transport.now_us()
     }
 
     /// Get the airframe ID

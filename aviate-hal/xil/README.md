@@ -1,28 +1,123 @@
 # aviate-hal-xil
 
-X-In-Loop (XIL) simulation infrastructure for Aviate flight systems.
+X-In-Loop (XIL) simulation and testing infrastructure for Aviate flight systems.
+
+## What is XIL?
+
+XIL encompasses both:
+- **SITL (Software-In-The-Loop)**: Full software simulation - flight controller runs on host PC
+- **HITL (Hardware-In-The-Loop)**: Real FC hardware connected to simulated environment
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        X-In-Loop (XIL) Modes                            │
+├─────────────────────────────────┬───────────────────────────────────────┤
+│            SITL                 │              HITL                     │
+├─────────────────────────────────┼───────────────────────────────────────┤
+│  FC: Host process               │  FC: Real MCU (STM32, etc.)           │
+│  Sensors: FakeImu, FakeBaro     │  Sensors: Real drivers, simulated I/O │
+│  Transport: UDP loopback        │  Transport: UART/USB to host          │
+│  Use: CI/CD, rapid iteration    │  Use: Hardware validation, timing     │
+└─────────────────────────────────┴───────────────────────────────────────┘
+```
 
 ## Quick Reference
 
 | Component | Description |
 |-----------|-------------|
-| `SitlMavlink` | MAVLink I/O (receives HIL_SENSOR, sends HIL_ACTUATOR) |
-| `KinematicsBackend` | Trait for simulator backends (Gazebo, future: Unity, AirSim) |
+| `XilIO` | Transport layer for XIL (sensor input, actuator output) |
+| `KinematicsBackend` | Trait for simulator backends (Gazebo, Unity, AirSim) |
 | `Mission` / `Phase` | Test framework for defining flight scenarios |
 | `TestConfig` | TOML parser for test configuration files |
 | `FlightLog` | Flight data recording and statistics |
 
 ## Purpose
 
-This crate provides **HAL-facing XIL glue** - the integration layer between flight controllers
-and simulators. It handles:
+This crate provides **XIL infrastructure** - the integration layer between flight controllers
+and simulators for both SITL and HITL testing:
 
-- MAVLink HIL I/O (SitlMavlink)
+- Transport I/O - Communication between FC and simulator
 - Backend trait definition (KinematicsBackend)
 - Test infrastructure (missions, criteria, multi-vehicle)
 - Flight logging
 
-**NOT handled here**: World modeling, Gazebo-specific code (that's in `backends/gz`).
+**NOT handled here**: World modeling, backend-specific code (that's in `backends/*`).
+
+## Architecture
+
+### SITL Mode
+
+Flight controller runs as a host process, using fake drivers:
+
+```
+┌──────────────┐                    ┌─────────────────────────────────────┐
+│   Simulator  │                    │     Flight Controller (Host)        │
+│   (Gazebo)   │                    │                                     │
+│              │    UDP/MAVLink     │  ┌─────────┐     ┌──────────────┐  │
+│  Sensors ────┼───────────────────→│  │ XilIO   │────→│ FakeImu/Baro │  │
+│              │                    │  │(transport)    │ FakeMag/Gnss │  │
+│              │                    │  └─────────┘     └──────┬───────┘  │
+│              │                    │                         ↓          │
+│              │                    │                   ┌──────────┐     │
+│              │                    │                   │ BoardHal │     │
+│              │                    │                   └────┬─────┘     │
+│              │                    │                        ↓          │
+│              │                    │                   ┌──────────┐     │
+│  Motors  ←───┼────────────────────│←─ FakeActuator ←──│  Kernel  │     │
+│              │                    │                   └──────────┘     │
+└──────────────┘                    └─────────────────────────────────────┘
+```
+
+### HITL Mode
+
+Flight controller runs on real hardware, I/O redirected to simulator:
+
+```
+┌──────────────┐                    ┌─────────────────────────────────────┐
+│   Simulator  │                    │     Flight Controller (MCU)         │
+│   (Gazebo)   │                    │                                     │
+│              │    UART/USB        │  ┌─────────┐     ┌──────────────┐  │
+│  Sensors ────┼───────────────────→│  │ HitlIO  │────→│ HitlImu/Baro │  │
+│              │                    │  │(transport)    │  (redirect)  │  │
+│              │                    │  └─────────┘     └──────┬───────┘  │
+│              │                    │                         ↓          │
+│              │                    │                   ┌──────────┐     │
+│              │                    │                   │ BoardHal │     │
+│              │                    │                   └────┬─────┘     │
+│              │                    │                        ↓          │
+│              │                    │                   ┌──────────┐     │
+│  Motors  ←───┼────────────────────│←─ HitlActuator ←──│  Kernel  │     │
+│              │                    │                   └──────────┘     │
+└──────────────┘                    └─────────────────────────────────────┘
+```
+
+## Transport vs HAL
+
+**Important architectural distinction:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  XilIO = Transport Layer (NOT HAL)                          │
+│  - Sends actuator commands to simulator                     │
+│  - Receives sensor data from simulator                      │
+│  - Does NOT implement ActuatorHal                           │
+│  - Protocol: MAVLink HIL messages (UDP for SITL, UART/USB   │
+│              for HITL)                                      │
+└─────────────────────────────────────────────────────────────┘
+                          ↑
+               send_actuator(), poll()
+                          ↑
+┌─────────────────────────────────────────────────────────────┐
+│  FakeActuator / HitlActuator (in aviate-hal-io)             │
+│  - Implements ActuatorDriver                                 │
+│  - Buffers commands for transport to collect                │
+│  - Receives telemetry from transport                        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+The kernel writes to `BoardHal`, then the transport layer takes the buffered
+command and sends it to the simulator. This keeps the HAL abstraction clean
+and transport-agnostic.
 
 ## Scope Clarification
 
@@ -34,41 +129,50 @@ aviate-backend-gz (implements KinematicsBackend)
 aviate_gz_plugin (C++, Gazebo)
 ```
 
-The xil core does NOT depend on any specific backend. Backends implement traits defined
-here and are selected at runtime via configuration.
+The xil core does NOT depend on any specific backend. Backends implement traits
+defined here and are selected at runtime via configuration.
 
 ## Key Components
 
-### SitlMavlink
+### XilIO (Transport)
 
-MAVLink transceiver for SITL simulation:
+Transport layer for XIL simulation:
 
 ```rust
-use aviate_hal_xil::{SitlMavlink, XilConfig};
+use aviate_hal_xil::{SitlIO, XilConfig};
 
-// Create MAVLink I/O
+// Create transport (SITL mode)
 let config = XilConfig::for_instance(0);
-let mut mavlink = SitlMavlink::new(config)?;
+let mut transport = SitlIO::new(config)?;
 
 // In control loop:
-mavlink.poll();  // Receive HIL_SENSOR, HIL_GPS messages
+transport.poll();  // Receive sensor messages from simulator
 
-// Get sensor data (to feed fake sensors)
-if let Some(sensor) = mavlink.take_sensor_data() {
+// Get sensor data (to feed fake sensors in BoardHal)
+if let Some(sensor) = transport.take_sensor_data() {
     board_hal.imu_mut().feed(sensor.imu);
     board_hal.baro_mut().feed(sensor.baro);
     board_hal.mag_mut().feed(sensor.mag);
 }
 
-if let Some(gps) = mavlink.take_gps_data() {
+if let Some(gps) = transport.take_gps_data() {
     board_hal.gnss_mut().feed(gps.gnss);
 }
 
-// Send actuator commands
-mavlink.write(&actuator_cmd);
+// Kernel writes to BoardHal
+board_hal.write(&actuator_cmd);
+
+// Transport takes command from FakeActuator and sends to simulator
+if let Some(raw_cmd) = board_hal.actuator_mut().take_cmd() {
+    transport.send_actuator(&raw_cmd);
+}
 ```
 
-`SitlMavlink` implements `ActuatorHal`, `SystemHal`, and `CommandHal` from aviate-core.
+Current transports:
+- `SitlIO`: UDP-based for SITL (host-to-host)
+- Future: `HitlIO` for UART/USB (host-to-MCU)
+
+Legacy alias `SitlMavlink` is available for compatibility.
 
 ### KinematicsBackend Trait
 
@@ -92,7 +196,7 @@ Current implementations:
 Future planned:
 - AirSim
 - Unity
-- Custom world kernel
+- Custom dynamics kernel
 
 ### Test Framework
 
@@ -121,6 +225,43 @@ let mission = Mission {
 };
 ```
 
+## Data Flow
+
+Complete XIL data flow (same pattern for SITL and HITL, different transport):
+
+```
+SENSOR DATA (Simulator → Flight Controller):
+┌──────────┐    Transport     ┌─────────┐    feed()    ┌───────────┐
+│Simulator │ ───────────────→ │  XilIO  │ ──────────→  │ FakeImu   │
+│ (sensor) │  UDP (SITL)      │         │              │ FakeBaro  │
+└──────────┘  UART (HITL)     └─────────┘              │ etc.      │
+                                                        └─────┬─────┘
+                                                              ↓
+                                                     BoardHal.read_imu()
+                                                              ↓
+                                                     ┌────────────────┐
+                                                     │     Kernel     │
+                                                     └────────────────┘
+
+ACTUATOR DATA (Flight Controller → Simulator):
+┌────────────────┐                 ┌───────────────┐
+│     Kernel     │                 │   BoardHal    │
+└───────┬────────┘                 │ (ActuatorHal) │
+        │                          └───────┬───────┘
+        │ write()                          │
+        ↓                                  ↓
+┌───────────────┐    take_cmd()    ┌─────────────┐
+│ FakeActuator  │ ←─────────────── │    XilIO    │
+│ (buffer cmd)  │                  │ (transport) │
+└───────────────┘                  └──────┬──────┘
+                                          │ send_actuator()
+                                          ↓
+                                   ┌──────────┐
+                                   │Simulator │
+                                   │ (motors) │
+                                   └──────────┘
+```
+
 ## Port Allocation
 
 Multi-vehicle simulations use instance-based port allocation:
@@ -142,9 +283,9 @@ The backend supports different timing modes:
 
 ```rust
 pub enum TimingMode {
-    Unlimited,           // Run as fast as possible
-    RealTime,            // 1x real-time
-    Scaled(f64),         // e.g., Scaled(2.0) = 2x faster than real-time
+    Unlimited,           // Run as fast as possible (CI/CD)
+    RealTime,            // 1x real-time (HITL requirement)
+    Scaled(f64),         // e.g., Scaled(2.0) = 2x faster
 }
 
 pub enum LockstepMode {
@@ -155,7 +296,8 @@ pub enum LockstepMode {
 }
 ```
 
-**Lockstep** is recommended for deterministic, reproducible tests.
+- **SITL**: Lockstep recommended for deterministic, reproducible tests
+- **HITL**: RealTime + Async required (real hardware has real timing)
 
 ## Test Configuration (TOML)
 
@@ -168,7 +310,8 @@ description = "Basic single vehicle flight test"
 
 [world]
 vehicles = 1
-lockstep = true
+lockstep = true      # false for HITL
+mode = "sitl"        # or "hitl"
 
 [[vehicles]]
 id = "x500"
@@ -187,24 +330,6 @@ name = "takeoff"
 duration_sec = 10.0
 actions = [{ type = "takeoff", altitude = 5.0 }]
 criteria = [{ type = "altitude", min = 4.0, max = 6.0 }]
-
-[[vehicles.mission.phases]]
-name = "hover"
-duration_sec = 10.0
-actions = ["hold"]
-criteria = [{ type = "altitude", min = 4.5, max = 5.5 }]
-
-[[vehicles.mission.phases]]
-name = "land"
-duration_sec = 10.0
-actions = ["land"]
-criteria = [{ type = "altitude", min = -0.5, max = 0.5 }]
-
-[[vehicles.mission.phases]]
-name = "disarm"
-duration_sec = 5.0
-actions = ["disarm"]
-criteria = ["disarmed"]
 ```
 
 Parse with:
@@ -260,7 +385,7 @@ The Gazebo backend uses shared memory for low-latency communication:
          ↓                                        ↓
    Physics step                             MAVLink UDP
          ↓                                        ↓
-   Sensor readings                        SitlMavlink (FC)
+   Sensor readings                          XilIO (FC)
 ```
 
 See [backends/gz/README.md](backends/gz/README.md) for details.

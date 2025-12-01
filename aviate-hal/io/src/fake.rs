@@ -1,7 +1,7 @@
-//! Fake sensor drivers for SITL testing
+//! Fake sensor and actuator drivers for SITL testing
 //!
-//! These drivers don't read from real hardware - instead they receive sensor data
-//! from external sources (e.g., MAVLink HIL_SENSOR/HIL_GPS messages from Gazebo).
+//! These drivers don't read from/write to real hardware - instead they exchange data
+//! with external sources (e.g., MAVLink HIL messages from Gazebo).
 //!
 //! ## Usage
 //!
@@ -23,10 +23,10 @@
 //! let sensors = SensorBridge::new(imu, baro, mag, gnss, time);
 //! ```
 
-use crate::error::{SensorError, SensorResult};
+use crate::error::{ActuatorResult, SensorError, SensorResult};
 use crate::traits::{
-    BaroDriver, GnssDriver, GnssFix, ImuDriver, MagDriver, RawBaroReading, RawGnssReading,
-    RawImuReading, RawMagReading,
+    ActuatorDriver, ActuatorStatus, BaroDriver, GnssDriver, GnssFix, ImuDriver, MagDriver,
+    RawActuatorCmd, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading,
 };
 
 /// Fake IMU driver for SITL
@@ -253,6 +253,121 @@ impl GnssDriver for FakeGnss {
     }
 }
 
+/// Fake actuator driver for SITL
+///
+/// Buffers actuator commands and telemetry for bidirectional simulation.
+///
+/// ## Data Flow
+///
+/// **Commands (FC → Simulator):**
+/// ```text
+/// BoardHal.write(&cmd) → FakeActuator.write() → transport.send_actuator()
+/// ```
+///
+/// **Telemetry (Simulator → FC):**
+/// ```text
+/// transport.take_actuator_telemetry() → FakeActuator.feed_status() → BoardHal.read_actuator_status()
+/// ```
+///
+/// ## Telemetry Support
+///
+/// Unlike simple PWM drivers, FakeActuator supports telemetry because simulators
+/// like Gazebo can report motor RPM, which is useful for:
+/// - Testing EKF motor-based velocity estimation
+/// - Validating motor health monitoring logic
+/// - Simulating ESC telemetry scenarios
+#[derive(Debug)]
+pub struct FakeActuator {
+    /// Buffered command (None if no new command)
+    cmd: Option<RawActuatorCmd>,
+    /// Buffered telemetry from simulator (None if no new data)
+    status: Option<ActuatorStatus>,
+    /// Armed state
+    armed: bool,
+}
+
+impl Default for FakeActuator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FakeActuator {
+    /// Create a new fake actuator driver
+    pub fn new() -> Self {
+        Self {
+            cmd: None,
+            status: None,
+            armed: false,
+        }
+    }
+
+    /// Take the buffered command (called by transport layer)
+    ///
+    /// Returns the last command written, or None if no new command.
+    /// After calling, the buffer is cleared.
+    pub fn take_cmd(&mut self) -> Option<RawActuatorCmd> {
+        self.cmd.take()
+    }
+
+    /// Check if a command is buffered
+    pub fn has_cmd(&self) -> bool {
+        self.cmd.is_some()
+    }
+
+    /// Peek at the buffered command without taking it
+    pub fn peek_cmd(&self) -> Option<&RawActuatorCmd> {
+        self.cmd.as_ref()
+    }
+
+    /// Feed actuator telemetry from simulator
+    ///
+    /// Called by the transport layer when telemetry is received from the simulator.
+    /// The kernel can then read this via `BoardHal.actuator().read_status()`.
+    pub fn feed_status(&mut self, status: ActuatorStatus) {
+        self.status = Some(status);
+    }
+
+    /// Check if telemetry is available
+    pub fn has_status(&self) -> bool {
+        self.status.is_some()
+    }
+
+    /// Clear telemetry buffer
+    pub fn clear_status(&mut self) {
+        self.status = None;
+    }
+}
+
+impl ActuatorDriver for FakeActuator {
+    fn write(&mut self, cmd: &RawActuatorCmd) -> ActuatorResult<()> {
+        self.cmd = Some(*cmd);
+        Ok(())
+    }
+
+    fn read_status(&mut self) -> Option<ActuatorStatus> {
+        self.status.take()
+    }
+
+    fn status_ready(&mut self) -> bool {
+        self.status.is_some()
+    }
+
+    fn arm(&mut self) {
+        self.armed = true;
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+        // Clear any pending command on disarm
+        self.cmd = None;
+    }
+
+    fn is_armed(&self) -> bool {
+        self.armed
+    }
+}
+
 /// Combined fake sensor set for SITL
 ///
 /// Convenience struct holding all fake sensors with helper methods
@@ -429,5 +544,58 @@ mod tests {
         assert!((gnss.alt_m - 500.0).abs() < 0.1);
         assert_eq!(gnss.fix, GnssFix::ThreeD);
         assert_eq!(gnss.satellites, 12);
+    }
+
+    #[test]
+    fn test_fake_actuator_no_cmd_initially() {
+        let mut actuator = FakeActuator::new();
+        assert!(!actuator.has_cmd());
+        assert!(actuator.take_cmd().is_none());
+        assert!(!actuator.is_armed());
+    }
+
+    #[test]
+    fn test_fake_actuator_write_and_take() {
+        let mut actuator = FakeActuator::new();
+
+        let cmd = RawActuatorCmd {
+            outputs: [0.5; 16],
+            count: 4,
+        };
+
+        actuator.write(&cmd).unwrap();
+        assert!(actuator.has_cmd());
+
+        let taken = actuator.take_cmd().unwrap();
+        assert_eq!(taken.outputs[0], 0.5);
+        assert_eq!(taken.count, 4);
+
+        // After take, buffer should be empty
+        assert!(!actuator.has_cmd());
+    }
+
+    #[test]
+    fn test_fake_actuator_arm_disarm() {
+        let mut actuator = FakeActuator::new();
+
+        // Initially disarmed
+        assert!(!actuator.is_armed());
+
+        // Arm
+        actuator.arm();
+        assert!(actuator.is_armed());
+
+        // Write a command
+        let cmd = RawActuatorCmd {
+            outputs: [0.5; 16],
+            count: 4,
+        };
+        actuator.write(&cmd).unwrap();
+        assert!(actuator.has_cmd());
+
+        // Disarm should clear buffered command
+        actuator.disarm();
+        assert!(!actuator.is_armed());
+        assert!(!actuator.has_cmd());
     }
 }

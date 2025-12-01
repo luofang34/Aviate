@@ -1,11 +1,11 @@
-//! BoardHal - Composes I/O drivers into SensorHal
+//! BoardHal - Composes I/O drivers into SensorHal and ActuatorHal
 //!
-//! The `BoardHal` takes individual sensor drivers (ImuDriver, BaroDriver, etc.)
-//! and implements `SensorHal` from aviate-core. This allows the same flight controller
-//! code to work with:
+//! The `BoardHal` takes individual sensor and actuator drivers and implements
+//! `SensorHal` and `ActuatorHal` from aviate-core. This allows the same flight
+//! controller code to work with:
 //!
-//! - Real hardware sensors (ICM426xx, BMP390, etc. via embedded-hal)
-//! - Simulated sensors (fake sensors fed from Gazebo HIL messages)
+//! - Real hardware (ICM426xx, BMP390, PWM motors via embedded-hal)
+//! - Simulated devices (fake sensors/actuators fed from Gazebo HIL messages)
 //!
 //! ## Example
 //!
@@ -15,22 +15,26 @@
 //! let baro = Bmp390::new(spi);
 //! let mag = Qmc5883l::new(i2c);
 //! let gnss = UbloxGnss::new(uart);
-//! let hal = BoardHal::new(imu, baro, mag, gnss, time_source);
+//! let actuator = PwmMotorGroup::new(tim);
+//! let hal = BoardHal::new(imu, baro, mag, gnss, time_source, actuator);
 //!
-//! // For SITL (fake sensors from Gazebo):
+//! // For SITL (fake devices from Gazebo):
 //! let imu = FakeImu::new();
 //! let baro = FakeBaro::new();
 //! let mag = FakeMag::new();
 //! let gnss = FakeGnss::new();
-//! let hal = BoardHal::new(imu, baro, mag, gnss, time_source);
+//! let actuator = FakeActuator::new();
+//! let hal = BoardHal::new(imu, baro, mag, gnss, time_source, actuator);
 //!
-//! // Both use the same SensorHal interface
+//! // Both use the same SensorHal/ActuatorHal interface
 //! if let Some(imu_reading) = hal.read_imu() {
 //!     // Process IMU data
 //! }
+//! hal.write(&actuator_cmd);  // Send to motors
 //! ```
 
-use aviate_core::hal::SensorHal;
+use aviate_core::hal::{ActuatorHal, SensorHal};
+use aviate_core::mixer::ActuatorCmd;
 use aviate_core::sensor::{
     AirData, BaroData, GnssData, GnssFix as CoreGnssFix, GnssHealth, ImuData, MagData,
     SensorHealth, SensorReading,
@@ -41,9 +45,12 @@ use aviate_core::types::{
 };
 
 use crate::error::SensorError;
-use crate::traits::{BaroDriver, GnssDriver, GnssFix, ImuDriver, MagDriver, TimeSource};
+use crate::traits::{
+    ActuatorDriver, BaroDriver, GnssDriver, GnssFix, ImuDriver, MagDriver, RawActuatorCmd,
+    TimeSource, MAX_ACTUATOR_OUTPUTS,
+};
 
-/// Board-level HAL that composes I/O drivers into SensorHal
+/// Board-level HAL that composes I/O drivers into SensorHal and ActuatorHal
 ///
 /// Generic over:
 /// - `I`: IMU driver implementing `ImuDriver`
@@ -51,32 +58,38 @@ use crate::traits::{BaroDriver, GnssDriver, GnssFix, ImuDriver, MagDriver, TimeS
 /// - `M`: Magnetometer driver implementing `MagDriver`
 /// - `G`: GNSS driver implementing `GnssDriver`
 /// - `T`: Time source implementing `TimeSource`
+/// - `A`: Actuator driver implementing `ActuatorDriver`
 ///
-/// Future: Will also compose actuator drivers to implement full AviateHal
-pub struct BoardHal<I, B, M, G, T> {
+/// This struct is the central composition point for all I/O. By using the same
+/// `BoardHal` for both SITL and real hardware (with different driver types),
+/// the kernel code remains unchanged between simulation and deployment.
+pub struct BoardHal<I, B, M, G, T, A> {
     imu: I,
     baro: B,
     mag: M,
     gnss: G,
     time: T,
+    actuator: A,
 }
 
-impl<I, B, M, G, T> BoardHal<I, B, M, G, T>
+impl<I, B, M, G, T, A> BoardHal<I, B, M, G, T, A>
 where
     I: ImuDriver,
     B: BaroDriver,
     M: MagDriver,
     G: GnssDriver,
     T: TimeSource,
+    A: ActuatorDriver,
 {
-    /// Create a new board HAL with all sensors
-    pub fn new(imu: I, baro: B, mag: M, gnss: G, time: T) -> Self {
+    /// Create a new board HAL with all sensors and actuators
+    pub fn new(imu: I, baro: B, mag: M, gnss: G, time: T, actuator: A) -> Self {
         Self {
             imu,
             baro,
             mag,
             gnss,
             time,
+            actuator,
         }
     }
 
@@ -120,6 +133,16 @@ where
         &mut self.gnss
     }
 
+    /// Get a reference to the actuator driver
+    pub fn actuator(&self) -> &A {
+        &self.actuator
+    }
+
+    /// Get a mutable reference to the actuator driver
+    pub fn actuator_mut(&mut self) -> &mut A {
+        &mut self.actuator
+    }
+
     /// Get current timestamp
     fn timestamp(&self) -> Timestamp {
         Timestamp {
@@ -134,13 +157,14 @@ where
     }
 }
 
-impl<I, B, M, G, T> SensorHal for BoardHal<I, B, M, G, T>
+impl<I, B, M, G, T, A> SensorHal for BoardHal<I, B, M, G, T, A>
 where
     I: ImuDriver,
     B: BaroDriver,
     M: MagDriver,
     G: GnssDriver,
     T: TimeSource,
+    A: ActuatorDriver,
 {
     fn read_imu(&mut self) -> Option<SensorReading<ImuData>> {
         // Check if data is ready first (for interrupt-driven operation)
@@ -309,9 +333,48 @@ where
     }
 }
 
+impl<I, B, M, G, T, A> ActuatorHal for BoardHal<I, B, M, G, T, A>
+where
+    I: ImuDriver,
+    B: BaroDriver,
+    M: MagDriver,
+    G: GnssDriver,
+    T: TimeSource,
+    A: ActuatorDriver,
+{
+    fn write(&mut self, cmd: &ActuatorCmd) {
+        // Convert ActuatorCmd to RawActuatorCmd
+        let mut raw = RawActuatorCmd {
+            outputs: [0.0; MAX_ACTUATOR_OUTPUTS],
+            count: cmd.active_mask.count_ones() as u8,
+        };
+
+        // Copy normalized outputs
+        for (i, output) in cmd.outputs.iter().enumerate().take(MAX_ACTUATOR_OUTPUTS) {
+            raw.outputs[i] = output.0;
+        }
+
+        // Write to actuator driver (ignore result - ActuatorHal::write is infallible)
+        let _ = self.actuator.write(&raw);
+    }
+
+    fn arm(&mut self) {
+        self.actuator.arm();
+    }
+
+    fn disarm(&mut self) {
+        self.actuator.disarm();
+    }
+
+    fn is_armed(&self) -> bool {
+        self.actuator.is_armed()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ActuatorResult;
     use crate::traits::{RawBaroReading, RawGnssReading, RawImuReading, RawMagReading};
     use crate::SensorResult;
 
@@ -372,6 +435,40 @@ mod tests {
         }
     }
 
+    // Mock actuator
+    struct MockActuator {
+        armed: bool,
+        last_cmd: Option<RawActuatorCmd>,
+    }
+
+    impl MockActuator {
+        fn new() -> Self {
+            Self {
+                armed: false,
+                last_cmd: None,
+            }
+        }
+    }
+
+    impl ActuatorDriver for MockActuator {
+        fn write(&mut self, cmd: &RawActuatorCmd) -> ActuatorResult<()> {
+            self.last_cmd = Some(*cmd);
+            Ok(())
+        }
+
+        fn arm(&mut self) {
+            self.armed = true;
+        }
+
+        fn disarm(&mut self) {
+            self.armed = false;
+        }
+
+        fn is_armed(&self) -> bool {
+            self.armed
+        }
+    }
+
     #[test]
     fn test_board_hal_reads_imu() {
         let imu = MockImu {
@@ -391,8 +488,9 @@ mod tests {
         let gnss = MockGnss {
             reading: RawGnssReading::default(),
         };
+        let actuator = MockActuator::new();
 
-        let mut hal = BoardHal::new(imu, baro, mag, gnss, MockTime(1000));
+        let mut hal = BoardHal::new(imu, baro, mag, gnss, MockTime(1000), actuator);
 
         let reading = hal.read_imu().unwrap();
         assert!(reading.valid);
@@ -414,9 +512,37 @@ mod tests {
         let gnss = MockGnss {
             reading: RawGnssReading::default(),
         };
+        let actuator = MockActuator::new();
 
-        let mut hal = BoardHal::new(imu, baro, mag, gnss, MockTime(1000));
+        let mut hal = BoardHal::new(imu, baro, mag, gnss, MockTime(1000), actuator);
 
         assert!(hal.read_imu().is_none());
+    }
+
+    #[test]
+    fn test_board_hal_actuator() {
+        let imu = MockImu {
+            reading: RawImuReading::default(),
+            ready: false,
+        };
+        let baro = MockBaro {
+            reading: RawBaroReading::default(),
+        };
+        let mag = MockMag {
+            reading: RawMagReading::default(),
+        };
+        let gnss = MockGnss {
+            reading: RawGnssReading::default(),
+        };
+        let actuator = MockActuator::new();
+
+        let mut hal = BoardHal::new(imu, baro, mag, gnss, MockTime(1000), actuator);
+
+        // Test arm/disarm
+        assert!(!hal.is_armed());
+        hal.arm();
+        assert!(hal.is_armed());
+        hal.disarm();
+        assert!(!hal.is_armed());
     }
 }
