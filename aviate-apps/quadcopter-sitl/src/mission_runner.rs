@@ -31,6 +31,9 @@ use crate::mission::{
 use aviate_backend_gz::{enu_to_ned_f32, AviateModelState, GzPluginBridge};
 
 #[cfg(feature = "gz-plugin")]
+use aviate_hal_xil::{PortSlot, XilNetConfig};
+
+#[cfg(feature = "gz-plugin")]
 use aviate_mavlink::{
     mav_cmd, parse_mavlink, serialize_mavlink, CommandLong, Heartbeat, HilSensor, MavAutopilot,
     MavMessage, MavState, MavType, SetAttitudeTarget, SetPositionTargetLocalNed,
@@ -51,11 +54,13 @@ pub struct MavClient {
 
 #[cfg(feature = "gz-plugin")]
 impl MavClient {
-    /// Default FC port (Aviate SITL listens on 14560)
-    const FC_PORT: u16 = 14560;
-
     /// Create a new MAVLink client connected to the FC
     pub fn new(instance: u8) -> Result<Self, String> {
+        Self::new_with_net(instance, XilNetConfig::default())
+    }
+
+    /// Create a new MAVLink client with custom network configuration
+    pub fn new_with_net(instance: u8, net: XilNetConfig) -> Result<Self, String> {
         // Bind to ephemeral port (OS assigns)
         let socket = UdpSocket::bind("0.0.0.0:0")
             .map_err(|e| format!("Failed to bind UDP socket: {}", e))?;
@@ -63,8 +68,8 @@ impl MavClient {
             .set_nonblocking(true)
             .map_err(|e| format!("Failed to set nonblocking: {}", e))?;
 
-        // FC address (each instance could have different port in multi-vehicle)
-        let port = Self::FC_PORT + instance as u16 * 10;
+        // FC address: sensor port is where FC listens for HIL data
+        let port = net.port(instance as u16, PortSlot::SensorIn);
         let target_addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
 
         Ok(Self {

@@ -125,7 +125,7 @@ impl SitlIO {
     /// Create a new SITL I/O transport
     pub fn new(config: XilConfig) -> io::Result<Self> {
         // Socket to receive sensor data from simulator
-        let recv_socket = UdpSocket::bind(("0.0.0.0", config.sensor_port))?;
+        let recv_socket = UdpSocket::bind(("0.0.0.0", config.sensor_port()))?;
         recv_socket.set_nonblocking(true)?;
 
         // Socket to send actuator commands to simulator
@@ -380,7 +380,7 @@ impl SitlIO {
             self.seq = self.seq.wrapping_add(1);
             let _ = self
                 .send_socket
-                .send_to(&buf[..len], self.config.simulator_addr);
+                .send_to(&buf[..len], self.config.simulator_addr());
             self.tx_count += 1;
         }
     }

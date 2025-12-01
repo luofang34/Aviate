@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-use super::mission::{Action, Criterion, FaultSpec, Mission, Phase, SensorTarget, VehicleConfig};
+use crate::mission::{Action, Criterion, FaultSpec, Mission, Phase, SensorTarget, VehicleConfig};
 
 /// Parsed test configuration
 #[derive(Debug, Clone)]

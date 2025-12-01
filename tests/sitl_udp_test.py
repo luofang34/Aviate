@@ -21,9 +21,12 @@ import threading
 from pymavlink import mavutil
 from pymavlink.dialects.v20 import common as mavlink2
 
-# Configuration matching aviate-platform-sitl
-AVIATE_LISTEN_PORT = 14560   # Aviate listens here for sensor data
-AVIATE_SEND_PORT = 14561     # Aviate sends actuator data here
+# Configuration matching aviate-platform-sitl XilNetConfig
+# Default: base=20000, stride=16, instance 0
+XIL_BASE_PORT = 20000
+XIL_STRIDE = 16
+AVIATE_LISTEN_PORT = XIL_BASE_PORT + 0   # Aviate listens here (SensorIn slot)
+AVIATE_SEND_PORT = XIL_BASE_PORT + 1     # Aviate sends actuator data here (ActuatorOut slot)
 LOCALHOST = "127.0.0.1"
 
 class SimpleSimulator:

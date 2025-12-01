@@ -20,14 +20,15 @@ except ImportError:
     import tomli as tomllib  # Python < 3.11
 
 
-# Default ports (matching router_gen.rs)
-DEFAULT_GCS_PORT = 14550      # GCS connects to mavrouter here
-VEHICLE_BASE_PORT = 14560     # Vehicle N on port BASE + N
+# Default ports matching XilNetConfig (base=20000, stride=16)
+DEFAULT_GCS_PORT = 14550      # GCS connects to mavrouter here (unchanged)
+XIL_BASE_PORT = 20000         # Base port for XIL instances
+XIL_STRIDE = 16               # Port stride per instance
 
 
 def vehicle_port(instance: int) -> int:
-    """Get UDP port for vehicle instance (matching Rust router_gen.rs)."""
-    return VEHICLE_BASE_PORT + instance
+    """Get UDP port for vehicle instance (matching Rust XilNetConfig)."""
+    return XIL_BASE_PORT + instance * XIL_STRIDE  # SensorIn slot = offset 0
 
 
 class MavConnection:
@@ -306,8 +307,8 @@ class MavRouter:
 
 @pytest.fixture
 def mav_connection():
-    """Single vehicle MAVLink connection (direct to SITL on port 14560)."""
-    conn = MavConnection(f"udpout:127.0.0.1:{VEHICLE_BASE_PORT}")
+    """Single vehicle MAVLink connection (direct to SITL on XIL port)."""
+    conn = MavConnection(f"udpout:127.0.0.1:{vehicle_port(0)}")
     yield conn
     conn.close()
 

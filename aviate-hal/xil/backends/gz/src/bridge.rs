@@ -9,15 +9,16 @@
 //!
 //! FFI mode is recommended for production use - it provides ~1μs latency.
 
+use aviate_hal_xil::{PortSlot, XilNetConfig};
+
 /// Gazebo bridge configuration
 ///
 /// Supports multi-vehicle simulation via instance IDs.
 /// Each instance uses separate shared memory and UDP ports.
 ///
-/// Port allocation (base ports + instance * 10):
-/// - Instance 0: aviate=14560, actuator=14561, test=14562
-/// - Instance 1: aviate=14570, actuator=14571, test=14572
-/// - Instance 2: aviate=14580, actuator=14581, test=14582
+/// Port allocation uses XilNetConfig (base=20000, stride=16):
+/// - Instance 0: sensor=20000, actuator=20001, test_telemetry=20004
+/// - Instance 1: sensor=20016, actuator=20017, test_telemetry=20020
 #[derive(Clone, Debug)]
 pub struct GzBridgeConfig {
     /// Instance ID for multi-vehicle simulation (0 for single vehicle)
@@ -27,12 +28,8 @@ pub struct GzBridgeConfig {
     pub model_name: String,
     /// Motor command topic in Gazebo (used by plugin for gz-transport publish)
     pub motor_topic: String,
-    /// UDP port to send HIL data to Aviate
-    pub aviate_port: u16,
-    /// UDP port to receive actuator commands from Aviate
-    pub actuator_port: u16,
-    /// UDP port to send position data to test client
-    pub test_port: u16,
+    /// Network configuration for port allocation
+    pub net: XilNetConfig,
 }
 
 impl GzBridgeConfig {
@@ -41,24 +38,43 @@ impl GzBridgeConfig {
     /// Instance-based naming:
     /// - model_name: `x500_<instance>` (or just x500 for instance 0)
     /// - motor_topic: /<model_name>/command/motor_speed
-    /// - ports: base + instance * 10
     pub fn for_instance(instance: u8) -> Self {
+        Self::for_instance_with_net(instance, XilNetConfig::default())
+    }
+
+    /// Create config with custom network settings
+    pub fn for_instance_with_net(instance: u8, net: XilNetConfig) -> Self {
         let model_name = if instance == 0 {
             "x500".to_string()
         } else {
             format!("x500_{}", instance)
         };
         let motor_topic = format!("/{}/command/motor_speed", model_name);
-        let base_port = 14560u16 + (instance as u16) * 10;
 
         Self {
             instance,
             model_name,
             motor_topic,
-            aviate_port: base_port,
-            actuator_port: base_port + 1,
-            test_port: base_port + 2,
+            net,
         }
+    }
+
+    /// Get the sensor (HIL data) port for this instance
+    #[inline]
+    pub fn aviate_port(&self) -> u16 {
+        self.net.port(self.instance as u16, PortSlot::SensorIn)
+    }
+
+    /// Get the actuator port for this instance
+    #[inline]
+    pub fn actuator_port(&self) -> u16 {
+        self.net.port(self.instance as u16, PortSlot::ActuatorOut)
+    }
+
+    /// Get the test telemetry port for this instance
+    #[inline]
+    pub fn test_port(&self) -> u16 {
+        self.net.port(self.instance as u16, PortSlot::TestTelemetry)
     }
 }
 
@@ -135,7 +151,7 @@ mod ffi_bridge {
             let send_socket = UdpSocket::bind("0.0.0.0:0")?;
             send_socket.set_nonblocking(true)?;
 
-            let recv_socket = UdpSocket::bind(("0.0.0.0", config.actuator_port))?;
+            let recv_socket = UdpSocket::bind(("0.0.0.0", config.actuator_port()))?;
             recv_socket.set_nonblocking(true)?;
 
             Ok(Self {
@@ -314,7 +330,7 @@ mod ffi_bridge {
             let mut buf = [0u8; 300];
             if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
                 self.seq = self.seq.wrapping_add(1);
-                let addr = ("127.0.0.1", self.config.aviate_port);
+                let addr = ("127.0.0.1", self.config.aviate_port());
                 let _ = self.send_socket.send_to(&buf[..len], addr);
             }
         }
@@ -323,7 +339,7 @@ mod ffi_bridge {
         fn send_to_test_client(&mut self, msg: &MavMessage) {
             let mut buf = [0u8; 300];
             if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
-                let addr = ("127.0.0.1", self.config.test_port);
+                let addr = ("127.0.0.1", self.config.test_port());
                 let _ = self.send_socket.send_to(&buf[..len], addr);
             }
         }

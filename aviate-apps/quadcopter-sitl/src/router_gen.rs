@@ -2,21 +2,20 @@
 //!
 //! Generates mavrouter TOML configuration from test configuration.
 //! Each vehicle instance gets a unique UDP port for MAVLink communication:
-//!   - Vehicle instance N connects on port BASE_PORT + N
+//!   - Vehicle instance N connects on port from XilNetConfig (default base=20000, stride=16)
 //!   - GCS connects to mavrouter on standard port 14550
 //!
-//! Port allocation:
+//! Port allocation uses XilNetConfig:
 //!   - 14550: GCS endpoint (server, accepts GCS connections)
-//!   - 14560 + instance: Vehicle endpoints (client, connects to each SITL)
+//!   - XilNetConfig.port(instance, SensorIn): Vehicle endpoints (client, connects to each SITL)
 
 use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::path::Path;
 
-use crate::test_config::TestConfig;
+use aviate_hal_xil::{PortSlot, XilNetConfig};
 
-/// Base port for vehicle MAVLink connections
-pub const VEHICLE_BASE_PORT: u16 = 14560;
+use crate::test_config::TestConfig;
 
 /// GCS MAVLink port (standard)
 pub const GCS_PORT: u16 = 14550;
@@ -47,6 +46,15 @@ impl Default for RouterParams {
 
 /// Generate mavrouter TOML configuration from test configuration
 pub fn generate_router_config(config: &TestConfig, params: &RouterParams) -> String {
+    generate_router_config_with_net(config, params, XilNetConfig::default())
+}
+
+/// Generate mavrouter TOML configuration with custom network settings
+pub fn generate_router_config_with_net(
+    config: &TestConfig,
+    params: &RouterParams,
+    net: XilNetConfig,
+) -> String {
     let mut toml = String::new();
 
     // Header comment
@@ -62,7 +70,7 @@ pub fn generate_router_config(config: &TestConfig, params: &RouterParams) -> Str
     )
     .unwrap();
     for vehicle in &config.vehicles {
-        let port = VEHICLE_BASE_PORT + vehicle.instance as u16;
+        let port = net.port(vehicle.instance as u16, PortSlot::SensorIn);
         writeln!(
             toml,
             "#     {} (instance {}) on port {}",
@@ -100,7 +108,7 @@ pub fn generate_router_config(config: &TestConfig, params: &RouterParams) -> Str
 
     // Vehicle endpoints (client mode - connects to SITL instances)
     for vehicle in &config.vehicles {
-        let port = VEHICLE_BASE_PORT + vehicle.instance as u16;
+        let port = net.port(vehicle.instance as u16, PortSlot::SensorIn);
         writeln!(
             toml,
             "# {} (system_id = {})",
@@ -149,9 +157,9 @@ pub fn generate_temp_router_config(
     Ok(path)
 }
 
-/// Get the UDP port for a vehicle instance
+/// Get the UDP port for a vehicle instance using default XilNetConfig
 pub fn vehicle_port(instance: u8) -> u16 {
-    VEHICLE_BASE_PORT + instance as u16
+    XilNetConfig::default().port(instance as u16, PortSlot::SensorIn)
 }
 
 #[cfg(test)]
@@ -193,8 +201,8 @@ verify = []
         assert!(toml.contains("address = \"0.0.0.0:14550\""));
         assert!(toml.contains("mode = \"server\""));
 
-        // Should have vehicle endpoint
-        assert!(toml.contains("address = \"127.0.0.1:14560\""));
+        // Should have vehicle endpoint (base port = 20000 for instance 0)
+        assert!(toml.contains("address = \"127.0.0.1:20000\""));
         assert!(toml.contains("mode = \"client\""));
 
         // Should have general config
@@ -250,8 +258,9 @@ verify = []
         assert!(toml.contains("address = \"0.0.0.0:14550\""));
 
         // Should have two vehicle endpoints with correct ports
-        assert!(toml.contains("address = \"127.0.0.1:14560\"")); // instance 0
-        assert!(toml.contains("address = \"127.0.0.1:14561\"")); // instance 1
+        // base=20000, stride=16: instance 0 = 20000, instance 1 = 20016
+        assert!(toml.contains("address = \"127.0.0.1:20000\"")); // instance 0
+        assert!(toml.contains("address = \"127.0.0.1:20016\"")); // instance 1
 
         // Should have comments identifying vehicles
         assert!(toml.contains("x500_0"));
@@ -260,8 +269,9 @@ verify = []
 
     #[test]
     fn test_vehicle_port() {
-        assert_eq!(vehicle_port(0), 14560);
-        assert_eq!(vehicle_port(1), 14561);
-        assert_eq!(vehicle_port(2), 14562);
+        // base=20000, stride=16
+        assert_eq!(vehicle_port(0), 20000);
+        assert_eq!(vehicle_port(1), 20016);
+        assert_eq!(vehicle_port(2), 20032);
     }
 }

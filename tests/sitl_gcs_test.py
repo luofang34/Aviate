@@ -3,10 +3,11 @@ import time
 import sys
 from pymavlink import mavutil
 
-# Configuration
-# Aviate listens on port 14560 for Sensor/Command input
+# Configuration - XilNetConfig (base=20000, stride=16)
+XIL_BASE_PORT = 20000
+XIL_STRIDE = 16
 AVIATE_IP = "127.0.0.1"
-AVIATE_PORT = 14560
+AVIATE_PORT = XIL_BASE_PORT + 0  # Aviate listens here (SensorIn slot)
 
 def main():
     print(f"Connecting to Aviate at {AVIATE_IP}:{AVIATE_PORT}")

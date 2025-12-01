@@ -15,6 +15,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use aviate_app_quadcopter_sitl::{generate_world, parse_test_config, WorldParams};
+#[cfg(feature = "gz-plugin")]
+use aviate_hal_xil::{PortSlot, XilNetConfig};
 
 /// Environment variable to run in headless mode
 #[cfg(feature = "gz-plugin")]
@@ -331,11 +333,11 @@ fn launch_flight_controllers(
         return children;
     }
 
+    let net = XilNetConfig::from_env();
+
     for vehicle in &config.vehicles {
-        // Each instance uses different ports:
-        // Instance 0: sensor_port=14560, actuator_port=14561
-        // Instance N: sensor_port=14560+N*10, actuator_port=14561+N*10
-        let sensor_port = 14560 + vehicle.instance as u16 * 10;
+        // Each instance uses different ports based on XilNetConfig
+        let sensor_port = net.port(vehicle.instance as u16, PortSlot::SensorIn);
 
         println!(
             "Launching FC for vehicle {} (instance {}, port {})...",

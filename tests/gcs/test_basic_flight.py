@@ -15,11 +15,12 @@ import time
 import pytest
 from pymavlink import mavutil
 
-from conftest import MavConnection, VEHICLE_BASE_PORT
+from conftest import MavConnection, vehicle_port, XIL_BASE_PORT, XIL_STRIDE
 
 
 # Test port for receiving position data from gz_bridge
-TEST_PORT = 14562  # GzBridgeConfig.test_port
+# Using XilNetConfig: TestTelemetry slot = offset 4
+TEST_PORT = XIL_BASE_PORT + 4  # GzBridgeConfig.test_port -> TestTelemetry slot
 
 
 class TestMotorOutput:
@@ -28,7 +29,7 @@ class TestMotorOutput:
     @pytest.fixture
     def gcs(self):
         """Direct connection to SITL."""
-        conn = MavConnection(f"udpout:127.0.0.1:{VEHICLE_BASE_PORT}")
+        conn = MavConnection(f"udpout:127.0.0.1:{vehicle_port(0)}")
         yield conn
         conn.close()
 
@@ -36,7 +37,8 @@ class TestMotorOutput:
     def actuator_listener(self):
         """Listen for HIL_ACTUATOR_CONTROLS on actuator port."""
         # Connect to receive actuator commands sent from SITL
-        conn = MavConnection(f"udpin:127.0.0.1:14561")
+        # ActuatorOut slot = offset 1
+        conn = MavConnection(f"udpin:127.0.0.1:{XIL_BASE_PORT + 1}")
         yield conn
         conn.close()
 

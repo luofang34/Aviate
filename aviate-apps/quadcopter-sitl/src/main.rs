@@ -76,9 +76,9 @@ fn main() {
         info!("Starting Aviate SITL Quadcopter (UDP MAVLink mode)");
         info!(
             "Listening for HIL_SENSOR/HIL_GPS on port {}",
-            config.sensor_port
+            config.sensor_port()
         );
-        info!("Sending HIL_ACTUATOR_CONTROLS to {}", config.simulator_addr);
+        info!("Sending HIL_ACTUATOR_CONTROLS to {}", config.simulator_addr());
         run_udp(config);
     }
 }

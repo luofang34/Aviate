@@ -21,9 +21,11 @@ import threading
 from pymavlink import mavutil
 from pymavlink.dialects.v20 import common as mavlink2
 
-# Test configuration
-AVIATE_PORT = 14560  # Port where aviate-mavlink listens
-GCS_PORT = 14561     # Port where GCS/test sends to
+# Test configuration - XilNetConfig (base=20000, stride=16)
+XIL_BASE_PORT = 20000
+XIL_STRIDE = 16
+AVIATE_PORT = XIL_BASE_PORT + 0  # Port where aviate-mavlink listens (SensorIn)
+GCS_PORT = XIL_BASE_PORT + 1     # Port where GCS/test sends to (ActuatorOut)
 LOCALHOST = "127.0.0.1"
 
 def create_mavlink_connection():

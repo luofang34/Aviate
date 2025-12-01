@@ -5,12 +5,14 @@
 //!
 //! Architecture:
 //! ```text
-//! GCS (port 14550) <--> mavrouter <--> Vehicle 1 (port 14560)
-//!                                  <--> Vehicle 2 (port 14561)
-//!                                  <--> Vehicle N (port 14560+N)
+//! GCS (port 14550) <--> mavrouter <--> Vehicle 1 (port 20000)
+//!                                  <--> Vehicle 2 (port 20016)
+//!                                  <--> Vehicle N (XilNetConfig ports)
 //! ```
 
-use crate::router_gen::{GCS_PORT, VEHICLE_BASE_PORT};
+use aviate_hal_xil::{PortSlot, XilNetConfig};
+
+use crate::router_gen::GCS_PORT;
 use crate::test_config::TestConfig;
 
 // Re-export from mavrouter for convenience
@@ -32,9 +34,9 @@ impl RouterHandle {
         GCS_PORT
     }
 
-    /// Get vehicle port for instance
+    /// Get vehicle port for instance using default XilNetConfig
     pub fn vehicle_port(&self, instance: u8) -> u16 {
-        VEHICLE_BASE_PORT + instance as u16
+        XilNetConfig::default().port(instance as u16, PortSlot::SensorIn)
     }
 
     /// Check if router is still running
@@ -93,7 +95,9 @@ mod tests {
     #[test]
     fn test_router_ports() {
         assert_eq!(GCS_PORT, 14550);
-        assert_eq!(VEHICLE_BASE_PORT, 14560);
-        assert_eq!(VEHICLE_BASE_PORT + 1, 14561);
+        let net = XilNetConfig::default();
+        // base=20000, stride=16
+        assert_eq!(net.port(0, PortSlot::SensorIn), 20000);
+        assert_eq!(net.port(1, PortSlot::SensorIn), 20016);
     }
 }

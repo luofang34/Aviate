@@ -27,7 +27,7 @@ pub use mission::{
 
 pub use router_gen::{
     generate_router_config, generate_router_config_file, generate_temp_router_config, vehicle_port,
-    RouterParams, GCS_PORT, VEHICLE_BASE_PORT,
+    RouterParams, GCS_PORT,
 };
 pub use test_config::{parse_test_config, parse_test_config_str, TestConfig, VehicleTestConfig};
 pub use world_gen::{generate_temp_world, generate_world, generate_world_file, WorldParams};
