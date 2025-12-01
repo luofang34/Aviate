@@ -12,6 +12,8 @@ path = "src/lib.rs"
 [features]
 default = []
 hitl = []
+# Enable fault injection for SITL/HITL testing
+xil-fault = ["aviate-hal-io/xil-fault"]
 
 [dependencies]
 aviate-core = { path = "../../aviate-core" }

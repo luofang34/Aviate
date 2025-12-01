@@ -566,7 +566,11 @@ mod tests {
                 cycle,
                 MAX_FALLBACK_AGE_CYCLES
             );
-            assert_eq!(cmd.outputs[0].0, 0.75, "Cycle {}: should have last_good value", cycle);
+            assert_eq!(
+                cmd.outputs[0].0, 0.75,
+                "Cycle {}: should have last_good value",
+                cycle
+            );
         }
 
         // Age should now be exactly MAX_FALLBACK_AGE_CYCLES

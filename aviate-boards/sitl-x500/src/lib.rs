@@ -210,7 +210,9 @@ impl X500SitlBoard {
                     if i < max_retries - 1 {
                         eprintln!(
                             "[WARN] Failed to bind port {}: {}. Retrying in {}ms...",
-                            config.sensor_port(), e, retry_delay_ms
+                            config.sensor_port(),
+                            e,
+                            retry_delay_ms
                         );
                         std::thread::sleep(std::time::Duration::from_millis(retry_delay_ms));
                     } else {

@@ -29,6 +29,8 @@
 pub mod backend;
 pub mod bridge;
 pub mod config;
+pub mod fault_ctrl;
+pub mod fault_protocol;
 pub mod flight_log;
 pub mod mission;
 pub mod mock;
@@ -59,6 +61,15 @@ pub use mission::{
     Action, Criterion, CriterionResult, FaultSpec, Mission, MissionResult, MultiVehicleCriterion,
     MultiVehicleMission, MultiVehiclePhase, Phase, PhaseResult, SensorTarget, VehicleConfig,
 };
+
+// Fault injection protocol exports
+pub use fault_protocol::{
+    AckStatus, FaultAck, FaultAction, FaultClient, FaultCommand, FAULT_ACK_MAGIC, FAULT_ACK_SIZE,
+    FAULT_CMD_MAGIC, FAULT_CMD_SIZE,
+};
+
+// Fault controller exports
+pub use fault_ctrl::{FaultController, FaultCtrlError};
 
 /// XIL Network Configuration
 ///
@@ -94,19 +105,45 @@ impl Default for XilNetConfig {
 }
 
 impl XilNetConfig {
+    /// PX4-compatible legacy port allocation (base=14560, stride=10)
+    ///
+    /// For interoperability with PX4 SITL, jMAVSim, and other tools
+    /// that expect the legacy port scheme:
+    /// - Instance 0: sensor=14560, actuator=14561
+    /// - Instance 1: sensor=14570, actuator=14571
+    pub const PX4_COMPAT: Self = Self {
+        base_port: 14560,
+        stride: 10,
+    };
+
     /// Load from environment variables (XIL_BASE_PORT, XIL_PORT_STRIDE)
+    ///
+    /// Special value "px4" for XIL_BASE_PORT enables PX4-compatible mode.
     pub fn from_env() -> Self {
+        // Check for PX4 compatibility mode
+        if let Ok(val) = std::env::var("XIL_BASE_PORT") {
+            if val.eq_ignore_ascii_case("px4") || val == "14560" {
+                return Self::PX4_COMPAT;
+            }
+        }
+
         let base_port = std::env::var("XIL_BASE_PORT")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(20000);
-        // stride must be >= 16 to prevent port overlap
+        // stride must be >= 10 for PX4 compat, >= 16 for new scheme
         let stride = std::env::var("XIL_PORT_STRIDE")
             .ok()
             .and_then(|s| s.parse().ok())
-            .filter(|&v| v >= 16)
+            .filter(|&v| v >= 10)
             .unwrap_or(16);
         Self { base_port, stride }
+    }
+
+    /// Check if this is PX4-compatible configuration
+    #[inline]
+    pub fn is_px4_compat(&self) -> bool {
+        self.base_port == 14560 && self.stride == 10
     }
 
     /// Calculate port for a specific instance and slot (overflow-safe)
@@ -282,5 +319,94 @@ mod tests {
         let addr = config.simulator_addr();
         assert_eq!(addr.port(), 20001);
         assert_eq!(addr.ip().to_string(), "127.0.0.1");
+    }
+
+    // ===== PX4 Compatibility Tests =====
+
+    #[test]
+    fn test_px4_compat_const() {
+        let net = XilNetConfig::PX4_COMPAT;
+        assert_eq!(net.base_port, 14560);
+        assert_eq!(net.stride, 10);
+        assert!(net.is_px4_compat());
+    }
+
+    #[test]
+    fn test_px4_compat_port_allocation() {
+        let net = XilNetConfig::PX4_COMPAT;
+
+        // Instance 0: sensor=14560, actuator=14561
+        assert_eq!(net.port(0, PortSlot::SensorIn), 14560);
+        assert_eq!(net.port(0, PortSlot::ActuatorOut), 14561);
+        assert_eq!(net.port(0, PortSlot::FaultCmd), 14562);
+
+        // Instance 1: sensor=14570, actuator=14571
+        assert_eq!(net.port(1, PortSlot::SensorIn), 14570);
+        assert_eq!(net.port(1, PortSlot::ActuatorOut), 14571);
+
+        // Instance 2: sensor=14580, actuator=14581
+        assert_eq!(net.port(2, PortSlot::SensorIn), 14580);
+        assert_eq!(net.port(2, PortSlot::ActuatorOut), 14581);
+    }
+
+    #[test]
+    fn test_px4_compat_multi_vehicle() {
+        let net = XilNetConfig::PX4_COMPAT;
+
+        // Verify no port overlap for 10 vehicles
+        let mut ports = std::collections::HashSet::new();
+        for instance in 0..10u16 {
+            let sensor = net.port(instance, PortSlot::SensorIn);
+            let actuator = net.port(instance, PortSlot::ActuatorOut);
+            assert!(
+                ports.insert(sensor),
+                "Duplicate sensor port for instance {}",
+                instance
+            );
+            assert!(
+                ports.insert(actuator),
+                "Duplicate actuator port for instance {}",
+                instance
+            );
+        }
+    }
+
+    #[test]
+    fn test_xil_config_with_px4_compat() {
+        let config = XilConfig::for_instance_with_net(0, XilNetConfig::PX4_COMPAT);
+        assert_eq!(config.sensor_port(), 14560);
+        assert_eq!(config.actuator_port(), 14561);
+
+        let config = XilConfig::for_instance_with_net(1, XilNetConfig::PX4_COMPAT);
+        assert_eq!(config.sensor_port(), 14570);
+        assert_eq!(config.actuator_port(), 14571);
+    }
+
+    #[test]
+    fn test_new_scheme_multi_vehicle() {
+        let net = XilNetConfig::default();
+
+        // Verify no port overlap for 100 vehicles (new scheme supports more)
+        let mut ports = std::collections::HashSet::new();
+        for instance in 0..100u16 {
+            let sensor = net.port(instance, PortSlot::SensorIn);
+            let actuator = net.port(instance, PortSlot::ActuatorOut);
+            let fault = net.port(instance, PortSlot::FaultCmd);
+            assert!(
+                ports.insert(sensor),
+                "Duplicate sensor port for instance {}",
+                instance
+            );
+            assert!(
+                ports.insert(actuator),
+                "Duplicate actuator port for instance {}",
+                instance
+            );
+            assert!(
+                ports.insert(fault),
+                "Duplicate fault port for instance {}",
+                instance
+            );
+        }
     }
 }

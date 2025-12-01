@@ -9,6 +9,8 @@ description = "I/O device traits for Aviate - sensors (input) and actuators (out
 default = []
 # Enable when using async embedded-hal
 async = ["dep:embedded-hal-async"]
+# Enable fault injection API for SITL/HITL testing
+xil-fault = []
 
 [dependencies]
 aviate-core = { path = "../../aviate-core" }
