@@ -289,13 +289,14 @@ fn launch_gz_bridges(
 
         let child = Command::new(&bridge_binary)
             .env("LD_LIBRARY_PATH", plugin_path)
+            .env("AVIATE_INSTANCE", vehicle.instance.to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn();
 
         match child {
             Ok(c) => {
-                println!("  gz-bridge started (PID: {})", c.id());
+                println!("  gz-bridge started (PID: {}, instance {})", c.id(), vehicle.instance);
                 children.push(c);
             }
             Err(e) => {
@@ -327,26 +328,26 @@ fn launch_flight_controllers(
     }
 
     for vehicle in &config.vehicles {
-        println!(
-            "Launching FC for vehicle {} (instance {})...",
-            vehicle.id, vehicle.instance
-        );
-
-        // Each instance needs different ports
+        // Each instance uses different ports:
         // Instance 0: sensor_port=14560, actuator_port=14561
         // Instance N: sensor_port=14560+N*10, actuator_port=14561+N*10
-        let _sensor_port = 14560 + vehicle.instance as u16 * 10;
+        let sensor_port = 14560 + vehicle.instance as u16 * 10;
+
+        println!(
+            "Launching FC for vehicle {} (instance {}, port {})...",
+            vehicle.id, vehicle.instance, sensor_port
+        );
 
         let child = Command::new(&fc_binary)
             .env("LD_LIBRARY_PATH", plugin_path)
-            // Future: pass instance-specific config via env or args
+            .env("AVIATE_INSTANCE", vehicle.instance.to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn();
 
         match child {
             Ok(c) => {
-                println!("  FC started (PID: {})", c.id());
+                println!("  FC started (PID: {}, instance {}, port {})", c.id(), vehicle.instance, sensor_port);
                 children.push(c);
             }
             Err(e) => {

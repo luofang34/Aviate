@@ -1,7 +1,7 @@
-//! Sensor driver traits
+//! Sensor and Actuator driver traits
 //!
-//! These traits define the interface for all sensor drivers, whether real hardware
-//! (using embedded-hal) or simulated (SITL/fake sensors).
+//! These traits define the interface for all I/O drivers, whether real hardware
+//! (using embedded-hal) or simulated (SITL/fake devices).
 //!
 //! ## Design
 //!
@@ -28,7 +28,7 @@
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
 
-use crate::error::SensorResult;
+use crate::error::{ActuatorResult, SensorResult};
 
 /// Time source for timestamps
 pub trait TimeSource {

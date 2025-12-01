@@ -6,15 +6,42 @@
 //! Requires the `gz-plugin` feature and AviateGzPlugin loaded in Gazebo.
 //!
 //! Usage:
-//!   gz-bridge [--timeout <ms>]
+//!   gz-bridge [--instance <N>]
+//!
+//! Environment:
+//!   AVIATE_INSTANCE - Instance ID for multi-vehicle (default: 0)
 
 use aviate_backend_gz::{GzBridge, GzBridgeConfig};
+
+/// Get instance ID from AVIATE_INSTANCE env var or --instance arg
+fn get_instance() -> u8 {
+    // Check environment variable first
+    if let Ok(val) = std::env::var("AVIATE_INSTANCE") {
+        if let Ok(instance) = val.parse::<u8>() {
+            return instance;
+        }
+    }
+
+    // Check command line args
+    let args: Vec<String> = std::env::args().collect();
+    for i in 0..args.len() {
+        if args[i] == "--instance" && i + 1 < args.len() {
+            if let Ok(instance) = args[i + 1].parse::<u8>() {
+                return instance;
+            }
+        }
+    }
+
+    0 // Default to instance 0
+}
 
 fn main() {
     println!("Gazebo-MAVLink Bridge for Aviate SITL");
     println!("=====================================");
 
-    let config = GzBridgeConfig::default();
+    // Get instance from environment or args
+    let instance = get_instance();
+    let config = GzBridgeConfig::for_instance(instance);
     println!("Configuration:");
     println!("  Model name:  {}", config.model_name);
     println!("  Motor topic: {}", config.motor_topic);

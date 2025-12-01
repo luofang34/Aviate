@@ -26,6 +26,7 @@
 pub mod backend;
 pub mod bridge;
 pub mod flight_log;
+pub mod mavlink_io;
 pub mod mock;
 pub mod test;
 pub mod udp;
@@ -38,6 +39,7 @@ pub use world::{
 };
 
 // HAL exports
+pub use mavlink_io::{HilGpsData, HilSensorData, SitlMavlink};
 pub use mock::SitlHal;
 pub use udp::UdpMavlinkHal;
 
@@ -56,8 +58,15 @@ pub const DEFAULT_SENSOR_PORT: u16 = 14560;
 pub const DEFAULT_ACTUATOR_PORT: u16 = 14561;
 
 /// XIL configuration
+///
+/// Supports multi-vehicle simulation via instance IDs.
+/// Each instance uses separate UDP ports:
+/// - Instance 0: sensor=14560, actuator=14561
+/// - Instance N: sensor=14560+N*10, actuator=14561+N*10
 #[derive(Clone, Debug)]
 pub struct XilConfig {
+    /// Instance ID for multi-vehicle simulation (0 for single vehicle)
+    pub instance: u8,
     /// UDP port to receive sensor data from simulator
     pub sensor_port: u16,
     /// Address to send actuator commands to
@@ -68,14 +77,25 @@ pub struct XilConfig {
     pub loop_rate_hz: u32,
 }
 
-impl Default for XilConfig {
-    fn default() -> Self {
+impl XilConfig {
+    /// Create config for a specific instance ID
+    ///
+    /// Port allocation: base + instance * 10
+    pub fn for_instance(instance: u8) -> Self {
+        let base_port = DEFAULT_SENSOR_PORT + (instance as u16) * 10;
         Self {
-            sensor_port: DEFAULT_SENSOR_PORT,
-            simulator_addr: std::net::SocketAddr::from(([127, 0, 0, 1], DEFAULT_ACTUATOR_PORT)),
+            instance,
+            sensor_port: base_port,
+            simulator_addr: std::net::SocketAddr::from(([127, 0, 0, 1], base_port + 1)),
             gcs_addr: std::net::SocketAddr::from(([127, 0, 0, 1], 14550)),
             loop_rate_hz: 1000,
         }
+    }
+}
+
+impl Default for XilConfig {
+    fn default() -> Self {
+        Self::for_instance(0)
     }
 }
 

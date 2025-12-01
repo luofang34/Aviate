@@ -156,14 +156,19 @@ mod ffi_bridge {
         /// Connect to the Gazebo plugin via shared memory
         ///
         /// Waits for the AviateGzPlugin to initialize shared memory.
+        /// Uses the instance ID from config for multi-vehicle support.
         pub fn connect(&mut self, timeout_ms: u64) -> Result<(), GzBridgeError> {
             let max_attempts = (timeout_ms / 500).max(1) as u32;
             eprintln!(
-                "[GzBridge] Connecting to AviateGzPlugin ({}ms timeout)...",
-                timeout_ms
+                "[GzBridge] Instance {} connecting to AviateGzPlugin ({}ms timeout)...",
+                self.config.instance, timeout_ms
             );
 
-            match GzPluginBridge::connect_with_retry(max_attempts, 500) {
+            match GzPluginBridge::connect_instance_with_retry(
+                self.config.instance,
+                max_attempts,
+                500,
+            ) {
                 Ok(plugin) => {
                     eprintln!("[GzBridge] Connected via shared memory FFI");
                     self.plugin = Some(plugin);

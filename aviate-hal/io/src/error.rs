@@ -32,3 +32,19 @@ impl SensorError {
 
 /// Result type for sensor operations
 pub type SensorResult<T> = Result<T, SensorError>;
+
+/// Actuator error types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActuatorError {
+    /// Hardware fault (overcurrent, overtemp, etc.)
+    HardwareFault,
+    /// Communication error with ESC/servo
+    CommError,
+    /// Output clamped (value out of range)
+    OutputClamped,
+    /// Not armed (outputs disabled)
+    NotArmed,
+}
+
+/// Result type for actuator operations
+pub type ActuatorResult<T> = Result<T, ActuatorError>;

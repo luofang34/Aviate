@@ -3,6 +3,18 @@
 //! This board represents a simulated x500 quadcopter in Gazebo SITL.
 //! It combines the XIL HAL with quadcopter airframe configuration.
 //!
+//! ## Architecture
+//!
+//! This board uses the same `BoardHal` that real hardware boards use,
+//! ensuring the sensor dataflow is identical between SITL and real hardware:
+//!
+//! ```text
+//! SITL:  Gazebo → HIL_SENSOR → SitlMavlink → FakeImu/Baro/... → BoardHal → SensorHal
+//! Real:  SPI/I2C → BMI088/BMP390/... → BoardHal → SensorHal
+//!                                           ↓
+//!                                    Same kernel code
+//! ```
+//!
 //! ## Sensor Configuration (simulated)
 //!
 //! | Sensor | Model | Interface |
@@ -38,15 +50,59 @@ use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
 use aviate_core::types::{Meters, MetersPerSecond, Normalized, Seconds};
 use aviate_core::AviateKernel;
 
-use aviate_hal_xil::{SitlConfig, UdpMavlinkHal};
+use aviate_hal_io::{BoardHal, FakeBaro, FakeGnss, FakeImu, FakeMag};
+use aviate_hal_xil::{SitlConfig, SitlMavlink};
+
+/// Time source for SITL using std::time
+struct SitlTime {
+    start: std::time::Instant,
+}
+
+impl SitlTime {
+    fn new() -> Self {
+        Self {
+            start: std::time::Instant::now(),
+        }
+    }
+}
+
+impl aviate_hal_io::TimeSource for SitlTime {
+    fn now_us(&self) -> u64 {
+        self.start.elapsed().as_micros() as u64
+    }
+}
+
+/// Type alias for the SITL board's sensor HAL
+///
+/// This is the same BoardHal that real hardware would use, just with
+/// fake sensor drivers instead of real hardware drivers.
+pub type SitlBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, SitlTime>;
 
 /// X500 SITL board configuration
+///
+/// Uses the same BoardHal abstraction as real hardware boards, ensuring
+/// that SITL tests exercise the same code paths as real hardware.
 pub struct X500SitlBoard {
-    hal: UdpMavlinkHal,
+    /// MAVLink I/O (receives HIL messages, sends actuator commands)
+    mavlink: SitlMavlink,
+
+    /// Board HAL with fake sensors (same interface as real hardware)
+    /// This implements SensorHal via the generic BoardHal implementation
+    board_hal: SitlBoardHal,
+
+    /// Flight controller kernel
     kernel: AviateKernel<McController, QuadXMixer>,
+
+    /// Last command received
     last_cmd: Command,
+
+    /// Last IMU timestamp for dt calculation
     last_imu_time: Option<u64>,
+
+    /// Cached sensor readings for kernel
     sensor_cache: SensorCache,
+
+    /// EKF initialization flag
     ekf_initialized: bool,
 }
 
@@ -92,12 +148,25 @@ impl X500SitlBoard {
 
     /// Create a new X500 SITL board with custom configuration
     pub fn with_config(config: SitlConfig) -> io::Result<Self> {
-        let hal = UdpMavlinkHal::new(config)?;
+        let mavlink = SitlMavlink::new(config)?;
+
+        // Create fake sensors - same interface as real hardware drivers
+        let fake_imu = FakeImu::new();
+        let fake_baro = FakeBaro::new();
+        let fake_mag = FakeMag::new();
+        let fake_gnss = FakeGnss::new();
+        let time = SitlTime::new();
+
+        // Create BoardHal with fake sensors
+        // This is the SAME BoardHal that real hardware would use!
+        let board_hal = BoardHal::new(fake_imu, fake_baro, fake_mag, fake_gnss, time);
+
         let kernel = Self::create_kernel();
         let last_cmd = Self::default_command();
 
         Ok(Self {
-            hal,
+            mavlink,
+            board_hal,
             kernel,
             last_cmd,
             last_imu_time: None,
@@ -108,15 +177,23 @@ impl X500SitlBoard {
 
     /// Create a new X500 SITL board with retry on port binding
     pub fn new_with_retry(max_retries: u32, retry_delay_ms: u64) -> io::Result<Self> {
-        let config = SitlConfig::default();
+        Self::with_config_retry(SitlConfig::default(), max_retries, retry_delay_ms)
+    }
+
+    /// Create a new X500 SITL board with custom config and retry on port binding
+    pub fn with_config_retry(
+        config: SitlConfig,
+        max_retries: u32,
+        retry_delay_ms: u64,
+    ) -> io::Result<Self> {
         for i in 0..max_retries {
             match Self::with_config(config.clone()) {
                 Ok(board) => return Ok(board),
                 Err(e) => {
                     if i < max_retries - 1 {
                         eprintln!(
-                            "[WARN] Failed to bind port: {}. Retrying in {}ms...",
-                            e, retry_delay_ms
+                            "[WARN] Failed to bind port {}: {}. Retrying in {}ms...",
+                            config.sensor_port, e, retry_delay_ms
                         );
                         std::thread::sleep(std::time::Duration::from_millis(retry_delay_ms));
                     } else {
@@ -162,14 +239,40 @@ impl X500SitlBoard {
 
     /// Run one iteration of the control loop
     ///
-    /// This reads sensors, runs the kernel, and writes actuator outputs.
+    /// This:
+    /// 1. Polls MAVLink for HIL messages
+    /// 2. Feeds fake sensors with HIL data (via BoardHal accessors)
+    /// 3. Reads sensors via BoardHal's SensorHal implementation
+    /// 4. Runs the kernel
+    /// 5. Sends actuator commands via MAVLink
+    ///
     /// Returns the actuator command that was sent.
     pub fn step(&mut self) -> ActuatorCmd {
-        // 1. Read sensors and calculate dt
-        let mut current_dt = 0.001; // Default 1ms
-        let mut current_delta_us = 1000;
+        // 1. Poll MAVLink for incoming messages
+        self.mavlink.poll();
 
-        if let Some(imu) = self.hal.read_imu() {
+        // 2. Feed fake sensors with HIL data (via BoardHal accessors)
+        //    This is the key integration point - same pattern as real HW feeding real sensors
+        if let Some(sensor_data) = self.mavlink.take_sensor_data() {
+            // Feed IMU
+            self.board_hal.imu_mut().feed(sensor_data.imu);
+            // Feed Baro
+            self.board_hal.baro_mut().feed(sensor_data.baro);
+            // Feed Mag
+            self.board_hal.mag_mut().feed(sensor_data.mag);
+        }
+
+        if let Some(gps_data) = self.mavlink.take_gps_data() {
+            // Feed GNSS
+            self.board_hal.gnss_mut().feed(gps_data.gnss);
+        }
+
+        // 3. Read sensors via BoardHal's SensorHal implementation
+        //    This is the SAME code path that real hardware uses!
+        let mut current_dt = 0.001;
+        let mut current_delta_us = 1000u64;
+
+        if let Some(imu) = self.board_hal.read_imu() {
             let current_time = imu.timestamp.ticks;
             let delta_us_val = if let Some(last) = self.last_imu_time {
                 current_time.saturating_sub(last)
@@ -183,15 +286,15 @@ impl X500SitlBoard {
             self.sensor_cache.imu = Some(imu);
         }
 
-        if let Some(gnss) = self.hal.read_gnss() {
+        if let Some(gnss) = self.board_hal.read_gnss() {
             self.sensor_cache.gnss = Some(gnss);
         }
 
-        if let Some(baro) = self.hal.read_baro() {
+        if let Some(baro) = self.board_hal.read_baro() {
             self.sensor_cache.baro = Some(baro);
         }
 
-        if let Some(mag) = self.hal.read_mag() {
+        if let Some(mag) = self.board_hal.read_mag() {
             self.sensor_cache.mag = Some(mag);
         }
 
@@ -200,8 +303,8 @@ impl X500SitlBoard {
             tick_delta: current_delta_us,
         };
 
-        // 2. Receive commands
-        if let Some(sys_cmd) = self.hal.recv_command() {
+        // 4. Receive commands via MAVLink
+        if let Some(sys_cmd) = self.mavlink.recv_command() {
             match sys_cmd {
                 SystemCommand::FlightControl(cmd) => {
                     self.kernel
@@ -219,17 +322,17 @@ impl X500SitlBoard {
                     } else {
                         eprintln!("[INFO] Armed successfully");
                     }
-                    self.hal.arm();
+                    self.mavlink.arm();
                 }
                 SystemCommand::Disarm => {
                     eprintln!("[INFO] Disarm command");
                     self.kernel.disarm();
-                    self.hal.disarm();
+                    self.mavlink.disarm();
                 }
             }
         }
 
-        // 3. Initialize EKF once we have sensor data
+        // 5. Initialize EKF once we have sensor data
         if !self.ekf_initialized && self.sensor_cache.imu.is_some() {
             eprintln!("[INFO] Initializing EKF with sensor data");
             self.kernel.ekf.init(
@@ -244,21 +347,21 @@ impl X500SitlBoard {
             self.ekf_initialized = true;
         }
 
-        // 4. Run init state machine
+        // 6. Run init state machine
         let sensors = self.sensor_cache.to_sensor_set();
         if !self.kernel.is_ready() {
-            let ts = self.hal.now();
+            let ts = self.mavlink.now();
             self.kernel.init_step(&sensors, ts);
         }
 
-        // 4. Step kernel
+        // 7. Step kernel
         let actuator_cmd = self.kernel.step(time_delta, &self.last_cmd, &sensors, 0);
 
-        // 5. Write outputs
-        self.hal.write(&actuator_cmd);
+        // 8. Write outputs via MAVLink
+        self.mavlink.write(&actuator_cmd);
 
-        // 6. Watchdog
-        self.hal.kick_watchdog();
+        // 9. Watchdog
+        self.mavlink.kick_watchdog();
 
         actuator_cmd
     }
@@ -266,10 +369,10 @@ impl X500SitlBoard {
     /// Run the main control loop indefinitely
     pub fn run(&mut self) -> ! {
         let loop_period_us = 1000; // 1kHz
-        let mut last_tick = self.hal.now_us();
+        let mut last_tick = self.mavlink.now_us();
 
         loop {
-            let now = self.hal.now_us();
+            let now = self.mavlink.now_us();
             let elapsed = now.saturating_sub(last_tick);
 
             if elapsed >= loop_period_us {
@@ -306,7 +409,7 @@ impl X500SitlBoard {
 
     /// Get current timestamp in microseconds
     pub fn now_us(&self) -> u64 {
-        self.hal.now_us()
+        self.mavlink.now_us()
     }
 
     /// Get the airframe ID
@@ -349,7 +452,7 @@ pub struct BoardInfo {
 /// Motor layout configuration
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MotorLayout {
-    QuadX,    // X configuration (45° rotated)
+    QuadX,    // X configuration (45 rotated)
     QuadPlus, // + configuration
     Hex,      // Hexacopter
     Octo,     // Octocopter
