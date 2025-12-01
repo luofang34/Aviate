@@ -436,4 +436,306 @@ mod tests {
         assert!(report.any_fallback);
         assert_eq!(cmd.outputs[0].0, 0.1);
     }
+
+    // =========================================================================
+    // FAULT INJECTION TESTS: Multiple groups, age expiration, fallback chain
+    // =========================================================================
+
+    // Group 0: channels 0-3, Group 1: channels 4-7
+    const GROUP0_MEMBERS: &[u8] = &[0, 1, 2, 3];
+    const GROUP1_MEMBERS: &[u8] = &[4, 5, 6, 7];
+
+    const SAFE_PATTERN_0: GroupVector = GroupVector {
+        outputs: [Normalized(0.1); MAX_ACTUATORS],
+        mask: 0x000F,
+        valid: true,
+    };
+
+    const SAFE_PATTERN_1: GroupVector = GroupVector {
+        outputs: [Normalized(0.2); MAX_ACTUATORS],
+        mask: 0x00F0,
+        valid: true,
+    };
+
+    static TWO_GROUPS: [ActuatorGroupConfig; 2] = [
+        ActuatorGroupConfig {
+            kind: GroupKind::Multirotor,
+            coupling: CouplingKind::Strong,
+            fallback: FallbackPolicy::HoldLastGood,
+            members: GROUP0_MEMBERS,
+            safe_pattern: SAFE_PATTERN_0,
+        },
+        ActuatorGroupConfig {
+            kind: GroupKind::ControlSurfaces,
+            coupling: CouplingKind::Strong,
+            fallback: FallbackPolicy::HoldLastGood,
+            members: GROUP1_MEMBERS,
+            safe_pattern: SAFE_PATTERN_1,
+        },
+    ];
+
+    /// Test that multiple groups fail independently - fault in one group
+    /// should not affect the other group's output or fallback state.
+    #[test]
+    fn test_sanitizer_multiple_groups_independent() {
+        let mut sanitizer = Sanitizer::default();
+        let mode = ModeConfig {
+            mode: ConfigMode::Hover,
+            groups: &TWO_GROUPS,
+        };
+
+        // 1. First valid cycle to establish last_good for both groups
+        let mut cmd1 = make_cmd();
+        cmd1.outputs[0] = Normalized(0.6); // Group 0
+        cmd1.outputs[4] = Normalized(0.7); // Group 1
+        let report1 = sanitizer.sanitize(&mut cmd1, &mode);
+        assert!(!report1.any_fallback);
+        assert_eq!(report1.group_results[0], GroupSanitizeResult::AllValid);
+        assert_eq!(report1.group_results[1], GroupSanitizeResult::AllValid);
+
+        // 2. Inject NaN in Group 0 only, Group 1 stays valid
+        let mut cmd2 = make_cmd();
+        cmd2.outputs[0] = Normalized(Scalar::NAN); // Fault in Group 0
+        cmd2.outputs[4] = Normalized(0.8); // Valid in Group 1
+        cmd2.outputs[5] = Normalized(0.9);
+        cmd2.outputs[6] = Normalized(0.85);
+        cmd2.outputs[7] = Normalized(0.75);
+
+        let report2 = sanitizer.sanitize(&mut cmd2, &mode);
+
+        // Group 0 should fallback to last_good
+        assert!(report2.any_fallback);
+        assert_eq!(
+            report2.group_results[0],
+            GroupSanitizeResult::FallbackLastGood
+        );
+        assert_eq!(cmd2.outputs[0].0, 0.6); // From last_good
+
+        // Group 1 should be unaffected - stays AllValid with original values
+        assert_eq!(report2.group_results[1], GroupSanitizeResult::AllValid);
+        assert_eq!(cmd2.outputs[4].0, 0.8); // Preserved
+        assert_eq!(cmd2.outputs[5].0, 0.9);
+
+        // Verify fallback_mask only has Group 0 bit set
+        assert_eq!(cmd2.fallback_mask, 0b0001);
+    }
+
+    /// Test that last_good expires after MAX_FALLBACK_AGE_CYCLES (100 cycles).
+    /// After expiration, sanitizer should fall back to safe_pattern.
+    ///
+    /// Boundary analysis:
+    /// - Condition: age < MAX_FALLBACK_AGE_CYCLES (i.e., age < 100)
+    /// - After valid cycle: age = 0
+    /// - After N invalid cycles: age = N
+    /// - age = 99: 99 < 100 → true → uses last_good
+    /// - age = 100: 100 < 100 → false → uses safe_pattern
+    #[test]
+    fn test_sanitizer_fallback_age_expiration() {
+        use aviate_core::mixer::MAX_FALLBACK_AGE_CYCLES;
+
+        let mut sanitizer = Sanitizer::default();
+        let mode = ModeConfig {
+            mode: ConfigMode::Hover,
+            groups: &STRONG_GROUP,
+        };
+
+        // 1. Establish last_good with a valid cycle
+        let mut cmd_valid = make_cmd();
+        cmd_valid.outputs[0] = Normalized(0.75);
+        cmd_valid.outputs[1] = Normalized(0.75);
+        cmd_valid.outputs[2] = Normalized(0.75);
+        cmd_valid.outputs[3] = Normalized(0.75);
+        sanitizer.sanitize(&mut cmd_valid, &mode);
+
+        // Verify last_good is established
+        assert!(sanitizer.state.last_good[0].valid);
+        assert_eq!(sanitizer.state.age[0], 0);
+
+        // 2. Run MAX_FALLBACK_AGE_CYCLES invalid cycles (age goes 0 → 100)
+        // Each cycle: check age < 100, use last_good if true, then increment age
+        for cycle in 0..MAX_FALLBACK_AGE_CYCLES {
+            let mut cmd = make_cmd();
+            cmd.outputs[0] = Normalized(Scalar::NAN);
+            let report = sanitizer.sanitize(&mut cmd, &mode);
+
+            assert_eq!(
+                report.group_results[0],
+                GroupSanitizeResult::FallbackLastGood,
+                "Cycle {}: should use last_good (age {} < {})",
+                cycle,
+                cycle,
+                MAX_FALLBACK_AGE_CYCLES
+            );
+            assert_eq!(cmd.outputs[0].0, 0.75, "Cycle {}: should have last_good value", cycle);
+        }
+
+        // Age should now be exactly MAX_FALLBACK_AGE_CYCLES
+        assert_eq!(sanitizer.state.age[0], MAX_FALLBACK_AGE_CYCLES);
+
+        // 3. One more invalid cycle - age is now 100, which is NOT < 100
+        // So this cycle should use safe_pattern
+        let mut cmd_expire = make_cmd();
+        cmd_expire.outputs[0] = Normalized(Scalar::NAN);
+        let report_expire = sanitizer.sanitize(&mut cmd_expire, &mode);
+
+        assert_eq!(
+            report_expire.group_results[0],
+            GroupSanitizeResult::FallbackSafe,
+            "Cycle {}: age {} >= {}, should use safe_pattern",
+            MAX_FALLBACK_AGE_CYCLES,
+            MAX_FALLBACK_AGE_CYCLES,
+            MAX_FALLBACK_AGE_CYCLES
+        );
+        assert_eq!(
+            cmd_expire.outputs[0].0, 0.1,
+            "Should use safe_pattern value (0.1)"
+        );
+    }
+
+    /// Test the complete sequential fallback chain:
+    /// valid → last_good fallback → (age expires) → safe_pattern → (no safe) → zero
+    #[test]
+    fn test_sanitizer_sequential_fallback_chain() {
+        use aviate_core::mixer::MAX_FALLBACK_AGE_CYCLES;
+
+        // Stage 1: Test with safe_pattern available
+        {
+            let mut sanitizer = Sanitizer::default();
+            let mode = ModeConfig {
+                mode: ConfigMode::Hover,
+                groups: &STRONG_GROUP,
+            };
+
+            // Step 1: Valid cycle
+            let mut cmd1 = make_cmd();
+            let report1 = sanitizer.sanitize(&mut cmd1, &mode);
+            assert_eq!(report1.group_results[0], GroupSanitizeResult::AllValid);
+
+            // Step 2: Invalid - falls back to last_good
+            let mut cmd2 = make_cmd();
+            cmd2.outputs[0] = Normalized(Scalar::NAN);
+            let report2 = sanitizer.sanitize(&mut cmd2, &mode);
+            assert_eq!(
+                report2.group_results[0],
+                GroupSanitizeResult::FallbackLastGood
+            );
+
+            // Step 3: Exhaust last_good by running MAX_FALLBACK_AGE_CYCLES invalid cycles
+            // (first cycle already incremented age to 1, so we need MAX-1 more)
+            for _ in 0..(MAX_FALLBACK_AGE_CYCLES - 1) {
+                let mut cmd = make_cmd();
+                cmd.outputs[0] = Normalized(Scalar::NAN);
+                sanitizer.sanitize(&mut cmd, &mode);
+            }
+
+            // After MAX_FALLBACK_AGE_CYCLES invalid cycles total, age = MAX_FALLBACK_AGE_CYCLES
+            // Step 4: Now should use safe_pattern (age >= MAX_FALLBACK_AGE_CYCLES)
+            let mut cmd3 = make_cmd();
+            cmd3.outputs[0] = Normalized(Scalar::NAN);
+            let report3 = sanitizer.sanitize(&mut cmd3, &mode);
+            assert_eq!(report3.group_results[0], GroupSanitizeResult::FallbackSafe);
+            assert_eq!(cmd3.outputs[0].0, 0.1); // safe_pattern value
+        }
+
+        // Stage 2: Test without safe_pattern - should go to zero
+        {
+            let mut sanitizer = Sanitizer::default();
+            let mode = ModeConfig {
+                mode: ConfigMode::Hover,
+                groups: &STRONG_GROUP_NO_SAFE,
+            };
+
+            // Step 1: Valid cycle to establish last_good
+            let mut cmd1 = make_cmd();
+            cmd1.outputs[0] = Normalized(0.8);
+            sanitizer.sanitize(&mut cmd1, &mode);
+
+            // Step 2: Exhaust last_good
+            for _ in 0..MAX_FALLBACK_AGE_CYCLES {
+                let mut cmd = make_cmd();
+                cmd.outputs[0] = Normalized(Scalar::NAN);
+                sanitizer.sanitize(&mut cmd, &mode);
+            }
+
+            // Step 3: Now should go to zero (FallbackUnavailable)
+            let mut cmd2 = make_cmd();
+            cmd2.outputs[0] = Normalized(Scalar::NAN);
+            let report = sanitizer.sanitize(&mut cmd2, &mode);
+            assert_eq!(
+                report.group_results[0],
+                GroupSanitizeResult::FallbackUnavailable
+            );
+            assert!(report.critical_failure);
+            assert_eq!(cmd2.outputs[0].0, 0.0);
+        }
+    }
+
+    /// Test mixer saturation handling with combined axis inputs.
+    /// Verifies that when total demand exceeds motor capacity,
+    /// outputs are clamped symmetrically preserving attitude authority.
+    #[test]
+    fn test_mixer_saturation_priority() {
+        let mixer = QuadXMixer {
+            timestamp_source: dummy_timestamp,
+        };
+
+        // Scenario 1: High thrust + maximum roll
+        // t=0.9, r=0.5 -> M1 = 0.9+0.5 = 1.4 (clamped to 1.0)
+        //               -> M0 = 0.9-0.5 = 0.4
+        let axis1 = AxisCommand {
+            roll: NormalizedSigned(0.5),
+            pitch: NormalizedSigned(0.0),
+            yaw: NormalizedSigned(0.0),
+            collective: Normalized(0.9),
+        };
+
+        let cmd1 = mixer.mix(&axis1);
+
+        // Verify clamping behavior
+        assert_eq!(cmd1.outputs[1].0, 1.0, "M1 should be clamped to 1.0");
+        assert!((cmd1.outputs[0].0 - 0.4).abs() < 1e-5, "M0 should be 0.4");
+        // M2 = t + r = 1.4 clamped to 1.0
+        assert_eq!(cmd1.outputs[2].0, 1.0, "M2 should be clamped to 1.0");
+        // M3 = t - r = 0.4
+        assert!((cmd1.outputs[3].0 - 0.4).abs() < 1e-5, "M3 should be 0.4");
+
+        // Scenario 2: Combined roll + pitch + yaw saturation
+        // Tests that all axes contribute even when saturating
+        // t=0.8, r=0.3, p=0.3, y=0.2
+        // M0 = t - r + p - y = 0.8 - 0.3 + 0.3 - 0.2 = 0.6
+        // M1 = t + r + p + y = 0.8 + 0.3 + 0.3 + 0.2 = 1.6 → 1.0
+        // M2 = t + r - p + y = 0.8 + 0.3 - 0.3 + 0.2 = 1.0
+        // M3 = t - r - p - y = 0.8 - 0.3 - 0.3 - 0.2 = 0.0
+        let axis2 = AxisCommand {
+            roll: NormalizedSigned(0.3),
+            pitch: NormalizedSigned(0.3),
+            yaw: NormalizedSigned(0.2),
+            collective: Normalized(0.8),
+        };
+
+        let cmd2 = mixer.mix(&axis2);
+
+        assert!((cmd2.outputs[0].0 - 0.6).abs() < 1e-5, "M0 = 0.6");
+        assert_eq!(cmd2.outputs[1].0, 1.0, "M1 clamped to 1.0");
+        assert!((cmd2.outputs[2].0 - 1.0).abs() < 1e-5, "M2 = 1.0");
+        assert!((cmd2.outputs[3].0 - 0.0).abs() < 1e-5, "M3 = 0.0");
+
+        // Scenario 3: Negative saturation (low thrust with large control demand)
+        // t=0.1, r=0.3
+        // M0 = 0.1 - 0.3 = -0.2 → 0.0
+        // M3 = 0.1 - 0.3 = -0.2 → 0.0
+        let axis3 = AxisCommand {
+            roll: NormalizedSigned(0.3),
+            pitch: NormalizedSigned(0.0),
+            yaw: NormalizedSigned(0.0),
+            collective: Normalized(0.1),
+        };
+
+        let cmd3 = mixer.mix(&axis3);
+
+        assert_eq!(cmd3.outputs[0].0, 0.0, "M0 clamped to 0.0");
+        assert_eq!(cmd3.outputs[3].0, 0.0, "M3 clamped to 0.0");
+        // M1 = 0.1 + 0.3 = 0.4
+        assert!((cmd3.outputs[1].0 - 0.4).abs() < 1e-5, "M1 = 0.4");
+    }
 }
