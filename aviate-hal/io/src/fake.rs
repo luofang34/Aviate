@@ -22,8 +22,65 @@
 //! // SensorBridge reads from fake sensors (same interface as real hardware)
 //! let sensors = SensorBridge::new(imu, baro, mag, gnss, time);
 //! ```
+//!
+//! ## Fault Injection
+//!
+//! All fake sensors support fault injection for SITL testing:
+//!
+//! ```ignore
+//! // Inject sensor fault
+//! imu.inject_fault(SensorFault::HealthDegraded);
+//!
+//! // Now read() returns error mapping to degraded health
+//! assert!(matches!(imu.read(), Err(SensorError::InvalidData)));
+//!
+//! // Clear faults
+//! imu.clear_faults();
+//! ```
 
 use crate::error::{ActuatorResult, SensorError, SensorResult};
+
+// ============================================================================
+// Fault Injection Types
+// ============================================================================
+
+/// Sensor fault types for SITL testing
+///
+/// These faults are injected at the FakeDriver layer, independent of the
+/// physics backend (Gazebo/Unity), enabling deterministic testing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SensorFault {
+    /// Sensor reports degraded health (e.g., noisy data, intermittent issues)
+    /// Maps to SensorError::InvalidData → SensorHealth::Degraded
+    HealthDegraded,
+
+    /// Sensor has completely failed
+    /// Maps to SensorError::DeviceNotFound → SensorHealth::Failed
+    HealthFailed,
+
+    /// Inject NaN values into sensor readings
+    /// Reading returns Ok but contains NaN in data fields
+    NaN,
+
+    /// Sensor stops providing data for specified cycles
+    /// After countdown expires, fault auto-clears
+    Dropout {
+        /// Number of read cycles to drop
+        remaining_cycles: u32,
+    },
+
+    /// Add constant bias offset to readings (for IMU/Mag 3-axis sensors)
+    BiasShift {
+        /// Offset to add to each axis
+        offset: [f32; 3],
+    },
+
+    /// Add constant bias to single-value readings (for Baro)
+    BiasShiftScalar {
+        /// Offset to add
+        offset: f32,
+    },
+}
 use crate::traits::{
     ActuatorDriver, ActuatorStatus, BaroDriver, GnssDriver, GnssFix, ImuDriver, MagDriver,
     RawActuatorCmd, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading,
@@ -32,13 +89,15 @@ use crate::traits::{
 /// Fake IMU driver for SITL
 ///
 /// Receives accelerometer and gyroscope data from external source
-/// (e.g., HIL_SENSOR MAVLink message)
+/// (e.g., HIL_SENSOR MAVLink message). Supports fault injection for testing.
 #[derive(Debug, Default)]
 pub struct FakeImu {
     /// Buffered reading (None if no data available)
     reading: Option<RawImuReading>,
     /// Source ID for this sensor
     source_id: u8,
+    /// Active fault (if any)
+    fault: Option<SensorFault>,
 }
 
 impl FakeImu {
@@ -52,6 +111,7 @@ impl FakeImu {
         Self {
             reading: None,
             source_id,
+            fault: None,
         }
     }
 
@@ -69,14 +129,90 @@ impl FakeImu {
     pub fn has_data(&self) -> bool {
         self.reading.is_some()
     }
+
+    /// Inject a sensor fault
+    pub fn inject_fault(&mut self, fault: SensorFault) {
+        self.fault = Some(fault);
+    }
+
+    /// Clear all injected faults
+    pub fn clear_faults(&mut self) {
+        self.fault = None;
+    }
+
+    /// Check if a fault is active
+    pub fn has_fault(&self) -> bool {
+        self.fault.is_some()
+    }
+
+    /// Get the active fault (if any)
+    pub fn get_fault(&self) -> Option<&SensorFault> {
+        self.fault.as_ref()
+    }
 }
 
 impl ImuDriver for FakeImu {
     fn read(&mut self) -> SensorResult<RawImuReading> {
+        // Handle faults first
+        if let Some(ref mut fault) = self.fault {
+            match fault {
+                SensorFault::HealthDegraded => {
+                    return Err(SensorError::InvalidData);
+                }
+                SensorFault::HealthFailed => {
+                    return Err(SensorError::DeviceNotFound);
+                }
+                SensorFault::NaN => {
+                    // Return reading with NaN values
+                    self.reading.take();
+                    return Ok(RawImuReading {
+                        accel: [f32::NAN, f32::NAN, f32::NAN],
+                        gyro: [f32::NAN, f32::NAN, f32::NAN],
+                        temperature: Some(f32::NAN),
+                    });
+                }
+                SensorFault::Dropout { remaining_cycles } => {
+                    if *remaining_cycles > 0 {
+                        *remaining_cycles -= 1;
+                        return Err(SensorError::InvalidState);
+                    } else {
+                        // Dropout expired, clear fault
+                        self.fault = None;
+                    }
+                }
+                SensorFault::BiasShift { offset } => {
+                    // Apply bias to reading if available
+                    if let Some(mut reading) = self.reading.take() {
+                        reading.accel[0] += offset[0];
+                        reading.accel[1] += offset[1];
+                        reading.accel[2] += offset[2];
+                        return Ok(reading);
+                    }
+                    return Err(SensorError::InvalidState);
+                }
+                SensorFault::BiasShiftScalar { .. } => {
+                    // Not applicable to IMU, ignore
+                }
+            }
+        }
+
         self.reading.take().ok_or(SensorError::InvalidState)
     }
 
     fn data_ready(&mut self) -> SensorResult<bool> {
+        // If health faults are active, still report data ready
+        // (the error will come from read())
+        if let Some(fault) = &self.fault {
+            match fault {
+                SensorFault::HealthDegraded | SensorFault::HealthFailed | SensorFault::NaN => {
+                    return Ok(true);
+                }
+                SensorFault::Dropout { remaining_cycles } if *remaining_cycles > 0 => {
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
         Ok(self.reading.is_some())
     }
 
@@ -88,13 +224,15 @@ impl ImuDriver for FakeImu {
 /// Fake barometer driver for SITL
 ///
 /// Receives pressure and temperature data from external source
-/// (e.g., HIL_SENSOR MAVLink message)
+/// (e.g., HIL_SENSOR MAVLink message). Supports fault injection for testing.
 #[derive(Debug, Default)]
 pub struct FakeBaro {
     /// Buffered reading
     reading: Option<RawBaroReading>,
     /// Source ID
     source_id: u8,
+    /// Active fault (if any)
+    fault: Option<SensorFault>,
 }
 
 impl FakeBaro {
@@ -108,6 +246,7 @@ impl FakeBaro {
         Self {
             reading: None,
             source_id,
+            fault: None,
         }
     }
 
@@ -125,14 +264,77 @@ impl FakeBaro {
     pub fn has_data(&self) -> bool {
         self.reading.is_some()
     }
+
+    /// Inject a sensor fault
+    pub fn inject_fault(&mut self, fault: SensorFault) {
+        self.fault = Some(fault);
+    }
+
+    /// Clear all injected faults
+    pub fn clear_faults(&mut self) {
+        self.fault = None;
+    }
+
+    /// Check if a fault is active
+    pub fn has_fault(&self) -> bool {
+        self.fault.is_some()
+    }
 }
 
 impl BaroDriver for FakeBaro {
     fn read(&mut self) -> SensorResult<RawBaroReading> {
+        // Handle faults first
+        if let Some(ref mut fault) = self.fault {
+            match fault {
+                SensorFault::HealthDegraded => {
+                    return Err(SensorError::InvalidData);
+                }
+                SensorFault::HealthFailed => {
+                    return Err(SensorError::DeviceNotFound);
+                }
+                SensorFault::NaN => {
+                    self.reading.take();
+                    return Ok(RawBaroReading {
+                        pressure_pa: f32::NAN,
+                        temperature_c: f32::NAN,
+                    });
+                }
+                SensorFault::Dropout { remaining_cycles } => {
+                    if *remaining_cycles > 0 {
+                        *remaining_cycles -= 1;
+                        return Err(SensorError::InvalidState);
+                    } else {
+                        self.fault = None;
+                    }
+                }
+                SensorFault::BiasShiftScalar { offset } => {
+                    if let Some(mut reading) = self.reading.take() {
+                        reading.pressure_pa += *offset;
+                        return Ok(reading);
+                    }
+                    return Err(SensorError::InvalidState);
+                }
+                SensorFault::BiasShift { .. } => {
+                    // Not applicable to Baro, ignore
+                }
+            }
+        }
+
         self.reading.take().ok_or(SensorError::InvalidState)
     }
 
     fn data_ready(&mut self) -> SensorResult<bool> {
+        if let Some(fault) = &self.fault {
+            match fault {
+                SensorFault::HealthDegraded | SensorFault::HealthFailed | SensorFault::NaN => {
+                    return Ok(true);
+                }
+                SensorFault::Dropout { remaining_cycles } if *remaining_cycles > 0 => {
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
         Ok(self.reading.is_some())
     }
 
@@ -144,13 +346,15 @@ impl BaroDriver for FakeBaro {
 /// Fake magnetometer driver for SITL
 ///
 /// Receives magnetic field data from external source
-/// (e.g., HIL_SENSOR MAVLink message)
+/// (e.g., HIL_SENSOR MAVLink message). Supports fault injection for testing.
 #[derive(Debug, Default)]
 pub struct FakeMag {
     /// Buffered reading
     reading: Option<RawMagReading>,
     /// Source ID
     source_id: u8,
+    /// Active fault (if any)
+    fault: Option<SensorFault>,
 }
 
 impl FakeMag {
@@ -164,6 +368,7 @@ impl FakeMag {
         Self {
             reading: None,
             source_id,
+            fault: None,
         }
     }
 
@@ -181,14 +386,78 @@ impl FakeMag {
     pub fn has_data(&self) -> bool {
         self.reading.is_some()
     }
+
+    /// Inject a sensor fault
+    pub fn inject_fault(&mut self, fault: SensorFault) {
+        self.fault = Some(fault);
+    }
+
+    /// Clear all injected faults
+    pub fn clear_faults(&mut self) {
+        self.fault = None;
+    }
+
+    /// Check if a fault is active
+    pub fn has_fault(&self) -> bool {
+        self.fault.is_some()
+    }
 }
 
 impl MagDriver for FakeMag {
     fn read(&mut self) -> SensorResult<RawMagReading> {
+        // Handle faults first
+        if let Some(ref mut fault) = self.fault {
+            match fault {
+                SensorFault::HealthDegraded => {
+                    return Err(SensorError::InvalidData);
+                }
+                SensorFault::HealthFailed => {
+                    return Err(SensorError::DeviceNotFound);
+                }
+                SensorFault::NaN => {
+                    self.reading.take();
+                    return Ok(RawMagReading {
+                        field_ut: [f32::NAN, f32::NAN, f32::NAN],
+                    });
+                }
+                SensorFault::Dropout { remaining_cycles } => {
+                    if *remaining_cycles > 0 {
+                        *remaining_cycles -= 1;
+                        return Err(SensorError::InvalidState);
+                    } else {
+                        self.fault = None;
+                    }
+                }
+                SensorFault::BiasShift { offset } => {
+                    if let Some(mut reading) = self.reading.take() {
+                        reading.field_ut[0] += offset[0];
+                        reading.field_ut[1] += offset[1];
+                        reading.field_ut[2] += offset[2];
+                        return Ok(reading);
+                    }
+                    return Err(SensorError::InvalidState);
+                }
+                SensorFault::BiasShiftScalar { .. } => {
+                    // Not applicable to Mag, ignore
+                }
+            }
+        }
+
         self.reading.take().ok_or(SensorError::InvalidState)
     }
 
     fn data_ready(&mut self) -> SensorResult<bool> {
+        if let Some(fault) = &self.fault {
+            match fault {
+                SensorFault::HealthDegraded | SensorFault::HealthFailed | SensorFault::NaN => {
+                    return Ok(true);
+                }
+                SensorFault::Dropout { remaining_cycles } if *remaining_cycles > 0 => {
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
         Ok(self.reading.is_some())
     }
 
@@ -200,13 +469,15 @@ impl MagDriver for FakeMag {
 /// Fake GNSS driver for SITL
 ///
 /// Receives position and velocity data from external source
-/// (e.g., HIL_GPS MAVLink message)
+/// (e.g., HIL_GPS MAVLink message). Supports fault injection for testing.
 #[derive(Debug, Default)]
 pub struct FakeGnss {
     /// Buffered reading
     reading: Option<RawGnssReading>,
     /// Source ID
     source_id: u8,
+    /// Active fault (if any)
+    fault: Option<SensorFault>,
 }
 
 impl FakeGnss {
@@ -220,6 +491,7 @@ impl FakeGnss {
         Self {
             reading: None,
             source_id,
+            fault: None,
         }
     }
 
@@ -237,14 +509,88 @@ impl FakeGnss {
     pub fn has_data(&self) -> bool {
         self.reading.is_some()
     }
+
+    /// Inject a sensor fault
+    pub fn inject_fault(&mut self, fault: SensorFault) {
+        self.fault = Some(fault);
+    }
+
+    /// Clear all injected faults
+    pub fn clear_faults(&mut self) {
+        self.fault = None;
+    }
+
+    /// Check if a fault is active
+    pub fn has_fault(&self) -> bool {
+        self.fault.is_some()
+    }
 }
 
 impl GnssDriver for FakeGnss {
     fn read(&mut self) -> SensorResult<RawGnssReading> {
+        // Handle faults first
+        if let Some(ref mut fault) = self.fault {
+            match fault {
+                SensorFault::HealthDegraded => {
+                    return Err(SensorError::InvalidData);
+                }
+                SensorFault::HealthFailed => {
+                    return Err(SensorError::DeviceNotFound);
+                }
+                SensorFault::NaN => {
+                    self.reading.take();
+                    return Ok(RawGnssReading {
+                        lat_deg: f64::NAN,
+                        lon_deg: f64::NAN,
+                        alt_m: f32::NAN,
+                        vel_ned: [f32::NAN, f32::NAN, f32::NAN],
+                        fix: GnssFix::None,
+                        h_acc: f32::NAN,
+                        v_acc: f32::NAN,
+                        satellites: 0,
+                    });
+                }
+                SensorFault::Dropout { remaining_cycles } => {
+                    if *remaining_cycles > 0 {
+                        *remaining_cycles -= 1;
+                        return Err(SensorError::InvalidState);
+                    } else {
+                        self.fault = None;
+                    }
+                }
+                SensorFault::BiasShift { offset } => {
+                    // For GNSS, bias shift applies to position (NED offset in meters)
+                    // This is a simplified model - real GNSS errors are more complex
+                    if let Some(mut reading) = self.reading.take() {
+                        // Approximate: 1 degree lat ≈ 111km, so offset[0] meters ≈ offset[0]/111000 degrees
+                        reading.lat_deg += (offset[0] as f64) / 111000.0;
+                        reading.lon_deg += (offset[1] as f64) / 111000.0;
+                        reading.alt_m += offset[2];
+                        return Ok(reading);
+                    }
+                    return Err(SensorError::InvalidState);
+                }
+                SensorFault::BiasShiftScalar { .. } => {
+                    // Not directly applicable to GNSS, ignore
+                }
+            }
+        }
+
         self.reading.take().ok_or(SensorError::InvalidState)
     }
 
     fn data_ready(&mut self) -> SensorResult<bool> {
+        if let Some(fault) = &self.fault {
+            match fault {
+                SensorFault::HealthDegraded | SensorFault::HealthFailed | SensorFault::NaN => {
+                    return Ok(true);
+                }
+                SensorFault::Dropout { remaining_cycles } if *remaining_cycles > 0 => {
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
         Ok(self.reading.is_some())
     }
 
@@ -597,5 +943,185 @@ mod tests {
         actuator.disarm();
         assert!(!actuator.is_armed());
         assert!(!actuator.has_cmd());
+    }
+
+    // =========================================================================
+    // FAULT INJECTION TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_imu_fault_health_degraded() {
+        let mut imu = FakeImu::new();
+        imu.feed(RawImuReading {
+            accel: [0.0, 0.0, -9.81],
+            gyro: [0.0, 0.0, 0.0],
+            temperature: Some(25.0),
+        });
+
+        // Inject degraded health fault
+        imu.inject_fault(SensorFault::HealthDegraded);
+        assert!(imu.has_fault());
+        assert!(matches!(imu.data_ready(), Ok(true)));
+
+        // read() should return InvalidData error
+        assert!(matches!(imu.read(), Err(SensorError::InvalidData)));
+
+        // Clear fault
+        imu.clear_faults();
+        assert!(!imu.has_fault());
+    }
+
+    #[test]
+    fn test_imu_fault_health_failed() {
+        let mut imu = FakeImu::new();
+        imu.inject_fault(SensorFault::HealthFailed);
+
+        // read() should return DeviceNotFound error
+        assert!(matches!(imu.read(), Err(SensorError::DeviceNotFound)));
+    }
+
+    #[test]
+    fn test_imu_fault_nan_injection() {
+        let mut imu = FakeImu::new();
+        imu.feed(RawImuReading {
+            accel: [0.0, 0.0, -9.81],
+            gyro: [0.0, 0.0, 0.0],
+            temperature: Some(25.0),
+        });
+
+        imu.inject_fault(SensorFault::NaN);
+
+        let reading = imu.read().expect("Should return Ok with NaN values");
+        assert!(reading.accel[0].is_nan());
+        assert!(reading.accel[1].is_nan());
+        assert!(reading.accel[2].is_nan());
+        assert!(reading.gyro[0].is_nan());
+    }
+
+    #[test]
+    fn test_imu_fault_dropout() {
+        let mut imu = FakeImu::new();
+
+        // Inject 3-cycle dropout
+        // Behavior: remaining_cycles decrements on each read()
+        // When remaining_cycles reaches 0, the fault clears on the NEXT read attempt
+        imu.inject_fault(SensorFault::Dropout {
+            remaining_cycles: 3,
+        });
+
+        // First 3 reads should fail (remaining goes 3→2→1→0)
+        for i in 0..3 {
+            imu.feed(RawImuReading {
+                accel: [0.0, 0.0, -9.81],
+                gyro: [0.0, 0.0, 0.0],
+                temperature: Some(25.0),
+            });
+            assert!(
+                matches!(imu.read(), Err(SensorError::InvalidState)),
+                "Cycle {} should fail",
+                i
+            );
+        }
+
+        // Fault is still present but remaining_cycles = 0
+        // Next read will clear it and proceed normally
+        imu.feed(RawImuReading {
+            accel: [0.0, 0.0, -9.81],
+            gyro: [0.0, 0.0, 0.0],
+            temperature: Some(25.0),
+        });
+        assert!(imu.read().is_ok());
+
+        // Now fault should be cleared
+        assert!(!imu.has_fault());
+    }
+
+    #[test]
+    fn test_imu_fault_bias_shift() {
+        let mut imu = FakeImu::new();
+        imu.feed(RawImuReading {
+            accel: [0.0, 0.0, -9.81],
+            gyro: [0.0, 0.0, 0.0],
+            temperature: Some(25.0),
+        });
+
+        // Inject bias: add 1.0 to X, 2.0 to Y, 3.0 to Z
+        imu.inject_fault(SensorFault::BiasShift {
+            offset: [1.0, 2.0, 3.0],
+        });
+
+        let reading = imu.read().expect("Should return biased reading");
+        assert!((reading.accel[0] - 1.0).abs() < 1e-5);
+        assert!((reading.accel[1] - 2.0).abs() < 1e-5);
+        assert!((reading.accel[2] - (-9.81 + 3.0)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_baro_fault_bias_shift_scalar() {
+        let mut baro = FakeBaro::new();
+        baro.feed(RawBaroReading {
+            pressure_pa: 101325.0,
+            temperature_c: 25.0,
+        });
+
+        // Inject bias: add 1000 Pa
+        baro.inject_fault(SensorFault::BiasShiftScalar { offset: 1000.0 });
+
+        let reading = baro.read().expect("Should return biased reading");
+        assert!((reading.pressure_pa - 102325.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_mag_fault_health_degraded() {
+        let mut mag = FakeMag::new();
+        mag.inject_fault(SensorFault::HealthDegraded);
+
+        assert!(matches!(mag.read(), Err(SensorError::InvalidData)));
+    }
+
+    #[test]
+    fn test_gnss_fault_dropout_recovery() {
+        let mut gnss = FakeGnss::new();
+
+        // Inject 2-cycle dropout
+        gnss.inject_fault(SensorFault::Dropout {
+            remaining_cycles: 2,
+        });
+
+        // During dropout, data_ready should return false
+        assert!(matches!(gnss.data_ready(), Ok(false)));
+
+        // First 2 reads fail (remaining goes 2→1→0)
+        assert!(matches!(gnss.read(), Err(SensorError::InvalidState)));
+        assert!(matches!(gnss.read(), Err(SensorError::InvalidState)));
+
+        // Fault is still present but remaining = 0
+        // Normal operation resumes on next read (which clears the fault)
+        gnss.feed(RawGnssReading {
+            lat_deg: 47.0,
+            lon_deg: 8.0,
+            alt_m: 500.0,
+            vel_ned: [0.0, 0.0, 0.0],
+            fix: GnssFix::ThreeD,
+            h_acc: 1.0,
+            v_acc: 1.5,
+            satellites: 10,
+        });
+        assert!(gnss.read().is_ok());
+
+        // Now fault should be cleared
+        assert!(!gnss.has_fault());
+    }
+
+    #[test]
+    fn test_gnss_fault_nan_injection() {
+        let mut gnss = FakeGnss::new();
+        gnss.inject_fault(SensorFault::NaN);
+
+        let reading = gnss.read().expect("Should return Ok with NaN values");
+        assert!(reading.lat_deg.is_nan());
+        assert!(reading.lon_deg.is_nan());
+        assert!(reading.alt_m.is_nan());
+        assert_eq!(reading.fix, GnssFix::None);
     }
 }

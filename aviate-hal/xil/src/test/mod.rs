@@ -8,6 +8,6 @@ pub mod mission;
 
 // Re-export mission types
 pub use mission::{
-    Action, Criterion, CriterionResult, Mission, MissionResult, MultiVehicleCriterion,
-    MultiVehicleMission, MultiVehiclePhase, Phase, PhaseResult, VehicleConfig,
+    Action, Criterion, CriterionResult, FaultSpec, Mission, MissionResult, MultiVehicleCriterion,
+    MultiVehicleMission, MultiVehiclePhase, Phase, PhaseResult, SensorTarget, VehicleConfig,
 };

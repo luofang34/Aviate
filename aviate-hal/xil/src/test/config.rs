@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-use super::mission::{Action, Criterion, Mission, Phase, VehicleConfig};
+use super::mission::{Action, Criterion, FaultSpec, Mission, Phase, SensorTarget, VehicleConfig};
 
 /// Parsed test configuration
 #[derive(Debug, Clone)]
@@ -262,16 +262,24 @@ impl PhaseBuilder {
 
 /// Parse an action from TOML inline table format
 fn parse_action(s: &str) -> Action {
-    // Simple parsing of { type = "...", value = ... }
+    // Simple parsing of { type = "...", value = ..., sensor = ..., fault = ... }
     let s = s.trim().trim_start_matches('{').trim_end_matches('}');
     let mut type_str = String::new();
     let mut value: f32 = 0.0;
+    let mut sensor_str = String::new();
+    let mut fault_str = String::new();
+    let mut cycles: u32 = 0;
+    let mut offset = [0.0f32; 3];
 
     for part in s.split(',') {
         if let Some((k, v)) = parse_kv(part) {
             match k.as_str() {
                 "type" => type_str = v,
                 "value" => value = v.parse().unwrap_or(0.0),
+                "sensor" => sensor_str = v,
+                "fault" => fault_str = v,
+                "cycles" => cycles = v.parse().unwrap_or(0),
+                "offset" => offset = parse_vec3(&v),
                 _ => {}
             }
         }
@@ -282,6 +290,26 @@ fn parse_action(s: &str) -> Action {
         "disarm" => Action::Disarm,
         "thrust" => Action::Thrust(value),
         "wait" => Action::Wait,
+        "inject_fault" => {
+            let sensor = match sensor_str.as_str() {
+                "imu" => SensorTarget::Imu,
+                "baro" => SensorTarget::Baro,
+                "mag" => SensorTarget::Mag,
+                "gnss" => SensorTarget::Gnss,
+                _ => SensorTarget::Imu, // Default
+            };
+            let fault = match fault_str.as_str() {
+                "degraded" | "health_degraded" => FaultSpec::HealthDegraded,
+                "failed" | "health_failed" => FaultSpec::HealthFailed,
+                "nan" => FaultSpec::NaN,
+                "dropout" => FaultSpec::Dropout { cycles },
+                "bias" | "bias_shift" => FaultSpec::BiasShift { offset },
+                "bias_scalar" => FaultSpec::BiasScalar { offset: value },
+                _ => FaultSpec::HealthDegraded, // Default
+            };
+            Action::InjectFault { sensor, fault }
+        }
+        "clear_faults" => Action::ClearFaults,
         _ => Action::Wait,
     }
 }

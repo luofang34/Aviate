@@ -109,6 +109,41 @@ pub enum Action {
     },
     /// Go to position (NED)
     GoTo { position: [f32; 3], heading: f32 },
+    /// Inject fault into a sensor (for SITL testing)
+    InjectFault {
+        /// Target sensor
+        sensor: SensorTarget,
+        /// Type of fault to inject
+        fault: FaultSpec,
+    },
+    /// Clear all injected faults
+    ClearFaults,
+}
+
+/// Target sensor for fault injection
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SensorTarget {
+    Imu,
+    Baro,
+    Mag,
+    Gnss,
+}
+
+/// Fault specification for injection
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FaultSpec {
+    /// Sensor reports degraded health
+    HealthDegraded,
+    /// Sensor has completely failed
+    HealthFailed,
+    /// Inject NaN values into readings
+    NaN,
+    /// Drop sensor data for N cycles
+    Dropout { cycles: u32 },
+    /// Add bias offset to readings
+    BiasShift { offset: [f32; 3] },
+    /// Add scalar bias (for single-value sensors like baro)
+    BiasScalar { offset: f32 },
 }
 
 /// Verification criteria for a phase

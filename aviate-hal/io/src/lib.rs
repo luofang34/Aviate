@@ -137,7 +137,7 @@ pub mod traits;
 // Main exports
 pub use board_hal::BoardHal;
 pub use error::{ActuatorError, ActuatorResult, SensorError, SensorResult};
-pub use fake::{FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag, FakeSensorSet};
+pub use fake::{FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag, FakeSensorSet, SensorFault};
 pub use traits::{
     ActuatorDriver, ActuatorErrorFlags, ActuatorStatus, ActuatorTelemetry, BaroDriver, GnssDriver,
     GnssFix, ImuCalibration, ImuDriver, MagCalibration, MagDriver, RawActuatorCmd, RawBaroReading,
