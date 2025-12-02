@@ -7,6 +7,7 @@ members = [
     "aviate-hal/io",
     "aviate-hal/xil",
     "aviate-hal/xil/backends/gz",
+    "aviate-hal/xil/backends/mavlink-hil",
     "aviate-boards/sitl-x500",
     "aviate-apps/quadcopter-sitl",
     "tests/lint-verification",

@@ -1,0 +1,11 @@
+[package]
+name = "aviate-backend-mavlink-hil"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "MAVLink HIL backend for legacy simulator compatibility (jMAVSim, X-Plane, etc.)"
+
+[dependencies]
+aviate-hal-xil = { path = "../.." }
+
+[dev-dependencies]
