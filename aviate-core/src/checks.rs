@@ -120,6 +120,8 @@ pub enum DegradationReason {
     EnvelopeViolation,
     /// RC link lost
     RcLost,
+    /// Persistent timing violation (spec §18)
+    TimingViolation,
 }
 
 bitflags::bitflags! {

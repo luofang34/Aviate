@@ -313,6 +313,8 @@ impl ActuatorState {
 pub struct ActuatorFallbackState {
     pub last_good: [GroupVector; MAX_GROUPS],
     pub age: [u16; MAX_GROUPS],
+    /// Per-group consecutive fallback counter (for degradation triggering)
+    pub consecutive_fallback: [u16; MAX_GROUPS],
 }
 
 impl Default for ActuatorFallbackState {
@@ -320,6 +322,7 @@ impl Default for ActuatorFallbackState {
         Self {
             last_good: [GroupVector::default(); MAX_GROUPS],
             age: [0; MAX_GROUPS],
+            consecutive_fallback: [0; MAX_GROUPS],
         }
     }
 }
@@ -348,6 +351,8 @@ pub struct SanitizeReport {
     pub group_results: [GroupSanitizeResult; MAX_GROUPS],
     pub any_fallback: bool,
     pub critical_failure: bool,
+    /// True when any group has exceeded MAX_CONSECUTIVE_FALLBACK frames
+    pub consecutive_fallback_limit_exceeded: bool,
 }
 
 impl Default for SanitizeReport {
@@ -356,11 +361,16 @@ impl Default for SanitizeReport {
             group_results: [GroupSanitizeResult::AllValid; MAX_GROUPS],
             any_fallback: false,
             critical_failure: false,
+            consecutive_fallback_limit_exceeded: false,
         }
     }
 }
 
 pub const MAX_FALLBACK_AGE_CYCLES: u16 = 100;
+
+/// Maximum consecutive fallback cycles before triggering degradation.
+/// Degradation triggers on frame (MAX_CONSECUTIVE_FALLBACK + 1).
+pub const MAX_CONSECUTIVE_FALLBACK: u16 = 10;
 
 pub trait ActuatorSanitizer {
     fn sanitize(&mut self, cmd: &mut ActuatorCmd, mode: &ModeConfig) -> SanitizeReport;
@@ -499,6 +509,26 @@ impl ActuatorSanitizer for Sanitizer {
                 }
 
                 self.state.age[i] = self.state.age[i].saturating_add(1);
+            }
+
+            // Consecutive fallback tracking (per-group)
+            match report.group_results[i] {
+                GroupSanitizeResult::AllValid | GroupSanitizeResult::Clamped => {
+                    // Reset counter: we still have control authority
+                    self.state.consecutive_fallback[i] = 0;
+                }
+                GroupSanitizeResult::FallbackLastGood
+                | GroupSanitizeResult::FallbackSafe
+                | GroupSanitizeResult::FallbackUnavailable => {
+                    // Increment consecutive counter: lost authority
+                    self.state.consecutive_fallback[i] =
+                        self.state.consecutive_fallback[i].saturating_add(1);
+
+                    // Check limit: trigger on frame (MAX + 1)
+                    if self.state.consecutive_fallback[i] > MAX_CONSECUTIVE_FALLBACK {
+                        report.consecutive_fallback_limit_exceeded = true;
+                    }
+                }
             }
         }
 

@@ -13,6 +13,8 @@ default = ["mc", "fw", "vtol"]
 mc = []
 fw = []
 vtol = []
+# Enable test hooks for inject_state/inject_fault (spec §20)
+test-hooks = []
 
 [lib]
 path = "src/lib.rs"

@@ -1,6 +1,9 @@
 use crate::types::FloatExt;
 use crate::types::Scalar;
 
+/// Tolerance for quaternion unit-length validation (INV-27)
+pub const QUAT_NORM_EPS: Scalar = 1e-4;
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Vector3<T> {
     pub x: T,
@@ -165,6 +168,21 @@ impl Quaternion {
 
     pub fn norm_sq(&self) -> Scalar {
         self.w * self.w + self.x * self.x + self.y * self.y + self.z * self.z
+    }
+
+    /// Check if quaternion is unit-length within tolerance (INV-27)
+    pub fn is_normalized(&self, epsilon: Scalar) -> bool {
+        let norm_sq = self.norm_sq();
+        // Explicit NaN/Inf handling: any non-finite value is not normalized
+        if !norm_sq.is_finite() {
+            return false;
+        }
+        (norm_sq - 1.0).abs() < epsilon
+    }
+
+    /// Convenience method using default tolerance
+    pub fn is_normalized_default(&self) -> bool {
+        self.is_normalized(QUAT_NORM_EPS)
     }
 
     pub fn normalize(&self) -> Self {

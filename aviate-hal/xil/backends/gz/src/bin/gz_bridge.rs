@@ -43,10 +43,17 @@ fn main() {
     let instance = get_instance();
     let config = GzBridgeConfig::for_instance(instance);
     println!("Configuration:");
-    println!("  Model name:  {}", config.model_name);
-    println!("  Motor topic: {}", config.motor_topic);
-    println!("  Aviate port: {}", config.aviate_port);
-    println!("  Test port:   {}", config.test_port);
+    println!("  Model name:     {}", config.model_name);
+    println!("  Motor topic:    {}", config.motor_topic);
+    println!(
+        "  Send HIL to:    127.0.0.1:{} (aviate)",
+        config.aviate_port()
+    );
+    println!(
+        "  Recv actuators: 0.0.0.0:{} (actuator)",
+        config.actuator_port()
+    );
+    println!("  Test port:      {}", config.test_port());
 
     let mut bridge = match GzBridge::new(config) {
         Ok(b) => b,

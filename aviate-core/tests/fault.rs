@@ -5,9 +5,9 @@
 //! - FaultCategory enumeration
 //! - FaultAction enumeration
 //! - FaultHandlingTable lookups
-//! - ControlLaw degradation ordering
+//! - ControlLawV1 degradation ordering
 
-use aviate_core::control::ControlLaw;
+use aviate_core::control::ControlLawV1;
 use aviate_core::fault::{
     FaultAction, FaultCategory, FaultFlags, FaultHandlingTable, FaultResponse,
 };
@@ -188,36 +188,35 @@ fn fault_action_variants() {
 }
 
 // =============================================================================
-// ControlLaw - Degradation Ordering
+// ControlLawV1 - Degradation Ordering
 // =============================================================================
 
 #[test]
 fn control_law_degradation_order() {
     // §14: Control law degradation is monotonic
-    assert!(ControlLaw::Normal < ControlLaw::Alternate1);
-    assert!(ControlLaw::Alternate1 < ControlLaw::Alternate2);
-    assert!(ControlLaw::Alternate2 < ControlLaw::Direct);
-    assert!(ControlLaw::Direct < ControlLaw::Frozen);
+    assert!(ControlLawV1::Primary < ControlLawV1::Alternate);
+    assert!(ControlLawV1::Alternate < ControlLawV1::Direct);
+    assert!(ControlLawV1::Direct < ControlLawV1::Backup);
 }
 
 #[test]
 fn control_law_max_degradation() {
     let laws = [
-        ControlLaw::Normal,
-        ControlLaw::Alternate1,
-        ControlLaw::Alternate2,
-        ControlLaw::Direct,
-        ControlLaw::Frozen,
+        ControlLawV1::Primary,
+        ControlLawV1::Alternate,
+        ControlLawV1::Alternate,
+        ControlLawV1::Direct,
+        ControlLawV1::Backup,
     ];
 
     let max_law = laws.iter().max().unwrap();
-    assert_eq!(*max_law, ControlLaw::Frozen);
+    assert_eq!(*max_law, ControlLawV1::Backup);
 }
 
 #[test]
 fn control_law_equality() {
-    assert_eq!(ControlLaw::Normal, ControlLaw::Normal);
-    assert_ne!(ControlLaw::Normal, ControlLaw::Alternate1);
+    assert_eq!(ControlLawV1::Primary, ControlLawV1::Primary);
+    assert_ne!(ControlLawV1::Primary, ControlLawV1::Alternate);
 }
 
 // =============================================================================
@@ -242,7 +241,7 @@ fn fault_table_imu_all_failed_emergency() {
     assert!(entry.is_some(), "ImuAllFailed should have an entry");
     let e = entry.unwrap();
     assert_eq!(e.action, FaultAction::Emergency);
-    assert_eq!(e.degrade_to, Some(ControlLaw::Frozen));
+    assert_eq!(e.degrade_to, Some(ControlLawV1::Backup));
     assert_eq!(e.max_response_time_ms, 0);
 }
 
@@ -258,7 +257,7 @@ fn fault_table_gnss_all_lost_degrade() {
     assert!(entry.is_some());
     let e = entry.unwrap();
     assert_eq!(e.action, FaultAction::Degrade);
-    assert_eq!(e.degrade_to, Some(ControlLaw::Alternate1));
+    assert_eq!(e.degrade_to, Some(ControlLawV1::Alternate));
 }
 
 #[test]
@@ -273,7 +272,7 @@ fn fault_table_numeric_error_emergency() {
     assert!(entry.is_some());
     let e = entry.unwrap();
     assert_eq!(e.action, FaultAction::Emergency);
-    assert_eq!(e.degrade_to, Some(ControlLaw::Frozen));
+    assert_eq!(e.degrade_to, Some(ControlLawV1::Backup));
 }
 
 #[test]
@@ -328,13 +327,13 @@ fn fault_response_fields() {
     let response = FaultResponse {
         fault: FaultCategory::EstimatorDiverged,
         action: FaultAction::Degrade,
-        degrade_to: Some(ControlLaw::Alternate2),
+        degrade_to: Some(ControlLawV1::Alternate),
         max_response_time_ms: 50,
     };
 
     assert_eq!(response.fault, FaultCategory::EstimatorDiverged);
     assert_eq!(response.action, FaultAction::Degrade);
-    assert_eq!(response.degrade_to, Some(ControlLaw::Alternate2));
+    assert_eq!(response.degrade_to, Some(ControlLawV1::Alternate));
     assert_eq!(response.max_response_time_ms, 50);
 }
 

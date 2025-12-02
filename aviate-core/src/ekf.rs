@@ -1,4 +1,4 @@
-use crate::math::{Matrix, Quaternion, Vector3};
+use crate::math::{Matrix, Quaternion, Vector3, QUAT_NORM_EPS};
 use crate::sensor::{
     BaroData, GnssData, GnssFix, GnssHealth, ImuData, MagData, SensorHealth, SensorReading,
 };
@@ -86,6 +86,9 @@ pub struct Ekf {
     config: EkfConfig,
 
     initialized: bool,
+
+    /// INV-27: Quaternion normalization fault flag (latches until init())
+    quat_fault: bool,
 }
 
 impl Default for Ekf {
@@ -123,11 +126,30 @@ impl Ekf {
             p_cov: Matrix::identity().mul_scalar(0.1), // Initial uncertainty
             config,
             initialized: false,
+            quat_fault: false,
         }
     }
 
     pub fn is_initialized(&self) -> bool {
         self.initialized
+    }
+
+    /// Returns true if a quaternion normalization fault has occurred (INV-27).
+    /// Fault latches until init() is called.
+    pub fn has_numeric_fault(&self) -> bool {
+        self.quat_fault
+    }
+
+    /// INV-27: Normalize quaternion and validate result.
+    /// Returns IDENTITY and sets quat_fault if normalization fails.
+    fn sanitize_quat(&mut self, q: Quaternion) -> Quaternion {
+        let q = q.normalize();
+        if !q.is_normalized(QUAT_NORM_EPS) {
+            self.quat_fault = true;
+            Quaternion::IDENTITY
+        } else {
+            q
+        }
     }
 
     pub fn init(&mut self, pos: Vector3<Meters>, vel: Vector3<MetersPerSecond>, quat: Quaternion) {
@@ -147,6 +169,7 @@ impl Ekf {
         self.mag_bias = Vector3::new(Microtesla(0.0), Microtesla(0.0), Microtesla(0.0));
         self.p_cov = Matrix::identity().mul_scalar(0.1);
         self.initialized = true;
+        self.quat_fault = false; // Clear latch on re-init (INV-27)
     }
 
     pub fn predict(&mut self, imu: &ImuData, dt: Scalar) {
@@ -237,7 +260,7 @@ impl Ekf {
         } else {
             Quaternion::IDENTITY
         };
-        self.quat = self.quat.mul(&dq).normalize();
+        self.quat = self.sanitize_quat(self.quat.mul(&dq));
 
         // 3. Propagate Covariance (P = F*P*F' + Q)
         // We need Jacobian F (15x15).
@@ -561,9 +584,13 @@ impl Ekf {
             k_vector[IDX_ATT + 1] * innov,
             k_vector[IDX_ATT + 2] * innov,
         );
-        let dq_small =
-            Quaternion::new(1.0, d_ang.x * 0.5, d_ang.y * 0.5, d_ang.z * 0.5).normalize();
-        self.quat = self.quat.mul(&dq_small).normalize();
+        let dq_small = self.sanitize_quat(Quaternion::new(
+            1.0,
+            d_ang.x * 0.5,
+            d_ang.y * 0.5,
+            d_ang.z * 0.5,
+        ));
+        self.quat = self.sanitize_quat(self.quat.mul(&dq_small));
 
         // Update gyro bias
         self.gyro_bias.x = RadiansPerSecond(self.gyro_bias.x.0 + k_vector[IDX_GB] * innov);
@@ -663,9 +690,13 @@ impl Ekf {
         );
         // Apply small angle rotation to quaternion
         // Better: use small angle approx dq = [1, dx/2, dy/2, dz/2]
-        let dq_small =
-            Quaternion::new(1.0, d_ang.x * 0.5, d_ang.y * 0.5, d_ang.z * 0.5).normalize();
-        self.quat = self.quat.mul(&dq_small).normalize();
+        let dq_small = self.sanitize_quat(Quaternion::new(
+            1.0,
+            d_ang.x * 0.5,
+            d_ang.y * 0.5,
+            d_ang.z * 0.5,
+        ));
+        self.quat = self.sanitize_quat(self.quat.mul(&dq_small));
 
         // 4. Update P = (I - KH) * P
         // P_new = P - K * H * P
@@ -713,5 +744,30 @@ impl Ekf {
                 StateValidFlags::empty()
             },
         }
+    }
+
+    /// Inject state for testing (spec §20 test-hooks)
+    ///
+    /// Directly sets the EKF internal state from an external StateEstimate.
+    /// Only available with the `test-hooks` feature enabled.
+    #[cfg(feature = "test-hooks")]
+    pub fn set_state(&mut self, state: &StateEstimate) {
+        self.quat = state.attitude;
+        self.last_gyro_body = crate::math::Vector3 {
+            x: state.angular_velocity[0],
+            y: state.angular_velocity[1],
+            z: state.angular_velocity[2],
+        };
+        self.pos = Vector3 {
+            x: state.position_ned[0],
+            y: state.position_ned[1],
+            z: state.position_ned[2],
+        };
+        self.vel = Vector3 {
+            x: state.velocity_ned[0],
+            y: state.velocity_ned[1],
+            z: state.velocity_ned[2],
+        };
+        self.initialized = state.valid_flags.contains(StateValidFlags::all());
     }
 }

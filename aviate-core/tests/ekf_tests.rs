@@ -1861,3 +1861,130 @@ fn ekf_mag_innovation_wrapping_below_minus_pi() {
 
     assert!(ekf.is_initialized());
 }
+
+// =============================================================================
+// INV-27: Quaternion Fault Latch Behavior Tests
+// =============================================================================
+
+#[test]
+fn ekf_has_numeric_fault_false_initially() {
+    let ekf = Ekf::new(EkfConfig::default());
+    assert!(
+        !ekf.has_numeric_fault(),
+        "quat_fault should be false initially"
+    );
+}
+
+#[test]
+fn ekf_init_clears_quat_fault() {
+    let mut ekf = Ekf::new(EkfConfig::default());
+
+    // First init
+    ekf.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
+        Quaternion::IDENTITY,
+    );
+
+    // After init, fault should be false
+    assert!(
+        !ekf.has_numeric_fault(),
+        "quat_fault should be false after init()"
+    );
+}
+
+#[test]
+fn ekf_normal_operation_no_fault() {
+    use aviate_core::sensor::ImuData;
+    use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
+
+    let mut ekf = Ekf::new(EkfConfig::default());
+
+    ekf.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
+        Quaternion::IDENTITY,
+    );
+
+    // Normal IMU data - should not trigger fault
+    let imu = ImuData {
+        gyro: [
+            RadiansPerSecond(0.1),
+            RadiansPerSecond(0.0),
+            RadiansPerSecond(0.0),
+        ],
+        accel: [
+            MetersPerSecondSquared(0.0),
+            MetersPerSecondSquared(0.0),
+            MetersPerSecondSquared(-9.81),
+        ],
+    };
+
+    // Multiple predict cycles should not trigger fault
+    for _ in 0..100 {
+        ekf.predict(&imu, 0.01);
+    }
+
+    assert!(
+        !ekf.has_numeric_fault(),
+        "Normal operation should not trigger quat_fault"
+    );
+}
+
+#[test]
+fn ekf_reinit_clears_fault_state() {
+    use aviate_core::sensor::ImuData;
+    use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
+
+    let mut ekf = Ekf::new(EkfConfig::default());
+
+    // First init
+    ekf.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
+        Quaternion::IDENTITY,
+    );
+
+    // Do some predictions
+    let imu = ImuData {
+        gyro: [
+            RadiansPerSecond(0.5),
+            RadiansPerSecond(0.3),
+            RadiansPerSecond(0.1),
+        ],
+        accel: [
+            MetersPerSecondSquared(1.0),
+            MetersPerSecondSquared(0.5),
+            MetersPerSecondSquared(-9.81),
+        ],
+    };
+
+    for _ in 0..50 {
+        ekf.predict(&imu, 0.01);
+    }
+
+    // Re-initialize - this should clear any potential fault state
+    ekf.init(
+        Vector3::new(Meters(100.0), Meters(50.0), Meters(-10.0)),
+        Vector3::new(
+            MetersPerSecond(5.0),
+            MetersPerSecond(2.0),
+            MetersPerSecond(-1.0),
+        ),
+        Quaternion::from_axis_angle(Vector3::new(0.0, 0.0, 1.0), 0.5),
+    );
+
+    assert!(!ekf.has_numeric_fault(), "Re-init should clear quat_fault");
+}

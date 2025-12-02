@@ -293,7 +293,7 @@ fn launch_gz_bridges(
             .env("LD_LIBRARY_PATH", plugin_path)
             .env("AVIATE_INSTANCE", vehicle.instance.to_string())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit()) // Show bridge debug output
             .spawn();
 
         match child {
@@ -348,7 +348,7 @@ fn launch_flight_controllers(
             .env("LD_LIBRARY_PATH", plugin_path)
             .env("AVIATE_INSTANCE", vehicle.instance.to_string())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit()) // Show FC debug output
             .spawn();
 
         match child {

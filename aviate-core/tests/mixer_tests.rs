@@ -742,4 +742,163 @@ mod tests {
         // M1 = 0.1 + 0.3 = 0.4
         assert!((cmd3.outputs[1].0 - 0.4).abs() < 1e-5, "M1 = 0.4");
     }
+
+    // =========================================================================
+    // CONSECUTIVE FALLBACK COUNTER TESTS
+    // =========================================================================
+
+    use aviate_core::mixer::MAX_CONSECUTIVE_FALLBACK;
+
+    #[test]
+    fn test_consecutive_fallback_counter_increments() {
+        let mut sanitizer = Sanitizer::default();
+        let mode = ModeConfig {
+            mode: ConfigMode::Hover,
+            groups: &STRONG_GROUP,
+        };
+
+        // Simulate consecutive invalid inputs (fallback cycles)
+        for i in 0..3 {
+            let mut cmd = make_cmd();
+            cmd.outputs[0] = Normalized(Scalar::NAN); // Force fallback
+            let report = sanitizer.sanitize(&mut cmd, &mode);
+
+            assert!(report.any_fallback);
+            assert_eq!(
+                sanitizer.state.consecutive_fallback[0],
+                (i + 1) as u16,
+                "After {} fallback cycles, counter should be {}",
+                i + 1,
+                i + 1
+            );
+        }
+    }
+
+    #[test]
+    fn test_consecutive_fallback_resets_on_valid() {
+        let mut sanitizer = Sanitizer::default();
+        let mode = ModeConfig {
+            mode: ConfigMode::Hover,
+            groups: &STRONG_GROUP,
+        };
+
+        // Two fallback cycles
+        for _ in 0..2 {
+            let mut cmd = make_cmd();
+            cmd.outputs[0] = Normalized(Scalar::NAN);
+            sanitizer.sanitize(&mut cmd, &mode);
+        }
+        assert_eq!(sanitizer.state.consecutive_fallback[0], 2);
+
+        // Valid frame resets counter
+        let mut cmd = make_cmd();
+        let report = sanitizer.sanitize(&mut cmd, &mode);
+
+        assert!(!report.any_fallback);
+        assert_eq!(report.group_results[0], GroupSanitizeResult::AllValid);
+        assert_eq!(
+            sanitizer.state.consecutive_fallback[0], 0,
+            "Counter should reset to 0 on valid frame"
+        );
+    }
+
+    #[test]
+    fn test_consecutive_fallback_triggers_limit_exceeded() {
+        let mut sanitizer = Sanitizer::default();
+        let mode = ModeConfig {
+            mode: ConfigMode::Hover,
+            groups: &STRONG_GROUP,
+        };
+
+        // MAX_CONSECUTIVE_FALLBACK frames - should NOT trigger yet
+        for i in 0..MAX_CONSECUTIVE_FALLBACK {
+            let mut cmd = make_cmd();
+            cmd.outputs[0] = Normalized(Scalar::NAN);
+            let report = sanitizer.sanitize(&mut cmd, &mode);
+
+            assert!(
+                !report.consecutive_fallback_limit_exceeded,
+                "Frame {}: should NOT trigger limit_exceeded (counter={})",
+                i + 1,
+                sanitizer.state.consecutive_fallback[0]
+            );
+        }
+
+        assert_eq!(
+            sanitizer.state.consecutive_fallback[0], MAX_CONSECUTIVE_FALLBACK,
+            "After MAX frames, counter should equal MAX"
+        );
+
+        // (MAX + 1)-th frame - should trigger
+        let mut cmd = make_cmd();
+        cmd.outputs[0] = Normalized(Scalar::NAN);
+        let report = sanitizer.sanitize(&mut cmd, &mode);
+
+        assert!(
+            report.consecutive_fallback_limit_exceeded,
+            "Frame {}: SHOULD trigger limit_exceeded",
+            MAX_CONSECUTIVE_FALLBACK + 1
+        );
+        assert_eq!(
+            sanitizer.state.consecutive_fallback[0],
+            MAX_CONSECUTIVE_FALLBACK + 1,
+            "Counter should be MAX+1"
+        );
+    }
+
+    #[test]
+    fn test_consecutive_fallback_clamped_does_not_increment() {
+        let mut sanitizer = Sanitizer::default();
+        let mode = ModeConfig {
+            mode: ConfigMode::Cruise,
+            groups: &WEAK_GROUP,
+        };
+
+        // For weak coupling, even with some invalid channels, result is Clamped
+        // which should NOT increment the consecutive fallback counter
+        let mut cmd = make_cmd();
+        cmd.outputs[0] = Normalized(0.5); // Valid
+        cmd.outputs[1] = Normalized(Scalar::NAN); // Invalid - triggers Clamped for weak
+
+        let report = sanitizer.sanitize(&mut cmd, &mode);
+
+        // Weak coupling with some invalid channels results in Clamped
+        assert_eq!(report.group_results[0], GroupSanitizeResult::Clamped);
+        assert_eq!(
+            sanitizer.state.consecutive_fallback[0], 0,
+            "Clamped should reset counter (still has control authority)"
+        );
+    }
+
+    #[test]
+    fn test_consecutive_fallback_per_group_independence() {
+        let mut sanitizer = Sanitizer::default();
+        let mode = ModeConfig {
+            mode: ConfigMode::Hover,
+            groups: &TWO_GROUPS,
+        };
+
+        // Make Group 0 fail, Group 1 valid
+        for _ in 0..5 {
+            let mut cmd = make_cmd();
+            cmd.outputs[0] = Normalized(Scalar::NAN); // Group 0 fails
+            cmd.outputs[4] = Normalized(0.5); // Group 1 valid
+            cmd.outputs[5] = Normalized(0.5);
+            cmd.outputs[6] = Normalized(0.5);
+            cmd.outputs[7] = Normalized(0.5);
+            sanitizer.sanitize(&mut cmd, &mode);
+        }
+
+        // Group 0 should have counter = 5
+        assert_eq!(
+            sanitizer.state.consecutive_fallback[0], 5,
+            "Group 0 should have 5 consecutive fallbacks"
+        );
+
+        // Group 1 should have counter = 0 (always valid)
+        assert_eq!(
+            sanitizer.state.consecutive_fallback[1], 0,
+            "Group 1 should have 0 consecutive fallbacks"
+        );
+    }
 }

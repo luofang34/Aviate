@@ -52,11 +52,11 @@ use aviate_core::control::mc::McController;
 use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
 use aviate_core::hal::{ActuatorHal, CommandHal, SensorHal, SystemCommand, SystemHal};
 use aviate_core::math::{Quaternion, Vector3};
-use aviate_core::mixer::{ActuatorCmd, ModeConfig, QuadXMixer};
+use aviate_core::mixer::{ActuatorCmd, ActuatorState, ModeConfig, QuadXMixer};
 use aviate_core::sensor::{BaroData, GnssData, ImuData, MagData, SensorReading, SensorSet};
 use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
 use aviate_core::types::{Meters, MetersPerSecond, Normalized, Seconds};
-use aviate_core::AviateKernel;
+use aviate_core::{AviateKernel, ChannelId, InitState};
 
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{SitlConfig, SitlIO};
@@ -334,16 +334,18 @@ impl X500SitlBoard {
                 }
                 SystemCommand::Arm => {
                     eprintln!("[INFO] Arm command (state={:?})", self.kernel.init_state);
+                    eprintln!("[INFO] Faults: {:?}", self.kernel.faults);
                     if let Err(e) = self.kernel.arm() {
                         let pre_arm = &self.kernel.checks.pre_arm;
                         eprintln!("[WARN] Arming failed: {:?}", e);
                         eprintln!("[WARN] Missing pre-arm: {:?}", pre_arm.missing());
+                        eprintln!("[WARN] Faults: {:?}", self.kernel.faults);
                     } else {
                         eprintln!("[INFO] Armed successfully");
+                        // Only arm HAL and transport if kernel arm succeeded
+                        self.board_hal.arm();
+                        self.transport.set_armed(true);
                     }
-                    // Arm through BoardHal (which arms FakeActuator) and notify MAVLink
-                    self.board_hal.arm();
-                    self.transport.set_armed(true);
                 }
                 SystemCommand::Disarm => {
                     eprintln!("[INFO] Disarm command");
@@ -374,11 +376,28 @@ impl X500SitlBoard {
         let sensors = self.sensor_cache.to_sensor_set();
         if !self.kernel.is_ready() {
             let ts = self.transport.now();
+            let prev_state = self.kernel.init_state;
             self.kernel.init_step(&sensors, ts);
+
+            // Log state transitions
+            if self.kernel.init_state != prev_state {
+                eprintln!(
+                    "[FC] Init state: {:?} -> {:?}",
+                    prev_state, self.kernel.init_state
+                );
+            }
         }
 
         // 7. Step kernel
-        let actuator_cmd = self.kernel.step(time_delta, &self.last_cmd, &sensors, 0);
+        let result = self.kernel.update(
+            ChannelId(0),
+            time_delta,
+            &sensors,
+            &self.last_cmd,
+            &ActuatorState::default(),
+            None,
+        );
+        let actuator_cmd = result.actuator;
 
         // 8. Write outputs via BoardHal (ActuatorHal implementation)
         //    This writes to FakeActuator, same path as real hardware
@@ -424,7 +443,7 @@ impl X500SitlBoard {
 
     /// Check if the kernel is armed
     pub fn is_armed(&self) -> bool {
-        self.kernel.init_state == aviate_core::InitState::Armed
+        self.kernel.init_state == InitState::Armed
     }
 
     /// Get a reference to the kernel

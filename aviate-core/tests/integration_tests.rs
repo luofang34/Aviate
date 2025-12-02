@@ -4,12 +4,13 @@
 mod tests {
     use aviate_core::control::attitude::AttitudeController;
     use aviate_core::control::rate::RateController;
-    use aviate_core::control::Command;
+    use aviate_core::control::{Command, VehicleController};
     use aviate_core::ekf::Ekf;
     use aviate_core::math::{Quaternion, Vector3};
+    use aviate_core::mixer::{ActuatorCmd, Mixer};
     use aviate_core::sensor::{
         AirData, BaroData, GnssData, GnssFix, GnssHealth, ImuData, MagData, SensorHealth,
-        SensorReading,
+        SensorReading, SensorSet,
     };
     use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
     use aviate_core::types::Seconds;
@@ -17,7 +18,38 @@ mod tests {
         Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Normalized, Pascals,
         RadiansPerSecond, Scalar,
     };
-    use aviate_core::AviateKernel;
+    use aviate_core::{AviateKernel, ChannelId};
+
+    trait KernelTestExt {
+        fn step_test(
+            &mut self,
+            time_delta: TimeDelta,
+            cmd: &Command,
+            sensors: &SensorSet,
+            command_age_ms: u32,
+        ) -> ActuatorCmd;
+    }
+
+    impl<V: VehicleController, M: Mixer> KernelTestExt for AviateKernel<V, M> {
+        fn step_test(
+            &mut self,
+            time_delta: TimeDelta,
+            cmd: &Command,
+            sensors: &SensorSet,
+            _command_age_ms: u32,
+        ) -> ActuatorCmd {
+            let actuator_state = self.actuator_state.clone();
+            let res = self.update(
+                ChannelId::PRIMARY,
+                time_delta,
+                sensors,
+                cmd,
+                &actuator_state,
+                None,
+            );
+            res.actuator
+        }
+    }
 
     fn dummy_time_delta() -> TimeDelta {
         TimeDelta {
@@ -306,7 +338,7 @@ mod tests {
 
         // Before arming: Expect safe output (0.0)
         let safe_sensors = valid_test_sensors();
-        let act_cmd_safe = kernel.step(dummy_time_delta(), &cmd, &safe_sensors, 0);
+        let act_cmd_safe = kernel.step_test(dummy_time_delta(), &cmd, &safe_sensors, 0);
         for i in 0..4 {
             assert!(
                 (act_cmd_safe.outputs[i].0).abs() < 1e-5,
@@ -335,7 +367,7 @@ mod tests {
         // Arm
         kernel.arm().expect("Failed to arm");
 
-        let act_cmd = kernel.step(dummy_time_delta(), &cmd, &valid_sensors, 0);
+        let act_cmd = kernel.step_test(dummy_time_delta(), &cmd, &valid_sensors, 0);
 
         // QuadXMixer with 0 R/P/Y should output collective on all 4 motors
         for i in 0..4 {
@@ -421,7 +453,7 @@ mod tests {
 
         kernel.arm().expect("Failed to arm");
 
-        let act_cmd = kernel.step(dummy_time_delta(), &cmd, &valid_sensors, 0);
+        let act_cmd = kernel.step_test(dummy_time_delta(), &cmd, &valid_sensors, 0);
 
         // FwController currently outputs 0 R/P/Y and passes collective.
         // So QuadXMixer should still produce 0.5 on motors.

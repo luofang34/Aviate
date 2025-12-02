@@ -1,4 +1,4 @@
-use crate::control::ControlLaw;
+use crate::control::ControlLawV1;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FaultCategory {
@@ -31,6 +31,10 @@ pub enum FaultCategory {
     TimingViolationPersistent,
     ConfigInvalid,
     ConfigTransitionFailed,
+
+    // Memory/integrity faults
+    MemoryError,
+    EnumInvalid,
 }
 
 bitflags::bitflags! {
@@ -62,6 +66,9 @@ bitflags::bitflags! {
         const TIMING_PERSISTENT = 1 << 41;
         const CONFIG_INVALID = 1 << 48;
         const CONFIG_TRANSITION_FAILED = 1 << 49;
+
+        const MEMORY_ERROR = 1 << 56;
+        const ENUM_INVALID = 1 << 57;
     }
 }
 
@@ -77,7 +84,7 @@ pub enum FaultAction {
 pub struct FaultResponse {
     pub fault: FaultCategory,
     pub action: FaultAction,
-    pub degrade_to: Option<ControlLaw>,
+    pub degrade_to: Option<ControlLawV1>,
     pub max_response_time_ms: u32,
 }
 
@@ -98,31 +105,31 @@ impl FaultHandlingTable {
             FaultResponse {
                 fault: FaultCategory::ImuAllFailed,
                 action: FaultAction::Emergency,
-                degrade_to: Some(ControlLaw::Frozen),
+                degrade_to: Some(ControlLawV1::Backup),
                 max_response_time_ms: 0,
             },
             FaultResponse {
                 fault: FaultCategory::GnssAllLost,
                 action: FaultAction::Degrade,
-                degrade_to: Some(ControlLaw::Alternate1),
+                degrade_to: Some(ControlLawV1::Alternate),
                 max_response_time_ms: 100,
             },
             FaultResponse {
                 fault: FaultCategory::EstimatorDiverged,
                 action: FaultAction::Degrade,
-                degrade_to: Some(ControlLaw::Alternate2),
+                degrade_to: Some(ControlLawV1::Alternate),
                 max_response_time_ms: 10,
             },
             FaultResponse {
                 fault: FaultCategory::NumericError,
                 action: FaultAction::Emergency,
-                degrade_to: Some(ControlLaw::Frozen),
+                degrade_to: Some(ControlLawV1::Backup),
                 max_response_time_ms: 0,
             },
             FaultResponse {
                 fault: FaultCategory::CommandTimeout,
                 action: FaultAction::Degrade,
-                degrade_to: Some(ControlLaw::Alternate1),
+                degrade_to: Some(ControlLawV1::Alternate),
                 max_response_time_ms: 100,
             },
             FaultResponse {
@@ -134,19 +141,19 @@ impl FaultHandlingTable {
             FaultResponse {
                 fault: FaultCategory::ActuatorFallbackPersistent,
                 action: FaultAction::Degrade,
-                degrade_to: Some(ControlLaw::Alternate1),
+                degrade_to: Some(ControlLawV1::Alternate),
                 max_response_time_ms: 10,
             },
             FaultResponse {
                 fault: FaultCategory::ConfigTransitionFailed,
                 action: FaultAction::Degrade,
-                degrade_to: Some(ControlLaw::Alternate1),
+                degrade_to: Some(ControlLawV1::Alternate),
                 max_response_time_ms: 0,
             },
             FaultResponse {
                 fault: FaultCategory::TimingViolationPersistent,
                 action: FaultAction::Degrade,
-                degrade_to: Some(ControlLaw::Alternate2),
+                degrade_to: Some(ControlLawV1::Alternate),
                 max_response_time_ms: 50,
             },
         ],

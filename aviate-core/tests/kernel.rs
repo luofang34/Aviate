@@ -5,11 +5,13 @@
 //! - Arm/disarm behavior and error cases
 //! - AviateKernel step() behavior
 //! - Safe output when not armed
-//! - Spec types (ChannelId, ChannelHealth, ChannelStatus, etc.)
+//! - Spec types (ChannelId, ChannelHealthV1, ChannelStatus, etc.)
 
 use aviate_core::checks::PreArmFlags;
 use aviate_core::control::mc::McController;
-use aviate_core::control::{Command, CommandSource, ConfigMode, ControlLaw, ControlMode, Setpoint};
+use aviate_core::control::{
+    Command, CommandSource, ConfigMode, ControlLawV1, ControlMode, Setpoint,
+};
 use aviate_core::fault::FaultFlags;
 use aviate_core::math::{Quaternion, Vector3};
 use aviate_core::mixer::{ModeConfig, QuadXMixer};
@@ -24,10 +26,44 @@ use aviate_core::types::{
     RadiansPerSecond,
 };
 use aviate_core::{
-    ArmError, AviateKernel, ChannelHealth, ChannelId, ChannelStatus, ConfigTransitionState,
+    ArmError, AviateKernel, ChannelHealthV1, ChannelId, ChannelStatus, ConfigTransitionState,
     CycleTiming, DegradationReason, EnvelopeMargin, InitState, TimingStats, TransitionError,
     TransitionFailure,
 };
+
+use aviate_core::control::VehicleController;
+use aviate_core::mixer::{ActuatorCmd, Mixer};
+
+trait KernelTestExt {
+    fn step_test(
+        &mut self,
+        time_delta: aviate_core::time::TimeDelta,
+        cmd: &Command,
+        sensors: &SensorSet,
+        command_age_ms: u32,
+    ) -> ActuatorCmd;
+}
+
+impl<V: VehicleController, M: Mixer> KernelTestExt for AviateKernel<V, M> {
+    fn step_test(
+        &mut self,
+        time_delta: aviate_core::time::TimeDelta,
+        cmd: &Command,
+        sensors: &SensorSet,
+        _command_age_ms: u32,
+    ) -> ActuatorCmd {
+        let actuator_state = self.actuator_state.clone();
+        let res = self.update(
+            ChannelId::PRIMARY,
+            time_delta,
+            sensors,
+            cmd,
+            &actuator_state,
+            None,
+        );
+        res.actuator
+    }
+}
 
 fn dummy_timestamp() -> Timestamp {
     Timestamp {
@@ -179,19 +215,19 @@ fn init_state_only_armed_allows_control() {
 fn init_state_forces_frozen_when_not_armed() {
     assert_eq!(
         InitState::PowerOn.forced_control_law(),
-        Some(ControlLaw::Frozen)
+        Some(ControlLawV1::Backup)
     );
     assert_eq!(
         InitState::Ready.forced_control_law(),
-        Some(ControlLaw::Frozen)
+        Some(ControlLawV1::Backup)
     );
     assert_eq!(
         InitState::Disarmed.forced_control_law(),
-        Some(ControlLaw::Frozen)
+        Some(ControlLawV1::Backup)
     );
     assert_eq!(
         InitState::Fault.forced_control_law(),
-        Some(ControlLaw::Frozen)
+        Some(ControlLawV1::Backup)
     );
 }
 
@@ -429,7 +465,7 @@ fn kernel_outputs_safe_when_not_armed() {
     };
 
     let sensors = make_valid_sensors();
-    let output = kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    let output = kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Should output safe values (0.0) when not armed
     for i in 0..4 {
@@ -473,7 +509,7 @@ fn kernel_outputs_control_when_armed() {
         source: CommandSource::Pilot,
     };
 
-    let output = kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    let output = kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Should output ~0.5 on all motors with zero R/P/Y
     for i in 0..4 {
@@ -510,21 +546,21 @@ fn channel_id_max_channels() {
 }
 
 // =============================================================================
-// ChannelHealth - Default
+// ChannelHealthV1 - Default
 // =============================================================================
 
 #[test]
 fn channel_health_default_operative() {
-    let health = ChannelHealth::default();
-    assert_eq!(health, ChannelHealth::Operative);
+    let health = ChannelHealthV1::default();
+    assert_eq!(health, ChannelHealthV1::Operative);
 }
 
 #[test]
 fn channel_health_variants() {
-    let _operative = ChannelHealth::Operative;
-    let _degraded = ChannelHealth::Degraded;
-    let _failed = ChannelHealth::Failed;
-    let _testing = ChannelHealth::Testing;
+    let _operative = ChannelHealthV1::Operative;
+    let _degraded = ChannelHealthV1::Degraded;
+    let _failed = ChannelHealthV1::Failed;
+    let _offline = ChannelHealthV1::Offline;
 }
 
 // =============================================================================
@@ -537,8 +573,8 @@ fn channel_status_default() {
 
     assert_eq!(status.mode, ControlMode::Rate);
     assert_eq!(status.config_mode, ConfigMode::Hover);
-    assert_eq!(status.law, ControlLaw::Normal);
-    assert_eq!(status.health, ChannelHealth::Operative);
+    assert_eq!(status.law, ControlLawV1::Primary);
+    assert_eq!(status.health, ChannelHealthV1::Operative);
     assert!(status.faults.is_empty());
     assert_eq!(status.confidence, EstimateQuality::Good);
 }
@@ -823,7 +859,16 @@ fn kernel_detects_all_imu_failed_fault() {
     let mut kernel = make_kernel();
     let failed_sensors = make_failed_imu_sensors();
 
-    kernel.init_step(&failed_sensors, dummy_timestamp());
+    // Fault detection happens in update(), not init_step()
+    let cmd = Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint::default(),
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 0,
+        source: CommandSource::Pilot,
+    };
+    kernel.step_test(dummy_time_delta(), &cmd, &failed_sensors, 0);
 
     // Should have ALL_IMU_FAILED fault
     assert!(
@@ -920,14 +965,24 @@ fn kernel_pre_arm_missing_flags_reported() {
 fn kernel_clears_faults_when_sensors_recover() {
     let mut kernel = make_kernel();
 
+    // Fault detection happens in update(), not init_step()
+    let cmd = Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint::default(),
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 0,
+        source: CommandSource::Pilot,
+    };
+
     // Start with failed sensors
     let failed_sensors = make_failed_imu_sensors();
-    kernel.init_step(&failed_sensors, dummy_timestamp());
+    kernel.step_test(dummy_time_delta(), &cmd, &failed_sensors, 0);
     assert!(kernel.faults.contains(FaultFlags::ALL_IMU_FAILED));
 
     // Now provide good sensors
     let good_sensors = make_valid_sensors();
-    kernel.init_step(&good_sensors, dummy_timestamp());
+    kernel.step_test(dummy_time_delta(), &cmd, &good_sensors, 0);
 
     // Fault should be cleared
     assert!(
@@ -1688,7 +1743,7 @@ fn fault_state_outputs_safe_values() {
         source: CommandSource::Pilot,
     };
 
-    let output = kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    let output = kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
     // All outputs should be safe (0.0) in fault state
     for i in 0..4 {
@@ -1827,19 +1882,16 @@ fn request_config_mode_fails_already_transitioning() {
 #[test]
 fn control_law_severity_ordering() {
     // Lower severity = less degraded
-    assert!(ControlLaw::Normal.severity() < ControlLaw::Alternate1.severity());
-    assert!(ControlLaw::Alternate1.severity() < ControlLaw::Alternate2.severity());
-    assert!(ControlLaw::Alternate2.severity() < ControlLaw::Direct.severity());
-    assert!(ControlLaw::Direct.severity() < ControlLaw::Degraded.severity());
-    assert!(ControlLaw::Degraded.severity() < ControlLaw::Failsafe.severity());
-    assert!(ControlLaw::Failsafe.severity() < ControlLaw::Frozen.severity());
+    assert!(ControlLawV1::Primary.severity() < ControlLawV1::Alternate.severity());
+    assert!(ControlLawV1::Alternate.severity() < ControlLawV1::Direct.severity());
+    assert!(ControlLawV1::Direct.severity() < ControlLawV1::Backup.severity());
 }
 
 /// Test kernel starts with Normal control law
 #[test]
 fn kernel_starts_with_normal_control_law() {
     let kernel = make_kernel();
-    assert_eq!(kernel.control_law, ControlLaw::Normal);
+    assert_eq!(kernel.control_law, ControlLawV1::Primary);
 }
 
 /// Test get_health returns correct state
@@ -1869,7 +1921,7 @@ fn kernel_get_health_returns_correct_state() {
 
     let health = kernel.get_health();
     assert_eq!(health.init_state, InitState::Ready);
-    assert_eq!(health.control_law, ControlLaw::Normal);
+    assert_eq!(health.control_law, ControlLawV1::Primary);
     assert_eq!(health.config_mode, ConfigMode::Hover);
     assert!(health.faults.is_empty());
 }
@@ -2121,7 +2173,7 @@ fn step_returns_safe_when_not_armed() {
     };
 
     // Not armed - step should return safe output
-    let output = kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    let output = kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Safe output should have active_mask = 0
     assert_eq!(output.active_mask, 0);
@@ -2164,7 +2216,7 @@ fn step_returns_safe_on_critical_fault() {
     };
 
     // Step with failed sensors should detect critical fault
-    let output = kernel.step(dummy_time_delta(), &cmd, &failed_sensors, 0);
+    let output = kernel.step_test(dummy_time_delta(), &cmd, &failed_sensors, 0);
 
     // Should return safe output (active_mask = 0)
     assert_eq!(
@@ -2196,7 +2248,7 @@ fn step_with_frozen_control_law() {
     kernel.arm().unwrap();
 
     // Set frozen control law
-    kernel.control_law = ControlLaw::Frozen;
+    kernel.control_law = ControlLawV1::Backup;
 
     let cmd = Command {
         mode: ControlMode::Attitude,
@@ -2207,7 +2259,7 @@ fn step_with_frozen_control_law() {
         source: CommandSource::Pilot,
     };
 
-    let output = kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    let output = kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Frozen law should have fallback_mask set
     assert_eq!(output.fallback_mask, 0xFF);
@@ -2248,7 +2300,7 @@ fn step_performs_control_when_armed() {
         source: CommandSource::Pilot,
     };
 
-    let output = kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    let output = kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Should have active outputs
     assert!(output.sanitized);
@@ -2293,7 +2345,7 @@ fn step_handles_degradation_trigger() {
     };
 
     // Run step - should handle degradation
-    let _output = kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    let _output = kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Control law may have changed due to degradation
     // (exact behavior depends on get_degradation_trigger logic)
@@ -2309,19 +2361,22 @@ fn handle_degradation_all_reasons() {
     use aviate_core::DegradationReason;
 
     let reasons_and_expected_laws = [
-        (DegradationReason::AttitudeLost, ControlLaw::Frozen),
-        (DegradationReason::ImuDegraded, ControlLaw::Degraded),
-        (DegradationReason::PositionLost, ControlLaw::Degraded),
-        (DegradationReason::VelocityLost, ControlLaw::Degraded),
-        (DegradationReason::CommandTimeout, ControlLaw::Failsafe),
-        (DegradationReason::EnvelopeViolation, ControlLaw::Degraded),
-        (DegradationReason::BaroDegraded, ControlLaw::Degraded),
-        (DegradationReason::RcLost, ControlLaw::Failsafe),
+        (DegradationReason::AttitudeLost, ControlLawV1::Backup),
+        (DegradationReason::ImuDegraded, ControlLawV1::Alternate),
+        (DegradationReason::PositionLost, ControlLawV1::Alternate),
+        (DegradationReason::VelocityLost, ControlLawV1::Alternate),
+        (DegradationReason::CommandTimeout, ControlLawV1::Alternate),
+        (
+            DegradationReason::EnvelopeViolation,
+            ControlLawV1::Alternate,
+        ),
+        (DegradationReason::BaroDegraded, ControlLawV1::Alternate),
+        (DegradationReason::RcLost, ControlLawV1::Alternate),
     ];
 
     for (reason, expected_law) in reasons_and_expected_laws {
         let mut kernel = make_kernel();
-        kernel.control_law = ControlLaw::Normal;
+        kernel.control_law = ControlLawV1::Primary;
 
         let event = kernel.handle_degradation(reason, dummy_timestamp());
 
@@ -2342,14 +2397,14 @@ fn handle_degradation_no_event_when_not_worse() {
     let mut kernel = make_kernel();
 
     // Start with Frozen (worst)
-    kernel.control_law = ControlLaw::Frozen;
+    kernel.control_law = ControlLawV1::Backup;
 
     // Try to "degrade" to Degraded (less severe)
     let event = kernel.handle_degradation(DegradationReason::ImuDegraded, dummy_timestamp());
 
     // Should not trigger - already worse
     assert!(event.is_none());
-    assert_eq!(kernel.control_law, ControlLaw::Frozen);
+    assert_eq!(kernel.control_law, ControlLawV1::Backup);
 }
 
 // =============================================================================
@@ -2367,7 +2422,7 @@ fn test_sensor_overrides_gnss_force_state() {
         setpoint: Setpoint::default(),
         config_mode_request: None,
         sensor_overrides: Some(aviate_core::control::SensorOverrides {
-            gnss_force_state: Some(1), // Suspect
+            gnss_force_state: Some(GnssHealth::Suspect), // Suspect
         }),
         sequence: 0,
         source: CommandSource::Pilot,
@@ -2388,25 +2443,25 @@ fn test_sensor_overrides_gnss_force_state() {
     }
     kernel.arm().unwrap();
 
-    kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
     // EKF should have updated with Suspect GNSS (internal EKF state not easily exposed,
     // but we verify code path execution).
     // Cover other force states
     cmd.sensor_overrides = Some(aviate_core::control::SensorOverrides {
-        gnss_force_state: Some(0), // Good
+        gnss_force_state: Some(GnssHealth::Good), // Good
     });
-    kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
     cmd.sensor_overrides = Some(aviate_core::control::SensorOverrides {
-        gnss_force_state: Some(2), // Lost
+        gnss_force_state: Some(GnssHealth::Lost), // Lost
     });
-    kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
     cmd.sensor_overrides = Some(aviate_core::control::SensorOverrides {
-        gnss_force_state: Some(99), // Unknown -> Lost
+        gnss_force_state: Some(GnssHealth::Lost), // Unknown -> Lost
     });
-    kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 }
 
 #[test]
@@ -2414,34 +2469,44 @@ fn test_update_sensor_faults_all_sensors() {
     let mut kernel = make_kernel();
     let mut sensors = make_valid_sensors();
 
+    // Fault detection happens in update(), not init_step()
+    let cmd = Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint::default(),
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 0,
+        source: CommandSource::Pilot,
+    };
+
     // 1. Fail Baro
     sensors.baros[0].health = SensorHealth::Failed;
-    kernel.init_step(&sensors, dummy_timestamp());
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
     assert!(kernel.faults.contains(FaultFlags::BARO_FAILED));
 
     // Recover Baro
     sensors.baros[0].health = SensorHealth::Good;
-    kernel.init_step(&sensors, dummy_timestamp());
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
     assert!(!kernel.faults.contains(FaultFlags::BARO_FAILED));
 
     // 2. Fail Mag
     sensors.mags[0].health = SensorHealth::Failed;
-    kernel.init_step(&sensors, dummy_timestamp());
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
     assert!(kernel.faults.contains(FaultFlags::MAG_FAILED));
 
     // Recover Mag
     sensors.mags[0].health = SensorHealth::Good;
-    kernel.init_step(&sensors, dummy_timestamp());
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
     assert!(!kernel.faults.contains(FaultFlags::MAG_FAILED));
 
     // 3. Fail GNSS
     sensors.gnss[0].health = SensorHealth::Failed;
-    kernel.init_step(&sensors, dummy_timestamp());
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
     assert!(kernel.faults.contains(FaultFlags::ALL_GNSS_LOST));
 
     // Recover GNSS
     sensors.gnss[0].health = SensorHealth::Good;
-    kernel.init_step(&sensors, dummy_timestamp());
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
     assert!(!kernel.faults.contains(FaultFlags::ALL_GNSS_LOST));
 }
 
@@ -2452,7 +2517,7 @@ fn test_init_state_forced_control_law_coverage() {
     // Test non-armed returns Some(Frozen)
     assert_eq!(
         InitState::PreArm.forced_control_law(),
-        Some(ControlLaw::Frozen)
+        Some(ControlLawV1::Backup)
     );
 }
 
@@ -2625,14 +2690,14 @@ fn get_health_report() {
     let mut kernel = make_kernel();
 
     kernel.init_state = InitState::Armed;
-    kernel.control_law = ControlLaw::Degraded;
+    kernel.control_law = ControlLawV1::Alternate;
     kernel.mode = ConfigMode::Cruise;
     kernel.faults.insert(FaultFlags::BARO_FAILED);
 
     let health = kernel.get_health();
 
     assert_eq!(health.init_state, InitState::Armed);
-    assert_eq!(health.control_law, ControlLaw::Degraded);
+    assert_eq!(health.control_law, ControlLawV1::Alternate);
     assert_eq!(health.config_mode, ConfigMode::Cruise);
     assert!(health.faults.contains(FaultFlags::BARO_FAILED));
 }
@@ -2761,7 +2826,7 @@ fn test_check_critical_faults_returns_true() {
     // Should return true and transition to Fault
     assert!(kernel.check_critical_faults());
     assert_eq!(kernel.init_state, InitState::Fault);
-    assert_eq!(kernel.control_law, ControlLaw::Frozen);
+    assert_eq!(kernel.control_law, ControlLawV1::Backup);
 }
 
 #[test]
@@ -2798,7 +2863,7 @@ fn test_step_with_unhealthy_sensors() {
     kernel.init_state = InitState::Armed;
 
     // Run step
-    kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Verify no panic and logic executed (coverage should hit the 'else'/skip paths)
 }
@@ -2841,7 +2906,7 @@ fn step_with_sensor_overrides_no_gnss_force() {
         source: CommandSource::Pilot,
     };
 
-    kernel.step(dummy_time_delta(), &cmd, &sensors, 0);
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
     // Code path executed - gnss_force_state None branch hit
 }
 
@@ -2883,14 +2948,14 @@ fn handle_degradation_same_severity_no_event() {
     let mut kernel = make_kernel();
 
     // Start with Degraded
-    kernel.control_law = ControlLaw::Degraded;
+    kernel.control_law = ControlLawV1::Alternate;
 
     // Try to "degrade" to Degraded again (same severity)
     let event = kernel.handle_degradation(DegradationReason::ImuDegraded, dummy_timestamp());
 
     // No event - same severity
     assert!(event.is_none(), "Same severity should not produce event");
-    assert_eq!(kernel.control_law, ControlLaw::Degraded);
+    assert_eq!(kernel.control_law, ControlLawV1::Alternate);
 }
 
 /// Test handle_degradation from Failsafe to Degraded (lower severity) - no event
@@ -2899,14 +2964,14 @@ fn handle_degradation_lower_severity_no_event() {
     let mut kernel = make_kernel();
 
     // Start with Failsafe
-    kernel.control_law = ControlLaw::Failsafe;
+    kernel.control_law = ControlLawV1::Alternate;
 
     // Try to "degrade" to Degraded (lower severity)
     let event = kernel.handle_degradation(DegradationReason::ImuDegraded, dummy_timestamp());
 
     // No event - trying to go to lower severity
     assert!(event.is_none());
-    assert_eq!(kernel.control_law, ControlLaw::Failsafe);
+    assert_eq!(kernel.control_law, ControlLawV1::Alternate);
 }
 
 /// Test handle_degradation from Normal to Degraded (higher severity) - produces event
@@ -2915,12 +2980,12 @@ fn handle_degradation_higher_severity_produces_event() {
     let mut kernel = make_kernel();
 
     // Start with Normal
-    kernel.control_law = ControlLaw::Normal;
+    kernel.control_law = ControlLawV1::Primary;
 
     // Degrade to Degraded (higher severity)
     let event = kernel.handle_degradation(DegradationReason::ImuDegraded, dummy_timestamp());
 
     // Event produced
     assert!(event.is_some());
-    assert_eq!(kernel.control_law, ControlLaw::Degraded);
+    assert_eq!(kernel.control_law, ControlLawV1::Alternate);
 }

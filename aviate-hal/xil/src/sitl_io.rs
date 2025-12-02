@@ -389,6 +389,16 @@ impl SitlIO {
     pub fn stats(&self) -> (u64, u64) {
         (self.rx_count, self.tx_count)
     }
+
+    /// Get the address actuator commands are sent to
+    pub fn simulator_addr(&self) -> std::net::SocketAddr {
+        self.config.simulator_addr()
+    }
+
+    /// Get the sensor port we're listening on
+    pub fn sensor_port(&self) -> u16 {
+        self.config.sensor_port()
+    }
 }
 
 // Implement SystemHal - timing and system functions

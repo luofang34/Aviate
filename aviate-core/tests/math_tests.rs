@@ -8,7 +8,7 @@
 //! - Quaternion::to_euler gimbal lock handling
 //! - Quaternion::default
 
-use aviate_core::math::{Matrix, Quaternion, Vector3};
+use aviate_core::math::{Matrix, Quaternion, Vector3, QUAT_NORM_EPS};
 use aviate_core::types::Scalar;
 use core::f32::consts::FRAC_PI_2;
 
@@ -305,4 +305,44 @@ fn matrix_identity() {
             }
         }
     }
+}
+
+// =============================================================================
+// INV-27: Quaternion is_normalized Tests
+// =============================================================================
+
+#[test]
+fn quaternion_is_normalized_identity() {
+    assert!(Quaternion::IDENTITY.is_normalized(QUAT_NORM_EPS));
+}
+
+#[test]
+fn quaternion_is_normalized_after_normalize() {
+    let q = Quaternion::new(1.0, 2.0, 3.0, 4.0).normalize();
+    assert!(q.is_normalized(QUAT_NORM_EPS));
+}
+
+#[test]
+fn quaternion_is_not_normalized_unnormalized() {
+    let q = Quaternion::new(1.0, 2.0, 3.0, 4.0);
+    assert!(!q.is_normalized(QUAT_NORM_EPS));
+}
+
+#[test]
+fn quaternion_is_not_normalized_nan() {
+    let q = Quaternion::new(f32::NAN, 0.0, 0.0, 0.0);
+    assert!(!q.is_normalized(QUAT_NORM_EPS));
+}
+
+#[test]
+fn quaternion_is_not_normalized_inf() {
+    let q = Quaternion::new(f32::INFINITY, 0.0, 0.0, 0.0);
+    assert!(!q.is_normalized(QUAT_NORM_EPS));
+}
+
+#[test]
+fn quaternion_is_normalized_default() {
+    // Test the convenience method using default tolerance
+    assert!(Quaternion::IDENTITY.is_normalized_default());
+    assert!(!Quaternion::new(2.0, 0.0, 0.0, 0.0).is_normalized_default());
 }

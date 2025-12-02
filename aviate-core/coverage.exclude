@@ -17,15 +17,15 @@
 
 | Metric | Covered | Total | Excluded | Final |
 |--------|---------|-------|----------|-------|
-| Lines | 2352 | 2353 | 14 markers | 100.0% |
-| Functions | 146 | 148 | 10 (STUB/DEFAULT) | 100.0% |
-| Branches | 460 | 460 | 0 LLVM artifacts | 100.0% |
+| Lines | 2602 | 2602 | 13 markers | 100.0% |
+| Functions | 151 | 153 | 10 (STUB/DEFAULT) | 100.0% |
+| Branches | 620 | 620 | 0 LLVM artifacts | 100.0% |
 
 ## Exclusions by Category
 
 - **STUB**: 1
 - **DEFAULT**: 1
-- **DEFENSIVE**: 10
+- **DEFENSIVE**: 9
 - **EMPTY**: 1
 
 ## Detailed Exclusion List
@@ -38,13 +38,13 @@
 
 ### ekf.rs
 ```
-460:                0.0 // COV:EXCL(DEFENSIVE: protects against misconfigured limits)
-495:        // COV:EXCL_START(DEFENSIVE: atan2/euler outputs bounded to [-π,π], wrapping is safety guard)
-506:        // COV:EXCL_STOP
-513:            return; // COV:EXCL(DEFENSIVE: weight 0.01-0.1 rejected by earlier check)
-531:            return; // COV:EXCL(DEFENSIVE: prevent division by zero)
-612:            _ => return, // COV:EXCL(DEFENSIVE: invalid state_idx guard)
-619:            return; // COV:EXCL(DEFENSIVE: prevent division by zero)
+483:                0.0 // COV:EXCL(DEFENSIVE: protects against misconfigured limits)
+518:        // COV:EXCL_START(DEFENSIVE: atan2/euler outputs bounded to [-π,π], wrapping is safety guard)
+529:        // COV:EXCL_STOP
+536:            return; // COV:EXCL(DEFENSIVE: weight 0.01-0.1 rejected by earlier check)
+554:            return; // COV:EXCL(DEFENSIVE: prevent division by zero)
+639:            _ => return, // COV:EXCL(DEFENSIVE: invalid state_idx guard)
+646:            return; // COV:EXCL(DEFENSIVE: prevent division by zero)
 ```
 
 ### hal.rs
@@ -55,16 +55,15 @@
 
 ### lib.rs
 ```
-316:    // COV:EXCL_START(STUB: watchdog placeholder, not implemented)
-320:    // COV:EXCL_STOP
-434:            InitState::Armed => {} // COV:EXCL(EMPTY: monitoring only, disarm via disarm())
-767:            let _event = self.handle_degradation(reason, timestamp); // COV:EXCL(DEFENSIVE: requires real sensor failure, tested in SITL)
+324:    // COV:EXCL_START(STUB: watchdog placeholder, not implemented)
+328:    // COV:EXCL_STOP
+442:            InitState::Armed => {} // COV:EXCL(EMPTY: monitoring only, disarm via disarm())
 ```
 
 ### mixer.rs
 ```
-382:                break; // COV:EXCL(DEFENSIVE: bounds check)
-390:                    continue; // COV:EXCL(DEFENSIVE: bounds check)
-474:                            continue; // COV:EXCL(DEFENSIVE: bounds check)
+392:                break; // COV:EXCL(DEFENSIVE: bounds check)
+400:                    continue; // COV:EXCL(DEFENSIVE: bounds check)
+484:                            continue; // COV:EXCL(DEFENSIVE: bounds check)
 ```
 
