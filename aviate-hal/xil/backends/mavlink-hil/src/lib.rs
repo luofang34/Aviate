@@ -53,7 +53,9 @@ use aviate_hal_xil::{
     SimActuatorCmd, SimBaroData, SimGnssData, SimGnssFix, SimImuData, SimMagData, SimSensorPacket,
 };
 
-pub use messages::{HilActuatorControls, HilGps, HilMessage, HilSensor, HilStateQuaternion};
+pub use messages::{
+    Heartbeat, HilActuatorControls, HilGps, HilMessage, HilSensor, HilStateQuaternion,
+};
 pub use transport::{HilTransport, HilTransportConfig};
 pub use wire::{parse_frame, serialize_frame, MavFrame, ParseError};
 
@@ -220,6 +222,15 @@ impl HilBackend {
         };
 
         self.transport.send_actuator_controls(&hil_cmd)
+    }
+
+    /// Send a heartbeat to the simulator
+    ///
+    /// Required by some simulators (like jMAVSim) to initialize HIL communication.
+    /// Should be called periodically (typically 1Hz) to maintain the connection.
+    pub fn send_heartbeat(&mut self, armed: bool) -> io::Result<()> {
+        let heartbeat = Heartbeat::new_quadrotor_hil(armed);
+        self.transport.send_heartbeat(&heartbeat)
     }
 
     /// Get current timestamp in microseconds

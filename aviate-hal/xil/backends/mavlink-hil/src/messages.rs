@@ -5,10 +5,102 @@
 //! https://mavlink.io/en/messages/common.html
 //!
 //! Supported messages:
+//! - HEARTBEAT (0): Connection heartbeat
 //! - HIL_SENSOR (107): IMU/baro/mag sensor data from simulator
 //! - HIL_GPS (113): GPS data from simulator
 //! - HIL_STATE_QUATERNION (115): Full vehicle state from simulator
 //! - HIL_ACTUATOR_CONTROLS (93): Motor/servo commands to simulator
+
+/// HEARTBEAT message ID
+pub const HEARTBEAT_ID: u8 = 0;
+
+/// HEARTBEAT (0) - System heartbeat
+///
+/// Sent periodically to indicate system is alive and identify its type.
+/// Required by jMAVSim to initialize HIL communication.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Heartbeat {
+    /// Vehicle type (MAV_TYPE): 2 = quadrotor
+    pub mav_type: u8,
+    /// Autopilot type (MAV_AUTOPILOT): 12 = PX4-compatible
+    pub autopilot: u8,
+    /// System mode flags (MAV_MODE_FLAG)
+    pub base_mode: u8,
+    /// Custom mode (autopilot-specific)
+    pub custom_mode: u32,
+    /// System status (MAV_STATE)
+    pub system_status: u8,
+    /// MAVLink version
+    pub mavlink_version: u8,
+}
+
+impl Heartbeat {
+    /// Payload size in bytes
+    pub const SIZE: usize = 9;
+
+    /// MAV_TYPE: Quadrotor
+    pub const MAV_TYPE_QUADROTOR: u8 = 2;
+    /// MAV_AUTOPILOT: Generic (PX4-compatible)
+    pub const MAV_AUTOPILOT_GENERIC: u8 = 0;
+    /// MAV_MODE_FLAG: Safety armed
+    pub const MAV_MODE_FLAG_SAFETY_ARMED: u8 = 0x80;
+    /// MAV_MODE_FLAG: HIL enabled
+    pub const MAV_MODE_FLAG_HIL_ENABLED: u8 = 0x20;
+    /// MAV_STATE: Standby
+    pub const MAV_STATE_STANDBY: u8 = 3;
+    /// MAV_STATE: Active
+    pub const MAV_STATE_ACTIVE: u8 = 4;
+
+    /// Create a default HIL heartbeat for a quadrotor
+    pub fn new_quadrotor_hil(armed: bool) -> Self {
+        let base_mode = Self::MAV_MODE_FLAG_HIL_ENABLED
+            | if armed {
+                Self::MAV_MODE_FLAG_SAFETY_ARMED
+            } else {
+                0
+            };
+        Self {
+            mav_type: Self::MAV_TYPE_QUADROTOR,
+            autopilot: Self::MAV_AUTOPILOT_GENERIC,
+            base_mode,
+            custom_mode: 0,
+            system_status: if armed {
+                Self::MAV_STATE_ACTIVE
+            } else {
+                Self::MAV_STATE_STANDBY
+            },
+            mavlink_version: 3,
+        }
+    }
+
+    /// Serialize to bytes (little-endian)
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut buf = [0u8; Self::SIZE];
+        // custom_mode is first (4 bytes) due to MAVLink field reordering
+        buf[0..4].copy_from_slice(&self.custom_mode.to_le_bytes());
+        buf[4] = self.mav_type;
+        buf[5] = self.autopilot;
+        buf[6] = self.base_mode;
+        buf[7] = self.system_status;
+        buf[8] = self.mavlink_version;
+        buf
+    }
+
+    /// Deserialize from bytes (little-endian)
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        if data.len() < Self::SIZE {
+            return None;
+        }
+        Some(Self {
+            custom_mode: u32::from_le_bytes(data[0..4].try_into().ok()?),
+            mav_type: data[4],
+            autopilot: data[5],
+            base_mode: data[6],
+            system_status: data[7],
+            mavlink_version: data[8],
+        })
+    }
+}
 
 /// HIL_SENSOR message ID
 pub const HIL_SENSOR_ID: u8 = 107;
@@ -381,6 +473,7 @@ impl HilActuatorControls {
 /// HIL message types
 #[derive(Clone, Debug)]
 pub enum HilMessage {
+    Heartbeat(Heartbeat),
     Sensor(HilSensor),
     Gps(HilGps),
     StateQuaternion(HilStateQuaternion),
@@ -391,6 +484,7 @@ impl HilMessage {
     /// Get message ID
     pub fn msg_id(&self) -> u8 {
         match self {
+            Self::Heartbeat(_) => HEARTBEAT_ID,
             Self::Sensor(_) => HIL_SENSOR_ID,
             Self::Gps(_) => HIL_GPS_ID,
             Self::StateQuaternion(_) => HIL_STATE_QUATERNION_ID,
@@ -526,5 +620,40 @@ mod tests {
     #[test]
     fn test_hil_state_quaternion_size() {
         assert_eq!(HilStateQuaternion::SIZE, 64);
+    }
+
+    #[test]
+    fn test_heartbeat_roundtrip() {
+        let heartbeat = Heartbeat::new_quadrotor_hil(true);
+        let bytes = heartbeat.to_bytes();
+        let parsed = Heartbeat::from_bytes(&bytes).expect("parse failed");
+        assert_eq!(heartbeat.mav_type, parsed.mav_type);
+        assert_eq!(heartbeat.autopilot, parsed.autopilot);
+        assert_eq!(heartbeat.base_mode, parsed.base_mode);
+        assert_eq!(heartbeat.custom_mode, parsed.custom_mode);
+        assert_eq!(heartbeat.system_status, parsed.system_status);
+        assert_eq!(heartbeat.mavlink_version, parsed.mavlink_version);
+    }
+
+    #[test]
+    fn test_heartbeat_size() {
+        assert_eq!(Heartbeat::SIZE, 9);
+    }
+
+    #[test]
+    fn test_heartbeat_armed_flags() {
+        let armed = Heartbeat::new_quadrotor_hil(true);
+        assert_eq!(
+            armed.base_mode & Heartbeat::MAV_MODE_FLAG_SAFETY_ARMED,
+            Heartbeat::MAV_MODE_FLAG_SAFETY_ARMED
+        );
+        assert_eq!(armed.system_status, Heartbeat::MAV_STATE_ACTIVE);
+
+        let disarmed = Heartbeat::new_quadrotor_hil(false);
+        assert_eq!(
+            disarmed.base_mode & Heartbeat::MAV_MODE_FLAG_SAFETY_ARMED,
+            0
+        );
+        assert_eq!(disarmed.system_status, Heartbeat::MAV_STATE_STANDBY);
     }
 }

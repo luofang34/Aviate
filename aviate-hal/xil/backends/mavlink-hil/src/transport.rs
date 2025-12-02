@@ -9,7 +9,9 @@ use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::Instant;
 
-use crate::messages::{HilActuatorControls, HilGps, HilMessage, HilSensor, HilStateQuaternion};
+use crate::messages::{
+    Heartbeat, HilActuatorControls, HilGps, HilMessage, HilSensor, HilStateQuaternion,
+};
 use crate::wire::{parse_frame, serialize_frame, MavFrame, ParseError, MAX_FRAME_SIZE};
 
 /// HIL transport configuration
@@ -132,6 +134,9 @@ impl HilTransport {
     /// Handle a parsed frame
     fn handle_frame(&mut self, frame: MavFrame) {
         match frame.message {
+            HilMessage::Heartbeat(_) => {
+                // Ignore incoming heartbeats (we receive these from GCS)
+            }
             HilMessage::Sensor(sensor) => {
                 self.last_sensor = Some(sensor);
             }
@@ -165,10 +170,21 @@ impl HilTransport {
     /// Send actuator controls to the simulator
     pub fn send_actuator_controls(&mut self, controls: &HilActuatorControls) -> io::Result<()> {
         let msg = HilMessage::ActuatorControls(*controls);
+        self.send_message(&msg)
+    }
+
+    /// Send a heartbeat message to the simulator
+    pub fn send_heartbeat(&mut self, heartbeat: &Heartbeat) -> io::Result<()> {
+        let msg = HilMessage::Heartbeat(*heartbeat);
+        self.send_message(&msg)
+    }
+
+    /// Send a generic HIL message
+    fn send_message(&mut self, msg: &HilMessage) -> io::Result<()> {
         let mut buf = [0u8; MAX_FRAME_SIZE];
 
         if let Some(len) = serialize_frame(
-            &msg,
+            msg,
             self.seq,
             self.config.sys_id,
             self.config.comp_id,

@@ -10,8 +10,8 @@
 //! ```
 
 use crate::messages::{
-    HilActuatorControls, HilGps, HilMessage, HilSensor, HilStateQuaternion,
-    HIL_ACTUATOR_CONTROLS_ID, HIL_GPS_ID, HIL_SENSOR_ID, HIL_STATE_QUATERNION_ID,
+    Heartbeat, HilActuatorControls, HilGps, HilMessage, HilSensor, HilStateQuaternion,
+    HEARTBEAT_ID, HIL_ACTUATOR_CONTROLS_ID, HIL_GPS_ID, HIL_SENSOR_ID, HIL_STATE_QUATERNION_ID,
 };
 
 /// MAVLink v2 start byte
@@ -20,8 +20,11 @@ pub const MAVLINK_STX_V2: u8 = 0xFD;
 /// MAVLink v1 start byte (for compatibility)
 pub const MAVLINK_STX_V1: u8 = 0xFE;
 
-/// Minimum header size (STX + LEN + INC + CMP + SEQ + SYS + CMP + MSG_ID[3])
+/// Minimum header size for v2 (STX + LEN + INC + CMP + SEQ + SYS + CMP + MSG_ID[3])
 pub const HEADER_SIZE: usize = 10;
+
+/// Header size for v1 (STX + LEN + SEQ + SYS + CMP + MSG_ID)
+pub const HEADER_SIZE_V1: usize = 6;
 
 /// CRC size
 pub const CRC_SIZE: usize = 2;
@@ -37,6 +40,7 @@ const CRC_INIT: u16 = 0xFFFF;
 
 /// CRC extra bytes for each message type (from MAVLink message definitions)
 /// These are used in the CRC calculation to ensure message format compatibility
+const CRC_EXTRA_HEARTBEAT: u8 = 50;
 const CRC_EXTRA_HIL_SENSOR: u8 = 108;
 const CRC_EXTRA_HIL_GPS: u8 = 124;
 const CRC_EXTRA_HIL_STATE_QUATERNION: u8 = 4;
@@ -45,6 +49,7 @@ const CRC_EXTRA_HIL_ACTUATOR_CONTROLS: u8 = 47;
 /// Get CRC extra byte for a message ID
 fn crc_extra(msg_id: u8) -> Option<u8> {
     match msg_id {
+        HEARTBEAT_ID => Some(CRC_EXTRA_HEARTBEAT),
         HIL_SENSOR_ID => Some(CRC_EXTRA_HIL_SENSOR),
         HIL_GPS_ID => Some(CRC_EXTRA_HIL_GPS),
         HIL_STATE_QUATERNION_ID => Some(CRC_EXTRA_HIL_STATE_QUATERNION),
@@ -64,12 +69,12 @@ pub fn crc_calculate(data: &[u8], extra: u8) -> u16 {
 }
 
 /// Accumulate one byte into CRC
+/// Uses the exact jMAVSim/MAVLink algorithm with proper truncation
 #[inline]
-fn crc_accumulate(byte: u8, mut crc: u16) -> u16 {
-    let tmp = (byte ^ (crc as u8)) as u16;
-    let tmp = tmp ^ (tmp << 4);
-    crc = (crc >> 8) ^ (tmp << 8) ^ (tmp << 3) ^ (tmp >> 4);
-    crc
+fn crc_accumulate(byte: u8, crc: u16) -> u16 {
+    let tmp = ((byte as u16) ^ crc) & 0xff;
+    let tmp = tmp ^ ((tmp << 4) & 0xff);
+    (crc >> 8) ^ (tmp << 8) ^ (tmp << 3) ^ (tmp >> 4)
 }
 
 /// Parse error types
@@ -100,18 +105,31 @@ pub struct MavFrame {
     pub message: HilMessage,
 }
 
-/// Parse a MAVLink v2 frame from a buffer
+/// Parse a MAVLink frame from a buffer (supports both v1 and v2)
 ///
 /// Returns the parsed frame and the number of bytes consumed.
 pub fn parse_frame(data: &[u8]) -> Result<(MavFrame, usize), ParseError> {
-    // Find start byte
-    let start_pos = data.iter().position(|&b| b == MAVLINK_STX_V2);
+    // Find start byte (either v1 or v2)
+    let start_pos = data
+        .iter()
+        .position(|&b| b == MAVLINK_STX_V2 || b == MAVLINK_STX_V1);
     let start_pos = match start_pos {
         Some(pos) => pos,
         None => return Err(ParseError::Incomplete),
     };
 
     let data = &data[start_pos..];
+    let is_v2 = data[0] == MAVLINK_STX_V2;
+
+    if is_v2 {
+        parse_frame_v2(data, start_pos)
+    } else {
+        parse_frame_v1(data, start_pos)
+    }
+}
+
+/// Parse a MAVLink v2 frame
+fn parse_frame_v2(data: &[u8], start_pos: usize) -> Result<(MavFrame, usize), ParseError> {
     if data.len() < HEADER_SIZE {
         return Err(ParseError::Incomplete);
     }
@@ -157,9 +175,59 @@ pub fn parse_frame(data: &[u8]) -> Result<(MavFrame, usize), ParseError> {
     ))
 }
 
+/// Parse a MAVLink v1 frame
+fn parse_frame_v1(data: &[u8], start_pos: usize) -> Result<(MavFrame, usize), ParseError> {
+    if data.len() < HEADER_SIZE_V1 {
+        return Err(ParseError::Incomplete);
+    }
+
+    // Parse v1 header: STX(1) + LEN(1) + SEQ(1) + SYS(1) + CMP(1) + MSG_ID(1)
+    let len = data[1] as usize;
+    let seq = data[2];
+    let sys_id = data[3];
+    let comp_id = data[4];
+    let msg_id = data[5];
+
+    let frame_len = HEADER_SIZE_V1 + len + CRC_SIZE;
+    if data.len() < frame_len {
+        return Err(ParseError::Incomplete);
+    }
+
+    // Get CRC extra for this message
+    let extra = crc_extra(msg_id).ok_or(ParseError::UnknownMessageId(msg_id))?;
+
+    // Verify CRC (over header[1..6] + payload for v1)
+    let crc_data = &data[1..HEADER_SIZE_V1 + len];
+    let expected_crc = crc_calculate(crc_data, extra);
+    let received_crc =
+        u16::from_le_bytes([data[HEADER_SIZE_V1 + len], data[HEADER_SIZE_V1 + len + 1]]);
+
+    if expected_crc != received_crc {
+        return Err(ParseError::CrcMismatch);
+    }
+
+    // Parse payload
+    let payload = &data[HEADER_SIZE_V1..HEADER_SIZE_V1 + len];
+    let message = parse_message(msg_id, payload)?;
+
+    Ok((
+        MavFrame {
+            seq,
+            sys_id,
+            comp_id,
+            message,
+        },
+        start_pos + frame_len,
+    ))
+}
+
 /// Parse message payload
 fn parse_message(msg_id: u8, payload: &[u8]) -> Result<HilMessage, ParseError> {
     match msg_id {
+        HEARTBEAT_ID => {
+            let msg = Heartbeat::from_bytes(payload).ok_or(ParseError::InvalidPayload)?;
+            Ok(HilMessage::Heartbeat(msg))
+        }
         HIL_SENSOR_ID => {
             let msg = HilSensor::from_bytes(payload).ok_or(ParseError::InvalidPayload)?;
             Ok(HilMessage::Sensor(msg))
@@ -191,6 +259,7 @@ pub fn serialize_frame(
     buf: &mut [u8],
 ) -> Option<usize> {
     let (msg_id, payload_bytes) = match msg {
+        HilMessage::Heartbeat(m) => (HEARTBEAT_ID, m.to_bytes().to_vec()),
         HilMessage::Sensor(m) => (HIL_SENSOR_ID, m.to_bytes().to_vec()),
         HilMessage::Gps(m) => (HIL_GPS_ID, m.to_bytes().to_vec()),
         HilMessage::StateQuaternion(m) => (HIL_STATE_QUATERNION_ID, m.to_bytes().to_vec()),
@@ -381,6 +450,59 @@ mod tests {
             assert_eq!(state.lat, parsed.lat);
             assert_eq!(state.lon, parsed.lon);
             assert_eq!(state.zacc, parsed.zacc);
+        } else {
+            panic!("Wrong message type");
+        }
+    }
+
+    #[test]
+    fn test_heartbeat_roundtrip() {
+        let heartbeat = Heartbeat::new_quadrotor_hil(true);
+
+        let msg = HilMessage::Heartbeat(heartbeat);
+        let mut buf = [0u8; 256];
+        let len = serialize_frame(&msg, 1, 1, 1, &mut buf).expect("serialize failed");
+
+        let (frame, _) = parse_frame(&buf[..len]).expect("parse failed");
+        if let HilMessage::Heartbeat(parsed) = frame.message {
+            assert_eq!(heartbeat.mav_type, parsed.mav_type);
+            assert_eq!(heartbeat.autopilot, parsed.autopilot);
+            assert_eq!(heartbeat.base_mode, parsed.base_mode);
+        } else {
+            panic!("Wrong message type");
+        }
+    }
+
+    #[test]
+    fn test_parse_v1_heartbeat() {
+        // Build a MAVLink v1 HEARTBEAT frame manually
+        // v1 format: STX(0xFE) + LEN + SEQ + SYS + CMP + MSG_ID + PAYLOAD + CRC
+        let heartbeat = Heartbeat::new_quadrotor_hil(false);
+        let payload = heartbeat.to_bytes();
+
+        let mut buf = [0u8; 64];
+        buf[0] = MAVLINK_STX_V1; // v1 start
+        buf[1] = Heartbeat::SIZE as u8;
+        buf[2] = 42; // seq
+        buf[3] = 1; // sys_id
+        buf[4] = 1; // comp_id
+        buf[5] = HEARTBEAT_ID;
+        buf[6..6 + Heartbeat::SIZE].copy_from_slice(&payload);
+
+        // Calculate CRC over header[1..6] + payload
+        let crc_data = &buf[1..6 + Heartbeat::SIZE];
+        let crc = crc_calculate(crc_data, 50); // HEARTBEAT CRC extra = 50
+        let crc_offset = 6 + Heartbeat::SIZE;
+        buf[crc_offset..crc_offset + 2].copy_from_slice(&crc.to_le_bytes());
+
+        let frame_len = 6 + Heartbeat::SIZE + 2;
+        let (frame, consumed) = parse_frame(&buf[..frame_len]).expect("parse v1 failed");
+        assert_eq!(consumed, frame_len);
+        assert_eq!(frame.seq, 42);
+        assert_eq!(frame.sys_id, 1);
+
+        if let HilMessage::Heartbeat(parsed) = frame.message {
+            assert_eq!(parsed.mav_type, heartbeat.mav_type);
         } else {
             panic!("Wrong message type");
         }

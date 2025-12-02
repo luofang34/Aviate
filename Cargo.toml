@@ -9,7 +9,9 @@ members = [
     "aviate-hal/xil/backends/gz",
     "aviate-hal/xil/backends/mavlink-hil",
     "aviate-boards/sitl-x500",
+    "aviate-boards/sitl-jmavsim",
     "aviate-apps/quadcopter-sitl",
+    "aviate-apps/jmavsim-sitl",
     "tests/lint-verification",
 ]
 resolver = "2"

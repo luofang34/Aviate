@@ -1,0 +1,13 @@
+[package]
+name = "aviate-board-sitl-jmavsim"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "jMAVSim SITL board using MAVLink HIL protocol"
+
+[dependencies]
+aviate-core = { path = "../../aviate-core" }
+aviate-hal-io = { path = "../../aviate-hal/io" }
+aviate-hal-xil = { path = "../../aviate-hal/xil" }
+aviate-backend-mavlink-hil = { path = "../../aviate-hal/xil/backends/mavlink-hil" }
+aviate-airframe-quadcopter = { path = "../../aviate-airframes/quadcopter" }
