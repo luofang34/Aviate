@@ -34,8 +34,8 @@ pub mod fault_protocol;
 pub mod flight_log;
 pub mod mission;
 pub mod mock;
+pub mod sim_types;
 pub mod sitl_io;
-pub mod udp;
 pub mod world;
 
 // Core exports
@@ -47,7 +47,12 @@ pub use world::{
 // Transport exports
 pub use mock::SitlHal;
 pub use sitl_io::{HilGpsData, HilSensorData, SitlIO};
-pub use udp::UdpMavlinkHal;
+
+// Simulator-neutral data types (for direct FFI integration)
+pub use sim_types::{
+    SimActuatorCmd, SimBaroData, SimGnssData, SimGnssFix, SimImuData, SimMagData, SimSensorPacket,
+    SimTimestampUs,
+};
 
 // Re-export legacy name for compatibility
 pub use SitlIO as SitlMavlink;
@@ -76,7 +81,7 @@ pub use fault_ctrl::{FaultController, FaultCtrlError};
 /// Port allocation scheme: `base_port + instance * stride + slot`
 ///
 /// Each instance occupies 16 ports (stride=16):
-/// - +0: SensorIn (simulator → FC, HIL_SENSOR/HIL_GPS)
+/// - +0: SensorIn (simulator → FC, sensor data)
 /// - +1: ActuatorOut (FC → simulator, motor commands)
 /// - +2: FaultCmd (test → FC, fault injection)
 /// - +3: XilCtrl (pause/step/reset/time sync)
@@ -141,7 +146,7 @@ impl XilNetConfig {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PortSlot {
-    /// Sensor data from simulator (HIL_SENSOR, HIL_GPS)
+    /// Sensor data from simulator
     SensorIn = 0,
     /// Actuator commands to simulator
     ActuatorOut = 1,

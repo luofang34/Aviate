@@ -13,10 +13,6 @@ pub fn serialize_mavlink(msg: &MavMessage, seq: u8, buf: &mut [u8]) -> Option<us
     match msg {
         MavMessage::Heartbeat(m) => serialize_heartbeat(m, seq, buf),
         MavMessage::SystemTime(m) => serialize_system_time(m, seq, buf),
-        MavMessage::HilSensor(m) => serialize_hil_sensor(m, seq, buf),
-        MavMessage::HilGps(m) => serialize_hil_gps(m, seq, buf),
-        MavMessage::HilActuatorControls(m) => serialize_hil_actuator_controls(m, seq, buf),
-        MavMessage::HilStateQuaternion(m) => serialize_hil_state_quaternion(m, seq, buf),
         MavMessage::AttitudeQuaternion(m) => serialize_attitude_quaternion(m, seq, buf),
         MavMessage::LocalPositionNed(m) => serialize_local_position_ned(m, seq, buf),
         MavMessage::SetAttitudeTarget(m) => serialize_set_attitude_target(m, seq, buf),
@@ -84,131 +80,6 @@ fn serialize_system_time(msg: &SystemTime, seq: u8, buf: &mut [u8]) -> Option<us
     write_u32_le(buf, offset + 8, msg.time_boot_ms);
 
     Some(write_crc(buf, offset + SystemTime::PAYLOAD_LEN, 137))
-}
-
-fn serialize_hil_sensor(msg: &HilSensor, seq: u8, buf: &mut [u8]) -> Option<usize> {
-    let frame_size = MavHeader::SIZE + HilSensor::PAYLOAD_LEN + 2;
-    if buf.len() < frame_size {
-        return None;
-    }
-
-    let offset = write_header(buf, HilSensor::PAYLOAD_LEN as u8, seq, HilSensor::MSG_ID);
-
-    write_u64_le(buf, offset, msg.time_usec);
-    write_f32_le(buf, offset + 8, msg.xacc);
-    write_f32_le(buf, offset + 12, msg.yacc);
-    write_f32_le(buf, offset + 16, msg.zacc);
-    write_f32_le(buf, offset + 20, msg.xgyro);
-    write_f32_le(buf, offset + 24, msg.ygyro);
-    write_f32_le(buf, offset + 28, msg.zgyro);
-    write_f32_le(buf, offset + 32, msg.xmag);
-    write_f32_le(buf, offset + 36, msg.ymag);
-    write_f32_le(buf, offset + 40, msg.zmag);
-    write_f32_le(buf, offset + 44, msg.abs_pressure);
-    write_f32_le(buf, offset + 48, msg.diff_pressure);
-    write_f32_le(buf, offset + 52, msg.pressure_alt);
-    write_f32_le(buf, offset + 56, msg.temperature);
-    write_u32_le(buf, offset + 60, msg.fields_updated);
-    buf[offset + 64] = msg.id;
-
-    Some(write_crc(buf, offset + HilSensor::PAYLOAD_LEN, 108))
-}
-
-fn serialize_hil_gps(msg: &HilGps, seq: u8, buf: &mut [u8]) -> Option<usize> {
-    let frame_size = MavHeader::SIZE + HilGps::PAYLOAD_LEN + 2;
-    if buf.len() < frame_size {
-        return None;
-    }
-
-    let offset = write_header(buf, HilGps::PAYLOAD_LEN as u8, seq, HilGps::MSG_ID);
-
-    write_u64_le(buf, offset, msg.time_usec);
-    write_i32_le(buf, offset + 8, msg.lat);
-    write_i32_le(buf, offset + 12, msg.lon);
-    write_i32_le(buf, offset + 16, msg.alt);
-    write_u16_le(buf, offset + 20, msg.eph);
-    write_u16_le(buf, offset + 22, msg.epv);
-    write_u16_le(buf, offset + 24, msg.vel);
-    write_i16_le(buf, offset + 26, msg.vn);
-    write_i16_le(buf, offset + 28, msg.ve);
-    write_i16_le(buf, offset + 30, msg.vd);
-    write_u16_le(buf, offset + 32, msg.cog);
-    buf[offset + 34] = msg.fix_type;
-    buf[offset + 35] = msg.satellites_visible;
-    buf[offset + 36] = msg.id;
-    write_u16_le(buf, offset + 37, msg.yaw);
-
-    Some(write_crc(buf, offset + HilGps::PAYLOAD_LEN, 124))
-}
-
-fn serialize_hil_actuator_controls(
-    msg: &HilActuatorControls,
-    seq: u8,
-    buf: &mut [u8],
-) -> Option<usize> {
-    let frame_size = MavHeader::SIZE + HilActuatorControls::PAYLOAD_LEN + 2;
-    if buf.len() < frame_size {
-        return None;
-    }
-
-    let offset = write_header(
-        buf,
-        HilActuatorControls::PAYLOAD_LEN as u8,
-        seq,
-        HilActuatorControls::MSG_ID,
-    );
-
-    write_u64_le(buf, offset, msg.time_usec);
-    for i in 0..16 {
-        write_f32_le(buf, offset + 8 + i * 4, msg.controls[i]);
-    }
-    buf[offset + 72] = msg.mode;
-    write_u64_le(buf, offset + 73, msg.flags);
-
-    Some(write_crc(
-        buf,
-        offset + HilActuatorControls::PAYLOAD_LEN,
-        47,
-    ))
-}
-
-fn serialize_hil_state_quaternion(
-    msg: &HilStateQuaternion,
-    seq: u8,
-    buf: &mut [u8],
-) -> Option<usize> {
-    let frame_size = MavHeader::SIZE + HilStateQuaternion::PAYLOAD_LEN + 2;
-    if buf.len() < frame_size {
-        return None;
-    }
-
-    let offset = write_header(
-        buf,
-        HilStateQuaternion::PAYLOAD_LEN as u8,
-        seq,
-        HilStateQuaternion::MSG_ID,
-    );
-
-    write_u64_le(buf, offset, msg.time_usec);
-    for i in 0..4 {
-        write_f32_le(buf, offset + 8 + i * 4, msg.attitude_quaternion[i]);
-    }
-    write_f32_le(buf, offset + 24, msg.rollspeed);
-    write_f32_le(buf, offset + 28, msg.pitchspeed);
-    write_f32_le(buf, offset + 32, msg.yawspeed);
-    write_i32_le(buf, offset + 36, msg.lat);
-    write_i32_le(buf, offset + 40, msg.lon);
-    write_i32_le(buf, offset + 44, msg.alt);
-    write_i16_le(buf, offset + 48, msg.vx);
-    write_i16_le(buf, offset + 50, msg.vy);
-    write_i16_le(buf, offset + 52, msg.vz);
-    write_u16_le(buf, offset + 54, msg.ind_airspeed);
-    write_u16_le(buf, offset + 56, msg.true_airspeed);
-    write_i16_le(buf, offset + 58, msg.xacc);
-    write_i16_le(buf, offset + 60, msg.yacc);
-    write_i16_le(buf, offset + 62, msg.zacc);
-
-    Some(write_crc(buf, offset + HilStateQuaternion::PAYLOAD_LEN, 4))
 }
 
 fn serialize_attitude_quaternion(
@@ -966,12 +837,6 @@ mod tests {
         253, 18, 0, 0, 0, 255, 190, 70, 0, 0, 220, 5, 220, 5, 232, 3, 220, 5, 0, 0, 0, 0, 0, 0, 0,
         0, 1, 1, 64, 169,
     ];
-    const PYMAVLINK_HIL_SENSOR: &[u8] = &[
-        253, 62, 0, 0, 0, 142, 1, 107, 0, 0, 64, 66, 15, 0, 0, 0, 0, 0, 205, 204, 204, 61, 205,
-        204, 76, 190, 195, 245, 28, 193, 10, 215, 35, 60, 10, 215, 163, 188, 0, 0, 0, 0, 205, 204,
-        76, 62, 0, 0, 0, 0, 205, 204, 204, 62, 0, 80, 125, 68, 0, 0, 0, 0, 0, 0, 200, 66, 0, 0,
-        200, 65, 255, 255, 103, 36,
-    ];
 
     #[test]
     fn test_pymavlink_heartbeat() {
@@ -1040,21 +905,6 @@ mod tests {
             assert_eq!(r.chan3_raw, 1000);
             assert_eq!(r.chan4_raw, 1500);
             assert_eq!(r.target_system, 1);
-        } else {
-            panic!("Wrong message type");
-        }
-    }
-
-    #[test]
-    fn test_pymavlink_hil_sensor() {
-        let (msg, consumed) = crate::parse_mavlink(PYMAVLINK_HIL_SENSOR).expect("Parse failed");
-        assert_eq!(consumed, PYMAVLINK_HIL_SENSOR.len());
-        if let MavMessage::HilSensor(h) = msg {
-            assert_eq!(h.time_usec, 1000000);
-            assert!((h.xacc - 0.1).abs() < 0.01);
-            assert!((h.yacc - (-0.2)).abs() < 0.01);
-            assert!((h.zacc - (-9.81)).abs() < 0.01);
-            assert!((h.abs_pressure - 1013.25).abs() < 0.1);
         } else {
             panic!("Wrong message type");
         }

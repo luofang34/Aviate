@@ -1,13 +1,8 @@
-//! Gazebo Bridge for SITL
+//! Gazebo Bridge Configuration
 //!
-//! This module bridges Gazebo Sim physics data to MAVLink HIL protocol.
-//! It reads model state from Gazebo and converts to HIL_SENSOR/HIL_GPS MAVLink messages.
-//!
-//! ## Bridge Modes
-//!
-//! - **FFI Mode** (default, `gz-plugin` feature): Zero-copy shared memory via AviateGzPlugin
-//!
-//! FFI mode is recommended for production use - it provides ~1μs latency.
+//! This module provides configuration for Gazebo simulation integration.
+//! The actual bridge logic is in main.rs, which connects GzPluginBridge
+//! to the flight controller's SitlIO.
 
 use aviate_hal_xil::{PortSlot, XilNetConfig};
 
@@ -59,7 +54,7 @@ impl GzBridgeConfig {
         }
     }
 
-    /// Get the sensor (HIL data) port for this instance
+    /// Get the sensor port for this instance
     #[inline]
     pub fn aviate_port(&self) -> u16 {
         self.net.port(self.instance as u16, PortSlot::SensorIn)
@@ -114,31 +109,28 @@ impl From<std::io::Error> for GzBridgeError {
 }
 
 // ============================================================================
-// FFI Mode (gz-plugin feature) - Zero-copy shared memory
+// GzBridge - Connects GzPluginBridge to test infrastructure
 // ============================================================================
 
 #[cfg(feature = "gz-plugin")]
 mod ffi_bridge {
     use super::*;
     use crate::plugin::{enu_to_ned_f32, enu_vel_to_ned_f32, GzPluginBridge, GzPluginError};
-    use aviate_mavlink::{
-        parse_mavlink, serialize_mavlink, HilActuatorControls, HilGps, HilSensor, LocalPositionNed,
-        MavMessage,
-    };
+    use aviate_mavlink::{serialize_mavlink, LocalPositionNed, MavMessage};
     use std::net::UdpSocket;
     use std::time::Instant;
 
-    /// Gazebo-MAVLink bridge using shared memory FFI
+    /// Gazebo bridge for test infrastructure
+    ///
+    /// Sends position telemetry to test clients via MAVLink.
+    /// Motor commands are now handled directly by main.rs.
     pub struct GzBridge {
         config: GzBridgeConfig,
         plugin: Option<GzPluginBridge>,
         start_time: Instant,
         send_socket: UdpSocket,
-        recv_socket: UdpSocket,
         seq: u8,
         // Statistics
-        hil_sent: u64,
-        motor_recv: u64,
         pos_sent: u64,
         // Cached state
         last_position: [f32; 3],
@@ -151,18 +143,12 @@ mod ffi_bridge {
             let send_socket = UdpSocket::bind("0.0.0.0:0")?;
             send_socket.set_nonblocking(true)?;
 
-            let recv_socket = UdpSocket::bind(("0.0.0.0", config.actuator_port()))?;
-            recv_socket.set_nonblocking(true)?;
-
             Ok(Self {
                 config,
                 plugin: None,
                 start_time: Instant::now(),
                 send_socket,
-                recv_socket,
                 seq: 0,
-                hil_sent: 0,
-                motor_recv: 0,
                 pos_sent: 0,
                 last_position: [0.0; 3],
                 last_velocity: [0.0; 3],
@@ -170,9 +156,6 @@ mod ffi_bridge {
         }
 
         /// Connect to the Gazebo plugin via shared memory
-        ///
-        /// Waits for the AviateGzPlugin to initialize shared memory.
-        /// Uses the instance ID from config for multi-vehicle support.
         pub fn connect(&mut self, timeout_ms: u64) -> Result<(), GzBridgeError> {
             let max_attempts = (timeout_ms / 500).max(1) as u32;
             eprintln!(
@@ -197,87 +180,27 @@ mod ffi_bridge {
 
         /// Check if connected to the plugin
         pub fn is_connected(&self) -> bool {
-            self.plugin
-                .as_ref()
-                .map(|p| p.is_connected())
-                .unwrap_or(false)
+            self.plugin.as_ref().is_some_and(|p| p.is_connected())
         }
 
-        /// Run one iteration of the bridge loop
+        /// Run one iteration - sends position telemetry to test client
         pub fn step(&mut self) {
-            let now_us = self.start_time.elapsed().as_micros() as u64;
-            let now_ms = (now_us / 1000) as u32;
+            let now_ms = (self.start_time.elapsed().as_micros() / 1000) as u32;
 
-            // Read physics state from plugin (zero-copy via shared memory)
-            let (accel, gyro, position, velocity) = if let Some(ref plugin) = self.plugin {
+            // Read physics state from plugin
+            let (position, velocity) = if let Some(ref plugin) = self.plugin {
                 if let Some(state) = plugin.get_model_state() {
-                    // Convert from ENU to NED for MAVLink
                     let ned_pos = enu_to_ned_f32(state.pos);
                     let ned_vel = enu_vel_to_ned_f32(state.vel);
-
-                    // Use angular velocity as gyro (already in body frame from physics)
-                    let gyro = [
-                        state.ang_vel[0] as f32,
-                        state.ang_vel[1] as f32,
-                        state.ang_vel[2] as f32,
-                    ];
-
-                    // Simulated accelerometer (gravity + body acceleration)
-                    let accel = [0.0f32, 0.0, -9.81];
-
                     self.last_position = ned_pos;
                     self.last_velocity = ned_vel;
-
-                    (accel, gyro, ned_pos, ned_vel)
+                    (ned_pos, ned_vel)
                 } else {
-                    // No valid data yet, use cached
-                    (
-                        [0.0, 0.0, -9.81],
-                        [0.0; 3],
-                        self.last_position,
-                        self.last_velocity,
-                    )
+                    (self.last_position, self.last_velocity)
                 }
             } else {
-                // Plugin not connected
-                ([0.0, 0.0, -9.81], [0.0; 3], [0.0; 3], [0.0; 3])
+                ([0.0; 3], [0.0; 3])
             };
-
-            // Build and send HIL_SENSOR
-            let hil_sensor = HilSensor {
-                time_usec: now_us,
-                xacc: accel[0],
-                yacc: accel[1],
-                zacc: accel[2],
-                xgyro: gyro[0],
-                ygyro: gyro[1],
-                zgyro: gyro[2],
-                xmag: 0.2,
-                ymag: 0.0,
-                zmag: 0.4,
-                abs_pressure: 1013.25,
-                diff_pressure: 0.0,
-                pressure_alt: -position[2], // NED z is down, altitude is positive up
-                temperature: 25.0,
-                fields_updated: 0x1FFF,
-                id: 0,
-            };
-
-            self.send_mavlink(&MavMessage::HilSensor(hil_sensor));
-            self.hil_sent += 1;
-
-            // Print stats every second (250 iterations at 250 Hz)
-            if self.hil_sent % 250 == 0 {
-                eprintln!(
-                    "[GzBridge] hil={}, motors={}, pos_sent={}, pos=[{:.2},{:.2},{:.2}]",
-                    self.hil_sent,
-                    self.motor_recv,
-                    self.pos_sent,
-                    position[0],
-                    position[1],
-                    position[2]
-                );
-            }
 
             // Send LOCAL_POSITION_NED to test client at 50Hz
             if self.seq % 5 == 0 {
@@ -294,45 +217,7 @@ mod ffi_bridge {
                 self.pos_sent += 1;
             }
 
-            // Send HIL_GPS at 10Hz
-            if self.seq % 25 == 0 {
-                let lat = (position[0] / 111000.0 * 1e7) as i32;
-                let lon = (position[1] / 111000.0 * 1e7) as i32;
-                let alt = (-position[2] * 1000.0) as i32;
-
-                let hil_gps = HilGps {
-                    time_usec: now_us,
-                    lat,
-                    lon,
-                    alt,
-                    eph: 100,
-                    epv: 100,
-                    vel: 0,
-                    vn: (velocity[0] * 100.0) as i16,
-                    ve: (velocity[1] * 100.0) as i16,
-                    vd: (velocity[2] * 100.0) as i16,
-                    cog: 0,
-                    fix_type: 3,
-                    satellites_visible: 10,
-                    id: 0,
-                    yaw: 0,
-                };
-
-                self.send_mavlink(&MavMessage::HilGps(hil_gps));
-            }
-
-            // Receive actuator commands from Aviate
-            self.receive_actuators();
-        }
-
-        /// Send a MAVLink message to Aviate
-        fn send_mavlink(&mut self, msg: &MavMessage) {
-            let mut buf = [0u8; 300];
-            if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
-                self.seq = self.seq.wrapping_add(1);
-                let addr = ("127.0.0.1", self.config.aviate_port());
-                let _ = self.send_socket.send_to(&buf[..len], addr);
-            }
+            self.seq = self.seq.wrapping_add(1);
         }
 
         /// Send a MAVLink message to the test client
@@ -341,51 +226,6 @@ mod ffi_bridge {
             if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
                 let addr = ("127.0.0.1", self.config.test_port());
                 let _ = self.send_socket.send_to(&buf[..len], addr);
-            }
-        }
-
-        /// Receive and process actuator commands
-        fn receive_actuators(&mut self) {
-            let mut buf = [0u8; 512];
-
-            loop {
-                match self.recv_socket.recv_from(&mut buf) {
-                    Ok((len, _)) => {
-                        if let Ok((msg, _)) = parse_mavlink(&buf[..len]) {
-                            if let MavMessage::HilActuatorControls(ctrl) = msg {
-                                self.motor_recv += 1;
-                                self.send_motor_command(&ctrl);
-                            }
-                        }
-                    }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                    Err(_) => break,
-                }
-            }
-        }
-
-        /// Send motor command to Gazebo via shared memory (zero-copy)
-        fn send_motor_command(&mut self, ctrl: &HilActuatorControls) {
-            // Convert normalized thrust (0-1) to motor velocity (0-1000 rad/s)
-            let velocities: [f64; 4] = [
-                (ctrl.controls[0].max(0.0) * 1000.0) as f64,
-                (ctrl.controls[1].max(0.0) * 1000.0) as f64,
-                (ctrl.controls[2].max(0.0) * 1000.0) as f64,
-                (ctrl.controls[3].max(0.0) * 1000.0) as f64,
-            ];
-
-            // Send via shared memory (zero-copy, plugin publishes to gz-transport)
-            if let Some(ref plugin) = self.plugin {
-                if plugin.set_motor_speeds(&velocities).is_ok() {
-                    if self.motor_recv % 50 == 1 {
-                        eprintln!(
-                            "[GzBridge] Motor cmd: [{:.1},{:.1},{:.1},{:.1}] rad/s",
-                            velocities[0], velocities[1], velocities[2], velocities[3]
-                        );
-                    }
-                } else if self.motor_recv % 250 == 1 {
-                    eprintln!("[GzBridge] Warning: Failed to send motor command via shm");
-                }
             }
         }
 
@@ -400,7 +240,7 @@ mod ffi_bridge {
 pub use ffi_bridge::GzBridge;
 
 // ============================================================================
-// Stub when neither feature is enabled
+// Stub when feature is not enabled
 // ============================================================================
 
 #[cfg(not(feature = "gz-plugin"))]

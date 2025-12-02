@@ -1,15 +1,15 @@
 //! SITL Transport Layer
 //!
-//! Handles network communication between the flight controller and simulator.
-//! This is the transport layer for SITL - it moves data between the FC and simulator,
+//! Simulator-neutral middleware between flight controller and simulator backends.
+//! This is the transport layer for SITL - it buffers sensor and actuator data,
 //! but does NOT implement HAL traits. HAL abstraction lives in `aviate-hal-io`.
 //!
 //! ## Responsibilities
 //!
-//! - **Sensor input**: Receives sensor data from simulator, buffers for BoardHal
-//! - **Actuator output**: Sends actuator commands to simulator
-//! - **Command input**: Receives arm/disarm and setpoint commands
-//! - **Heartbeat**: Maintains connection with simulator
+//! - **Sensor input**: Receives sensor data from simulator backend via Rust API
+//! - **Actuator output**: Provides actuator commands to simulator backend via Rust API
+//! - **Command input**: Receives arm/disarm and setpoint commands via MAVLink
+//! - **Heartbeat**: Maintains connection with GCS/mission_runner
 //!
 //! ## Architecture
 //!
@@ -20,27 +20,26 @@
 //! │  - FakeImu, FakeBaro, FakeMag, FakeGnss (sensor drivers)              │
 //! │  - FakeActuator (actuator driver)                                      │
 //! └─────────────────────────────────────────────────────────────────────────┘
-//!                    ↑ feed()                      ↓ take_cmd()
+//!                    ↑ feed()                      ↓ set_actuator_cmd()
 //! ┌─────────────────────────────────────────────────────────────────────────┐
 //! │                     aviate-hal-xil (this module)                        │
-//! │  SitlIO - Transport layer using MAVLink/UDP                            │
-//! │  - take_sensor_data() → feeds fake sensors                             │
-//! │  - send_actuator() ← reads from fake actuator                          │
+//! │  SitlIO - Simulator-neutral middleware                                 │
+//! │  - feed_sensor_packet() ← receives from backend                        │
+//! │  - take_actuator_cmd() → provides to backend                           │
 //! └─────────────────────────────────────────────────────────────────────────┘
-//!                    ↑ UDP                         ↓ UDP
+//!                    ↑ Rust API                    ↓ Rust API
 //! ┌─────────────────────────────────────────────────────────────────────────┐
-//! │                          Simulator (Gazebo)                             │
-//! │  HIL_SENSOR, HIL_GPS → sensor data                                     │
-//! │  HIL_ACTUATOR_CONTROLS ← actuator commands                             │
+//! │                  Simulator Backend (gazebo_bridge.rs)                   │
+//! │  - ENU→NED coordinate conversion                                       │
+//! │  - C FFI for Gazebo plugin integration                                 │
 //! └─────────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
 //! ## Note on MAVLink
 //!
-//! MAVLink is used as the wire protocol because it's the standard for HIL simulation.
-//! However, the actuator and sensor abstractions in `aviate-hal-io` are completely
-//! transport-agnostic. A different transport (e.g., shared memory, custom UDP) could
-//! be used by implementing a different transport layer.
+//! MAVLink is used only for GCS commands and mission_runner test harness.
+//! Sensor/actuator data uses direct Rust API (feed_sensor_packet, take_actuator_cmd)
+//! for lower latency and cleaner architecture.
 
 use std::io;
 use std::net::UdpSocket;
@@ -48,19 +47,17 @@ use std::net::UdpSocket;
 use aviate_core::hal::{CommandHal, SystemCommand, SystemHal};
 use aviate_core::time::{TimeSource, Timestamp};
 
-use aviate_hal_io::{
-    GnssFix, RawActuatorCmd, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading,
-};
+use aviate_hal_io::{GnssFix, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading};
 
 use aviate_mavlink::{
-    mav_cmd, parse_mavlink, serialize_mavlink, CommandLong, Heartbeat, HilActuatorControls, HilGps,
-    HilSensor, MavAutopilot, MavMessage, MavModeFlag, MavState, MavType, SetAttitudeTarget,
-    SetPositionTargetLocalNed,
+    mav_cmd, parse_mavlink, serialize_mavlink, CommandLong, Heartbeat, MavAutopilot, MavMessage,
+    MavModeFlag, MavState, MavType, SetAttitudeTarget, SetPositionTargetLocalNed,
 };
 
+use crate::sim_types::{SimActuatorCmd, SimGnssFix, SimSensorPacket};
 use crate::{bridge, XilConfig};
 
-/// Raw sensor data from HIL_SENSOR message
+/// Raw sensor data from simulator (IMU, baro, mag)
 #[derive(Debug, Clone, Default)]
 pub struct HilSensorData {
     pub imu: RawImuReading,
@@ -68,7 +65,7 @@ pub struct HilSensorData {
     pub mag: RawMagReading,
 }
 
-/// Raw GPS data from HIL_GPS message
+/// Raw GPS data from simulator
 #[derive(Debug, Clone, Default)]
 pub struct HilGpsData {
     pub gnss: RawGnssReading,
@@ -119,6 +116,9 @@ pub struct SitlIO {
     // Statistics
     rx_count: u64,
     tx_count: u64,
+
+    // Buffered actuator command for Rust API (direct FFI path)
+    actuator_cmd: Option<SimActuatorCmd>,
 }
 
 impl SitlIO {
@@ -146,6 +146,7 @@ impl SitlIO {
             gcs_addr: None,
             rx_count: 0,
             tx_count: 0,
+            actuator_cmd: None,
         })
     }
 
@@ -175,18 +176,105 @@ impl SitlIO {
         }
     }
 
-    /// Take buffered sensor data (from HIL_SENSOR)
+    /// Take buffered sensor data (IMU, baro, mag)
     ///
     /// Returns None if no new sensor data received since last take.
     pub fn take_sensor_data(&mut self) -> Option<HilSensorData> {
         self.sensor_data.take()
     }
 
-    /// Take buffered GPS data (from HIL_GPS)
+    /// Take buffered GPS data
     ///
     /// Returns None if no new GPS data received since last take.
     pub fn take_gps_data(&mut self) -> Option<HilGpsData> {
         self.gps_data.take()
+    }
+
+    // =========================================================================
+    // Rust API for direct simulator integration (bypasses MAVLink)
+    // =========================================================================
+
+    /// Feed sensor data from simulator via Rust API
+    ///
+    /// This is the direct path for simulator backends (like gazebo_bridge) to
+    /// provide sensor data without going through MAVLink. The data is buffered
+    /// and can be retrieved via `take_sensor_data()` and `take_gps_data()`.
+    ///
+    /// ## Coordinate Frame
+    ///
+    /// All data must be in NED (North-East-Down) frame. Backend-specific code
+    /// is responsible for coordinate conversion (e.g., ENU→NED for Gazebo).
+    pub fn feed_sensor_packet(&mut self, packet: &SimSensorPacket) {
+        // Convert IMU/Baro/Mag to HilSensorData
+        if packet.imu.is_some() || packet.baro.is_some() || packet.mag.is_some() {
+            let imu = packet
+                .imu
+                .map_or_else(RawImuReading::default, |d| RawImuReading {
+                    accel: d.accel,
+                    gyro: d.gyro,
+                    temperature: d.temperature,
+                });
+
+            let baro = packet
+                .baro
+                .map_or_else(RawBaroReading::default, |d| RawBaroReading {
+                    pressure_pa: d.pressure_pa,
+                    temperature_c: d.temperature_c,
+                });
+
+            let mag = packet
+                .mag
+                .map_or_else(RawMagReading::default, |d| RawMagReading {
+                    field_ut: d.field_ut,
+                });
+
+            self.sensor_data = Some(HilSensorData { imu, baro, mag });
+        }
+
+        // Convert GNSS to HilGpsData
+        if let Some(gnss) = packet.gnss {
+            let fix = match gnss.fix {
+                SimGnssFix::None => GnssFix::None,
+                SimGnssFix::TwoD => GnssFix::TwoD,
+                SimGnssFix::ThreeD => GnssFix::ThreeD,
+                SimGnssFix::RtkFloat => GnssFix::RtkFloat,
+                SimGnssFix::RtkFixed => GnssFix::RtkFixed,
+            };
+
+            self.gps_data = Some(HilGpsData {
+                gnss: RawGnssReading {
+                    lat_deg: gnss.lat_deg,
+                    lon_deg: gnss.lon_deg,
+                    alt_m: gnss.alt_m,
+                    vel_ned: gnss.vel_ned,
+                    fix,
+                    h_acc: gnss.h_acc,
+                    v_acc: gnss.v_acc,
+                    satellites: gnss.satellites,
+                },
+            });
+        }
+    }
+
+    /// Set actuator command for Rust API consumers
+    ///
+    /// Called by the board layer after getting actuator commands from the mixer.
+    /// Simulator backends (like gazebo_bridge) can retrieve this via `take_actuator_cmd()`.
+    pub fn set_actuator_cmd(&mut self, cmd: SimActuatorCmd) {
+        self.actuator_cmd = Some(cmd);
+    }
+
+    /// Take buffered actuator command (for Rust API)
+    ///
+    /// Returns None if no new actuator command since last take.
+    /// Used by simulator backends (like gazebo_bridge) to get motor commands.
+    pub fn take_actuator_cmd(&mut self) -> Option<SimActuatorCmd> {
+        self.actuator_cmd.take()
+    }
+
+    /// Check if there's a pending actuator command
+    pub fn has_actuator_cmd(&self) -> bool {
+        self.actuator_cmd.is_some()
     }
 
     /// Process received MAVLink data
@@ -203,10 +291,11 @@ impl SitlIO {
     }
 
     /// Handle a parsed MAVLink message
+    ///
+    /// Handles GCS commands (arm/disarm, setpoints). Sensor data is provided
+    /// via the Rust API (feed_sensor_packet) from the simulator backend.
     fn handle_message(&mut self, msg: MavMessage, src: std::net::SocketAddr) {
         match msg {
-            MavMessage::HilSensor(sensor) => self.handle_hil_sensor(sensor),
-            MavMessage::HilGps(gps) => self.handle_hil_gps(gps),
             MavMessage::SetAttitudeTarget(tgt) => {
                 self.gcs_addr = Some(src);
                 self.handle_set_attitude_target(tgt);
@@ -224,55 +313,6 @@ impl SitlIO {
             }
             _ => {}
         }
-    }
-
-    fn handle_hil_sensor(&mut self, sensor: HilSensor) {
-        self.sensor_data = Some(HilSensorData {
-            imu: RawImuReading {
-                accel: [sensor.xacc, sensor.yacc, sensor.zacc],
-                gyro: [sensor.xgyro, sensor.ygyro, sensor.zgyro],
-                temperature: Some(sensor.temperature),
-            },
-            baro: RawBaroReading {
-                pressure_pa: sensor.abs_pressure * 100.0, // mbar to Pa
-                temperature_c: sensor.temperature,
-            },
-            mag: RawMagReading {
-                field_ut: [
-                    sensor.xmag * 100.0, // Gauss to uT
-                    sensor.ymag * 100.0,
-                    sensor.zmag * 100.0,
-                ],
-            },
-        });
-    }
-
-    fn handle_hil_gps(&mut self, gps: HilGps) {
-        let fix = match gps.fix_type {
-            0 | 1 => GnssFix::None,
-            2 => GnssFix::TwoD,
-            3 | 4 => GnssFix::ThreeD,
-            5 => GnssFix::RtkFloat,
-            6 => GnssFix::RtkFixed,
-            _ => GnssFix::None,
-        };
-
-        self.gps_data = Some(HilGpsData {
-            gnss: RawGnssReading {
-                lat_deg: (gps.lat as f64) / 1e7,
-                lon_deg: (gps.lon as f64) / 1e7,
-                alt_m: (gps.alt as f32) / 1000.0,
-                vel_ned: [
-                    (gps.vn as f32) / 100.0,
-                    (gps.ve as f32) / 100.0,
-                    (gps.vd as f32) / 100.0,
-                ],
-                fix,
-                h_acc: (gps.eph as f32) / 100.0,
-                v_acc: (gps.epv as f32) / 100.0,
-                satellites: gps.satellites_visible,
-            },
-        });
     }
 
     fn handle_set_attitude_target(&mut self, tgt: SetAttitudeTarget) {
@@ -325,37 +365,6 @@ impl SitlIO {
             let _ = self.send_socket.send_to(&buf[..len], addr);
             self.tx_count += 1;
         }
-    }
-
-    /// Send actuator command to simulator via HIL_ACTUATOR_CONTROLS
-    ///
-    /// This is the MAVLink output for actuator commands. The board layer calls this
-    /// after reading from FakeActuator (via BoardHal's ActuatorHal implementation).
-    ///
-    /// ## Data Flow
-    ///
-    /// ```text
-    /// Kernel → BoardHal.write(&ActuatorCmd) → FakeActuator
-    ///                                              ↓
-    ///                            board reads via actuator_mut().take_cmd()
-    ///                                              ↓
-    ///                            SitlMavlink.send_actuator(&RawActuatorCmd)
-    ///                                              ↓
-    ///                            HIL_ACTUATOR_CONTROLS → Gazebo
-    /// ```
-    pub fn send_actuator(&mut self, cmd: &RawActuatorCmd) {
-        let msg = HilActuatorControls {
-            time_usec: self.now_us(),
-            controls: cmd.outputs,
-            mode: if self.armed {
-                MavModeFlag::SAFETY_ARMED.0
-            } else {
-                0
-            },
-            flags: 0,
-        };
-
-        self.send_message(&MavMessage::HilActuatorControls(msg));
     }
 
     /// Set armed state (for MAVLink mode flags)

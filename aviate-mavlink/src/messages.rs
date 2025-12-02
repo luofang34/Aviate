@@ -1,82 +1,4 @@
-//! MAVLink message definitions for HIL simulation and core control
-
-// --- Existing HIL messages ---
-
-/// HIL_SENSOR (MAVLink #107)
-#[derive(Copy, Clone, Debug, Default)]
-pub struct HilSensor {
-    pub time_usec: u64,
-    pub xacc: f32,
-    pub yacc: f32,
-    pub zacc: f32,
-    pub xgyro: f32,
-    pub ygyro: f32,
-    pub zgyro: f32,
-    pub xmag: f32,
-    pub ymag: f32,
-    pub zmag: f32,
-    pub abs_pressure: f32,
-    pub diff_pressure: f32,
-    pub pressure_alt: f32,
-    pub temperature: f32,
-    pub fields_updated: u32,
-    pub id: u8,
-}
-
-impl HilSensor {
-    pub const MSG_ID: u32 = 107;
-    pub const PAYLOAD_LEN: usize = 65;
-}
-
-/// HIL_GPS (MAVLink #113)
-#[derive(Copy, Clone, Debug, Default)]
-pub struct HilGps {
-    pub time_usec: u64,
-    pub lat: i32,
-    pub lon: i32,
-    pub alt: i32,
-    pub eph: u16,
-    pub epv: u16,
-    pub vel: u16,
-    pub vn: i16,
-    pub ve: i16,
-    pub vd: i16,
-    pub cog: u16,
-    pub fix_type: u8,
-    pub satellites_visible: u8,
-    pub id: u8,
-    pub yaw: u16,
-}
-
-impl HilGps {
-    pub const MSG_ID: u32 = 113;
-    pub const PAYLOAD_LEN: usize = 39;
-}
-
-/// HIL_ACTUATOR_CONTROLS (MAVLink #93)
-#[derive(Copy, Clone, Debug)]
-pub struct HilActuatorControls {
-    pub time_usec: u64,
-    pub controls: [f32; 16],
-    pub mode: u8,
-    pub flags: u64,
-}
-
-impl Default for HilActuatorControls {
-    fn default() -> Self {
-        Self {
-            time_usec: 0,
-            controls: [0.0; 16],
-            mode: 0,
-            flags: 0,
-        }
-    }
-}
-
-impl HilActuatorControls {
-    pub const MSG_ID: u32 = 93;
-    pub const PAYLOAD_LEN: usize = 81;
-}
+//! MAVLink message definitions for Aviate autopilot
 
 /// HEARTBEAT (MAVLink #0)
 #[derive(Copy, Clone, Debug, Default)]
@@ -105,34 +27,6 @@ impl SystemTime {
     pub const MSG_ID: u32 = 2;
     pub const PAYLOAD_LEN: usize = 12;
 }
-
-/// HIL_STATE_QUATERNION (MAVLink #115)
-#[derive(Copy, Clone, Debug, Default)]
-pub struct HilStateQuaternion {
-    pub time_usec: u64,
-    pub attitude_quaternion: [f32; 4],
-    pub rollspeed: f32,
-    pub pitchspeed: f32,
-    pub yawspeed: f32,
-    pub lat: i32,
-    pub lon: i32,
-    pub alt: i32,
-    pub vx: i16,
-    pub vy: i16,
-    pub vz: i16,
-    pub ind_airspeed: u16,
-    pub true_airspeed: u16,
-    pub xacc: i16,
-    pub yacc: i16,
-    pub zacc: i16,
-}
-
-impl HilStateQuaternion {
-    pub const MSG_ID: u32 = 115;
-    pub const PAYLOAD_LEN: usize = 64;
-}
-
-// --- New Messages (Quaternions & Control) ---
 
 /// ATTITUDE_QUATERNION (MAVLink #31)
 #[derive(Copy, Clone, Debug, Default)]
@@ -391,10 +285,6 @@ impl Statustext {
 pub enum MavMessage {
     Heartbeat(Heartbeat),
     SystemTime(SystemTime),
-    HilSensor(HilSensor),
-    HilGps(HilGps),
-    HilActuatorControls(HilActuatorControls),
-    HilStateQuaternion(HilStateQuaternion),
     AttitudeQuaternion(AttitudeQuaternion),
     LocalPositionNed(LocalPositionNed),
     SetAttitudeTarget(SetAttitudeTarget),
@@ -415,10 +305,6 @@ impl MavMessage {
         match self {
             MavMessage::Heartbeat(_) => Heartbeat::MSG_ID,
             MavMessage::SystemTime(_) => SystemTime::MSG_ID,
-            MavMessage::HilSensor(_) => HilSensor::MSG_ID,
-            MavMessage::HilGps(_) => HilGps::MSG_ID,
-            MavMessage::HilActuatorControls(_) => HilActuatorControls::MSG_ID,
-            MavMessage::HilStateQuaternion(_) => HilStateQuaternion::MSG_ID,
             MavMessage::AttitudeQuaternion(_) => AttitudeQuaternion::MSG_ID,
             MavMessage::LocalPositionNed(_) => LocalPositionNed::MSG_ID,
             MavMessage::SetAttitudeTarget(_) => SetAttitudeTarget::MSG_ID,

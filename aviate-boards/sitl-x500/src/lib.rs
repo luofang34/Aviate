@@ -10,13 +10,13 @@
 //!
 //! ```text
 //! SENSORS (Input):
-//! SITL:  Gazebo → HIL_SENSOR → SitlIO → FakeImu/Baro/... → BoardHal → SensorHal
+//! SITL:  Gazebo → gazebo_bridge (FFI) → SitlIO → FakeImu/Baro/... → BoardHal → SensorHal
 //! Real:  SPI/I2C → BMI088/BMP390/... → BoardHal → SensorHal
 //!                                           ↓
 //!                                    Same kernel code
 //!                                           ↓
 //! ACTUATORS (Output):
-//! SITL:  Kernel → BoardHal → FakeActuator → SitlIO → HIL_ACTUATOR_CONTROLS → Gazebo
+//! SITL:  Kernel → BoardHal → FakeActuator → SitlIO → gazebo_bridge (FFI) → Gazebo
 //! Real:  Kernel → BoardHal → PwmMotors → PWM signals → ESCs
 //! ```
 //!
@@ -24,10 +24,10 @@
 //!
 //! | Sensor | Model | Interface |
 //! |--------|-------|-----------|
-//! | IMU    | Gazebo physics | HIL_SENSOR |
-//! | GNSS   | Gazebo plugin  | HIL_GPS |
-//! | Baro   | Gazebo plugin  | HIL_SENSOR |
-//! | Mag    | Gazebo plugin  | HIL_SENSOR |
+//! | IMU    | Gazebo physics | FFI |
+//! | GNSS   | Gazebo plugin  | FFI |
+//! | Baro   | Gazebo plugin  | FFI |
+//! | Mag    | Gazebo plugin  | FFI |
 //!
 //! ## Motor Configuration (x500 layout)
 //!
@@ -59,7 +59,7 @@ use aviate_core::types::{Meters, MetersPerSecond, Normalized, Seconds};
 use aviate_core::{AviateKernel, ChannelId, InitState};
 
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
-use aviate_hal_xil::{SitlConfig, SitlIO};
+use aviate_hal_xil::{SimActuatorCmd, SitlConfig, SitlIO};
 
 /// Time source for SITL using std::time
 pub struct SitlTime {
@@ -403,10 +403,16 @@ impl X500SitlBoard {
         //    This writes to FakeActuator, same path as real hardware
         self.board_hal.write(&actuator_cmd);
 
-        // 9. Forward actuator command to simulator via MAVLink
-        //    Take command from FakeActuator and send to Gazebo
+        // 9. Forward actuator command to simulator via Rust API
+        //    Take command from FakeActuator and set for backend (gazebo_bridge) to retrieve
         if let Some(raw_cmd) = self.board_hal.actuator_mut().take_cmd() {
-            self.transport.send_actuator(&raw_cmd);
+            let sim_cmd = SimActuatorCmd {
+                timestamp_us: self.transport.now_us(),
+                outputs: raw_cmd.outputs,
+                count: raw_cmd.count,
+                armed: self.is_armed(),
+            };
+            self.transport.set_actuator_cmd(sim_cmd);
         }
 
         // 10. Watchdog
@@ -459,6 +465,19 @@ impl X500SitlBoard {
     /// Get current timestamp in microseconds
     pub fn now_us(&self) -> u64 {
         self.transport.now_us()
+    }
+
+    /// Get a reference to the transport layer
+    pub fn transport(&self) -> &SitlIO {
+        &self.transport
+    }
+
+    /// Get a mutable reference to the transport layer
+    ///
+    /// Use this to feed sensor data from simulator backends or
+    /// read actuator commands for forwarding to the simulator.
+    pub fn transport_mut(&mut self) -> &mut SitlIO {
+        &mut self.transport
     }
 
     /// Get the airframe ID

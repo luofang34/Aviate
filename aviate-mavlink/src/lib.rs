@@ -1,15 +1,20 @@
-//! MAVLink message parsing/serialization for HIL simulation
+//! MAVLink message parsing/serialization for Aviate autopilot
 //!
-//! Supports the subset of MAVLink 2.0 messages needed for SITL:
-//! - HIL_SENSOR (#107) - IMU/baro/mag from simulator
-//! - HIL_GPS (#113) - GNSS from simulator
-//! - HIL_ACTUATOR_CONTROLS (#93) - Motor outputs to simulator
-//! - HEARTBEAT (#0) - Keep-alive
+//! Supports the subset of MAVLink 2.0 messages needed for flight control:
+//! - HEARTBEAT (#0) - Keep-alive and status
+//! - SET_ATTITUDE_TARGET (#82) - Attitude commands from GCS
+//! - SET_POSITION_TARGET_LOCAL_NED (#84) - Position commands from GCS
+//! - COMMAND_LONG (#76) - Arm/disarm and other commands
+//! - Various telemetry messages for GCS communication
 //!
 //! This crate is `no_std` compatible with no allocations.
+//! Production-hardened with strict lint rules.
 
 #![no_std]
 #![forbid(unsafe_code)]
+#![deny(clippy::panic)]
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
 
 pub mod messages;
 pub mod parser;

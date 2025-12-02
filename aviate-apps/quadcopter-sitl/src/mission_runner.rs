@@ -14,7 +14,7 @@
 //! Commands flow through the full Aviate control stack:
 //! ```text
 //! MissionRunner → MAVLink UDP → Aviate SITL (main.rs) → Controller → Mixer
-//!     → HIL_ACTUATOR_CONTROLS → gz_bridge → Gazebo Motors
+//!     → GzPluginBridge (shared memory) → Gazebo Motors
 //! ```
 
 #[cfg(feature = "gz-plugin")]
@@ -35,8 +35,8 @@ use aviate_hal_xil::{PortSlot, XilNetConfig};
 
 #[cfg(feature = "gz-plugin")]
 use aviate_mavlink::{
-    mav_cmd, parse_mavlink, serialize_mavlink, CommandLong, Heartbeat, HilSensor, MavAutopilot,
-    MavMessage, MavState, MavType, SetAttitudeTarget, SetPositionTargetLocalNed,
+    mav_cmd, parse_mavlink, serialize_mavlink, CommandLong, Heartbeat, MavAutopilot, MavMessage,
+    MavState, MavType, SetAttitudeTarget, SetPositionTargetLocalNed,
 };
 
 /// MAVLink GCS client for sending commands to the FC
@@ -205,33 +205,6 @@ impl MavClient {
         }
         None
     }
-
-    /// Send HIL_SENSOR to satisfy pre-arm checks
-    /// This simulates sensor data that gz_bridge would normally send
-    pub fn send_hil_sensor(&mut self) -> bool {
-        let sensor = HilSensor {
-            time_usec: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_micros() as u64)
-                .unwrap_or(0),
-            xacc: 0.0,
-            yacc: 0.0,
-            zacc: -9.81,
-            xgyro: 0.0,
-            ygyro: 0.0,
-            zgyro: 0.0,
-            xmag: 0.2,
-            ymag: 0.0,
-            zmag: 0.4,
-            abs_pressure: 1013.25,
-            diff_pressure: 0.0,
-            pressure_alt: 0.0,
-            temperature: 25.0,
-            fields_updated: 0xFFFF_FFFF,
-            id: 0,
-        };
-        self.send(&MavMessage::HilSensor(sensor))
-    }
 }
 
 /// Mission runner state
@@ -242,7 +215,7 @@ impl MavClient {
 /// ## Control Modes
 ///
 /// - **MAVLink mode** (when FC is running): Commands flow through the full stack:
-///   `MissionRunner → MAVLink → FC → Controller → Mixer → HIL_ACTUATOR_CONTROLS → gz_bridge → Gazebo`
+///   `MissionRunner → MAVLink → FC → Controller → Mixer → GzPluginBridge → Gazebo`
 ///
 /// - **Direct mode** (fallback): Direct motor control via shared memory:
 ///   `MissionRunner → GzPluginBridge → Gazebo` (bypasses FC, for testing only)
@@ -296,10 +269,10 @@ impl MissionRunner {
 
     /// Check if FC is responding to MAVLink commands
     fn try_connect_fc(&mut self) -> bool {
-        // Send heartbeat and sensor data to prime the FC
+        // Send heartbeats to establish GCS connection
+        // Sensor data is fed from Gazebo by the FC (main.rs) directly
         for _ in 0..10 {
             self.mav.send_heartbeat();
-            self.mav.send_hil_sensor();
             std::thread::sleep(Duration::from_millis(10));
         }
 
@@ -500,7 +473,7 @@ impl MissionRunner {
     /// Execute an action
     ///
     /// When FC is connected (fc_connected=true), commands flow via MAVLink:
-    ///   MissionRunner → MAVLink → FC → Controller → Mixer → HIL_ACTUATOR_CONTROLS → gz_bridge → Gazebo
+    ///   MissionRunner → MAVLink → FC → Controller → Mixer → GzPluginBridge → Gazebo
     ///
     /// When FC is not running (fc_connected=false), direct motor control:
     ///   MissionRunner → GzPluginBridge → Gazebo (bypasses FC, for testing)

@@ -97,10 +97,6 @@ fn parse_message_payload(msg_id: u32, payload: &[u8]) -> Result<MavMessage, Pars
     match msg_id {
         Heartbeat::MSG_ID => parse_heartbeat(payload),
         SystemTime::MSG_ID => parse_system_time(payload),
-        HilSensor::MSG_ID => parse_hil_sensor(payload),
-        HilGps::MSG_ID => parse_hil_gps(payload),
-        HilActuatorControls::MSG_ID => parse_hil_actuator_controls(payload),
-        HilStateQuaternion::MSG_ID => parse_hil_state_quaternion(payload),
         AttitudeQuaternion::MSG_ID => parse_attitude_quaternion(payload),
         LocalPositionNed::MSG_ID => parse_local_position_ned(payload),
         SetAttitudeTarget::MSG_ID => parse_set_attitude_target(payload),
@@ -138,114 +134,6 @@ fn parse_system_time(payload: &[u8]) -> Result<MavMessage, ParseError> {
     Ok(MavMessage::SystemTime(SystemTime {
         time_unix_usec: read_u64_le(payload, 0),
         time_boot_ms: read_u32_le(payload, 8),
-    }))
-}
-
-fn parse_hil_sensor(payload: &[u8]) -> Result<MavMessage, ParseError> {
-    // MAVLink 2.0 trims trailing zeros - minimum is 62 bytes (fields_updated ends at 64, but zeros trimmed)
-    // Core fields end at offset 60 (fields_updated u32)
-    if payload.len() < 62 {
-        return Err(ParseError::InvalidPayload);
-    }
-
-    Ok(MavMessage::HilSensor(HilSensor {
-        time_usec: read_u64_le(payload, 0),
-        xacc: read_f32_le(payload, 8),
-        yacc: read_f32_le(payload, 12),
-        zacc: read_f32_le(payload, 16),
-        xgyro: read_f32_le(payload, 20),
-        ygyro: read_f32_le(payload, 24),
-        zgyro: read_f32_le(payload, 28),
-        xmag: read_f32_le(payload, 32),
-        ymag: read_f32_le(payload, 36),
-        zmag: read_f32_le(payload, 40),
-        abs_pressure: read_f32_le(payload, 44),
-        diff_pressure: read_f32_le(payload, 48),
-        pressure_alt: read_f32_le(payload, 52),
-        temperature: read_f32_le(payload, 56),
-        fields_updated: if payload.len() >= 64 {
-            read_u32_le(payload, 60)
-        } else {
-            0xFFFF
-        },
-        id: if payload.len() > 64 { payload[64] } else { 0 },
-    }))
-}
-
-fn parse_hil_gps(payload: &[u8]) -> Result<MavMessage, ParseError> {
-    if payload.len() < 36 {
-        // Minimum without optional fields
-        return Err(ParseError::InvalidPayload);
-    }
-
-    Ok(MavMessage::HilGps(HilGps {
-        time_usec: read_u64_le(payload, 0),
-        lat: read_i32_le(payload, 8),
-        lon: read_i32_le(payload, 12),
-        alt: read_i32_le(payload, 16),
-        eph: read_u16_le(payload, 20),
-        epv: read_u16_le(payload, 22),
-        vel: read_u16_le(payload, 24),
-        vn: read_i16_le(payload, 26),
-        ve: read_i16_le(payload, 28),
-        vd: read_i16_le(payload, 30),
-        cog: read_u16_le(payload, 32),
-        fix_type: payload[34],
-        satellites_visible: payload[35],
-        id: if payload.len() > 36 { payload[36] } else { 0 },
-        yaw: if payload.len() > 38 {
-            read_u16_le(payload, 37)
-        } else {
-            0
-        },
-    }))
-}
-
-fn parse_hil_actuator_controls(payload: &[u8]) -> Result<MavMessage, ParseError> {
-    if payload.len() < HilActuatorControls::PAYLOAD_LEN {
-        return Err(ParseError::InvalidPayload);
-    }
-
-    let mut controls = [0.0f32; 16];
-    for (i, ctrl) in controls.iter_mut().enumerate() {
-        *ctrl = read_f32_le(payload, 8 + i * 4);
-    }
-
-    Ok(MavMessage::HilActuatorControls(HilActuatorControls {
-        time_usec: read_u64_le(payload, 0),
-        controls,
-        mode: payload[72],
-        flags: read_u64_le(payload, 73),
-    }))
-}
-
-fn parse_hil_state_quaternion(payload: &[u8]) -> Result<MavMessage, ParseError> {
-    if payload.len() < HilStateQuaternion::PAYLOAD_LEN {
-        return Err(ParseError::InvalidPayload);
-    }
-
-    Ok(MavMessage::HilStateQuaternion(HilStateQuaternion {
-        time_usec: read_u64_le(payload, 0),
-        attitude_quaternion: [
-            read_f32_le(payload, 8),
-            read_f32_le(payload, 12),
-            read_f32_le(payload, 16),
-            read_f32_le(payload, 20),
-        ],
-        rollspeed: read_f32_le(payload, 24),
-        pitchspeed: read_f32_le(payload, 28),
-        yawspeed: read_f32_le(payload, 32),
-        lat: read_i32_le(payload, 36),
-        lon: read_i32_le(payload, 40),
-        alt: read_i32_le(payload, 44),
-        vx: read_i16_le(payload, 48),
-        vy: read_i16_le(payload, 50),
-        vz: read_i16_le(payload, 52),
-        ind_airspeed: read_u16_le(payload, 54),
-        true_airspeed: read_u16_le(payload, 56),
-        xacc: read_i16_le(payload, 58),
-        yacc: read_i16_le(payload, 60),
-        zacc: read_i16_le(payload, 62),
     }))
 }
 
@@ -595,22 +483,18 @@ fn crc_accumulate(byte: u8, crc: u16) -> u16 {
 /// Get CRC extra byte for message ID (from MAVLink XML definitions)
 fn get_crc_extra(msg_id: u32) -> u8 {
     match msg_id {
-        0 => 50,    // HEARTBEAT
-        1 => 124,   // SYS_STATUS
-        2 => 137,   // SYSTEM_TIME
-        31 => 246,  // ATTITUDE_QUATERNION
-        32 => 185,  // LOCAL_POSITION_NED
-        69 => 243,  // MANUAL_CONTROL
-        70 => 124,  // RC_CHANNELS_OVERRIDE
-        76 => 152,  // COMMAND_LONG
-        77 => 143,  // COMMAND_ACK
-        82 => 49,   // SET_ATTITUDE_TARGET
-        84 => 143,  // SET_POSITION_TARGET_LOCAL_NED
-        93 => 47,   // HIL_ACTUATOR_CONTROLS
-        107 => 108, // HIL_SENSOR
-        113 => 124, // HIL_GPS
-        115 => 4,   // HIL_STATE_QUATERNION
-        253 => 83,  // STATUSTEXT
-        _ => 0,     // Unknown message
+        0 => 50,   // HEARTBEAT
+        1 => 124,  // SYS_STATUS
+        2 => 137,  // SYSTEM_TIME
+        31 => 246, // ATTITUDE_QUATERNION
+        32 => 185, // LOCAL_POSITION_NED
+        69 => 243, // MANUAL_CONTROL
+        70 => 124, // RC_CHANNELS_OVERRIDE
+        76 => 152, // COMMAND_LONG
+        77 => 143, // COMMAND_ACK
+        82 => 49,  // SET_ATTITUDE_TARGET
+        84 => 143, // SET_POSITION_TARGET_LOCAL_NED
+        253 => 83, // STATUSTEXT
+        _ => 0,    // Unknown message
     }
 }
