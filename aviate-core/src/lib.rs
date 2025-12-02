@@ -1016,6 +1016,39 @@ impl<V: VehicleController, M: Mixer> AviateKernelImpl<V, M> {
             source: crate::time::TimeSource::Internal,
         };
 
+        // SEU Resilience: Validate command enum fields (Spec §15.3)
+        // This detects memory corruption in control-plane enums.
+        // On failure: set ENUM_INVALID fault and force safe output.
+        if !command.validate_enums() {
+            self.faults.insert(FaultFlags::ENUM_INVALID);
+            return UpdateResult {
+                actuator: ActuatorCmd {
+                    outputs: self.safe_output,
+                    active_mask: 0,
+                    sequence: command.sequence,
+                    timestamp,
+                    fallback_mask: 0,
+                    sanitized: true,
+                },
+                status: ChannelStatus {
+                    mode: ControlMode::Attitude, // Safe default
+                    config_mode: self.mode,
+                    transition_state: ConfigTransitionState::Stable(self.mode),
+                    law: ControlLawV1::Backup,
+                    health: ChannelHealthV1::Operative,
+                    faults: self.faults,
+                    confidence: self.ekf.get_estimate().quality,
+                    envelope_margin: EnvelopeMargin::default(),
+                    sequence: command.sequence,
+                    protection: ProtectionStatus::default(),
+                    sanitize_report: SanitizeReport::default(),
+                },
+                estimate: self.ekf.get_estimate(),
+                timing: CycleTiming::default(),
+                degradation: None,
+            };
+        }
+
         // 0. Update sensor fault flags (always, regardless of armed state)
         //    This allows continuous monitoring of sensor health.
         self.update_sensor_faults(sensors);

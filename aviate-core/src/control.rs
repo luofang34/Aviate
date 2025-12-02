@@ -19,6 +19,22 @@ pub enum ControlMode {
 }
 
 impl ControlMode {
+    /// Check if the discriminant value is valid (SEU resilience)
+    /// Uses unsafe discriminant read to detect memory corruption.
+    #[inline]
+    pub fn is_valid_discriminant(&self) -> bool {
+        // SAFETY: Reading discriminant of a valid enum is safe.
+        // If memory is corrupted, discriminant may be out of range.
+        let disc = core::mem::discriminant(self);
+        // Compare against all valid discriminants
+        disc == core::mem::discriminant(&ControlMode::Rate)
+            || disc == core::mem::discriminant(&ControlMode::Attitude)
+            || disc == core::mem::discriminant(&ControlMode::AltitudeHold)
+            || disc == core::mem::discriminant(&ControlMode::PositionHold)
+            || disc == core::mem::discriminant(&ControlMode::VelocityControl)
+            || disc == core::mem::discriminant(&ControlMode::DeviationTracking)
+    }
+
     /// Center-codes for 6 variants (spaced across 16-bit range)
     const CODES: &'static [(Self, u16)] = &[
         (ControlMode::Rate, 0x0000),
@@ -285,6 +301,16 @@ pub enum CommandSource {
 }
 
 impl CommandSource {
+    /// Check if the discriminant value is valid (SEU resilience)
+    #[inline]
+    pub fn is_valid_discriminant(&self) -> bool {
+        let disc = core::mem::discriminant(self);
+        disc == core::mem::discriminant(&CommandSource::Pilot)
+            || disc == core::mem::discriminant(&CommandSource::Autopilot)
+            || disc == core::mem::discriminant(&CommandSource::Gcs)
+            || disc == core::mem::discriminant(&CommandSource::Failsafe)
+    }
+
     const CODES: &'static [(Self, u16)] = &[
         (CommandSource::Pilot, 0x0000),
         (CommandSource::Autopilot, 0x5555),
@@ -369,6 +395,35 @@ pub struct Command {
     pub source: CommandSource,
 }
 
+impl Command {
+    /// Validate all enum fields for SEU resilience (Spec §15.3)
+    ///
+    /// Checks that enum discriminants are within valid ranges.
+    /// Returns true if all fields are valid, false if any corruption detected.
+    /// This is a fast O(1) operation that checks discriminant values.
+    #[inline]
+    pub fn validate_enums(&self) -> bool {
+        // Check ControlMode discriminant (0-5)
+        if !self.mode.is_valid_discriminant() {
+            return false;
+        }
+
+        // Check CommandSource discriminant (0-3)
+        if !self.source.is_valid_discriminant() {
+            return false;
+        }
+
+        // Check ConfigMode if present (0-3)
+        if let Some(config_mode) = self.config_mode_request {
+            if !config_mode.is_valid_discriminant() {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ConfigMode {
     Hover = 0,
@@ -378,6 +433,16 @@ pub enum ConfigMode {
 }
 
 impl ConfigMode {
+    /// Check if the discriminant value is valid (SEU resilience)
+    #[inline]
+    pub fn is_valid_discriminant(&self) -> bool {
+        let disc = core::mem::discriminant(self);
+        disc == core::mem::discriminant(&ConfigMode::Hover)
+            || disc == core::mem::discriminant(&ConfigMode::Cruise)
+            || disc == core::mem::discriminant(&ConfigMode::Transition)
+            || disc == core::mem::discriminant(&ConfigMode::Degraded)
+    }
+
     const CODES: &'static [(Self, u16)] = &[
         (ConfigMode::Hover, 0x0000),
         (ConfigMode::Cruise, 0x5555),

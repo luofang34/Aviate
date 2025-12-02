@@ -544,3 +544,123 @@ fn multiple_bit_flip_detected() {
     assert_eq!(law, ControlLawV1::Alternate); // Still nearest
     assert_eq!(dist, 3);
 }
+
+// ============================================================================
+// Discriminant Validation Tests (is_valid_discriminant)
+// ============================================================================
+
+#[test]
+fn control_mode_discriminant_valid() {
+    // All valid variants should pass discriminant check
+    assert!(ControlMode::Rate.is_valid_discriminant());
+    assert!(ControlMode::Attitude.is_valid_discriminant());
+    assert!(ControlMode::AltitudeHold.is_valid_discriminant());
+    assert!(ControlMode::PositionHold.is_valid_discriminant());
+    assert!(ControlMode::VelocityControl.is_valid_discriminant());
+    assert!(ControlMode::DeviationTracking.is_valid_discriminant());
+}
+
+#[test]
+fn command_source_discriminant_valid() {
+    assert!(CommandSource::Pilot.is_valid_discriminant());
+    assert!(CommandSource::Autopilot.is_valid_discriminant());
+    assert!(CommandSource::Gcs.is_valid_discriminant());
+    assert!(CommandSource::Failsafe.is_valid_discriminant());
+}
+
+#[test]
+fn config_mode_discriminant_valid() {
+    assert!(ConfigMode::Hover.is_valid_discriminant());
+    assert!(ConfigMode::Cruise.is_valid_discriminant());
+    assert!(ConfigMode::Transition.is_valid_discriminant());
+    assert!(ConfigMode::Degraded.is_valid_discriminant());
+}
+
+// ============================================================================
+// Command::validate_enums Tests
+// ============================================================================
+
+use aviate_core::control::{Command, Setpoint};
+use aviate_core::types::Normalized;
+
+fn make_valid_command() -> Command {
+    Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint {
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 0,
+        source: CommandSource::Gcs,
+    }
+}
+
+#[test]
+fn command_validate_enums_valid_command() {
+    let cmd = make_valid_command();
+    assert!(cmd.validate_enums(), "Valid command should pass validation");
+}
+
+#[test]
+fn command_validate_enums_all_modes() {
+    for mode in [
+        ControlMode::Rate,
+        ControlMode::Attitude,
+        ControlMode::AltitudeHold,
+        ControlMode::PositionHold,
+        ControlMode::VelocityControl,
+        ControlMode::DeviationTracking,
+    ] {
+        let cmd = Command {
+            mode,
+            ..make_valid_command()
+        };
+        assert!(
+            cmd.validate_enums(),
+            "Command with mode {:?} should be valid",
+            mode
+        );
+    }
+}
+
+#[test]
+fn command_validate_enums_all_sources() {
+    for source in [
+        CommandSource::Pilot,
+        CommandSource::Autopilot,
+        CommandSource::Gcs,
+        CommandSource::Failsafe,
+    ] {
+        let cmd = Command {
+            source,
+            ..make_valid_command()
+        };
+        assert!(
+            cmd.validate_enums(),
+            "Command with source {:?} should be valid",
+            source
+        );
+    }
+}
+
+#[test]
+fn command_validate_enums_with_config_mode_request() {
+    for config_mode in [
+        ConfigMode::Hover,
+        ConfigMode::Cruise,
+        ConfigMode::Transition,
+        ConfigMode::Degraded,
+    ] {
+        let cmd = Command {
+            config_mode_request: Some(config_mode),
+            ..make_valid_command()
+        };
+        assert!(
+            cmd.validate_enums(),
+            "Command with config_mode_request {:?} should be valid",
+            config_mode
+        );
+    }
+}
