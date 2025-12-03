@@ -41,42 +41,54 @@ typedef struct AviateMotorCommand {
     int num_motors;
 } AviateMotorCommand;
 
-/// Initialize the bridge for instance 0 (backwards compatible)
-/// Returns 0 on success, non-zero on error
-int aviate_gz_init(void);
+/// Maximum number of vehicle instances supported
+#define AVIATE_MAX_INSTANCES 8
 
 /// Initialize the bridge for a specific instance (multi-vehicle support)
 /// Instance 0 uses /aviate_gz_bridge, instance N uses /aviate_gz_bridge_N
 /// Returns 0 on success, non-zero on error
 int aviate_gz_init_instance(int instance);
 
-/// Shutdown the bridge (called at cleanup)
-void aviate_gz_shutdown(void);
+/// Shutdown the bridge for a specific instance
+void aviate_gz_shutdown_instance(int instance);
 
-/// Get current model state (zero-copy read from shared memory)
+/// Get current model state for a specific instance
 /// Returns 0 on success, non-zero if data not available
-int aviate_gz_get_model_state(AviateModelState* out);
+int aviate_gz_get_model_state_instance(int instance, AviateModelState* out);
 
-/// Set motor speeds (writes to shared memory, picked up by plugin)
+/// Set motor speeds for a specific instance
 /// Returns 0 on success, non-zero on error
-int aviate_gz_set_motor_speeds(const AviateMotorCommand* cmd);
+int aviate_gz_set_motor_speeds_instance(int instance, const AviateMotorCommand* cmd);
 
-/// Get the simulation time in microseconds
-uint64_t aviate_gz_get_sim_time_us(void);
+/// Get the simulation time in microseconds for a specific instance
+uint64_t aviate_gz_get_sim_time_us_instance(int instance);
 
-/// Check if the bridge is connected to gz-sim
+/// Check if a specific instance is connected to gz-sim
 /// Returns non-zero if connected
+int aviate_gz_is_connected_instance(int instance);
+
+/// Enable/disable lockstep mode for a specific instance
+void aviate_gz_set_lockstep_instance(int instance, int enabled);
+
+/// Get the current simulation step count for a specific instance
+uint64_t aviate_gz_get_sim_step_instance(int instance);
+
+/// Acknowledge a simulation step for a specific instance
+void aviate_gz_ack_step_instance(int instance, uint64_t step);
+
+// ============================================================================
+// Legacy API (instance 0 only, for backwards compatibility)
+// ============================================================================
+
+/// Initialize the bridge for instance 0 (backwards compatible)
+int aviate_gz_init(void);
+void aviate_gz_shutdown(void);
+int aviate_gz_get_model_state(AviateModelState* out);
+int aviate_gz_set_motor_speeds(const AviateMotorCommand* cmd);
+uint64_t aviate_gz_get_sim_time_us(void);
 int aviate_gz_is_connected(void);
-
-/// Enable/disable lockstep mode
-/// When enabled, Gazebo waits for FC to acknowledge each step
 void aviate_gz_set_lockstep(int enabled);
-
-/// Get the current simulation step count (for lockstep)
 uint64_t aviate_gz_get_sim_step(void);
-
-/// Acknowledge a simulation step (FC calls this after processing)
-/// This allows Gazebo to proceed to the next step in lockstep mode
 void aviate_gz_ack_step(uint64_t step);
 
 #ifdef __cplusplus

@@ -2,6 +2,8 @@
 //
 // This file implements the C FFI interface for Rust to access gz-sim data
 // via shared memory created by the AviateGzPlugin.
+//
+// Multi-instance support: Each vehicle instance has its own bridge state.
 
 #include "aviate_gz_bridge.h"
 #include "shared_state.h"
@@ -14,20 +16,34 @@
 #include <cstring>
 #include <atomic>
 
-// Global state for the C bridge
-static struct {
+// Bridge state for a single instance
+struct BridgeState {
     AviateSharedState* shm;
     int fd;
     uint32_t last_seq;
     bool initialized;
-} g_bridge = {nullptr, -1, 0, false};
+};
+
+// Array of bridge states (one per instance)
+static BridgeState g_bridges[AVIATE_MAX_INSTANCES] = {};
+
+// Helper to validate instance
+static inline bool valid_instance(int instance) {
+    return instance >= 0 && instance < AVIATE_MAX_INSTANCES;
+}
 
 extern "C" {
 
 int aviate_gz_init_instance(int instance)
 {
-    if (g_bridge.initialized) {
-        return 0;  // Already initialized
+    if (!valid_instance(instance)) {
+        return -3;  // Invalid instance
+    }
+
+    BridgeState& bridge = g_bridges[instance];
+
+    if (bridge.initialized) {
+        return 0;  // Already initialized for this instance
     }
 
     // Build shared memory name based on instance
@@ -39,94 +55,107 @@ int aviate_gz_init_instance(int instance)
     }
 
     // Open existing shared memory (created by plugin)
-    g_bridge.fd = shm_open(shm_name, O_RDWR, 0666);
-    if (g_bridge.fd == -1) {
+    bridge.fd = shm_open(shm_name, O_RDWR, 0666);
+    if (bridge.fd == -1) {
         return -1;  // Plugin not running yet
     }
 
     // Map into memory
     void* ptr = mmap(nullptr, sizeof(AviateSharedState),
-                     PROT_READ | PROT_WRITE, MAP_SHARED, g_bridge.fd, 0);
+                     PROT_READ | PROT_WRITE, MAP_SHARED, bridge.fd, 0);
     if (ptr == MAP_FAILED) {
-        close(g_bridge.fd);
-        g_bridge.fd = -1;
+        close(bridge.fd);
+        bridge.fd = -1;
         return -2;
     }
 
-    g_bridge.shm = static_cast<AviateSharedState*>(ptr);
-    g_bridge.last_seq = 0;
-    g_bridge.initialized = true;
+    bridge.shm = static_cast<AviateSharedState*>(ptr);
+    bridge.last_seq = 0;
+    bridge.initialized = true;
 
     return 0;
 }
 
-int aviate_gz_init(void)
+void aviate_gz_shutdown_instance(int instance)
 {
-    return aviate_gz_init_instance(0);
-}
-
-void aviate_gz_shutdown(void)
-{
-    if (!g_bridge.initialized) {
+    if (!valid_instance(instance)) {
         return;
     }
 
-    if (g_bridge.shm) {
-        munmap(g_bridge.shm, sizeof(AviateSharedState));
-        g_bridge.shm = nullptr;
+    BridgeState& bridge = g_bridges[instance];
+
+    if (!bridge.initialized) {
+        return;
     }
 
-    if (g_bridge.fd != -1) {
-        close(g_bridge.fd);
-        g_bridge.fd = -1;
+    if (bridge.shm) {
+        munmap(bridge.shm, sizeof(AviateSharedState));
+        bridge.shm = nullptr;
     }
 
-    g_bridge.initialized = false;
+    if (bridge.fd != -1) {
+        close(bridge.fd);
+        bridge.fd = -1;
+    }
+
+    bridge.initialized = false;
 }
 
-int aviate_gz_get_model_state(AviateModelState* out)
+int aviate_gz_get_model_state_instance(int instance, AviateModelState* out)
 {
-    if (!g_bridge.initialized || !g_bridge.shm || !out) {
+    if (!valid_instance(instance) || !out) {
+        return -1;
+    }
+
+    BridgeState& bridge = g_bridges[instance];
+
+    if (!bridge.initialized || !bridge.shm) {
         return -1;
     }
 
     // Check if plugin has marked data as valid
-    if (!__atomic_load_n(&g_bridge.shm->valid, __ATOMIC_ACQUIRE)) {
+    if (!__atomic_load_n(&bridge.shm->valid, __ATOMIC_ACQUIRE)) {
         out->valid = 0;
         return -2;
     }
 
     // Read current sequence
-    uint32_t seq = __atomic_load_n(&g_bridge.shm->seq, __ATOMIC_ACQUIRE);
+    uint32_t seq = __atomic_load_n(&bridge.shm->seq, __ATOMIC_ACQUIRE);
 
-    // Copy data (simple memcpy is safe due to atomic seq)
-    out->pos[0] = g_bridge.shm->pos[0];
-    out->pos[1] = g_bridge.shm->pos[1];
-    out->pos[2] = g_bridge.shm->pos[2];
+    // Copy data
+    out->pos[0] = bridge.shm->pos[0];
+    out->pos[1] = bridge.shm->pos[1];
+    out->pos[2] = bridge.shm->pos[2];
 
-    out->quat[0] = g_bridge.shm->quat[0];
-    out->quat[1] = g_bridge.shm->quat[1];
-    out->quat[2] = g_bridge.shm->quat[2];
-    out->quat[3] = g_bridge.shm->quat[3];
+    out->quat[0] = bridge.shm->quat[0];
+    out->quat[1] = bridge.shm->quat[1];
+    out->quat[2] = bridge.shm->quat[2];
+    out->quat[3] = bridge.shm->quat[3];
 
-    out->vel[0] = g_bridge.shm->vel[0];
-    out->vel[1] = g_bridge.shm->vel[1];
-    out->vel[2] = g_bridge.shm->vel[2];
+    out->vel[0] = bridge.shm->vel[0];
+    out->vel[1] = bridge.shm->vel[1];
+    out->vel[2] = bridge.shm->vel[2];
 
-    out->ang_vel[0] = g_bridge.shm->ang_vel[0];
-    out->ang_vel[1] = g_bridge.shm->ang_vel[1];
-    out->ang_vel[2] = g_bridge.shm->ang_vel[2];
+    out->ang_vel[0] = bridge.shm->ang_vel[0];
+    out->ang_vel[1] = bridge.shm->ang_vel[1];
+    out->ang_vel[2] = bridge.shm->ang_vel[2];
 
-    out->time_us = g_bridge.shm->time_us;
+    out->time_us = bridge.shm->time_us;
     out->valid = 1;
 
-    g_bridge.last_seq = seq;
+    bridge.last_seq = seq;
     return 0;
 }
 
-int aviate_gz_set_motor_speeds(const AviateMotorCommand* cmd)
+int aviate_gz_set_motor_speeds_instance(int instance, const AviateMotorCommand* cmd)
 {
-    if (!g_bridge.initialized || !g_bridge.shm || !cmd) {
+    if (!valid_instance(instance) || !cmd) {
+        return -1;
+    }
+
+    BridgeState& bridge = g_bridges[instance];
+
+    if (!bridge.initialized || !bridge.shm) {
         return -1;
     }
 
@@ -135,54 +164,133 @@ int aviate_gz_set_motor_speeds(const AviateMotorCommand* cmd)
     if (n > 8) n = 8;
 
     for (int i = 0; i < n; i++) {
-        g_bridge.shm->motor_vel[i] = cmd->velocities[i];
+        bridge.shm->motor_vel[i] = cmd->velocities[i];
     }
-    g_bridge.shm->num_motors = n;
+    bridge.shm->num_motors = n;
 
     // Increment sequence to signal new command
-    __atomic_fetch_add(&g_bridge.shm->motor_seq, 1, __ATOMIC_RELEASE);
+    __atomic_fetch_add(&bridge.shm->motor_seq, 1, __ATOMIC_RELEASE);
 
     return 0;
 }
 
-uint64_t aviate_gz_get_sim_time_us(void)
+uint64_t aviate_gz_get_sim_time_us_instance(int instance)
 {
-    if (!g_bridge.initialized || !g_bridge.shm) {
+    if (!valid_instance(instance)) {
         return 0;
     }
-    return g_bridge.shm->time_us;
+
+    BridgeState& bridge = g_bridges[instance];
+
+    if (!bridge.initialized || !bridge.shm) {
+        return 0;
+    }
+    return bridge.shm->time_us;
+}
+
+int aviate_gz_is_connected_instance(int instance)
+{
+    if (!valid_instance(instance)) {
+        return 0;
+    }
+
+    BridgeState& bridge = g_bridges[instance];
+
+    if (!bridge.initialized || !bridge.shm) {
+        return 0;
+    }
+    return __atomic_load_n(&bridge.shm->plugin_ready, __ATOMIC_ACQUIRE) != 0;
+}
+
+void aviate_gz_set_lockstep_instance(int instance, int enabled)
+{
+    if (!valid_instance(instance)) {
+        return;
+    }
+
+    BridgeState& bridge = g_bridges[instance];
+
+    if (!bridge.initialized || !bridge.shm) {
+        return;
+    }
+    __atomic_store_n(&bridge.shm->lockstep_enabled, enabled ? 1 : 0, __ATOMIC_RELEASE);
+}
+
+uint64_t aviate_gz_get_sim_step_instance(int instance)
+{
+    if (!valid_instance(instance)) {
+        return 0;
+    }
+
+    BridgeState& bridge = g_bridges[instance];
+
+    if (!bridge.initialized || !bridge.shm) {
+        return 0;
+    }
+    return __atomic_load_n(&bridge.shm->sim_step, __ATOMIC_ACQUIRE);
+}
+
+void aviate_gz_ack_step_instance(int instance, uint64_t step)
+{
+    if (!valid_instance(instance)) {
+        return;
+    }
+
+    BridgeState& bridge = g_bridges[instance];
+
+    if (!bridge.initialized || !bridge.shm) {
+        return;
+    }
+    __atomic_store_n(&bridge.shm->fc_step_ack, step, __ATOMIC_RELEASE);
+}
+
+// ============================================================================
+// Legacy API (instance 0 only, for backwards compatibility)
+// ============================================================================
+
+int aviate_gz_init(void)
+{
+    return aviate_gz_init_instance(0);
+}
+
+void aviate_gz_shutdown(void)
+{
+    aviate_gz_shutdown_instance(0);
+}
+
+int aviate_gz_get_model_state(AviateModelState* out)
+{
+    return aviate_gz_get_model_state_instance(0, out);
+}
+
+int aviate_gz_set_motor_speeds(const AviateMotorCommand* cmd)
+{
+    return aviate_gz_set_motor_speeds_instance(0, cmd);
+}
+
+uint64_t aviate_gz_get_sim_time_us(void)
+{
+    return aviate_gz_get_sim_time_us_instance(0);
 }
 
 int aviate_gz_is_connected(void)
 {
-    if (!g_bridge.initialized || !g_bridge.shm) {
-        return 0;
-    }
-    return __atomic_load_n(&g_bridge.shm->plugin_ready, __ATOMIC_ACQUIRE) != 0;
+    return aviate_gz_is_connected_instance(0);
 }
 
 void aviate_gz_set_lockstep(int enabled)
 {
-    if (!g_bridge.initialized || !g_bridge.shm) {
-        return;
-    }
-    __atomic_store_n(&g_bridge.shm->lockstep_enabled, enabled ? 1 : 0, __ATOMIC_RELEASE);
+    aviate_gz_set_lockstep_instance(0, enabled);
 }
 
 uint64_t aviate_gz_get_sim_step(void)
 {
-    if (!g_bridge.initialized || !g_bridge.shm) {
-        return 0;
-    }
-    return __atomic_load_n(&g_bridge.shm->sim_step, __ATOMIC_ACQUIRE);
+    return aviate_gz_get_sim_step_instance(0);
 }
 
 void aviate_gz_ack_step(uint64_t step)
 {
-    if (!g_bridge.initialized || !g_bridge.shm) {
-        return;
-    }
-    __atomic_store_n(&g_bridge.shm->fc_step_ack, step, __ATOMIC_RELEASE);
+    aviate_gz_ack_step_instance(0, step);
 }
 
 }  // extern "C"

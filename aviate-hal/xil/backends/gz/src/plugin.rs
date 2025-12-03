@@ -60,19 +60,19 @@ impl Default for AviateMotorCommand {
     }
 }
 
-// FFI declarations - link against libaviate_gz_bridge.so
+// FFI declarations - link against libaviate_gz_bridge_static.a
 extern "C" {
-    #[allow(dead_code)]
-    fn aviate_gz_init() -> c_int;
+    // Multi-instance API
     fn aviate_gz_init_instance(instance: c_int) -> c_int;
-    fn aviate_gz_shutdown();
-    fn aviate_gz_get_model_state(out: *mut AviateModelState) -> c_int;
-    fn aviate_gz_set_motor_speeds(cmd: *const AviateMotorCommand) -> c_int;
-    fn aviate_gz_get_sim_time_us() -> u64;
-    fn aviate_gz_is_connected() -> c_int;
-    fn aviate_gz_set_lockstep(enabled: c_int);
-    fn aviate_gz_get_sim_step() -> u64;
-    fn aviate_gz_ack_step(step: u64);
+    fn aviate_gz_shutdown_instance(instance: c_int);
+    fn aviate_gz_get_model_state_instance(instance: c_int, out: *mut AviateModelState) -> c_int;
+    fn aviate_gz_set_motor_speeds_instance(instance: c_int, cmd: *const AviateMotorCommand)
+        -> c_int;
+    fn aviate_gz_get_sim_time_us_instance(instance: c_int) -> u64;
+    fn aviate_gz_is_connected_instance(instance: c_int) -> c_int;
+    fn aviate_gz_set_lockstep_instance(instance: c_int, enabled: c_int);
+    fn aviate_gz_get_sim_step_instance(instance: c_int) -> u64;
+    fn aviate_gz_ack_step_instance(instance: c_int, step: u64);
 }
 
 /// Error type for GzPluginBridge operations
@@ -182,7 +182,8 @@ impl GzPluginBridge {
         }
 
         let mut state = AviateModelState::default();
-        let result = unsafe { aviate_gz_get_model_state(&mut state) };
+        let result =
+            unsafe { aviate_gz_get_model_state_instance(self.instance as c_int, &mut state) };
 
         if result == 0 && state.valid != 0 {
             Some(state)
@@ -204,7 +205,8 @@ impl GzPluginBridge {
         cmd.velocities[..n].copy_from_slice(&velocities[..n]);
         cmd.num_motors = n as c_int;
 
-        let result = unsafe { aviate_gz_set_motor_speeds(&cmd) };
+        let result =
+            unsafe { aviate_gz_set_motor_speeds_instance(self.instance as c_int, &cmd) };
         if result == 0 {
             Ok(())
         } else {
@@ -217,7 +219,7 @@ impl GzPluginBridge {
         if !self.initialized {
             return 0;
         }
-        unsafe { aviate_gz_get_sim_time_us() }
+        unsafe { aviate_gz_get_sim_time_us_instance(self.instance as c_int) }
     }
 
     /// Check if connected to the gz-sim plugin
@@ -225,7 +227,7 @@ impl GzPluginBridge {
         if !self.initialized {
             return false;
         }
-        unsafe { aviate_gz_is_connected() != 0 }
+        unsafe { aviate_gz_is_connected_instance(self.instance as c_int) != 0 }
     }
 
     /// Enable or disable lockstep mode
@@ -237,7 +239,7 @@ impl GzPluginBridge {
         if !self.initialized {
             return;
         }
-        unsafe { aviate_gz_set_lockstep(if enabled { 1 } else { 0 }) }
+        unsafe { aviate_gz_set_lockstep_instance(self.instance as c_int, if enabled { 1 } else { 0 }) }
     }
 
     /// Get the current simulation step count
@@ -248,7 +250,7 @@ impl GzPluginBridge {
         if !self.initialized {
             return 0;
         }
-        unsafe { aviate_gz_get_sim_step() }
+        unsafe { aviate_gz_get_sim_step_instance(self.instance as c_int) }
     }
 
     /// Acknowledge a simulation step
@@ -259,7 +261,7 @@ impl GzPluginBridge {
         if !self.initialized {
             return;
         }
-        unsafe { aviate_gz_ack_step(step) }
+        unsafe { aviate_gz_ack_step_instance(self.instance as c_int, step) }
     }
 
     /// Wait for a new simulation step and process it
@@ -304,7 +306,7 @@ impl GzPluginBridge {
 impl Drop for GzPluginBridge {
     fn drop(&mut self) {
         if self.initialized {
-            unsafe { aviate_gz_shutdown() };
+            unsafe { aviate_gz_shutdown_instance(self.instance as c_int) };
             self.initialized = false;
         }
     }
