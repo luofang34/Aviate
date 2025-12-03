@@ -7,9 +7,9 @@ set -e
 # All tests are config-based using TOML test definitions.
 #
 # Usage:
-#   ./scripts/run_sitl.sh                           # Default test (basic_flight)
-#   ./scripts/run_sitl.sh tests/quadcopter/hover.toml  # Specific test
-#   ./scripts/run_sitl.sh --help                    # Show help
+#   ./scripts/run_sitl.sh                              # Default test (basic_flight)
+#   ./scripts/run_sitl.sh tests/xil-missions/hover.toml   # Specific test
+#   ./scripts/run_sitl.sh --help                       # Show help
 #
 # The test runner handles:
 #   - Process cleanup (kill existing Gazebo/test processes)
@@ -23,7 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AVIATE_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Default test config
-DEFAULT_TEST="tests/quadcopter/basic_flight.toml"
+DEFAULT_TEST="tests/xil-missions/basic_flight.toml"
 TEST_CONFIG=""
 
 # Parse arguments
@@ -38,14 +38,14 @@ while [[ "$#" -gt 0 ]]; do
             echo "  TEST_CONFIG  Path to test TOML file (default: $DEFAULT_TEST)"
             echo ""
             echo "Examples:"
-            echo "  $0                                    # Run default test"
-            echo "  $0 tests/quadcopter/basic_flight.toml # Basic flight test"
-            echo "  $0 tests/quadcopter/two_vehicle.toml  # Multi-vehicle test"
+            echo "  $0                                       # Run default test"
+            echo "  $0 tests/xil-missions/basic_flight.toml  # Basic flight test"
+            echo "  $0 tests/xil-missions/two_vehicle_formation.toml  # Multi-vehicle test"
             echo ""
             echo "Test configs define:"
             echo "  - Vehicles: model, spawn position, instance ID"
             echo "  - Mission: phases with actions and verification criteria"
-            echo "  - World: lockstep mode, physics settings"
+            echo "  - World: lockstep mode (world files generated dynamically)"
             exit 0
             ;;
         *)
@@ -69,7 +69,7 @@ fi
 if [ ! -f "$TEST_CONFIG" ]; then
     echo "Error: Test config not found: $TEST_CONFIG"
     echo "Available tests:"
-    ls -1 tests/quadcopter/*.toml 2>/dev/null || echo "  (none found)"
+    ls -1 tests/xil-missions/*.toml 2>/dev/null || echo "  (none found)"
     exit 1
 fi
 
@@ -85,8 +85,7 @@ cleanup() {
     echo ""
     echo "Cleaning up..."
     pkill -9 -f "gz sim" 2>/dev/null || true
-    pkill -9 -f "sitl-test" 2>/dev/null || true
-    pkill -9 -f "aviate-app-quadcopter-sitl" 2>/dev/null || true
+    pkill -9 -f "sitl-gazebo-x500" 2>/dev/null || true
     rm -f /dev/shm/aviate_gz_bridge* 2>/dev/null || true
     echo "Done."
 }
@@ -106,8 +105,8 @@ if ! command -v gz &> /dev/null; then
 fi
 
 # --- Step 2: Build the test binary ---
-echo "Building SITL test binary..."
-cargo build -p aviate-app-quadcopter-sitl --features gz-plugin 2>&1 | tail -5
+echo "Building SITL binary..."
+cargo build -p aviate-app-sitl-gazebo-x500 2>&1 | tail -5
 
 # Check plugin is available
 PLUGIN_DIR="${AVIATE_DIR}/aviate-hal/xil/backends/gz/plugin/build"
@@ -125,14 +124,14 @@ echo ""
 echo "=== Running Test ==="
 
 # --- Step 3: Run the test ---
-# sitl-test handles:
+# sitl-gazebo-x500 --test handles:
 #   - World file generation from TOML
 #   - Gazebo launch with proper environment
 #   - Mission execution with lockstep
 #   - Multi-vehicle coordination
 #   - Result reporting
 
-./target/debug/sitl-test "$TEST_CONFIG"
+./target/debug/sitl-gazebo-x500 --test "$TEST_CONFIG"
 TEST_EXIT=$?
 
 echo ""

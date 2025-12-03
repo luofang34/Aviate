@@ -2,34 +2,24 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    // Only link if the gz-plugin feature is enabled
+    // Only add RPATH if gz-plugin feature is enabled
     if env::var("CARGO_FEATURE_GZ_PLUGIN").is_ok() {
-        // Locate the C++ build directory relative to this crate
-        // crate: aviate-hal/xil/backends/gz
-        // build: aviate-hal/xil/backends/gz/plugin/build
+        // Locate the plugin build directory
+        // This crate: aviate-apps/sitl-gazebo-x500
+        // Plugin:     aviate-hal/xil/backends/gz/plugin/build
         let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
         let crate_dir = PathBuf::from(&manifest_dir);
 
-        // Plugin is now a subdirectory of this crate
-        let build_dir = crate_dir.join("plugin/build");
-
-        if !build_dir.exists() {
-            println!(
-                "cargo:warning=AviateGzPlugin build directory not found at {:?}. FFI linking may fail.",
-                build_dir
-            );
-            println!("cargo:warning=Please build the plugin first: cd aviate-hal/xil/backends/gz/plugin/build && cmake .. && make");
-        }
-
-        // Link against the bridge library
-        println!("cargo:rustc-link-search=native={}", build_dir.display());
-        println!("cargo:rustc-link-lib=dylib=aviate_gz_bridge");
+        let build_dir = crate_dir
+            .join("../../aviate-hal/xil/backends/gz/plugin/build")
+            .canonicalize()
+            .unwrap_or_else(|_| crate_dir.join("../../aviate-hal/xil/backends/gz/plugin/build"));
 
         // Embed RPATH for runtime library loading using $ORIGIN (portable)
         // Binary: target/{debug,release}/sitl-gazebo-x500
         // Library: aviate-hal/xil/backends/gz/plugin/build/libaviate_gz_bridge.so
         //
-        // OUT_DIR is something like: target/debug/build/aviate-backend-gz-xxx/out
+        // OUT_DIR is something like: target/debug/build/aviate-app-sitl-gazebo-x500-xxx/out
         // We need to go up to target/{debug,release}/ which is 3 levels up
         let out_dir = env::var("OUT_DIR").unwrap();
         let target_dir = PathBuf::from(&out_dir)
@@ -48,11 +38,5 @@ fn main() {
             // Fallback to absolute path if relative path calculation fails
             println!("cargo:rustc-link-arg=-Wl,-rpath,{}", build_dir.display());
         }
-
-        // Re-run if library changes
-        println!(
-            "cargo:rerun-if-changed={}/libaviate_gz_bridge.so",
-            build_dir.display()
-        );
     }
 }

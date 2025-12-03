@@ -94,10 +94,7 @@ impl KinematicsBackend for GazeboBackend {
     fn step(&mut self, world: &mut World) -> Result<Duration, BackendError> {
         #[cfg(feature = "gz-plugin")]
         {
-            let plugin = self
-                .plugin
-                .as_ref()
-                .ok_or_else(|| BackendError::NotInitialized)?;
+            let plugin = self.plugin.as_ref().ok_or(BackendError::NotInitialized)?;
 
             // Wait for new step from Gazebo
             let current_step = plugin.sim_step();

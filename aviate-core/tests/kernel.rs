@@ -8,7 +8,7 @@
 //! - Spec types (ChannelId, ChannelHealthV1, ChannelStatus, etc.)
 
 use aviate_core::checks::PreArmFlags;
-use aviate_core::control::mc::McController;
+use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::{
     Command, CommandSource, ConfigMode, ControlLawV1, ControlMode, Setpoint,
 };
@@ -79,7 +79,7 @@ fn dummy_time_delta() -> aviate_core::time::TimeDelta {
     } // 100Hz update
 }
 
-fn make_kernel() -> AviateKernel<McController, QuadXMixer> {
+fn make_kernel() -> AviateKernel<MultirotorController, QuadXMixer> {
     let mixer = QuadXMixer {
         timestamp_source: dummy_timestamp,
     };
@@ -94,7 +94,7 @@ fn make_kernel() -> AviateKernel<McController, QuadXMixer> {
         | PreArmFlags::THROTTLE_LOW
         | PreArmFlags::CONFIG_VALID;
     let mut kernel = AviateKernel::with_pre_arm_required(
-        McController::default(),
+        MultirotorController::default(),
         mixer,
         mode_config,
         test_required,
@@ -1052,7 +1052,7 @@ fn kernel_requires_all_pre_arm_flags() {
     };
     let full_required = PreArmFlags::QUAD_WITH_GPS;
     let mut kernel = AviateKernel::with_pre_arm_required(
-        McController::default(),
+        MultirotorController::default(),
         mixer,
         mode_config,
         full_required,
@@ -1422,7 +1422,7 @@ fn production_config_quad_minimum_arms_with_minimal_sensors() {
         groups: &[],
     };
     let mut kernel = AviateKernel::with_pre_arm_required(
-        McController::default(),
+        MultirotorController::default(),
         mixer,
         mode_config,
         test_required,
@@ -2988,4 +2988,81 @@ fn handle_degradation_higher_severity_produces_event() {
     // Event produced
     assert!(event.is_some());
     assert_eq!(kernel.control_law, ControlLawV1::Alternate);
+}
+
+/// Test ground_reset clears faults and resets init sequence
+#[test]
+fn ground_reset_clears_faults_and_restarts_init() {
+    let mut kernel = make_kernel();
+
+    // Set some state
+    kernel.faults.insert(FaultFlags::IMU0_FAILED);
+    kernel.control_law = ControlLawV1::Alternate;
+
+    // Ground reset should work before arming
+    kernel.ground_reset();
+
+    // Faults should be cleared
+    assert!(kernel.faults.is_empty());
+    // Control law reset to Primary
+    assert_eq!(kernel.control_law, ControlLawV1::Primary);
+    // Init state reset
+    assert_eq!(kernel.init_state, InitState::ConfigLoading);
+}
+
+/// Test ground_reset is blocked when armed
+#[test]
+fn ground_reset_blocked_when_armed() {
+    // Create a kernel and manually set it to armed state
+    let mut kernel = make_kernel();
+    kernel.init_state = InitState::Armed;
+
+    // Set some state
+    kernel.faults.insert(FaultFlags::IMU0_FAILED);
+
+    // Ground reset should be blocked when armed
+    kernel.ground_reset();
+
+    // Faults should NOT be cleared (blocked)
+    assert!(kernel.faults.contains(FaultFlags::IMU0_FAILED));
+    // Should still be armed
+    assert_eq!(kernel.init_state, InitState::Armed);
+}
+
+/// Test report_timing_violation tracks consecutive violations
+#[test]
+fn report_timing_violation_tracks_consecutive() {
+    let mut kernel = make_kernel();
+
+    // Report violations - should increment counter
+    kernel.report_timing_violation(true);
+    assert_eq!(kernel.timing_stats.consecutive_violations, 1);
+
+    kernel.report_timing_violation(true);
+    assert_eq!(kernel.timing_stats.consecutive_violations, 2);
+
+    // Report success - should reset counter
+    kernel.report_timing_violation(false);
+    assert_eq!(kernel.timing_stats.consecutive_violations, 0);
+}
+
+/// Test report_timing_violation counts total violations correctly
+#[test]
+fn report_timing_violation_counts_total() {
+    let mut kernel = make_kernel();
+
+    // Report several violations
+    for _ in 0..10 {
+        kernel.report_timing_violation(true);
+    }
+
+    // Total should be 10, consecutive should be 10
+    assert_eq!(kernel.timing_stats.deadline_violations, 10);
+    assert_eq!(kernel.timing_stats.consecutive_violations, 10);
+
+    // Reset consecutive
+    kernel.report_timing_violation(false);
+    // Total unchanged, consecutive reset
+    assert_eq!(kernel.timing_stats.deadline_violations, 10);
+    assert_eq!(kernel.timing_stats.consecutive_violations, 0);
 }

@@ -10,10 +10,9 @@
 //!                                  <--> Vehicle N (XilNetConfig ports)
 //! ```
 
-use aviate_hal_xil::{PortSlot, XilNetConfig};
+use aviate_hal_xil::{PortSlot, TestConfig, XilNetConfig};
 
 use crate::router_gen::GCS_PORT;
-use crate::test_config::TestConfig;
 
 // Re-export from mavrouter for convenience
 pub use mavrouter::CancellationToken;

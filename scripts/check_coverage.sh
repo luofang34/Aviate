@@ -178,7 +178,7 @@ if [[ "$COVERAGE_MODE" != "block" && $BRANCH_HIT -lt $BRANCH_TOTAL ]]; then
             --instr-profile="$PROF_DIR/merged.profdata" \
             --show-branches=count \
             aviate-core/src/lib.rs aviate-core/src/ekf.rs aviate-core/src/mixer.rs 2>&1 || true)
-        BRANCH_ARTIFACTS=$(echo "$LLVM_OUT" | grep -c "Folded - Ignored" || echo 0)
+        BRANCH_ARTIFACTS=$(echo "$LLVM_OUT" | grep -c "Folded - Ignored" 2>/dev/null) || BRANCH_ARTIFACTS=0
     fi
 fi
 

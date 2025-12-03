@@ -1,5 +1,4 @@
-use crate::types::FloatExt;
-use crate::types::Scalar;
+use crate::types::{FloatExt, Scalar};
 
 /// Tolerance for quaternion unit-length validation (INV-27)
 pub const QUAT_NORM_EPS: Scalar = 1e-4;

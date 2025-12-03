@@ -1,35 +1,33 @@
-//! Aviate Quadcopter SITL Application
+//! Aviate Gazebo SITL Application
 //!
 //! This crate provides the SITL (Software-In-The-Loop) simulation environment
 //! for testing the Aviate flight controller with Gazebo.
 //!
 //! ## Components
 //!
-//! - **Mission Framework**: Define and execute test missions
+//! - **Mission Framework**: Shared mission types from aviate-hal-xil
 //! - **Lockstep Synchronization**: Deterministic simulation support
 //! - **Gazebo Integration**: Zero-copy physics data via shared memory
-//! - **Test Configuration**: TOML-based test scenario definitions
 //! - **World Generation**: Dynamic SDF world file generation
 
-pub mod mission;
 pub mod mission_runner;
 pub mod router_gen;
-pub mod test_config;
 pub mod world_gen;
 
 #[cfg(feature = "multi-vehicle")]
 pub mod multi_vehicle;
 
-pub use mission::{
-    Action, Criterion, CriterionResult, Mission, MissionResult, MultiVehicleCriterion,
-    MultiVehicleMission, MultiVehiclePhase, Phase, PhaseResult, VehicleConfig,
+// Re-export mission types from aviate-hal-xil (shared across all simulators)
+pub use aviate_hal_xil::{
+    parse_test_config, parse_test_config_str, Action, Criterion, CriterionResult, FaultSpec,
+    Mission, MissionResult, MultiVehicleCriterion, MultiVehicleMission, MultiVehiclePhase, Phase,
+    PhaseResult, SensorTarget, TestConfig, VehicleConfig, VehicleTestConfig,
 };
 
 pub use router_gen::{
     generate_router_config, generate_router_config_file, generate_temp_router_config, vehicle_port,
     RouterParams, GCS_PORT,
 };
-pub use test_config::{parse_test_config, parse_test_config_str, TestConfig, VehicleTestConfig};
 pub use world_gen::{generate_temp_world, generate_world, generate_world_file, WorldParams};
 
 #[cfg(feature = "gz-plugin")]

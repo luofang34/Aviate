@@ -8,7 +8,7 @@ use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::path::Path;
 
-use crate::test_config::{TestConfig, VehicleTestConfig};
+use aviate_hal_xil::{TestConfig, VehicleTestConfig};
 
 /// World generation parameters
 #[derive(Debug, Clone)]
@@ -331,7 +331,7 @@ pub fn generate_temp_world(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_config::parse_test_config_str;
+    use aviate_hal_xil::parse_test_config_str;
 
     #[test]
     fn test_generate_single_vehicle_world() {

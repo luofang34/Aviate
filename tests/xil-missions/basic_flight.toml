@@ -11,9 +11,7 @@ name = "basic_flight"
 description = "Basic single vehicle flight test (takeoff and land)"
 lockstep = true
 
-[world]
-file = "worlds/x500_quadcopter_lockstep.sdf"
-real_time_factor = 1.0
+# Note: World file is generated dynamically based on vehicles and lockstep settings
 
 [[vehicles]]
 id = "x500"

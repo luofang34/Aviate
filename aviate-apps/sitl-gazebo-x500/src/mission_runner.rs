@@ -23,7 +23,7 @@ use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "gz-plugin")]
-use crate::mission::{
+use aviate_hal_xil::{
     Action, Criterion, CriterionResult, Mission, MissionResult, Phase, PhaseResult,
 };
 
@@ -522,6 +522,17 @@ impl MissionRunner {
                         .send_position_target(position[0], position[1], position[2], *heading);
                 }
             }
+            Action::InjectFault { sensor, fault } => {
+                // TODO: Send fault injection via UDP to FC
+                self.log(&format!(
+                    "INJECT_FAULT {:?} {:?} (not yet implemented)",
+                    sensor, fault
+                ));
+            }
+            Action::ClearFaults => {
+                // TODO: Send clear faults command via UDP to FC
+                self.log("CLEAR_FAULTS (not yet implemented)");
+            }
         }
     }
 
@@ -553,6 +564,9 @@ impl MissionRunner {
                 heading: _,
             } => {
                 // Position control requires FC
+            }
+            Action::InjectFault { .. } | Action::ClearFaults => {
+                // Fault injection requires FC connection
             }
         }
     }
@@ -673,7 +687,7 @@ pub fn run_mission_suite_for_instance(
 
 #[cfg(test)]
 mod tests {
-    use crate::mission::CriterionResult;
+    use aviate_hal_xil::CriterionResult;
 
     #[test]
     fn test_criterion_result() {

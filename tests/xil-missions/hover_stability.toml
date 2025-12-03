@@ -14,9 +14,7 @@ name = "hover_stability"
 description = "Verify altitude hold and position stability during hover"
 lockstep = true
 
-[world]
-file = "worlds/x500_quadcopter_lockstep.sdf"
-real_time_factor = 1.0
+# Note: World file is generated dynamically based on vehicles and lockstep settings
 
 [[vehicles]]
 id = "x500"

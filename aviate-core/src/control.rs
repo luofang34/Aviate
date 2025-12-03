@@ -137,9 +137,10 @@ impl ControlLawV1 {
             if d < best.1 {
                 best = (law, d, value == code);
             }
-        }
+        } // COV:EXCL(LLVM: for-loop exit edge artifact)
         best
-    }
+    } // COV:EXCL_START(LLVM: function boundary artifact)
+      // COV:EXCL_STOP
 
     /// Returns the 16-bit center-code for this variant
     pub const fn to_code(self) -> u16 {
@@ -151,6 +152,7 @@ impl ControlLawV1 {
         }
     }
 
+    // COV:EXCL_START(STUB: Future ECC decode for wire/cross-channel, not yet used)
     /// Future: ECC decode allowing 1-2 bit correction
     #[allow(dead_code)]
     pub fn try_from_with_ecc(value: u16) -> Result<(Self, u8), crate::EnumValidationError> {
@@ -161,6 +163,7 @@ impl ControlLawV1 {
             Err(crate::EnumValidationError)
         }
     }
+    // COV:EXCL_STOP
 }
 
 /// v0.5.1: Strict center-only decode - all non-center codes → EnumInvalid
@@ -403,6 +406,7 @@ impl Command {
     /// This is a fast O(1) operation that checks discriminant values.
     #[inline]
     pub fn validate_enums(&self) -> bool {
+        // COV:EXCL_START(DEFENSIVE: SEU/memory corruption detection - cannot trigger in unit tests)
         // Check ControlMode discriminant (0-5)
         if !self.mode.is_valid_discriminant() {
             return false;
@@ -419,6 +423,7 @@ impl Command {
                 return false;
             }
         }
+        // COV:EXCL_STOP
 
         true
     }
@@ -554,10 +559,10 @@ pub mod rate;
 pub mod velocity;
 
 #[cfg(feature = "mc")]
-pub mod mc;
+pub mod multirotor;
 
 #[cfg(feature = "fw")]
-pub mod fw;
+pub mod fixed_wing;
 
 #[cfg(feature = "vtol")]
 pub mod vtol;

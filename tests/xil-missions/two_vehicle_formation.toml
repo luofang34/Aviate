@@ -8,9 +8,7 @@ name = "two_vehicle_formation"
 description = "Two vehicles takeoff in formation and verify separation"
 lockstep = true
 
-[world]
-file = "worlds/x500_two_vehicle_lockstep.sdf"
-real_time_factor = 1.0
+# Note: World file is generated dynamically based on vehicles and lockstep settings
 
 # Vehicle 1 (leader)
 [[vehicles]]

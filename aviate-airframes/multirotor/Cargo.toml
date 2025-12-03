@@ -1,8 +1,18 @@
 [package]
-name = "aviate-airframe-quadcopter"
+name = "aviate-airframe-multirotor"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 
 [lib]
 path = "src/lib.rs"
+
+[features]
+default = ["quad-x"]
+quad-x = []
+quad-plus = []
+hex-x = []
+x500 = ["quad-x"]  # X500 uses quad-x mixer
+
+[dependencies]
+aviate-core = { path = "../../aviate-core", features = ["mc"] }

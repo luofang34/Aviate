@@ -2,9 +2,9 @@ use crate::control::{AxisCommand, Command, ConfigMode, Limits, VehicleController
 use crate::state::StateEstimate;
 use crate::types::NormalizedSigned;
 
-pub struct FwController;
+pub struct FixedWingController;
 
-impl VehicleController for FwController {
+impl VehicleController for FixedWingController {
     fn step(
         &mut self,
         _state: &StateEstimate,

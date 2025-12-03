@@ -41,7 +41,7 @@
 use std::io;
 
 use aviate_backend_mavlink_hil::{HilBackend, HilBackendConfig};
-use aviate_core::control::mc::McController;
+use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
 use aviate_core::hal::{ActuatorHal, SensorHal};
 use aviate_core::math::{Quaternion, Vector3};
@@ -126,7 +126,7 @@ pub struct JmavSimBoard {
     board_hal: SitlBoardHal,
 
     /// Flight controller kernel
-    kernel: AviateKernel<McController, QuadXMixer>,
+    kernel: AviateKernel<MultirotorController, QuadXMixer>,
 
     /// Last command received
     last_cmd: Command,
@@ -231,8 +231,8 @@ impl JmavSimBoard {
         })
     }
 
-    fn create_kernel() -> AviateKernel<McController, QuadXMixer> {
-        let controller = McController::default();
+    fn create_kernel() -> AviateKernel<MultirotorController, QuadXMixer> {
+        let controller = MultirotorController::default();
         let mixer = QuadXMixer {
             timestamp_source: sitl_timestamp,
         };
@@ -471,12 +471,12 @@ impl JmavSimBoard {
     }
 
     /// Get a reference to the kernel
-    pub fn kernel(&self) -> &AviateKernel<McController, QuadXMixer> {
+    pub fn kernel(&self) -> &AviateKernel<MultirotorController, QuadXMixer> {
         &self.kernel
     }
 
     /// Get a mutable reference to the kernel
-    pub fn kernel_mut(&mut self) -> &mut AviateKernel<McController, QuadXMixer> {
+    pub fn kernel_mut(&mut self) -> &mut AviateKernel<MultirotorController, QuadXMixer> {
         &mut self.kernel
     }
 
@@ -512,11 +512,6 @@ impl JmavSimBoard {
         self.send_heartbeat();
     }
 
-    /// Get the airframe ID
-    pub fn airframe_id() -> &'static str {
-        aviate_airframe_quadcopter::airframe_id()
-    }
-
     /// Get board ID
     pub fn board_id() -> &'static str {
         "sitl-jmavsim"
@@ -544,29 +539,14 @@ fn convert_gnss_fix(fix: SimGnssFix) -> GnssFix {
 /// Board info for jMAVSim SITL
 pub const BOARD_INFO: BoardInfo = BoardInfo {
     name: "sitl-jmavsim",
-    airframe: "quadcopter",
-    description: "jMAVSim quadcopter via MAVLink HIL protocol",
-    motor_count: 4,
-    motor_layout: MotorLayout::QuadX,
+    description: "jMAVSim SITL via MAVLink HIL protocol",
 };
 
 /// Board information structure
 #[derive(Clone, Debug)]
 pub struct BoardInfo {
     pub name: &'static str,
-    pub airframe: &'static str,
     pub description: &'static str,
-    pub motor_count: u8,
-    pub motor_layout: MotorLayout,
-}
-
-/// Motor layout configuration
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MotorLayout {
-    QuadX,    // X configuration (45 rotated)
-    QuadPlus, // + configuration
-    Hex,      // Hexacopter
-    Octo,     // Octocopter
 }
 
 #[cfg(test)]
@@ -576,13 +556,6 @@ mod tests {
     #[test]
     fn test_board_info() {
         assert_eq!(BOARD_INFO.name, "sitl-jmavsim");
-        assert_eq!(BOARD_INFO.airframe, "quadcopter");
-        assert_eq!(BOARD_INFO.motor_count, 4);
-    }
-
-    #[test]
-    fn test_airframe_id() {
-        assert_eq!(JmavSimBoard::airframe_id(), "quadcopter");
     }
 
     #[test]

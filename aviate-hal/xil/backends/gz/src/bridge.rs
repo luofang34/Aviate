@@ -203,7 +203,7 @@ mod ffi_bridge {
             };
 
             // Send LOCAL_POSITION_NED to test client at 50Hz
-            if self.seq % 5 == 0 {
+            if self.seq.is_multiple_of(5) {
                 let local_pos = LocalPositionNed {
                     time_boot_ms: now_ms,
                     x: position[0],

@@ -115,7 +115,7 @@ aviate-airframe-quadcopter = { path = "../../aviate-airframes/quadcopter" }
 Create `aviate-boards/my-board/src/lib.rs`:
 
 ```rust
-use aviate_core::control::mc::McController;
+use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::mixer::QuadXMixer;
 use aviate_core::AviateKernel;
 
@@ -146,7 +146,7 @@ pub type MyBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, SitlTime>;
 pub struct MyBoard {
     mavlink: SitlMavlink,
     board_hal: MyBoardHal,  // Same BoardHal that real hardware would use!
-    kernel: AviateKernel<McController, QuadXMixer>,
+    kernel: AviateKernel<MultirotorController, QuadXMixer>,
     // ... other fields
 }
 ```

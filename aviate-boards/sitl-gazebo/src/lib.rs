@@ -1,7 +1,7 @@
-//! SITL X500 Board Configuration
+//! Gazebo SITL Board Configuration
 //!
-//! This board represents a simulated x500 quadcopter in Gazebo SITL.
-//! It combines the XIL HAL with quadcopter airframe configuration.
+//! Generic board for Gazebo-based SITL simulation. The specific airframe
+//! (e.g., X500, GenericQuadX) is specified by the application.
 //!
 //! ## Architecture
 //!
@@ -28,18 +28,6 @@
 //! | GNSS   | Gazebo plugin  | FFI |
 //! | Baro   | Gazebo plugin  | FFI |
 //! | Mag    | Gazebo plugin  | FFI |
-//!
-//! ## Motor Configuration (x500 layout)
-//!
-//! ```text
-//!     Front
-//!   1 (CW)   2 (CCW)
-//!       \   /
-//!        [X]
-//!       /   \
-//!   4 (CCW)  3 (CW)
-//!     Rear
-//! ```
 
 #![forbid(unsafe_code)]
 #![deny(clippy::panic)]
@@ -48,7 +36,7 @@
 
 use std::io;
 
-use aviate_core::control::mc::McController;
+use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
 use aviate_core::hal::{ActuatorHal, CommandHal, SensorHal, SystemCommand, SystemHal};
 use aviate_core::math::{Quaternion, Vector3};
@@ -87,11 +75,11 @@ impl aviate_hal_io::TimeSource for SitlTime {
 /// Implements both SensorHal and ActuatorHal.
 pub type SitlBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, SitlTime, FakeActuator>;
 
-/// X500 SITL board configuration
+/// Gazebo SITL board configuration
 ///
 /// Uses the same BoardHal abstraction as real hardware boards, ensuring
 /// that SITL tests exercise the same code paths as real hardware.
-pub struct X500SitlBoard {
+pub struct GazeboSitlBoard {
     /// SITL transport (receives sensor data, sends actuator commands)
     transport: SitlIO,
 
@@ -100,7 +88,7 @@ pub struct X500SitlBoard {
     board_hal: SitlBoardHal,
 
     /// Flight controller kernel
-    kernel: AviateKernel<McController, QuadXMixer>,
+    kernel: AviateKernel<MultirotorController, QuadXMixer>,
 
     /// Last command received
     last_cmd: Command,
@@ -149,7 +137,7 @@ impl SensorCache {
     }
 }
 
-impl X500SitlBoard {
+impl GazeboSitlBoard {
     /// Create a new X500 SITL board with default configuration
     pub fn new() -> io::Result<Self> {
         Self::with_config(SitlConfig::default())
@@ -224,8 +212,8 @@ impl X500SitlBoard {
         unreachable!()
     }
 
-    fn create_kernel() -> AviateKernel<McController, QuadXMixer> {
-        let controller = McController::default();
+    fn create_kernel() -> AviateKernel<MultirotorController, QuadXMixer> {
+        let controller = MultirotorController::default();
         let mixer = QuadXMixer {
             timestamp_source: sitl_timestamp,
         };
@@ -453,12 +441,12 @@ impl X500SitlBoard {
     }
 
     /// Get a reference to the kernel
-    pub fn kernel(&self) -> &AviateKernel<McController, QuadXMixer> {
+    pub fn kernel(&self) -> &AviateKernel<MultirotorController, QuadXMixer> {
         &self.kernel
     }
 
     /// Get a mutable reference to the kernel
-    pub fn kernel_mut(&mut self) -> &mut AviateKernel<McController, QuadXMixer> {
+    pub fn kernel_mut(&mut self) -> &mut AviateKernel<MultirotorController, QuadXMixer> {
         &mut self.kernel
     }
 
@@ -480,14 +468,9 @@ impl X500SitlBoard {
         &mut self.transport
     }
 
-    /// Get the airframe ID
-    pub fn airframe_id() -> &'static str {
-        aviate_airframe_quadcopter::airframe_id()
-    }
-
     /// Get board ID
     pub fn board_id() -> &'static str {
-        "sitl-x500"
+        "sitl-gazebo"
     }
 }
 
@@ -498,32 +481,17 @@ fn sitl_timestamp() -> Timestamp {
     }
 }
 
-/// Board info for the X500 SITL
+/// Board info for Gazebo SITL
 pub const BOARD_INFO: BoardInfo = BoardInfo {
-    name: "sitl-x500",
-    airframe: "quadcopter",
-    description: "PX4 X500 quadcopter in Gazebo SITL",
-    motor_count: 4,
-    motor_layout: MotorLayout::QuadX,
+    name: "sitl-gazebo",
+    description: "Gazebo SITL simulation board",
 };
 
 /// Board information structure
 #[derive(Clone, Debug)]
 pub struct BoardInfo {
     pub name: &'static str,
-    pub airframe: &'static str,
     pub description: &'static str,
-    pub motor_count: u8,
-    pub motor_layout: MotorLayout,
-}
-
-/// Motor layout configuration
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MotorLayout {
-    QuadX,    // X configuration (45 rotated)
-    QuadPlus, // + configuration
-    Hex,      // Hexacopter
-    Octo,     // Octocopter
 }
 
 #[cfg(test)]
@@ -532,18 +500,11 @@ mod tests {
 
     #[test]
     fn test_board_info() {
-        assert_eq!(BOARD_INFO.name, "sitl-x500");
-        assert_eq!(BOARD_INFO.airframe, "quadcopter");
-        assert_eq!(BOARD_INFO.motor_count, 4);
-    }
-
-    #[test]
-    fn test_airframe_id() {
-        assert_eq!(X500SitlBoard::airframe_id(), "quadcopter");
+        assert_eq!(BOARD_INFO.name, "sitl-gazebo");
     }
 
     #[test]
     fn test_board_id() {
-        assert_eq!(X500SitlBoard::board_id(), "sitl-x500");
+        assert_eq!(GazeboSitlBoard::board_id(), "sitl-gazebo");
     }
 }

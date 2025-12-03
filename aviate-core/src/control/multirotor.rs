@@ -6,14 +6,14 @@ use crate::control::{AxisCommand, Command, ConfigMode, Limits, VehicleController
 use crate::math::{Quaternion, Vector3};
 use crate::state::StateEstimate;
 
-pub struct McController {
+pub struct MultirotorController {
     pub pos_ctrl: PositionController,
     pub vel_ctrl: VelocityController,
     pub rate_ctrl: RateController,
     pub att_ctrl: AttitudeController,
 }
 
-impl Default for McController {
+impl Default for MultirotorController {
     fn default() -> Self {
         Self {
             pos_ctrl: PositionController::new([0.2, 0.2, 0.5]), // Default P gains for pos (X,Y,Z)
@@ -24,7 +24,7 @@ impl Default for McController {
     }
 }
 
-impl VehicleController for McController {
+impl VehicleController for MultirotorController {
     fn step(
         &mut self,
         state: &StateEstimate,

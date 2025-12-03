@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn test_kernel_mc() {
         use aviate_core::checks::PreArmFlags;
-        use aviate_core::control::mc::McController;
+        use aviate_core::control::multirotor::MultirotorController;
         use aviate_core::control::{CommandSource, ConfigMode, ControlMode, Setpoint};
         use aviate_core::mixer::{ModeConfig, QuadXMixer};
 
@@ -307,7 +307,7 @@ mod tests {
             | PreArmFlags::CONFIG_VALID;
 
         let mut kernel = AviateKernel::with_pre_arm_required(
-            McController::default(),
+            MultirotorController::default(),
             mixer,
             mode_config,
             test_required,
@@ -381,7 +381,7 @@ mod tests {
     #[test]
     fn test_kernel_fw() {
         use aviate_core::checks::PreArmFlags;
-        use aviate_core::control::fw::FwController;
+        use aviate_core::control::fixed_wing::FixedWingController;
         use aviate_core::control::{CommandSource, ConfigMode, ControlMode, Setpoint};
         use aviate_core::mixer::{ModeConfig, QuadXMixer};
 
@@ -408,8 +408,12 @@ mod tests {
             | PreArmFlags::THROTTLE_LOW
             | PreArmFlags::CONFIG_VALID;
 
-        let mut kernel =
-            AviateKernel::with_pre_arm_required(FwController, mixer, mode_config, test_required);
+        let mut kernel = AviateKernel::with_pre_arm_required(
+            FixedWingController,
+            mixer,
+            mode_config,
+            test_required,
+        );
 
         // Init EKF
         kernel.ekf.init(

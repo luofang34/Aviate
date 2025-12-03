@@ -2,16 +2,16 @@
 members = [
     "aviate-core",
     "aviate-mavlink",
-    "aviate-airframes/quadcopter",
+    "aviate-airframes/multirotor",
     "aviate-airframes/fixed-wing",
     "aviate-hal/io",
     "aviate-hal/xil",
     "aviate-hal/xil/backends/gz",
     "aviate-hal/xil/backends/mavlink-hil",
-    "aviate-boards/sitl-x500",
+    "aviate-boards/sitl-gazebo",
     "aviate-boards/sitl-jmavsim",
-    "aviate-apps/quadcopter-sitl",
-    "aviate-apps/jmavsim-sitl",
+    "aviate-apps/sitl-gazebo-x500",
+    "aviate-apps/sitl-jmavsim-generic-quad-x",
     "tests/lint-verification",
 ]
 resolver = "2"

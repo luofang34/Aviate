@@ -1,4 +1,4 @@
-//! jMAVSim SITL Flight Controller Application
+//! jMAVSim SITL Flight Controller - Generic Quad-X
 //!
 //! This application runs the Aviate flight controller with jMAVSim simulator
 //! using the standard MAVLink HIL protocol.
@@ -14,22 +14,22 @@
 //!
 //! ```bash
 //! # Automatic mode (starts jMAVSim automatically):
-//! cargo run -p aviate-app-jmavsim-sitl
+//! cargo run -p aviate-app-sitl-jmavsim-generic-quad-x
 //!
 //! # Manual mode (connect to already-running jMAVSim):
-//! cargo run -p aviate-app-jmavsim-sitl -- --no-sim
+//! cargo run -p aviate-app-sitl-jmavsim-generic-quad-x -- --no-sim
 //!
 //! # Headless mode (no jMAVSim GUI):
-//! cargo run -p aviate-app-jmavsim-sitl -- --headless
+//! cargo run -p aviate-app-sitl-jmavsim-generic-quad-x -- --headless
 //!
 //! # Auto-arm after 5 seconds:
-//! cargo run -p aviate-app-jmavsim-sitl -- --auto-arm 5
+//! cargo run -p aviate-app-sitl-jmavsim-generic-quad-x -- --auto-arm 5
 //!
 //! # Custom port:
-//! cargo run -p aviate-app-jmavsim-sitl -- --port 14561
+//! cargo run -p aviate-app-sitl-jmavsim-generic-quad-x -- --port 14561
 //!
 //! # Custom jMAVSim directory:
-//! cargo run -p aviate-app-jmavsim-sitl -- --jmavsim-dir /path/to/jMAVSim
+//! cargo run -p aviate-app-sitl-jmavsim-generic-quad-x -- --jmavsim-dir /path/to/jMAVSim
 //! ```
 //!
 //! ## Options
@@ -45,7 +45,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use aviate_airframe_multirotor::GenericQuadX;
 use aviate_board_sitl_jmavsim::{JmavSimBoard, JmavSimConfig};
+use aviate_core::airframe::Airframe;
 
 /// Global flag for graceful shutdown
 static RUNNING: AtomicBool = AtomicBool::new(true);
@@ -63,11 +65,11 @@ fn main() {
     let jmavsim_dir = parse_jmavsim_dir(&args).unwrap_or_else(|| JMAVSIM_DIR.to_string());
 
     println!("===========================================");
-    println!("  Aviate jMAVSim SITL Flight Controller");
+    println!("  Aviate jMAVSim SITL - Generic Quad-X");
     println!("===========================================");
     println!();
     println!("Board: {}", JmavSimBoard::board_id());
-    println!("Airframe: {}", JmavSimBoard::airframe_id());
+    println!("Airframe: {}", GenericQuadX::AIRFRAME_ID);
     println!("Simulator port: {}", port);
     println!();
 

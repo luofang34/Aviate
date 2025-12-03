@@ -1,0 +1,15 @@
+[package]
+name = "aviate-app-sitl-jmavsim-generic-quad-x"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Generic quadcopter on jMAVSim SITL"
+
+[[bin]]
+name = "sitl-jmavsim-generic-quad-x"
+path = "src/main.rs"
+
+[dependencies]
+aviate-board-sitl-jmavsim = { path = "../../aviate-boards/sitl-jmavsim" }
+aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor" }
+aviate-core = { path = "../../aviate-core" }

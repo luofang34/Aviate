@@ -13,9 +13,7 @@ use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::path::Path;
 
-use aviate_hal_xil::{PortSlot, XilNetConfig};
-
-use crate::test_config::TestConfig;
+use aviate_hal_xil::{PortSlot, TestConfig, XilNetConfig};
 
 /// GCS MAVLink port (standard)
 pub const GCS_PORT: u16 = 14550;
@@ -165,7 +163,7 @@ pub fn vehicle_port(instance: u8) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_config::parse_test_config_str;
+    use aviate_hal_xil::parse_test_config_str;
 
     #[test]
     fn test_generate_single_vehicle_router() {

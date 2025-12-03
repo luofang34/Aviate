@@ -1,33 +1,33 @@
 [package]
-name = "aviate-app-quadcopter-sitl"
+name = "aviate-app-sitl-gazebo-x500"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+description = "X500 quadcopter on Gazebo SITL"
 
 [[bin]]
-name = "aviate-app-quadcopter-sitl"
+name = "sitl-gazebo-x500"
 path = "src/main.rs"
 
-[[bin]]
-name = "sitl-test"
-path = "src/sitl_test.rs"
-
 [lib]
-name = "aviate_app_quadcopter_sitl"
+name = "aviate_app_sitl_gazebo_x500"
 path = "src/lib.rs"
 
 [features]
-gz-plugin = ["aviate-backend-gz/gz-plugin", "aviate-board-sitl-x500/gz-plugin"]
+gz-plugin = ["aviate-backend-gz/gz-plugin", "aviate-board-sitl-gazebo/gz-plugin"]
 multi-vehicle = ["mavrouter"]
-default = []
+default = ["gz-plugin"]
 
 [dependencies]
 aviate-core = { path = "../../aviate-core" }
 aviate-mavlink = { path = "../../aviate-mavlink" }
 aviate-hal-xil = { path = "../../aviate-hal/xil" }
 aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", optional = true }
-aviate-board-sitl-x500 = { path = "../../aviate-boards/sitl-x500" }
+aviate-board-sitl-gazebo = { path = "../../aviate-boards/sitl-gazebo" }
+aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor", features = ["x500"] }
 
 # Multi-vehicle routing (optional)
-# mavrouter 0.1.4 re-exports CancellationToken, RwLock, and brings tokio as transitive dep
 mavrouter = { version = "0.1.4", optional = true }
+
+[build-dependencies]
+pathdiff = "0.2"

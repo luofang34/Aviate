@@ -34,6 +34,7 @@ pub mod fault_protocol;
 pub mod flight_log;
 pub mod mission;
 pub mod mock;
+pub mod runner;
 pub mod sim_types;
 pub mod sitl_io;
 pub mod world;
@@ -65,6 +66,12 @@ pub use config::{parse_test_config, parse_test_config_str, TestConfig, VehicleTe
 pub use mission::{
     Action, Criterion, CriterionResult, FaultSpec, Mission, MissionResult, MultiVehicleCriterion,
     MultiVehicleMission, MultiVehiclePhase, Phase, PhaseResult, SensorTarget, VehicleConfig,
+};
+
+// Runner exports (backend-agnostic mission execution)
+pub use runner::{
+    run_test_config, MavClient, MissionRunner, SimulatorBackend, SimulatorError, TestResult,
+    VehicleState,
 };
 
 // Fault injection protocol exports
