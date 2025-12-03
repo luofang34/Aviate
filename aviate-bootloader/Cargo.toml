@@ -1,0 +1,37 @@
+# Standalone bootloader package (not part of main workspace due to different target/memory layout)
+[workspace]
+
+[package]
+name = "aviate-bootloader"
+edition = "2021"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+description = "Custom DFU bootloader for Aviate flight controllers"
+
+[[bin]]
+name = "aviate-bootloader"
+path = "src/main.rs"
+
+[features]
+default = ["micoair-h743-v2"]
+micoair-h743-v2 = []
+
+[dependencies]
+# STM32H7 HAL and support
+stm32h7xx-hal = { version = "0.16", features = ["stm32h743v", "rt", "usb_hs"] }
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7"
+embedded-hal = "1.0"
+
+# USB support
+usb-device = "0.3"
+usbd-dfu = "0.4"
+
+# Panic handler
+panic-halt = "1.0"
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+debug = true
+codegen-units = 1

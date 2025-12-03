@@ -2,6 +2,7 @@
 members = [
     "aviate-core",
     "aviate-mavlink",
+    "aviate-drivers",
     "aviate-airframes/multirotor",
     "aviate-airframes/fixed-wing",
     "aviate-hal/io",
@@ -10,9 +11,16 @@ members = [
     "aviate-hal/xil/backends/mavlink-hil",
     "aviate-boards/sitl-gazebo",
     "aviate-boards/sitl-jmavsim",
+    "aviate-boards/micoair-h743-v2",
     "aviate-apps/sitl-gazebo-x500",
     "aviate-apps/sitl-jmavsim-generic-quad-x",
     "tests/lint-verification",
+    "xtask",
+]
+exclude = [
+    "external/spl06-007",
+    "external/qmc5883l",
+    "external/PX4-gazebo-models",
 ]
 resolver = "2"
 

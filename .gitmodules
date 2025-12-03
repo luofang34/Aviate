@@ -1,3 +1,9 @@
 [submodule "external/PX4-gazebo-models"]
 	path = external/PX4-gazebo-models
 	url = https://github.com/PX4/PX4-gazebo-models.git
+[submodule "external/spl06-007"]
+	path = external/spl06-007
+	url = https://github.com/roxgib/SPL06-007.git
+[submodule "external/qmc5883l"]
+	path = external/qmc5883l
+	url = https://github.com/heyitsanthony/qmc5883l.git

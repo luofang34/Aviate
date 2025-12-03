@@ -1,0 +1,28 @@
+[package]
+name = "aviate-board-micoair-h743-v2"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "MicoAir H743-V2 flight controller board for Aviate"
+
+[lib]
+name = "aviate_board_micoair_h743_v2"
+path = "src/lib.rs"
+
+[features]
+default = []
+# Enable software-triggered bootloader entry (uses unsafe code)
+# For development/testing only - disable for production builds
+software-bootloader = []
+
+[dependencies]
+aviate-core = { path = "../../aviate-core" }
+aviate-hal-io = { path = "../../aviate-hal/io" }
+aviate-drivers = { path = "../../aviate-drivers" }
+
+# STM32H7 HAL
+stm32h7xx-hal = { version = "0.16", features = ["stm32h743v", "rt"] }
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+embedded-hal = "1.0"
+fugit = "0.3"

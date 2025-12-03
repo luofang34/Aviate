@@ -1,0 +1,32 @@
+[package]
+name = "aviate-drivers"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Sensor and actuator drivers for Aviate flight controller"
+
+[features]
+default = []
+# Enable std for testing
+std = []
+
+[dependencies]
+aviate-hal-io = { path = "../aviate-hal/io" }
+
+# Embedded HAL 1.0 traits
+embedded-hal = "1.0"
+
+# Math for no_std (powf, etc.)
+libm = "0.2"
+
+# External sensor drivers (embedded-hal 1.0 compatible)
+bmi088 = "0.2"
+bmi2 = "0.1"
+
+# Forked sensor drivers (will be upgraded to embedded-hal 1.0)
+# spl06-007 = { path = "external/spl06-007" }
+# qmc5883l = { path = "external/qmc5883l" }
+
+[dev-dependencies]
+# For testing with mock I2C/SPI
+embedded-hal-mock = "0.11"
