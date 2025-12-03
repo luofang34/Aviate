@@ -112,7 +112,7 @@ fn main() -> ExitCode {
         ExitCode::SUCCESS
     } else if let Some(ref config_path) = opts.test_config {
         info!("Mode: Test ({})", config_path);
-        run_test(config_path, opts.instance)
+        run_test(config_path, opts.instance, opts.headless)
     } else {
         info!(
             "Mode: Interactive (headless={})",
@@ -236,7 +236,7 @@ fn run_interactive(_headless: bool, _instance: u8) -> ExitCode {
 /// Supports multi-vehicle: each vehicle in the config runs its mission
 /// in a separate thread with its own backend instance.
 #[cfg(feature = "gz-plugin")]
-fn run_test(config_path: &str, _instance: u8) -> ExitCode {
+fn run_test(config_path: &str, _instance: u8, headless: bool) -> ExitCode {
     use aviate_app_sitl_gazebo_x500::{generate_temp_world, parse_test_config, WorldParams};
     use aviate_backend_gz::GazeboSimBackend;
     use aviate_hal_xil::run_test_config;
@@ -279,9 +279,13 @@ fn run_test(config_path: &str, _instance: u8) -> ExitCode {
 
     // Clean up and launch Gazebo
     cleanup_gazebo();
-    let gz_child = match launch_gazebo(&world_path, true) {
+    let gz_child = match launch_gazebo(&world_path, headless) {
         Ok(child) => {
-            info!("Gazebo started (PID: {}, headless)", child.id());
+            info!(
+                "Gazebo started (PID: {}, {})",
+                child.id(),
+                if headless { "headless" } else { "GUI" }
+            );
             child
         }
         Err(e) => {
@@ -337,7 +341,7 @@ fn run_test(config_path: &str, _instance: u8) -> ExitCode {
 }
 
 #[cfg(not(feature = "gz-plugin"))]
-fn run_test(_config_path: &str, _instance: u8) -> ExitCode {
+fn run_test(_config_path: &str, _instance: u8, _headless: bool) -> ExitCode {
     warn!("gz-plugin feature not enabled");
     warn!("Rebuild with: cargo build -p aviate-app-sitl-gazebo-x500 --features gz-plugin");
     ExitCode::FAILURE
