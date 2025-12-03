@@ -11,13 +11,10 @@ crate-type = ["rlib", "cdylib"]
 
 [features]
 default = []
-# Link against libaviate_gz_bridge.so for shared memory FFI
+# Link against libaviate_gz_bridge_static.a for shared memory FFI
 gz-plugin = []
 
 [dependencies]
 aviate-hal-xil = { path = "../.." }
 aviate-mavlink = { path = "../../../../aviate-mavlink" }
 once_cell = "1.19"
-
-[build-dependencies]
-pathdiff = "0.2"

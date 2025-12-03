@@ -21,37 +21,16 @@ fn main() {
             println!("cargo:warning=Please build the plugin first: cd aviate-hal/xil/backends/gz/plugin/build && cmake .. && make");
         }
 
-        // Link against the bridge library
+        // Link against the STATIC bridge library (no runtime .so dependency)
         println!("cargo:rustc-link-search=native={}", build_dir.display());
-        println!("cargo:rustc-link-lib=dylib=aviate_gz_bridge");
+        println!("cargo:rustc-link-lib=static=aviate_gz_bridge_static");
 
-        // Embed RPATH for runtime library loading using $ORIGIN (portable)
-        // Binary: target/{debug,release}/sitl-gazebo-x500
-        // Library: aviate-hal/xil/backends/gz/plugin/build/libaviate_gz_bridge.so
-        //
-        // OUT_DIR is something like: target/debug/build/aviate-backend-gz-xxx/out
-        // We need to go up to target/{debug,release}/ which is 3 levels up
-        let out_dir = env::var("OUT_DIR").unwrap();
-        let target_dir = PathBuf::from(&out_dir)
-            .ancestors()
-            .nth(3)
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from(&out_dir));
-
-        if let Some(rel_path) = pathdiff::diff_paths(&build_dir, &target_dir) {
-            // Use $ORIGIN-relative RPATH for portability
-            println!(
-                "cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/{}",
-                rel_path.display()
-            );
-        } else {
-            // Fallback to absolute path if relative path calculation fails
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", build_dir.display());
-        }
+        // Link rt for POSIX shared memory (shm_open, mmap, etc.)
+        println!("cargo:rustc-link-lib=rt");
 
         // Re-run if library changes
         println!(
-            "cargo:rerun-if-changed={}/libaviate_gz_bridge.so",
+            "cargo:rerun-if-changed={}/libaviate_gz_bridge_static.a",
             build_dir.display()
         );
     }

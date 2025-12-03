@@ -28,6 +28,3 @@ aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor", featu
 
 # Multi-vehicle routing (optional)
 mavrouter = { version = "0.1.4", optional = true }
-
-[build-dependencies]
-pathdiff = "0.2"
