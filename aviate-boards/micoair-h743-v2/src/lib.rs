@@ -1,28 +1,28 @@
-//! MicoAir H743-V2 Flight Controller Board
+//! MicoAir H743-V2 Flight Controller Board Family
 //!
-//! Hardware configuration for the MicoAir H743-V2 board based on STM32H743.
+//! Hardware configuration for the MicoAir H743-V2 board family based on STM32H743.
+//! This crate supports multiple board variants that share the same flight controller
+//! hardware but differ in integrated peripherals (ESC, BEC, form factor).
+//!
+//! ## Board Variants
+//!
+//! | Variant | Description | Feature Flag |
+//! |---------|-------------|--------------|
+//! | MicoAir743v2 | Standalone flight controller | (default) |
+//! | MicoAir743v2-AIO | All-in-one with 4x45A ESC | `aio` |
+//!
+//! All variants share:
+//! - MCU: STM32H743VIH6 @ 480MHz, 2MB Flash
+//! - IMU: BMI088 + BMI270 (dual redundant)
+//! - Baro: SPL06 @ I2C2 address 0x77
+//! - 7x UART, 1x I2C (external), 1x SWD, 2x ADC
 //!
 //! ## Feature Flags
 //!
 //! | Feature | Description |
 //! |---------|-------------|
 //! | `software-bootloader` | Enable software-triggered bootloader entry (dev only) |
-//!
-//! ### Production Build (default)
-//! ```sh
-//! cargo build -p aviate-board-micoair-h743-v2
-//! ```
-//! - `forbid(unsafe_code)` enforced
-//! - Bootloader module disabled
-//! - Firmware updates require physical boot button
-//!
-//! ### Development Build
-//! ```sh
-//! cargo build -p aviate-board-micoair-h743-v2 --features software-bootloader
-//! ```
-//! - Unsafe code allowed (for register access)
-//! - Bootloader module enabled
-//! - Firmware updates via USB without boot button
+//! | `aio` | AIO variant with integrated ESC (45A x4, AM32 firmware) |
 //!
 //! ## Sensor Configuration
 //!
@@ -31,9 +31,9 @@
 //! | IMU 1  | BMI088 | SPI | SPI2 | Gyro: PD5, Accel: PD4 | Gyro: PC15, Accel: PC14 |
 //! | IMU 2  | BMI270 | SPI | SPI3 | PA15 | PB7 |
 //! | Baro   | SPL06 | I2C | I2C2 | - | PD0 |
-//! | Mag    | QMC5883L | I2C | I2C1 | - | - |
+//! | Mag    | QMC5883L | I2C | I2C1 (external) | - | - |
 //!
-//! ## Motor Outputs (DShot capable)
+//! ## Motor Outputs (PWM/DShot300/DShot600)
 //!
 //! | Motor | Timer | Channel | GPIO |
 //! |-------|-------|---------|------|
@@ -76,14 +76,36 @@
 pub mod bootloader;
 
 /// Board identification
+#[cfg(not(feature = "aio"))]
 pub const BOARD_ID: &str = "micoair-h743-v2";
+#[cfg(feature = "aio")]
+pub const BOARD_ID: &str = "micoair-h743-v2-aio";
 
 /// Board information
+#[cfg(not(feature = "aio"))]
 pub const BOARD_INFO: BoardInfo = BoardInfo {
-    name: BOARD_ID,
+    name: "micoair-h743-v2",
     description: "MicoAir H743-V2 flight controller",
-    mcu: "STM32H743VIT6",
+    mcu: "STM32H743VIH6",
+    variant: BoardVariant::Standalone,
 };
+
+#[cfg(feature = "aio")]
+pub const BOARD_INFO: BoardInfo = BoardInfo {
+    name: "micoair-h743-v2-aio",
+    description: "MicoAir H743-V2 AIO (4x45A ESC)",
+    mcu: "STM32H743VIH6",
+    variant: BoardVariant::Aio,
+};
+
+/// Board variant
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoardVariant {
+    /// Standalone flight controller (no integrated ESC)
+    Standalone,
+    /// All-in-one with integrated 4x45A ESC
+    Aio,
+}
 
 /// Board information structure
 #[derive(Clone, Debug)]
@@ -91,6 +113,41 @@ pub struct BoardInfo {
     pub name: &'static str,
     pub description: &'static str,
     pub mcu: &'static str,
+    pub variant: BoardVariant,
+}
+
+/// AIO variant configuration (only available with `aio` feature)
+#[cfg(feature = "aio")]
+pub mod aio {
+    /// Integrated ESC configuration
+    pub mod esc {
+        /// ESC firmware type
+        pub const FIRMWARE: &str = "AM32_F4A_4IN1_F421";
+        /// Firmware version
+        pub const VERSION: &str = "2.17";
+        /// Number of motor outputs
+        pub const MOTOR_COUNT: u8 = 4;
+        /// Continuous current per motor (amps)
+        pub const CONTINUOUS_CURRENT_A: u8 = 45;
+        /// PWM frequency (Hz)
+        pub const PWM_FREQ_HZ: u32 = 48_000;
+        /// Supported voltage range
+        pub const VOLTAGE_MIN_V: f32 = 5.6;  // 2S
+        pub const VOLTAGE_MAX_V: f32 = 27.0; // 6S
+        /// Supported protocols
+        pub const SUPPORTS_PWM: bool = true;
+        pub const SUPPORTS_DSHOT300: bool = true;
+        pub const SUPPORTS_DSHOT600: bool = true;
+        pub const SUPPORTS_BDSHOT: bool = true;
+    }
+
+    /// BEC (Battery Eliminator Circuit) outputs
+    pub mod bec {
+        /// 5V BEC for controller, receiver, GPS, etc.
+        pub const BEC_5V_AMPS: f32 = 2.0;
+        /// 12V BEC for DJI O3/O4
+        pub const BEC_12V_AMPS: f32 = 2.0;
+    }
 }
 
 /// SPI bus assignments
@@ -101,12 +158,24 @@ pub mod spi {
     pub const BMI270_SPI: u8 = 3;
 }
 
-/// I2C bus assignments
+/// I2C bus assignments and pin definitions
 pub mod i2c {
     /// I2C1 for external devices (magnetometer, GPS, etc.)
     pub const EXTERNAL: u8 = 1;
     /// I2C2 for internal devices (barometer)
     pub const INTERNAL: u8 = 2;
+
+    /// I2C1 pins (PB8=SCL, PB9=SDA)
+    pub mod i2c1 {
+        pub const SCL: (char, u8) = ('B', 8);
+        pub const SDA: (char, u8) = ('B', 9);
+    }
+
+    /// I2C2 pins (PB10=SCL, PB11=SDA)
+    pub mod i2c2 {
+        pub const SCL: (char, u8) = ('B', 10);
+        pub const SDA: (char, u8) = ('B', 11);
+    }
 }
 
 /// Pin definitions for the board
@@ -138,8 +207,8 @@ pub mod pins {
     pub mod spl06 {
         /// Data ready interrupt (PD0)
         pub const DRDY: (char, u8) = ('D', 0);
-        /// I2C address (0x76 or 0x77)
-        pub const I2C_ADDR: u8 = 0x76;
+        /// I2C address (0x77 per PX4 board config)
+        pub const I2C_ADDR: u8 = 0x77;
     }
 
     /// QMC5883L magnetometer pins (I2C1)

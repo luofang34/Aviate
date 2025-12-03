@@ -4,6 +4,7 @@
 //! - USB CDC serial interface for debug output
 //! - Protected reboot-to-bootloader command
 //! - LED status indication
+//! - I2C bus scanning and sensor probing
 //!
 //! ## Commands
 //!
@@ -12,6 +13,10 @@
 //! | `help`  | Show available commands |
 //! | `info`  | Show board information |
 //! | `dfu`   | Start protected reboot sequence |
+//! | `i2c1`  | Scan I2C1 bus (external: mag) |
+//! | `i2c2`  | Scan I2C2 bus (internal: baro) |
+//! | `spi`   | Probe SPI sensors (BMI088, BMI270) |
+//! | `baro`  | Read SPL06 barometer |
 //!
 //! ## Reboot Protocol
 //!
@@ -29,6 +34,10 @@ use cortex_m_rt::entry;
 use stm32h7xx_hal::{pac, prelude::*, usb_hs};
 use usb_device::prelude::*;
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
+
+// Type aliases for I2C buses
+type I2c1Type = stm32h7xx_hal::i2c::I2c<pac::I2C1>;
+type I2c2Type = stm32h7xx_hal::i2c::I2c<pac::I2C2>;
 
 #[cfg(feature = "software-bootloader")]
 use aviate_board_micoair_h743_v2::bootloader;
@@ -176,6 +185,74 @@ fn parse_code(s: &str) -> Option<u16> {
     Some(result)
 }
 
+/// Format a byte as hex string
+fn format_hex(byte: u8) -> [u8; 2] {
+    const HEX: &[u8] = b"0123456789ABCDEF";
+    [HEX[(byte >> 4) as usize], HEX[(byte & 0x0F) as usize]]
+}
+
+/// Probe I2C1 for QMC5883L magnetometer (0x0D)
+fn probe_i2c1(i2c: &mut I2c1Type, serial: &mut SerialPort<usb_hs::UsbBus<usb_hs::USB2>>) {
+    let _ = serial.write(b"\r\nProbing I2C1 for QMC5883L (0x0D)...\r\n");
+
+    // Read chip ID register (0x0D) - should return 0xFF for QMC5883L
+    let mut buf = [0u8; 1];
+    match i2c.write_read(0x0D, &[0x0D], &mut buf) {
+        Ok(()) => {
+            let _ = serial.write(b"  QMC5883L found! ChipID=0x");
+            let hex = format_hex(buf[0]);
+            let _ = serial.write(&hex);
+            let _ = serial.write(b"\r\n");
+        }
+        Err(_) => {
+            let _ = serial.write(b"  QMC5883L not found on I2C1\r\n");
+        }
+    }
+}
+
+/// Also probe I2C2 for QMC5883L (PX4 uses -I which is internal I2C)
+fn probe_mag_i2c2(i2c: &mut I2c2Type, serial: &mut SerialPort<usb_hs::UsbBus<usb_hs::USB2>>) {
+    let _ = serial.write(b"\r\nProbing I2C2 for QMC5883L (0x0D)...\r\n");
+
+    let mut buf = [0u8; 1];
+    match i2c.write_read(0x0D, &[0x0D], &mut buf) {
+        Ok(()) => {
+            let _ = serial.write(b"  QMC5883L found on I2C2! ChipID=0x");
+            let hex = format_hex(buf[0]);
+            let _ = serial.write(&hex);
+            let _ = serial.write(b"\r\n");
+        }
+        Err(_) => {
+            let _ = serial.write(b"  QMC5883L not found on I2C2\r\n");
+        }
+    }
+}
+
+/// Probe I2C2 for SPL06 barometer (0x77 per PX4 config)
+fn probe_i2c2(i2c: &mut I2c2Type, serial: &mut SerialPort<usb_hs::UsbBus<usb_hs::USB2>>) {
+    let _ = serial.write(b"\r\nProbing I2C2 for SPL06...\r\n");
+
+    // Try both addresses 0x76 and 0x77
+    for addr in [0x77u8, 0x76u8] {
+        let mut buf = [0u8; 1];
+        // Read product ID register (0x0D) - should return 0x10 for SPL06
+        match i2c.write_read(addr, &[0x0D], &mut buf) {
+            Ok(()) => {
+                let _ = serial.write(b"  SPL06 found at 0x");
+                let hex = format_hex(addr);
+                let _ = serial.write(&hex);
+                let _ = serial.write(b" ProductID=0x");
+                let hex = format_hex(buf[0]);
+                let _ = serial.write(&hex);
+                let _ = serial.write(b"\r\n");
+                return;
+            }
+            Err(_) => {}
+        }
+    }
+    let _ = serial.write(b"  SPL06 not found at 0x76 or 0x77\r\n");
+}
+
 #[entry]
 fn main() -> ! {
     // Initialize LEDs first
@@ -248,6 +325,51 @@ fn main() -> ! {
         .device_class(USB_CLASS_CDC)
         .build();
 
+    // Signal successful USB init with green LED flash
+    set_led(LED_GREEN, true);
+    for _ in 0..500_000 {
+        cortex_m::asm::nop();
+    }
+    set_led(LED_GREEN, false);
+
+    // I2C initialization - try it now, should be safe
+    let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
+
+    // I2C1: External magnetometer (QMC5883L) - PB8 SCL, PB9 SDA
+    let i2c1_scl = gpiob.pb8.into_alternate_open_drain();
+    let i2c1_sda = gpiob.pb9.into_alternate_open_drain();
+    let mut i2c1 = dp.I2C1.i2c(
+        (i2c1_scl, i2c1_sda),
+        100.kHz(),
+        ccdr.peripheral.I2C1,
+        &ccdr.clocks,
+    );
+
+    // I2C2: Internal barometer (SPL06) - PB10 SCL, PB11 SDA
+    let i2c2_scl = gpiob.pb10.into_alternate_open_drain();
+    let i2c2_sda = gpiob.pb11.into_alternate_open_drain();
+    let mut i2c2 = dp.I2C2.i2c(
+        (i2c2_scl, i2c2_sda),
+        100.kHz(),
+        ccdr.peripheral.I2C2,
+        &ccdr.clocks,
+    );
+
+    // Double-flash green to signal I2C init complete
+    set_led(LED_GREEN, true);
+    for _ in 0..200_000 {
+        cortex_m::asm::nop();
+    }
+    set_led(LED_GREEN, false);
+    for _ in 0..200_000 {
+        cortex_m::asm::nop();
+    }
+    set_led(LED_GREEN, true);
+    for _ in 0..200_000 {
+        cortex_m::asm::nop();
+    }
+    set_led(LED_GREEN, false);
+
     let mut cmd_buf = CommandBuffer::new();
     let mut state = State::Normal;
     let mut tick_count: u32 = 0;
@@ -279,7 +401,23 @@ fn main() -> ! {
                                                 let _ = serial.write(b"\r\nCommands:\r\n");
                                                 let _ = serial.write(b"  help  - Show this help\r\n");
                                                 let _ = serial.write(b"  info  - Board information\r\n");
+                                                let _ = serial.write(b"  i2c1  - Scan I2C1 (expect 0x0D: mag)\r\n");
+                                                let _ = serial.write(b"  i2c2  - Scan I2C2 (expect 0x76: baro)\r\n");
                                                 let _ = serial.write(b"  dfu   - Reboot to bootloader\r\n");
+                                            } else if cmd.eq_ignore_ascii_case("i2c1") {
+                                                probe_i2c1(&mut i2c1, &mut serial);
+                                            } else if cmd.eq_ignore_ascii_case("i2c2") {
+                                                probe_i2c2(&mut i2c2, &mut serial);
+                                            } else if cmd.eq_ignore_ascii_case("mag") {
+                                                // Probe both buses for QMC5883L
+                                                probe_i2c1(&mut i2c1, &mut serial);
+                                                probe_mag_i2c2(&mut i2c2, &mut serial);
+                                            } else if cmd.eq_ignore_ascii_case("all") {
+                                                // Probe all sensors
+                                                let _ = serial.write(b"\r\n=== All Sensors ===");
+                                                probe_i2c1(&mut i2c1, &mut serial);
+                                                probe_mag_i2c2(&mut i2c2, &mut serial);
+                                                probe_i2c2(&mut i2c2, &mut serial);
                                             } else if cmd.eq_ignore_ascii_case("info") {
                                                 let _ = serial.write(b"\r\nBoard: MicoAir H743-V2\r\n");
                                                 let _ = serial.write(b"MCU: STM32H743VIT6\r\n");

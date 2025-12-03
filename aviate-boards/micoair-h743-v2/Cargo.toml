@@ -3,7 +3,7 @@ name = "aviate-board-micoair-h743-v2"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
-description = "MicoAir H743-V2 flight controller board for Aviate"
+description = "MicoAir H743-V2 flight controller board family for Aviate"
 
 [lib]
 name = "aviate_board_micoair_h743_v2"
@@ -14,6 +14,8 @@ default = []
 # Enable software-triggered bootloader entry (uses unsafe code)
 # For development/testing only - disable for production builds
 software-bootloader = []
+# AIO variant with integrated 4x45A ESC (AM32 firmware)
+aio = []
 
 [dependencies]
 aviate-core = { path = "../../aviate-core" }
