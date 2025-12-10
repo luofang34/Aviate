@@ -8,6 +8,7 @@ release/
 *.swo
 *.bak
 *.orig
+**/*.bin
 
 # AI/agent artifacts (keep these out of repo)
 .planning/

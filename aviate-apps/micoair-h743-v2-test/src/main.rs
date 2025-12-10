@@ -31,13 +31,17 @@ use panic_halt as _;
 
 use cortex_m::peripheral::syst::SystClkSource;
 use cortex_m_rt::entry;
-use stm32h7xx_hal::{pac, prelude::*, usb_hs};
+use stm32h7xx_hal::{pac, prelude::*, usb_hs, spi, gpio};
 use usb_device::prelude::*;
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
 
 // Type aliases for I2C buses
 type I2c1Type = stm32h7xx_hal::i2c::I2c<pac::I2C1>;
 type I2c2Type = stm32h7xx_hal::i2c::I2c<pac::I2C2>;
+
+// Type aliases for SPI buses
+type Spi2Type = spi::Spi<pac::SPI2, spi::Enabled, u8>;
+type Spi3Type = spi::Spi<pac::SPI3, spi::Enabled, u8>;
 
 #[cfg(feature = "software-bootloader")]
 use aviate_board_micoair_h743_v2::bootloader;
@@ -55,6 +59,66 @@ const LED_BLUE: u32 = 4;
 const RCC_BASE: u32 = 0x5802_4400;
 const RCC_AHB4ENR: *mut u32 = (RCC_BASE + 0x0E0) as *mut u32;
 const RCC_AHB4ENR_GPIOEEN: u32 = 1 << 4;
+
+// IWDG registers (Independent Watchdog for crash recovery)
+const IWDG_BASE: u32 = 0x5800_2C00;
+const IWDG_KR: *mut u32 = IWDG_BASE as *mut u32;
+const IWDG_PR: *mut u32 = (IWDG_BASE + 0x04) as *mut u32;
+const IWDG_RLR: *mut u32 = (IWDG_BASE + 0x08) as *mut u32;
+const IWDG_SR: *mut u32 = (IWDG_BASE + 0x0C) as *mut u32;
+
+// RCC LSI control (needed for IWDG)
+const RCC_CSR: *mut u32 = (RCC_BASE + 0x074) as *mut u32;
+const RCC_CSR_LSION: u32 = 1 << 0;
+const RCC_CSR_LSIRDY: u32 = 1 << 1;
+
+/// Start IWDG with ~5 second timeout
+fn init_watchdog() {
+    unsafe {
+        // Enable LSI clock (required for IWDG)
+        let csr = core::ptr::read_volatile(RCC_CSR);
+        core::ptr::write_volatile(RCC_CSR, csr | RCC_CSR_LSION);
+
+        // Wait for LSI ready with timeout
+        let mut timeout = 100_000u32;
+        while (core::ptr::read_volatile(RCC_CSR) & RCC_CSR_LSIRDY) == 0 {
+            timeout = timeout.saturating_sub(1);
+            if timeout == 0 {
+                break; // Continue anyway, watchdog might still work
+            }
+        }
+
+        // Start watchdog first (enables register access)
+        core::ptr::write_volatile(IWDG_KR, 0xCCCC);
+
+        // Unlock IWDG registers for configuration
+        core::ptr::write_volatile(IWDG_KR, 0x5555);
+
+        // Set prescaler to 256 (LSI=32kHz, 32000/256=125Hz)
+        core::ptr::write_volatile(IWDG_PR, 6); // 256 prescaler
+        // Set reload to 625 (625/125=5 seconds)
+        core::ptr::write_volatile(IWDG_RLR, 625);
+
+        // Wait for registers to update with timeout
+        timeout = 100_000u32;
+        while core::ptr::read_volatile(IWDG_SR) != 0 {
+            timeout = timeout.saturating_sub(1);
+            if timeout == 0 {
+                break; // Continue anyway
+            }
+        }
+
+        // Refresh watchdog to complete configuration
+        core::ptr::write_volatile(IWDG_KR, 0xAAAA);
+    }
+}
+
+/// Refresh (kick) the watchdog
+fn kick_watchdog() {
+    unsafe {
+        core::ptr::write_volatile(IWDG_KR, 0xAAAA);
+    }
+}
 
 // State machine for reboot confirmation
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -191,6 +255,21 @@ fn format_hex(byte: u8) -> [u8; 2] {
     [HEX[(byte >> 4) as usize], HEX[(byte & 0x0F) as usize]]
 }
 
+/// Format a u32 as hex string
+fn format_hex32(val: u32) -> [u8; 8] {
+    const HEX: &[u8] = b"0123456789ABCDEF";
+    [
+        HEX[((val >> 28) & 0xF) as usize],
+        HEX[((val >> 24) & 0xF) as usize],
+        HEX[((val >> 20) & 0xF) as usize],
+        HEX[((val >> 16) & 0xF) as usize],
+        HEX[((val >> 12) & 0xF) as usize],
+        HEX[((val >> 8) & 0xF) as usize],
+        HEX[((val >> 4) & 0xF) as usize],
+        HEX[(val & 0xF) as usize],
+    ]
+}
+
 /// Probe I2C1 for QMC5883L magnetometer (0x0D)
 fn probe_i2c1(i2c: &mut I2c1Type, serial: &mut SerialPort<usb_hs::UsbBus<usb_hs::USB2>>) {
     let _ = serial.write(b"\r\nProbing I2C1 for QMC5883L (0x0D)...\r\n");
@@ -251,6 +330,138 @@ fn probe_i2c2(i2c: &mut I2c2Type, serial: &mut SerialPort<usb_hs::UsbBus<usb_hs:
         }
     }
     let _ = serial.write(b"  SPL06 not found at 0x76 or 0x77\r\n");
+}
+
+/// BMI088 expected chip IDs
+const BMI088_GYRO_CHIP_ID: u8 = 0x0F;
+const BMI088_ACCEL_CHIP_ID: u8 = 0x1E;
+/// BMI270 expected chip ID
+const BMI270_CHIP_ID: u8 = 0x24;
+
+// GPIO type aliases for CS pins
+type Bmi088GyroCsPin = gpio::Pin<'D', 5, gpio::Output>;
+type Bmi088AccelCsPin = gpio::Pin<'D', 4, gpio::Output>;
+type Bmi270CsPin = gpio::Pin<'A', 15, gpio::Output>;
+
+/// Read a register from SPI2 (BMI088)
+fn spi2_read_reg(spi: &mut Spi2Type, reg: u8) -> u8 {
+    use stm32h7xx_hal::nb::block;
+    // Send read command (reg | 0x80 for read)
+    block!(spi.send(reg | 0x80)).ok();
+    block!(spi.read()).ok();
+    // Send dummy byte, read response
+    block!(spi.send(0x00)).ok();
+    block!(spi.read()).unwrap_or(0xFF)
+}
+
+/// Read a register from SPI3 (BMI270)
+fn spi3_read_reg(spi: &mut Spi3Type, reg: u8) -> u8 {
+    use stm32h7xx_hal::nb::block;
+    // Send read command (reg | 0x80 for read)
+    block!(spi.send(reg | 0x80)).ok();
+    block!(spi.read()).ok();
+    // Send dummy byte, read response
+    block!(spi.send(0x00)).ok();
+    block!(spi.read()).unwrap_or(0xFF)
+}
+
+// Direct CS pin control macros (since HAL has issues with GPIOD outputs)
+const GPIOD_BSRR_ADDR: *mut u32 = (0x5802_0C00 + 0x18) as *mut u32;
+const GPIOA_BSRR_ADDR: *mut u32 = (0x5802_0000 + 0x18) as *mut u32;
+
+fn set_bmi088_gyro_cs(low: bool) {
+    unsafe {
+        if low {
+            core::ptr::write_volatile(GPIOD_BSRR_ADDR, 1 << (5 + 16)); // PD5 low
+        } else {
+            core::ptr::write_volatile(GPIOD_BSRR_ADDR, 1 << 5); // PD5 high
+        }
+    }
+}
+
+fn set_bmi088_accel_cs(low: bool) {
+    unsafe {
+        if low {
+            core::ptr::write_volatile(GPIOD_BSRR_ADDR, 1 << (4 + 16)); // PD4 low
+        } else {
+            core::ptr::write_volatile(GPIOD_BSRR_ADDR, 1 << 4); // PD4 high
+        }
+    }
+}
+
+fn set_bmi270_cs(low: bool) {
+    unsafe {
+        if low {
+            core::ptr::write_volatile(GPIOA_BSRR_ADDR, 1 << (15 + 16)); // PA15 low
+        } else {
+            core::ptr::write_volatile(GPIOA_BSRR_ADDR, 1 << 15); // PA15 high
+        }
+    }
+}
+
+/// Probe BMI088 on SPI2
+fn probe_bmi088(
+    spi: &mut Spi2Type,
+    serial: &mut SerialPort<usb_hs::UsbBus<usb_hs::USB2>>,
+) {
+    let _ = serial.write(b"\r\nProbing BMI088 on SPI2...\r\n");
+
+    // Probe gyroscope (CHIP_ID reg 0x00)
+    set_bmi088_gyro_cs(true);
+    cortex_m::asm::delay(100);
+    let gyro_id = spi2_read_reg(spi, 0x00);
+    set_bmi088_gyro_cs(false);
+    cortex_m::asm::delay(100);
+
+    let _ = serial.write(b"  Gyro ChipID=0x");
+    let hex = format_hex(gyro_id);
+    let _ = serial.write(&hex);
+    if gyro_id == BMI088_GYRO_CHIP_ID {
+        let _ = serial.write(b" (BMI088 OK)\r\n");
+    } else {
+        let _ = serial.write(b" (unexpected)\r\n");
+    }
+
+    // Probe accelerometer (CHIP_ID reg 0x00)
+    // BMI088 accel needs dummy read first to wake up
+    set_bmi088_accel_cs(true);
+    cortex_m::asm::delay(100);
+    let _ = spi2_read_reg(spi, 0x00); // dummy read
+    let accel_id = spi2_read_reg(spi, 0x00);
+    set_bmi088_accel_cs(false);
+
+    let _ = serial.write(b"  Accel ChipID=0x");
+    let hex = format_hex(accel_id);
+    let _ = serial.write(&hex);
+    if accel_id == BMI088_ACCEL_CHIP_ID {
+        let _ = serial.write(b" (BMI088 OK)\r\n");
+    } else {
+        let _ = serial.write(b" (unexpected)\r\n");
+    }
+}
+
+/// Probe BMI270 on SPI3
+fn probe_bmi270(
+    spi: &mut Spi3Type,
+    serial: &mut SerialPort<usb_hs::UsbBus<usb_hs::USB2>>,
+) {
+    let _ = serial.write(b"\r\nProbing BMI270 on SPI3...\r\n");
+
+    // BMI270 needs dummy read first
+    set_bmi270_cs(true);
+    cortex_m::asm::delay(100);
+    let _ = spi3_read_reg(spi, 0x00); // dummy read
+    let chip_id = spi3_read_reg(spi, 0x00);
+    set_bmi270_cs(false);
+
+    let _ = serial.write(b"  ChipID=0x");
+    let hex = format_hex(chip_id);
+    let _ = serial.write(&hex);
+    if chip_id == BMI270_CHIP_ID {
+        let _ = serial.write(b" (BMI270 OK)\r\n");
+    } else {
+        let _ = serial.write(b" (unexpected)\r\n");
+    }
 }
 
 #[entry]
@@ -355,20 +566,12 @@ fn main() -> ! {
         &ccdr.clocks,
     );
 
-    // Double-flash green to signal I2C init complete
-    set_led(LED_GREEN, true);
-    for _ in 0..200_000 {
-        cortex_m::asm::nop();
-    }
-    set_led(LED_GREEN, false);
-    for _ in 0..200_000 {
-        cortex_m::asm::nop();
-    }
-    set_led(LED_GREEN, true);
-    for _ in 0..200_000 {
-        cortex_m::asm::nop();
-    }
-    set_led(LED_GREEN, false);
+    // SPI2 disabled for now - HAL GPIO split crashes
+    // Consume peripherals to prevent compiler errors
+    let _ = ccdr.peripheral.GPIOC;
+    let _ = ccdr.peripheral.GPIOD;
+    let _ = ccdr.peripheral.SPI2;
+    let _ = ccdr.peripheral.SPI3;
 
     let mut cmd_buf = CommandBuffer::new();
     let mut state = State::Normal;
@@ -379,7 +582,17 @@ fn main() -> ! {
     // Confirmation timeout: 5 seconds (5000 ticks at 1ms)
     const CONFIRM_TIMEOUT_TICKS: u32 = 5000;
 
+    // Start watchdog BEFORE risky GPIOC config
+    init_watchdog();
+
+    // GPIOC config disabled for now - use gpioc command to test
+    // The config below crashes even with watchdog protection
+    // TODO: investigate why GPIOC crashes during init but works at runtime
+
     loop {
+        // Kick watchdog to prevent reset
+        kick_watchdog();
+
         // Update tick count from SysTick
         if syst.has_wrapped() {
             tick_count = tick_count.wrapping_add(1);
@@ -401,8 +614,10 @@ fn main() -> ! {
                                                 let _ = serial.write(b"\r\nCommands:\r\n");
                                                 let _ = serial.write(b"  help  - Show this help\r\n");
                                                 let _ = serial.write(b"  info  - Board information\r\n");
-                                                let _ = serial.write(b"  i2c1  - Scan I2C1 (expect 0x0D: mag)\r\n");
-                                                let _ = serial.write(b"  i2c2  - Scan I2C2 (expect 0x76: baro)\r\n");
+                                                let _ = serial.write(b"  i2c1  - Probe I2C1 (QMC5883L mag)\r\n");
+                                                let _ = serial.write(b"  i2c2  - Probe I2C2 (SPL06 baro)\r\n");
+                                                let _ = serial.write(b"  spi   - Probe SPI (BMI088, BMI270)\r\n");
+                                                let _ = serial.write(b"  all   - Probe all sensors\r\n");
                                                 let _ = serial.write(b"  dfu   - Reboot to bootloader\r\n");
                                             } else if cmd.eq_ignore_ascii_case("i2c1") {
                                                 probe_i2c1(&mut i2c1, &mut serial);
@@ -412,12 +627,15 @@ fn main() -> ! {
                                                 // Probe both buses for QMC5883L
                                                 probe_i2c1(&mut i2c1, &mut serial);
                                                 probe_mag_i2c2(&mut i2c2, &mut serial);
+                                            } else if cmd.eq_ignore_ascii_case("spi") {
+                                                let _ = serial.write(b"\r\nSPI2 disabled (debugging HAL)\r\n");
                                             } else if cmd.eq_ignore_ascii_case("all") {
                                                 // Probe all sensors
                                                 let _ = serial.write(b"\r\n=== All Sensors ===");
                                                 probe_i2c1(&mut i2c1, &mut serial);
                                                 probe_mag_i2c2(&mut i2c2, &mut serial);
                                                 probe_i2c2(&mut i2c2, &mut serial);
+                                                let _ = serial.write(b"\r\nSPI: use 'spi' command\r\n");
                                             } else if cmd.eq_ignore_ascii_case("info") {
                                                 let _ = serial.write(b"\r\nBoard: MicoAir H743-V2\r\n");
                                                 let _ = serial.write(b"MCU: STM32H743VIT6\r\n");
@@ -426,6 +644,151 @@ fn main() -> ! {
                                                 let _ = serial.write(b"DFU: software-bootloader enabled\r\n");
                                                 #[cfg(not(feature = "software-bootloader"))]
                                                 let _ = serial.write(b"DFU: disabled (use BOOT button)\r\n");
+                                            } else if cmd.eq_ignore_ascii_case("rcc") {
+                                                // Read RCC_AHB4ENR to verify clocks
+                                                let _ = serial.write(b"\r\n=== RCC_AHB4ENR ===\r\n");
+                                                let ahb4enr_val = unsafe {
+                                                    core::ptr::read_volatile(RCC_AHB4ENR)
+                                                };
+                                                let _ = serial.write(b"Value: 0x");
+                                                let _ = serial.write(&format_hex32(ahb4enr_val));
+                                                let _ = serial.write(b"\r\n");
+                                                let _ = serial.write(b"GPIOA=");
+                                                let _ = serial.write(if ahb4enr_val & 1 != 0 { b"ON" } else { b"off" });
+                                                let _ = serial.write(b" GPIOB=");
+                                                let _ = serial.write(if ahb4enr_val & 2 != 0 { b"ON" } else { b"off" });
+                                                let _ = serial.write(b" GPIOC=");
+                                                let _ = serial.write(if ahb4enr_val & 4 != 0 { b"ON" } else { b"off" });
+                                                let _ = serial.write(b" GPIOD=");
+                                                let _ = serial.write(if ahb4enr_val & 8 != 0 { b"ON" } else { b"off" });
+                                                let _ = serial.write(b" GPIOE=");
+                                                let _ = serial.write(if ahb4enr_val & 16 != 0 { b"ON" } else { b"off" });
+                                                let _ = serial.write(b"\r\n");
+                                            } else if cmd.eq_ignore_ascii_case("gpio") {
+                                                // Test GPIOD register access
+                                                let _ = serial.write(b"\r\n=== GPIOD Register Test ===\r\n");
+                                                let _ = serial.write(b"Reading registers...\r\n");
+
+                                                const GPIOD_BASE: u32 = 0x5802_0C00;
+                                                const GPIOD_MODER_ADDR: *mut u32 = GPIOD_BASE as *mut u32;
+                                                const GPIOD_OTYPER_ADDR: *mut u32 = (GPIOD_BASE + 0x04) as *mut u32;
+                                                const GPIOD_OSPEEDR_ADDR: *mut u32 = (GPIOD_BASE + 0x08) as *mut u32;
+                                                const GPIOD_PUPDR_ADDR: *mut u32 = (GPIOD_BASE + 0x0C) as *mut u32;
+                                                const GPIOD_IDR_ADDR: *mut u32 = (GPIOD_BASE + 0x10) as *mut u32;
+                                                const GPIOD_ODR_ADDR: *mut u32 = (GPIOD_BASE + 0x14) as *mut u32;
+
+                                                let _ = serial.write(b"Reading registers...\r\n");
+
+                                                let (moder, otyper, ospeedr, pupdr, idr, odr) = unsafe {
+                                                    cortex_m::asm::dsb();
+                                                    (
+                                                        core::ptr::read_volatile(GPIOD_MODER_ADDR),
+                                                        core::ptr::read_volatile(GPIOD_OTYPER_ADDR),
+                                                        core::ptr::read_volatile(GPIOD_OSPEEDR_ADDR),
+                                                        core::ptr::read_volatile(GPIOD_PUPDR_ADDR),
+                                                        core::ptr::read_volatile(GPIOD_IDR_ADDR),
+                                                        core::ptr::read_volatile(GPIOD_ODR_ADDR),
+                                                    )
+                                                };
+
+                                                let _ = serial.write(b"MODER:   0x");
+                                                let _ = serial.write(&format_hex32(moder));
+                                                let _ = serial.write(b"\r\nOTYPER:  0x");
+                                                let _ = serial.write(&format_hex32(otyper));
+                                                let _ = serial.write(b"\r\nOSPEEDR: 0x");
+                                                let _ = serial.write(&format_hex32(ospeedr));
+                                                let _ = serial.write(b"\r\nPUPDR:   0x");
+                                                let _ = serial.write(&format_hex32(pupdr));
+                                                let _ = serial.write(b"\r\nIDR:     0x");
+                                                let _ = serial.write(&format_hex32(idr));
+                                                let _ = serial.write(b"\r\nODR:     0x");
+                                                let _ = serial.write(&format_hex32(odr));
+                                                let _ = serial.write(b"\r\n");
+
+                                                let _ = serial.write(b"\r\nReads succeeded!\r\n");
+                                            } else if cmd.eq_ignore_ascii_case("gpio2") {
+                                                // Try writing to ODR (should be safe)
+                                                let _ = serial.write(b"\r\n=== GPIOD ODR Write Test ===\r\n");
+
+                                                const GPIOD_BASE: u32 = 0x5802_0C00;
+                                                const GPIOD_ODR_ADDR: *mut u32 = (GPIOD_BASE + 0x14) as *mut u32;
+
+                                                let _ = serial.write(b"Writing to ODR...\r\n");
+                                                unsafe {
+                                                    cortex_m::asm::dsb();
+                                                    let odr = core::ptr::read_volatile(GPIOD_ODR_ADDR);
+                                                    // Write same value back (safe)
+                                                    core::ptr::write_volatile(GPIOD_ODR_ADDR, odr);
+                                                    cortex_m::asm::dsb();
+                                                }
+                                                let _ = serial.write(b"ODR write succeeded!\r\n");
+                                            } else if cmd.eq_ignore_ascii_case("gpio3") {
+                                                // Try writing to MODER
+                                                let _ = serial.write(b"\r\n=== GPIOD MODER Write Test ===\r\n");
+
+                                                const GPIOD_BASE: u32 = 0x5802_0C00;
+                                                const GPIOD_MODER_ADDR: *mut u32 = GPIOD_BASE as *mut u32;
+
+                                                let _ = serial.write(b"Writing to MODER...\r\n");
+                                                unsafe {
+                                                    cortex_m::asm::dsb();
+                                                    let moder = core::ptr::read_volatile(GPIOD_MODER_ADDR);
+                                                    // Configure PD4 as output (bits 8-9 = 01)
+                                                    let new_moder = (moder & !(0b11 << 8)) | (0b01 << 8);
+                                                    core::ptr::write_volatile(GPIOD_MODER_ADDR, new_moder);
+                                                    cortex_m::asm::dsb();
+                                                }
+                                                let _ = serial.write(b"MODER write succeeded!\r\n");
+                                            } else if cmd.eq_ignore_ascii_case("x") {
+                                                let _ = serial.write(b"\r\nX\r\n");
+                                            } else if cmd.eq_ignore_ascii_case("gpioc") {
+                                                // Test GPIOC configuration interactively
+                                                let _ = serial.write(b"\r\n=== GPIOC Test ===\r\n");
+                                                const GPIOC_BASE: u32 = 0x5802_0800;
+                                                const GPIOC_MODER_ADDR: *mut u32 = GPIOC_BASE as *mut u32;
+                                                const GPIOC_AFRL_ADDR: *mut u32 = (GPIOC_BASE + 0x20) as *mut u32;
+
+                                                // Read current values
+                                                let (moder_before, afrl_before) = unsafe {
+                                                    cortex_m::asm::dsb();
+                                                    (
+                                                        core::ptr::read_volatile(GPIOC_MODER_ADDR),
+                                                        core::ptr::read_volatile(GPIOC_AFRL_ADDR),
+                                                    )
+                                                };
+                                                let _ = serial.write(b"Before: MODER=0x");
+                                                let _ = serial.write(&format_hex32(moder_before));
+                                                let _ = serial.write(b" AFRL=0x");
+                                                let _ = serial.write(&format_hex32(afrl_before));
+                                                let _ = serial.write(b"\r\n");
+
+                                                // Configure PC2=AF5, PC3=AF5
+                                                let _ = serial.write(b"Configuring PC2/PC3 as AF5...\r\n");
+                                                unsafe {
+                                                    cortex_m::asm::dsb();
+                                                    let moder = core::ptr::read_volatile(GPIOC_MODER_ADDR);
+                                                    let moder = (moder & !(0b11 << 4) & !(0b11 << 6)) | (0b10 << 4) | (0b10 << 6);
+                                                    core::ptr::write_volatile(GPIOC_MODER_ADDR, moder);
+                                                    cortex_m::asm::dsb();
+
+                                                    let afrl = core::ptr::read_volatile(GPIOC_AFRL_ADDR);
+                                                    let afrl = (afrl & !(0xF << 8) & !(0xF << 12)) | (5 << 8) | (5 << 12);
+                                                    core::ptr::write_volatile(GPIOC_AFRL_ADDR, afrl);
+                                                    cortex_m::asm::dsb();
+                                                }
+
+                                                // Read back
+                                                let (moder_after, afrl_after) = unsafe {
+                                                    (
+                                                        core::ptr::read_volatile(GPIOC_MODER_ADDR),
+                                                        core::ptr::read_volatile(GPIOC_AFRL_ADDR),
+                                                    )
+                                                };
+                                                let _ = serial.write(b"After:  MODER=0x");
+                                                let _ = serial.write(&format_hex32(moder_after));
+                                                let _ = serial.write(b" AFRL=0x");
+                                                let _ = serial.write(&format_hex32(afrl_after));
+                                                let _ = serial.write(b"\r\nDone!\r\n");
                                             } else if cmd.eq_ignore_ascii_case("dfu") {
                                                 #[cfg(feature = "software-bootloader")]
                                                 {
