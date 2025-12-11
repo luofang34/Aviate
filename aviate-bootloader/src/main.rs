@@ -25,12 +25,20 @@ const BOOT_MAGIC: u32 = 0xB007_B007;
 // Application start address (after 128KB bootloader)
 const APP_ADDRESS: u32 = 0x0802_0000;
 
+// Crash detection magic value (stored in RTC backup register)
+const CRASH_MAGIC: u32 = 0xDEAD_BEEF;
+
 // STM32H743 register addresses
 const RCC_BASE: u32 = 0x5802_4400;
 const RCC_APB4ENR: *mut u32 = (RCC_BASE + 0x0F4) as *mut u32;
 const RCC_APB4ENR_PWREN: u32 = 1 << 4;
 const RCC_AHB4ENR: *mut u32 = (RCC_BASE + 0x0E0) as *mut u32;
 const RCC_AHB4ENR_GPIOEEN: u32 = 1 << 4;
+// Try both RSR registers - H7 has multiple domains
+const RCC_RSR: *mut u32 = (RCC_BASE + 0x0D4) as *mut u32;
+const RCC_C1_RSR: *mut u32 = (RCC_BASE + 0x130) as *mut u32;  // CPU1 reset status
+const RCC_RSR_IWDG1RSTF: u32 = 1 << 26;  // Independent watchdog reset flag
+const RCC_RSR_RMVF: u32 = 1 << 16;       // Remove reset flags
 
 const PWR_BASE: u32 = 0x5802_4800;
 const PWR_CR1: *mut u32 = PWR_BASE as *mut u32;
@@ -38,6 +46,7 @@ const PWR_CR1_DBP: u32 = 1 << 8;
 
 const RTC_BASE: u32 = 0x5800_4000;
 const RTC_BK0R: *mut u32 = (RTC_BASE + 0x50) as *mut u32;
+const RTC_BK1R: *mut u32 = (RTC_BASE + 0x54) as *mut u32;  // For crash detection
 
 // LED pins (active low) - MicoAir H743-V2
 const GPIOE_BASE: u32 = 0x5802_1000;
@@ -74,6 +83,35 @@ fn clear_boot_magic() {
     unsafe {
         core::ptr::write_volatile(RTC_BK0R, 0);
         cortex_m::asm::dsb();
+    }
+}
+
+/// Check if last reset was from a crash (using RTC backup register)
+fn check_crash_magic() -> bool {
+    unsafe {
+        // Enable PWR peripheral clock
+        let apb4enr = core::ptr::read_volatile(RCC_APB4ENR);
+        core::ptr::write_volatile(RCC_APB4ENR, apb4enr | RCC_APB4ENR_PWREN);
+        cortex_m::asm::dsb();
+
+        // Enable backup domain access
+        let cr1 = core::ptr::read_volatile(PWR_CR1);
+        core::ptr::write_volatile(PWR_CR1, cr1 | PWR_CR1_DBP);
+
+        // Wait for DBP bit to be set
+        while (core::ptr::read_volatile(PWR_CR1) & PWR_CR1_DBP) == 0 {}
+
+        // Read crash magic from RTC_BK1R
+        let magic = core::ptr::read_volatile(RTC_BK1R);
+        let was_crash = magic == CRASH_MAGIC;
+
+        // Clear the magic so we don't loop forever
+        if was_crash {
+            core::ptr::write_volatile(RTC_BK1R, 0);
+            cortex_m::asm::dsb();
+        }
+
+        was_crash
     }
 }
 
@@ -160,9 +198,22 @@ fn main() -> ! {
     set_led(LED_RED, false);
     set_led(LED_BLUE, false);
 
+    // Check for crash (RAM magic survives watchdog reset)
+    let was_crash = check_crash_magic();
+
+    // DEBUG: Blink RED LED if crash detected
+    if was_crash {
+        for _ in 0..5 {
+            set_led(LED_RED, true);
+            for _ in 0..500_000 { cortex_m::asm::nop(); }
+            set_led(LED_RED, false);
+            for _ in 0..500_000 { cortex_m::asm::nop(); }
+        }
+    }
+
     // Check for boot magic
     let magic = read_boot_magic();
-    let enter_dfu = magic == BOOT_MAGIC;
+    let enter_dfu = magic == BOOT_MAGIC || was_crash;
 
     if enter_dfu {
         // Clear the magic so we don't loop forever

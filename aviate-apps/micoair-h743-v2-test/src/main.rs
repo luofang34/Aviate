@@ -61,7 +61,8 @@ const RCC_AHB4ENR: *mut u32 = (RCC_BASE + 0x0E0) as *mut u32;
 const RCC_AHB4ENR_GPIOEEN: u32 = 1 << 4;
 
 // IWDG registers (Independent Watchdog for crash recovery)
-const IWDG_BASE: u32 = 0x5800_2C00;
+// STM32H743: IWDG1 base address (verified from PAC)
+const IWDG_BASE: u32 = 0x5800_4800;
 const IWDG_KR: *mut u32 = IWDG_BASE as *mut u32;
 const IWDG_PR: *mut u32 = (IWDG_BASE + 0x04) as *mut u32;
 const IWDG_RLR: *mut u32 = (IWDG_BASE + 0x08) as *mut u32;
@@ -72,44 +73,90 @@ const RCC_CSR: *mut u32 = (RCC_BASE + 0x074) as *mut u32;
 const RCC_CSR_LSION: u32 = 1 << 0;
 const RCC_CSR_LSIRDY: u32 = 1 << 1;
 
-/// Start IWDG with ~5 second timeout
-fn init_watchdog() {
+/// Start IWDG with ~10 second timeout
+/// Returns true if watchdog was initialized successfully
+fn init_watchdog() -> bool {
     unsafe {
+        // Enable PWR peripheral clock (needed for backup domain access)
+        const RCC_APB4ENR: *mut u32 = (RCC_BASE + 0x0F4) as *mut u32;
+        const RCC_APB4ENR_PWREN: u32 = 1 << 4;
+        let apb4enr = core::ptr::read_volatile(RCC_APB4ENR);
+        core::ptr::write_volatile(RCC_APB4ENR, apb4enr | RCC_APB4ENR_PWREN);
+        cortex_m::asm::dsb();
+
+        // Enable backup domain access (LSI is in backup domain on H7)
+        const PWR_CR1: *mut u32 = 0x5802_4800 as *mut u32;
+        const PWR_CR1_DBP: u32 = 1 << 8;
+        let cr1 = core::ptr::read_volatile(PWR_CR1);
+        core::ptr::write_volatile(PWR_CR1, cr1 | PWR_CR1_DBP);
+        cortex_m::asm::dsb();
+
+        // Wait for DBP to be set
+        let mut timeout = 100_000u32;
+        while (core::ptr::read_volatile(PWR_CR1) & PWR_CR1_DBP) == 0 {
+            timeout = timeout.saturating_sub(1);
+            if timeout == 0 {
+                return false; // Backup domain access failed
+            }
+        }
+
         // Enable LSI clock (required for IWDG)
         let csr = core::ptr::read_volatile(RCC_CSR);
         core::ptr::write_volatile(RCC_CSR, csr | RCC_CSR_LSION);
+        cortex_m::asm::dsb();
 
-        // Wait for LSI ready with timeout
-        let mut timeout = 100_000u32;
+        // Wait for LSI ready with longer timeout (LSI takes ~85us typ, 200us max)
+        // At 120MHz, 1M cycles = ~8ms which should be plenty
+        timeout = 1_000_000u32;
         while (core::ptr::read_volatile(RCC_CSR) & RCC_CSR_LSIRDY) == 0 {
             timeout = timeout.saturating_sub(1);
             if timeout == 0 {
-                break; // Continue anyway, watchdog might still work
+                return false; // LSI failed to start - watchdog won't work
             }
         }
 
-        // Start watchdog first (enables register access)
+        // Start watchdog FIRST to enable LSI clock to IWDG
         core::ptr::write_volatile(IWDG_KR, 0xCCCC);
+        cortex_m::asm::dsb();
+
+        // Small delay to let watchdog start
+        for _ in 0..1000 {
+            cortex_m::asm::nop();
+        }
 
         // Unlock IWDG registers for configuration
         core::ptr::write_volatile(IWDG_KR, 0x5555);
+        cortex_m::asm::dsb();
 
         // Set prescaler to 256 (LSI=32kHz, 32000/256=125Hz)
         core::ptr::write_volatile(IWDG_PR, 6); // 256 prescaler
-        // Set reload to 625 (625/125=5 seconds)
-        core::ptr::write_volatile(IWDG_RLR, 625);
+        cortex_m::asm::dsb();
 
-        // Wait for registers to update with timeout
-        timeout = 100_000u32;
+        // Set reload to 1250 (1250/125=10 seconds)
+        core::ptr::write_volatile(IWDG_RLR, 1250);
+        cortex_m::asm::dsb();
+
+        // Wait for registers to update (PVU and RVU bits in SR)
+        // Bit 0 (PVU) = Prescaler value update
+        // Bit 1 (RVU) = Reload value update
+        timeout = 1_000_000u32;
         while core::ptr::read_volatile(IWDG_SR) != 0 {
             timeout = timeout.saturating_sub(1);
             if timeout == 0 {
-                break; // Continue anyway
+                return false; // Register update failed - LSI not clocking IWDG
             }
         }
 
-        // Refresh watchdog to complete configuration
+        // Verify registers were written correctly
+        if core::ptr::read_volatile(IWDG_PR) != 6 || core::ptr::read_volatile(IWDG_RLR) != 1250 {
+            return false; // Register values not set
+        }
+
+        // Refresh watchdog to reset counter
         core::ptr::write_volatile(IWDG_KR, 0xAAAA);
+        cortex_m::asm::dsb();
+
+        true // Success
     }
 }
 
@@ -583,7 +630,35 @@ fn main() -> ! {
     const CONFIRM_TIMEOUT_TICKS: u32 = 5000;
 
     // Start watchdog BEFORE risky GPIOC config
-    init_watchdog();
+    let watchdog_ok = init_watchdog();
+
+    // Show watchdog status with LED - make it VERY visible
+    if watchdog_ok {
+        // 3 quick green flashes = watchdog initialized successfully
+        for _ in 0..3 {
+            set_led(LED_GREEN, true);
+            for _ in 0..200_000 {
+                cortex_m::asm::nop();
+            }
+            set_led(LED_GREEN, false);
+            for _ in 0..200_000 {
+                cortex_m::asm::nop();
+            }
+        }
+    } else {
+        // 5 slow red blinks = watchdog failed (LSI didn't start or registers not set)
+        // This means crash recovery won't work!
+        for _ in 0..5 {
+            set_led(LED_RED, true);
+            for _ in 0..500_000 {
+                cortex_m::asm::nop();
+            }
+            set_led(LED_RED, false);
+            for _ in 0..500_000 {
+                cortex_m::asm::nop();
+            }
+        }
+    }
 
     // GPIOC config disabled for now - use gpioc command to test
     // The config below crashes even with watchdog protection
@@ -619,6 +694,8 @@ fn main() -> ! {
                                                 let _ = serial.write(b"  spi   - Probe SPI (BMI088, BMI270)\r\n");
                                                 let _ = serial.write(b"  all   - Probe all sensors\r\n");
                                                 let _ = serial.write(b"  dfu   - Reboot to bootloader\r\n");
+                                                let _ = serial.write(b"  crash - Test crash recovery\r\n");
+                                                let _ = serial.write(b"  wdog  - Check watchdog status\r\n");
                                             } else if cmd.eq_ignore_ascii_case("i2c1") {
                                                 probe_i2c1(&mut i2c1, &mut serial);
                                             } else if cmd.eq_ignore_ascii_case("i2c2") {
@@ -808,6 +885,109 @@ fn main() -> ! {
                                                 #[cfg(not(feature = "software-bootloader"))]
                                                 {
                                                     let _ = serial.write(b"\r\nDFU disabled. Use BOOT+RESET button.\r\n");
+                                                }
+                                            } else if cmd.eq_ignore_ascii_case("wdog") {
+                                                let _ = serial.write(b"\r\n=== WATCHDOG STATUS ===\r\n");
+
+                                                unsafe {
+                                                    // Show addresses being used
+                                                    let _ = serial.write(b"IWDG_BASE: 0x");
+                                                    let _ = serial.write(&format_hex32(IWDG_BASE));
+                                                    let _ = serial.write(b"\r\n");
+
+                                                    // Show PAC IWDG base address for comparison
+                                                    let pac_iwdg_addr = pac::IWDG::ptr() as u32;
+                                                    let _ = serial.write(b"PAC IWDG:  0x");
+                                                    let _ = serial.write(&format_hex32(pac_iwdg_addr));
+                                                    let _ = serial.write(b"\r\n\r\n");
+
+                                                    // Check LSI status
+                                                    let csr = core::ptr::read_volatile(RCC_CSR);
+                                                    let lsi_on = (csr & RCC_CSR_LSION) != 0;
+                                                    let lsi_ready = (csr & RCC_CSR_LSIRDY) != 0;
+
+                                                    let _ = serial.write(b"LSI Enable: ");
+                                                    let _ = serial.write(if lsi_on { b"ON\r\n" } else { b"OFF\r\n" });
+                                                    let _ = serial.write(b"LSI Ready:  ");
+                                                    let _ = serial.write(if lsi_ready { b"YES\r\n" } else { b"NO\r\n" });
+
+                                                    // Check IWDG registers (our address)
+                                                    let sr = core::ptr::read_volatile(IWDG_SR);
+                                                    let pr = core::ptr::read_volatile(IWDG_PR);
+                                                    let rlr = core::ptr::read_volatile(IWDG_RLR);
+
+                                                    let _ = serial.write(b"IWDG_SR:  0x");
+                                                    let _ = serial.write(&format_hex32(sr));
+                                                    let _ = serial.write(b"\r\nIWDG_PR:  0x");
+                                                    let _ = serial.write(&format_hex32(pr));
+                                                    let _ = serial.write(b"\r\nIWDG_RLR: 0x");
+                                                    let _ = serial.write(&format_hex32(rlr));
+                                                    let _ = serial.write(b"\r\n");
+
+                                                    // Also check via PAC
+                                                    let pac_iwdg = &*pac::IWDG::ptr();
+                                                    let pac_sr = pac_iwdg.sr.read().bits();
+                                                    let pac_pr = pac_iwdg.pr.read().bits();
+                                                    let pac_rlr = pac_iwdg.rlr.read().bits();
+
+                                                    let _ = serial.write(b"\nVia PAC:\r\n");
+                                                    let _ = serial.write(b"PAC SR:   0x");
+                                                    let _ = serial.write(&format_hex32(pac_sr));
+                                                    let _ = serial.write(b"\r\nPAC PR:   0x");
+                                                    let _ = serial.write(&format_hex32(pac_pr));
+                                                    let _ = serial.write(b"\r\nPAC RLR:  0x");
+                                                    let _ = serial.write(&format_hex32(pac_rlr));
+                                                    let _ = serial.write(b"\r\n");
+
+                                                    let _ = serial.write(b"\nExpected: PR=6, RLR=1250 (10s timeout)\r\n");
+                                                    let _ = serial.write(b"Status: ");
+                                                    if lsi_ready && pr == 6 && rlr == 1250 {
+                                                        let _ = serial.write(b"WATCHDOG OK\r\n");
+                                                    } else if !lsi_ready {
+                                                        let _ = serial.write(b"LSI NOT RUNNING\r\n");
+                                                    } else {
+                                                        let _ = serial.write(b"WATCHDOG NOT CONFIGURED\r\n");
+                                                    }
+                                                }
+                                            } else if cmd.eq_ignore_ascii_case("crash") {
+                                                let _ = serial.write(b"\r\n=== CRASH TEST ===\r\n");
+                                                let _ = serial.write(b"Setting crash flag in RTC...\r\n");
+                                                let _ = serial.write(b"Entering infinite loop (no watchdog feed)...\r\n");
+                                                let _ = serial.write(b"Watchdog will reset in 10s\r\n");
+                                                let _ = serial.write(b"Bootloader should auto-enter DFU!\r\n");
+
+                                                // Set crash detection magic BEFORE hanging
+                                                unsafe {
+                                                    const RCC_APB4ENR: *mut u32 = 0x5802_44F4 as *mut u32;
+                                                    const RCC_APB4ENR_PWREN: u32 = 1 << 4;
+                                                    const PWR_CR1: *mut u32 = 0x5802_4800 as *mut u32;
+                                                    const PWR_CR1_DBP: u32 = 1 << 8;
+                                                    const RTC_BK1R: *mut u32 = 0x5800_4054 as *mut u32;
+                                                    const CRASH_MAGIC: u32 = 0xDEAD_BEEF;
+
+                                                    // PWR clock should already be enabled by HAL
+                                                    // Enable backup domain access
+                                                    let cr1 = core::ptr::read_volatile(PWR_CR1);
+                                                    core::ptr::write_volatile(PWR_CR1, cr1 | PWR_CR1_DBP);
+                                                    cortex_m::asm::dsb();
+
+                                                    // Write crash magic
+                                                    core::ptr::write_volatile(RTC_BK1R, CRASH_MAGIC);
+                                                    cortex_m::asm::dsb();
+                                                }
+
+                                                // Delay to flush serial
+                                                for _ in 0..500_000 {
+                                                    cortex_m::asm::nop();
+                                                }
+
+                                                // Turn on red LED to show we're in crash state
+                                                set_led(LED_RED, true);
+                                                set_led(LED_BLUE, false);
+
+                                                // Infinite loop - watchdog should trigger reset
+                                                loop {
+                                                    cortex_m::asm::nop();
                                                 }
                                             } else if !cmd.is_empty() {
                                                 let _ = serial.write(b"\r\nUnknown command: ");
