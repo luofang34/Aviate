@@ -22,6 +22,9 @@ aviate-core = { path = "../../aviate-core" }
 aviate-hal-io = { path = "../../aviate-hal/io" }
 aviate-drivers = { path = "../../aviate-drivers" }
 
+# Bootloader chip backend (optional, for bootloader LED pin definitions)
+aviate-chip-stm32h743 = { path = "../../aviate-chips/stm32h743", optional = true }
+
 # STM32H7 HAL
 stm32h7xx-hal = { version = "0.16", features = ["stm32h743v", "rt"] }
 cortex-m = "0.7"

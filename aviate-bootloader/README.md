@@ -11,11 +11,23 @@ Custom USB DFU bootloader for STM32H743-based flight controllers.
 
 ## LED Indicators
 
+### Normal Operation (Application)
 | LED | State | Meaning |
 |-----|-------|---------|
-| Green | Solid | DFU mode active, ready for firmware |
-| Blue | Blinking | USB activity (during upload) |
-| Red | Rapid blink | Error (HSI48 clock failure) |
+| Blue | Slow heartbeat (1Hz) | Application running normally |
+
+### Bootloader States
+| LED | State | Meaning |
+|-----|-------|---------|
+| Purple | 3 quick blinks (red+blue, 200ms on/off) | Crash recovery detected, entering DFU mode |
+| Green | Solid | DFU mode ready for firmware update |
+| Red | Solid (before reset) | Application hang detected (waiting for watchdog) |
+
+### Error States (Application)
+| LED | State | Meaning |
+|-----|-------|---------|
+| Red | Rapid blink | Critical initialization failure (HSI48, watchdog not available) |
+| Red | 5 blinks | Watchdog initialization failed (crash recovery unavailable) |
 
 ## Boot Sequence
 
@@ -118,18 +130,22 @@ Each `dfu` command generates a new random code. Wrong codes or timeouts
 
 ## Feature Flags
 
-### Production Build (Default)
+### Production Build
 ```sh
-cargo build --release
+# Must explicitly specify board target
+cargo build --release --features micoair-h743-v2
 ```
+- No default features - board selection required
 - `forbid(unsafe_code)` enforced in board crate
 - Software bootloader entry disabled
 - Firmware updates require physical BOOT button
 
 ### Development Build
 ```sh
-cargo build --release --features software-bootloader
+# Explicit board + software-dfu feature
+cargo build --release --features micoair-h743-v2,software-dfu
 ```
+- Software-dfu feature explicitly enabled
 - Unsafe code allowed (for RTC register access)
 - Software bootloader entry enabled
 - Firmware updates via USB without BOOT button
@@ -138,8 +154,12 @@ cargo build --release --features software-bootloader
 
 ```sh
 cd aviate-bootloader
-cargo build --release
+# Production build (explicit board, no software DFU)
+cargo build --release --target thumbv7em-none-eabihf --features micoair-h743-v2
 arm-none-eabi-objcopy -O binary target/thumbv7em-none-eabihf/release/aviate-bootloader aviate-bootloader.bin
+
+# Development build (with software DFU)
+cargo build --release --target thumbv7em-none-eabihf --features micoair-h743-v2,software-dfu
 ```
 
 ## Flashing the Bootloader

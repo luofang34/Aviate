@@ -13,19 +13,41 @@ name = "aviate-bootloader"
 path = "src/main.rs"
 
 [features]
-default = ["micoair-h743-v2"]
-micoair-h743-v2 = []
+# No default features - users must explicitly select board and optional features
+default = []
+
+# Production build: explicit board selection required
+# Use: cargo build --release --features micoair-h743-v2
+# Development build: add software-dfu for crash recovery
+# Use: cargo build --release --features micoair-h743-v2,software-dfu
+
+# Board-level features (user-facing - ONLY use these!)
+micoair-h743-v2 = ["arch-cortex-m", "chip-stm32h743", "board-micoair-h743-v2"]
+
+# Development feature: crash recovery and software bootloader request
+software-dfu = ["aviate-chip-stm32h743/software-dfu"]
+
+# Internal: architecture-level wiring (enables optional runtime deps)
+arch-cortex-m = ["dep:cortex-m", "dep:cortex-m-rt"]
+
+# Internal: chip selection (enables optional chip crates)
+chip-stm32h743 = ["dep:aviate-chip-stm32h743"]
+
+# Internal: board selection (enables optional board crates)
+board-micoair-h743-v2 = ["dep:aviate-board-micoair-h743-v2"]
 
 [dependencies]
-# STM32H7 HAL and support
-stm32h7xx-hal = { version = "0.16", features = ["stm32h743v", "rt", "usb_hs"] }
-cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
-cortex-m-rt = "0.7"
-embedded-hal = "1.0"
+aviate-boot-core = { path = "../aviate-boot-core" }
 
-# USB support
-usb-device = "0.3"
-usbd-dfu = "0.4"
+# Chip crates (optional, selected by features)
+aviate-chip-stm32h743 = { path = "../aviate-chips/stm32h743", optional = true }
+
+# Board crates (optional, selected by features)
+aviate-board-micoair-h743-v2 = { path = "../aviate-boards/micoair-h743-v2", features = ["aviate-chip-stm32h743"], optional = true }
+
+# Architecture-specific runtime dependencies (optional)
+cortex-m = { version = "0.7", features = ["critical-section-single-core"], optional = true }
+cortex-m-rt = { version = "0.7", optional = true }
 
 # Panic handler
 panic-halt = "1.0"

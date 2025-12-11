@@ -1,21 +1,24 @@
 use std::env;
-use std::fs::File;
-use std::io::Write;
+use std::fs;
 use std::path::PathBuf;
 
 fn main() {
-    // Put `memory.x` in our output directory and ensure it's
-    // on the linker search path.
+    // Determine which chip is selected and copy its memory.x
+    let chip_path = if cfg!(feature = "chip-stm32h743") {
+        "../aviate-chips/stm32h743/memory.x"
+    } else {
+        panic!("No chip selected! Enable exactly one chip-* feature.");
+    };
+
+    // Put memory.x in our output directory
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    File::create(out.join("memory.x"))
-        .unwrap()
-        .write_all(include_bytes!("memory.x"))
-        .unwrap();
+    let memory_x_path = PathBuf::from(chip_path);
+
+    fs::copy(&memory_x_path, out.join("memory.x"))
+        .unwrap_or_else(|e| panic!("Failed to copy memory.x from {:?}: {}", memory_x_path, e));
+
     println!("cargo:rustc-link-search={}", out.display());
 
-    // By default, Cargo will re-run a build script whenever
-    // any file in the project changes. By specifying `memory.x`
-    // here, we ensure the build script is only re-run when
-    // `memory.x` is changed.
-    println!("cargo:rerun-if-changed=memory.x");
+    // Re-run if the chip's memory.x changes
+    println!("cargo:rerun-if-changed={}", chip_path);
 }

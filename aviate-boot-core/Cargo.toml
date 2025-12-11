@@ -1,0 +1,14 @@
+[package]
+name = "aviate-boot-core"
+edition = "2021"
+version = "0.0.0"
+license = "MIT OR Apache-2.0"
+description = "Multi-MCU bootloader protocol layer (pure logic, no hardware dependencies)"
+
+[features]
+# Development feature: enables crash recovery and software DFU request
+# Production builds should NOT enable this feature for maximum safety
+software-dfu = []
+
+[dependencies]
+# No dependencies - pure logic layer!

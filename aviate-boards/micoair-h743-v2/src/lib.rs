@@ -75,6 +75,24 @@
 #[cfg(feature = "software-bootloader")]
 pub mod bootloader;
 
+/// LED pin assignments for bootloader
+///
+/// These pins are used by the bootloader for status indication.
+/// LEDs are active-low on this board.
+#[cfg(feature = "aviate-chip-stm32h743")]
+pub mod leds {
+    use aviate_chip_stm32h743::Port;
+
+    /// Red LED pin (PE3, active low)
+    pub const RED: (Port, u8) = (Port::E, 3);
+
+    /// Green LED pin (PE2, active low)
+    pub const GREEN: (Port, u8) = (Port::E, 2);
+
+    /// Blue LED pin (PE4, active low)
+    pub const BLUE: (Port, u8) = (Port::E, 4);
+}
+
 /// Board identification
 #[cfg(not(feature = "aio"))]
 pub const BOARD_ID: &str = "micoair-h743-v2";
@@ -409,7 +427,7 @@ mod tests {
     #[test]
     fn test_board_info() {
         assert_eq!(BOARD_INFO.name, "micoair-h743-v2");
-        assert_eq!(BOARD_INFO.mcu, "STM32H743VIT6");
+        assert_eq!(BOARD_INFO.mcu, "STM32H743VIH6");
     }
 
     #[test]

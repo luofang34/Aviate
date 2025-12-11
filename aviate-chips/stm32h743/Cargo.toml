@@ -1,0 +1,22 @@
+[package]
+name = "aviate-chip-stm32h743"
+edition = "2021"
+version = "0.0.0"
+license = "MIT OR Apache-2.0"
+description = "STM32H743 chip backend for Aviate bootloader"
+
+[features]
+# Pass through software-dfu feature to boot-core
+software-dfu = ["aviate-boot-core/software-dfu"]
+
+[dependencies]
+aviate-boot-core = { path = "../../aviate-boot-core" }
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+
+# Use PAC/HAL (not manual register addresses!)
+stm32h7xx-hal = { version = "0.16", features = ["stm32h743v", "rt", "usb_hs"] }
+usb-device = "0.3"
+usbd-dfu = "0.4"
+panic-halt = "1.0"
+embedded-hal = "1.0"
