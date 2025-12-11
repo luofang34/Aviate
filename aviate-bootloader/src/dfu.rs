@@ -146,29 +146,47 @@ impl FlashMemory {
     fn program_word(&mut self, address: u32, data: &[u8]) {
         self.wait_ready();
 
+        // Build complete 32-byte buffer with padding
+        let mut buffer = [0xFFu8; 32];
+        let copy_len = core::cmp::min(data.len(), 32);
+        buffer[..copy_len].copy_from_slice(&data[..copy_len]);
+
         unsafe {
+            // Clear any previous error flags
+            core::ptr::write_volatile(FLASH_CCR1, 0x0FEF_0000);
+
             // Enable programming
             let cr1 = core::ptr::read_volatile(FLASH_CR1);
             core::ptr::write_volatile(FLASH_CR1, cr1 | CR1_PG);
 
-            // Write 32 bytes (256 bits) - must be aligned
+            // Write 32 bytes as 8 consecutive 32-bit words
+            // CRITICAL: Must write in ascending address order for H7
             let dest = address as *mut u32;
             for i in 0..8 {
-                let idx = i * 4;
-                let word = if idx + 3 < data.len() {
-                    u32::from_le_bytes([data[idx], data[idx + 1], data[idx + 2], data[idx + 3]])
-                } else {
-                    0xFFFF_FFFF
-                };
+                let offset = i * 4;
+                let word = u32::from_le_bytes([
+                    buffer[offset],
+                    buffer[offset + 1],
+                    buffer[offset + 2],
+                    buffer[offset + 3],
+                ]);
                 core::ptr::write_volatile(dest.add(i), word);
             }
 
+            // Memory barriers
             cortex_m::asm::dsb();
+            cortex_m::asm::isb();
         }
 
         self.wait_ready();
 
         unsafe {
+            // Check and clear any programming errors
+            let sr1 = core::ptr::read_volatile(FLASH_SR1);
+            if (sr1 & 0x0FEF_0000) != 0 {
+                core::ptr::write_volatile(FLASH_CCR1, 0x0FEF_0000);
+            }
+
             // Disable programming
             let cr1 = core::ptr::read_volatile(FLASH_CR1);
             core::ptr::write_volatile(FLASH_CR1, cr1 & !CR1_PG);
