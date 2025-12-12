@@ -33,9 +33,7 @@ use std::env;
 use std::path::Path;
 use std::process::ExitCode;
 
-use aviate_airframe_multirotor::X500Airframe;
 use aviate_board_sitl_gazebo::GazeboSitlBoard;
-use aviate_core::airframe::Airframe;
 
 /// Simple logging macros
 macro_rules! info {
@@ -96,13 +94,37 @@ impl Options {
 fn main() -> ExitCode {
     let opts = Options::parse();
 
+    // Load application configuration (LOW-DAL init phase)
+    const APP_CONFIG_TOML: &str = include_str!("../AviateApp.toml");
+    let app_config = match aviate_config::from_toml_str(APP_CONFIG_TOML) {
+        Ok(config) => config,
+        Err(_) => {
+            eprintln!("[ERROR] Failed to parse AviateApp.toml");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Validate configuration
+    if let Err(_) = aviate_config::validate(&app_config) {
+        eprintln!("[ERROR] Invalid configuration in AviateApp.toml");
+        return ExitCode::FAILURE;
+    }
+
+    // Extract simulator config (CLI args override TOML defaults)
+    let headless = opts.headless || app_config.simulator
+        .as_ref()
+        .map(|s| s.headless)
+        .unwrap_or(false);
+
     // Print banner
     println!("===========================================");
     println!("  Aviate Gazebo SITL - X500 Quadcopter");
     println!("===========================================");
     println!();
-    println!("Board:    {}", GazeboSitlBoard::board_id());
-    println!("Airframe: {}", X500Airframe::AIRFRAME_ID);
+    println!("App ID:   {}", app_config.app.id);
+    println!("Board:    {}", app_config.app.board);
+    println!("Airframe: {}", app_config.app.airframe);
+    println!("Env:      {}", app_config.app.env);
     println!("Instance: {}", opts.instance);
     println!();
 
@@ -112,13 +134,13 @@ fn main() -> ExitCode {
         ExitCode::SUCCESS
     } else if let Some(ref config_path) = opts.test_config {
         info!("Mode: Test ({})", config_path);
-        run_test(config_path, opts.instance, opts.headless)
+        run_test(config_path, opts.instance, headless)
     } else {
         info!(
             "Mode: Interactive (headless={})",
-            if opts.headless { "yes" } else { "no" }
+            if headless { "yes" } else { "no" }
         );
-        run_interactive(opts.headless, opts.instance)
+        run_interactive(headless, opts.instance)
     }
 }
 

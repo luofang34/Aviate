@@ -19,6 +19,7 @@ multi-vehicle = ["mavrouter"]
 default = ["gz-plugin"]
 
 [dependencies]
+aviate-config = { path = "../../aviate-config" }
 aviate-core = { path = "../../aviate-core" }
 aviate-link = { path = "../../aviate-link" }
 aviate-hal-xil = { path = "../../aviate-hal/xil" }

@@ -37,10 +37,27 @@ pub struct TelemetryConfig {
     pub queue_len: usize,
 }
 
+impl Default for TelemetryConfig {
+    fn default() -> Self {
+        Self {
+            frame_size: 280,
+            queue_len: 32,
+        }
+    }
+}
+
 /// Security profile configuration
 #[derive(Debug, Deserialize)]
 pub struct SecurityConfig {
     pub profile: String,  // "none", "auth-only", "auth-and-encrypt"
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            profile: "none".into(),
+        }
+    }
 }
 
 /// Transport configuration (port, protocol, roles)

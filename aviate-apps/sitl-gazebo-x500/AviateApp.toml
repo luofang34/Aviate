@@ -1,0 +1,29 @@
+# Aviate Application Configuration
+# App: sitl-gazebo-x500
+# Config ID: CFG-DEV-SITL-001 (Phase 2 development)
+
+[app]
+id = "sitl-gazebo-x500"
+board = "sitl-gazebo"
+airframe = "x500"
+env = "sitl"
+
+[telemetry]
+frame_size = 280
+queue_len = 32
+
+[security]
+profile = "none"  # Options: "none", "auth-only", "auth-and-encrypt"
+
+# Transport 1: MAVLink over UDP for telemetry and commands
+[[transports]]
+protocol = "mavlink"
+port = "udp"
+roles = ["telemetry", "command"]
+port_sensor = 14560
+port_actuator = 14561
+
+[simulator]
+backend = "gazebo"
+headless = false
+lockstep = false
