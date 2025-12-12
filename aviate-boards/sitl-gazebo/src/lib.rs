@@ -186,6 +186,17 @@ impl GazeboSitlBoard {
     pub fn board_id() -> &'static str {
         "sitl-gazebo"
     }
+
+    /// Initialize telemetry from application config
+    ///
+    /// Call this after creating the board to enable GCS telemetry output.
+    ///
+    /// # Arguments
+    /// * `cfg` - Application configuration (from AviateApp.toml)
+    /// * `loop_hz` - Control loop frequency in Hz (e.g., 1000 for 1kHz)
+    pub fn init_telemetry(&mut self, cfg: &aviate_config::AppConfig, loop_hz: u32) {
+        self.runner.init_telemetry(cfg, loop_hz);
+    }
 }
 
 /// Board info for Gazebo SITL

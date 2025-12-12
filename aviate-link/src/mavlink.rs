@@ -82,4 +82,7 @@ pub use protocol::{
 
 // Re-export link implementations
 pub use command::MavlinkCommandLink;
-pub use telemetry::{format_actuators, format_attitude, format_heartbeat, MavlinkTelemetry};
+pub use telemetry::{
+    format_actuators, format_attitude, format_heartbeat, format_local_position,
+    MavlinkCycleFormatter, MavlinkTelemetry,
+};

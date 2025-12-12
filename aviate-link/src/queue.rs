@@ -3,6 +3,15 @@
 //! This module provides a fixed-size, no-allocation ring buffer for telemetry frames.
 //! It's designed for high-DAL control code that requires provable WCET.
 //!
+//! ## Default Queue Configuration
+//!
+//! The default telemetry queue is sized for MAVLink v2:
+//! - [`TELEMETRY_MAX_FRAME`]: 280 bytes (MAVLink v2 max with signing)
+//! - [`TELEMETRY_MAX_QUEUE`]: 32 frames (sufficient for burst telemetry)
+//!
+//! These constants are compile-time limits. Runtime config values (via `AviateApp.toml`)
+//! are for validation only and must be ≤ these limits.
+//!
 //! ## DO-178C Properties
 //!
 //! - **push()**: O(1), bounded cycles (~50 CPU cycles @ 480 MHz), non-blocking
@@ -43,6 +52,30 @@
 //!     }) {}
 //! }
 //! ```
+
+// ============================================================================
+// Default Telemetry Queue Constants
+// ============================================================================
+
+/// Maximum frame size for telemetry queue (MAVLink v2 max with signing)
+///
+/// This is a compile-time limit. Runtime config `frame_size` must be ≤ this value.
+pub const TELEMETRY_MAX_FRAME: usize = 280;
+
+/// Maximum queue length for telemetry queue (number of frames)
+///
+/// This is a compile-time limit. Runtime config `queue_len` must be ≤ this value.
+/// 32 frames allows burst telemetry without drops.
+pub const TELEMETRY_MAX_QUEUE: usize = 32;
+
+/// Default telemetry queue type alias
+///
+/// Used by `TelemetryTask` in aviate-runtime. Sized for MAVLink v2.
+pub type DefaultTelemetryQueue = TelemetryQueue<TELEMETRY_MAX_QUEUE, TELEMETRY_MAX_FRAME>;
+
+// ============================================================================
+// Queue Error Type
+// ============================================================================
 
 /// Queue operation errors
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -210,6 +210,10 @@ fn run_interactive(headless: bool, instance: u8) -> ExitCode {
     }
     info!("Gazebo ready");
 
+    // Load app config for telemetry
+    const APP_CONFIG_TOML: &str = include_str!("../AviateApp.toml");
+    let app_config = aviate_config::from_toml_str(APP_CONFIG_TOML).ok();
+
     // Create the board
     let mut board = match GazeboSitlBoard::with_config_retry(config, 5, 1000) {
         Ok(b) => b,
@@ -220,6 +224,11 @@ fn run_interactive(headless: bool, instance: u8) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    // Initialize telemetry (sends HEARTBEAT, ATTITUDE, POSITION to GCS)
+    if let Some(ref cfg) = app_config {
+        board.init_telemetry(cfg, 1000); // 1kHz control loop
+    }
 
     // Connect to Gazebo via shared memory
     let plugin = match GzPluginBridge::connect_instance_with_retry(instance, 20, 500) {

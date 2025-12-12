@@ -26,7 +26,11 @@
 #![cfg(any(feature = "env-sitl", feature = "env-hitl"))]
 
 use crate::sensor_cache::SensorCache;
+use crate::telemetry::{FrameTx, TelemetrySnapshot, TelemetryTask};
 
+use aviate_link::mavlink::MavlinkCycleFormatter;
+
+use aviate_config::AppConfig;
 use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::Command;
 use aviate_core::hal::{ActuatorHal, CommandHal, SensorHal, SystemCommand, SystemHal};
@@ -69,6 +73,36 @@ pub type SitlBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, SitlTime,
 /// SITL Kernel type
 pub type SitlKernel = AviateKernel<MultirotorController, QuadXMixer>;
 
+// ============================================================================
+// UDP Telemetry Transport (SITL-only)
+// ============================================================================
+
+use std::net::{SocketAddr, UdpSocket};
+
+/// UDP frame transmitter for telemetry (SITL-only)
+pub struct UdpFrameTx {
+    socket: UdpSocket,
+    addr: SocketAddr,
+}
+
+impl UdpFrameTx {
+    /// Create a new UDP transmitter
+    pub fn new(socket: UdpSocket, addr: SocketAddr) -> Self {
+        Self { socket, addr }
+    }
+}
+
+impl FrameTx for UdpFrameTx {
+    fn try_send(&mut self, frame: &[u8]) -> Result<(), ()> {
+        let _ = self.socket.send_to(frame, self.addr);
+        Ok(())
+    }
+}
+
+// ============================================================================
+// SITL Runner
+// ============================================================================
+
 /// SITL runner encapsulating the stepping logic (Gazebo/SitlIO-specific for Phase 1)
 ///
 /// This struct wraps SitlIO transport, BoardHal, and kernel, providing the control loop
@@ -96,6 +130,13 @@ pub struct SitlRunner {
 
     /// EKF initialization flag
     pub ekf_initialized: bool,
+
+    /// Telemetry task (optional, config-driven)
+    /// Uses MavlinkCycleFormatter for MAVLink protocol
+    telemetry: Option<TelemetryTask<UdpFrameTx, MavlinkCycleFormatter>>,
+
+    /// Iteration counter for rate dividers
+    iteration: u32,
 }
 
 impl SitlRunner {
@@ -114,6 +155,37 @@ impl SitlRunner {
             last_imu_time: None,
             sensor_cache: SensorCache::new(),
             ekf_initialized: false,
+            telemetry: None,
+            iteration: 0,
+        }
+    }
+
+    /// Initialize telemetry from config (called in AppRuntime::run)
+    ///
+    /// Looks for a transport with "telemetry" role and UDP endpoint.
+    /// If found, creates a TelemetryTask for GCS communication.
+    pub fn init_telemetry(&mut self, cfg: &AppConfig, loop_hz: u32) {
+        if let Some(telem_cfg) = &cfg.telemetry {
+            // Find transport with "telemetry" role and endpoint
+            if let Some(t) = cfg
+                .transports
+                .iter()
+                .find(|t| t.roles.iter().any(|r| r == "telemetry") && t.endpoint.is_some())
+            {
+                if let Some(ref endpoint) = t.endpoint {
+                    if let Ok(addr) = endpoint.parse::<SocketAddr>() {
+                        if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
+                            let _ = sock.set_nonblocking(true);
+                            let tx = UdpFrameTx::new(sock, addr);
+                            // Create protocol-specific formatter (from aviate-link)
+                            let formatter = MavlinkCycleFormatter::new(telem_cfg, loop_hz);
+                            // Create protocol-agnostic task (from aviate-runtime)
+                            self.telemetry = Some(TelemetryTask::new(tx, formatter));
+                            eprintln!("[INFO] Telemetry enabled: {} via {}", endpoint, t.protocol);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -265,7 +337,7 @@ impl SitlRunner {
             &aviate_core::mixer::ActuatorState::default(),
             None,
         );
-        let actuator_cmd = result.actuator;
+        let actuator_cmd = result.actuator.clone();
 
         // 8. Write outputs via BoardHal (ActuatorHal implementation)
         //    This writes to FakeActuator, same path as real hardware
@@ -283,7 +355,25 @@ impl SitlRunner {
             self.transport.set_actuator_cmd(sim_cmd);
         }
 
-        // 10. Watchdog
+        // 10. Update telemetry snapshot (HIGH-DAL: trivial field copies only)
+        self.iteration = self.iteration.wrapping_add(1);
+        let time_ms = (self.transport.now_us() / 1000) as u32;
+        if let Some(ref mut telem) = self.telemetry {
+            let snapshot = TelemetrySnapshot {
+                time_ms,
+                iteration: self.iteration,
+                status: result.status,
+                state: result.estimate,
+            };
+            telem.update_state(snapshot); // Just copies, easy to audit
+        }
+
+        // 11. Format + queue + send telemetry (LOW-DAL: MAVLink formatting, I/O)
+        if let Some(ref mut telem) = self.telemetry {
+            telem.tick_and_flush(); // All MAVLink work happens here
+        }
+
+        // 12. Watchdog
         self.transport.kick_watchdog();
 
         actuator_cmd
@@ -406,7 +496,6 @@ pub mod loop_periods {
 }
 
 // Re-export for convenience (Phase 1 stub - Phase 2+ will use this for AppRuntime)
-use aviate_config::AppConfig;
 
 /// Application runtime for SITL/HITL (Phase 1 stub)
 ///

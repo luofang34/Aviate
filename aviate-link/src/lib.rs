@@ -112,6 +112,38 @@
 //! ## Feature Flags
 //!
 //! None currently. This crate has no optional features.
+//!
+//! # MAVLink 2 Minimal Subset
+//!
+//! The `mavlink` module implements a **minimal required subset** of MAVLink 2.0
+//! for flight control. We do NOT implement full MAVLink.
+//!
+//! ## Supported Messages (Inbound - Ground → FC)
+//!
+//! | Msg ID | Name | Purpose |
+//! |--------|------|---------|
+//! | 0 | HEARTBEAT | GCS presence detection |
+//! | 76 | COMMAND_LONG | Arm, disarm, mode set |
+//! | 82 | SET_ATTITUDE_TARGET | Attitude + thrust setpoint |
+//! | 84 | SET_POSITION_TARGET_LOCAL_NED | Position/velocity setpoint |
+//!
+//! ## Supported Messages (Outbound - FC → Ground)
+//!
+//! | Msg ID | Name | Purpose |
+//! |--------|------|---------|
+//! | 0 | HEARTBEAT | FC status |
+//! | 31 | ATTITUDE_QUATERNION | Attitude telemetry |
+//! | 32 | LOCAL_POSITION_NED | Position telemetry |
+//!
+//! ## NOT Supported
+//!
+//! - Mission upload/download (MISSION_*)
+//! - Parameter protocol (PARAM_*)
+//! - Log download (LOG_*)
+//! - File transfer (FTP_*)
+//! - Most MAV_CMD_* commands
+//!
+//! For full MAVLink support, use a companion computer.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -130,5 +162,7 @@ pub mod mavlink;
 // Re-export key types for convenience
 pub use command::{Command, CommandKind, CommandLink};
 pub use errors::{LinkError, LinkResult, TelemetryError, TelemetryResult};
-pub use queue::{QueueError, TelemetryQueue};
-pub use telemetry::TelemetryBackend;
+pub use queue::{
+    DefaultTelemetryQueue, QueueError, TelemetryQueue, TELEMETRY_MAX_FRAME, TELEMETRY_MAX_QUEUE,
+};
+pub use telemetry::{TelemetryBackend, TelemetryCycleFormatter, TelemetrySnapshot};

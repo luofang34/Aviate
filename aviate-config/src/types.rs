@@ -31,10 +31,29 @@ pub struct AppInfo {
 }
 
 /// Telemetry queue configuration
+///
+/// The `frame_size` and `queue_len` values are for validation only.
+/// They must be ≤ the compile-time limits (`TELEMETRY_MAX_FRAME`, `TELEMETRY_MAX_QUEUE`).
 #[derive(Debug, Deserialize)]
 pub struct TelemetryConfig {
     pub frame_size: usize,
     pub queue_len: usize,
+    #[serde(default = "default_heartbeat_hz")]
+    pub heartbeat_hz: u8,
+    #[serde(default = "default_attitude_hz")]
+    pub attitude_hz: u8,
+    #[serde(default = "default_position_hz")]
+    pub position_hz: u8,
+}
+
+fn default_heartbeat_hz() -> u8 {
+    1
+}
+fn default_attitude_hz() -> u8 {
+    10
+}
+fn default_position_hz() -> u8 {
+    4
 }
 
 impl Default for TelemetryConfig {
@@ -42,6 +61,9 @@ impl Default for TelemetryConfig {
         Self {
             frame_size: 280,
             queue_len: 32,
+            heartbeat_hz: default_heartbeat_hz(),
+            attitude_hz: default_attitude_hz(),
+            position_hz: default_position_hz(),
         }
     }
 }
@@ -72,6 +94,9 @@ pub struct TransportConfig {
     pub port_sensor: Option<u16>,
     #[serde(default)]
     pub port_actuator: Option<u16>,
+    /// UDP endpoint for telemetry/command (e.g., "127.0.0.1:14550")
+    #[serde(default)]
+    pub endpoint: Option<String>,
 }
 
 /// Simulator configuration (SITL only)

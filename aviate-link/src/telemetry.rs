@@ -1,36 +1,35 @@
 //! High-level telemetry interface for low-DAL tasks
 //!
-//! This module provides the TelemetryBackend trait for protocol-agnostic
-//! telemetry transmission.
+//! This module provides two complementary telemetry abstractions:
+//!
+//! ## 1. `TelemetryBackend` trait (Low-DAL I/O sender)
+//!
+//! For direct message transmission. Implementations perform I/O.
+//!
+//! ## 2. `TelemetryCycleFormatter` trait (Cycle-based formatting)
+//!
+//! For use with `TelemetryTask` in aviate-runtime. This trait allows
+//! protocol-agnostic telemetry formatting in the control loop:
+//!
+//! - **High-DAL control code**: Calls `update_state()` (trivial field copies)
+//! - **Low-DAL telemetry code**: Calls `tick_and_flush()` which uses
+//!   `TelemetryCycleFormatter::format_cycle()` to format messages and push to queue
 //!
 //! ## DO-178C Usage Pattern
-//!
-//! - **High-DAL control code**: MUST NOT call implementations that perform I/O directly!
-//!   - Instead: Call pure `format_*` helpers (in telemetry_mavlink.rs) and push to TelemetryQueue
-//!   - Why: High-DAL code requires provable WCET, no external I/O allowed
-//!
-//! - **Low-DAL usage**: Use TelemetryBackend implementations to pop from queue + perform I/O
-//!   - Why: Low-DAL code can fail (e.g., USB disconnected) without affecting control loop
-//!
-//! ## Example (Correct Pattern)
 //!
 //! ```ignore
 //! // High-DAL control_task (provable WCET, no I/O)
 //! pub fn control_task(ctx: &mut AppContext) {
 //!     let state = ctx.kernel.estimate();
 //!
-//!     // FORMAT only - no I/O!
-//!     let mut buf = [0u8; 256];
-//!     if let Ok(len) = format_attitude(&state, ctx.time_ms, sys_id, comp_id, &mut ctx.seq, &mut buf) {
-//!         let _ = ctx.telemetry_queue.push(&buf[..len]);  // Non-blocking O(1)
-//!     }
+//!     // Trivial field copy - HIGH-DAL safe
+//!     let snapshot = TelemetrySnapshot { ... };
+//!     ctx.telemetry_task.update_state(snapshot);
 //! }
 //!
 //! // Low-DAL telemetry_task (can fail, doesn't affect control)
-//! pub fn telemetry_task(ctx: &mut AppContext, telemetry: &mut impl TelemetryBackend) {
-//!     while ctx.telemetry_queue.pop_with(|frame| {
-//!         let _ = telemetry.send_raw(frame);  // Failure OK, just increment counter
-//!     }) {}
+//! pub fn telemetry_task(ctx: &mut AppContext) {
+//!     ctx.telemetry_task.tick_and_flush();  // Formats + sends
 //! }
 //! ```
 
@@ -39,6 +38,76 @@ use aviate_core::state::StateEstimate;
 use aviate_core::ChannelStatus;
 
 use crate::errors::TelemetryResult;
+use crate::queue::DefaultTelemetryQueue;
+
+// ============================================================================
+// TelemetrySnapshot (protocol-agnostic state for formatting)
+// ============================================================================
+
+/// State snapshot for telemetry (POD, trivially copyable)
+///
+/// This structure is copied from the high-DAL control loop to the low-DAL
+/// telemetry task. The copy is the only high-DAL operation - all formatting
+/// and I/O happens in low-DAL `tick_and_flush()`.
+///
+/// Defined here in aviate-link so both aviate-runtime and protocol implementations
+/// can use it without circular dependencies.
+#[derive(Clone, Default)]
+pub struct TelemetrySnapshot {
+    /// System time in milliseconds since boot
+    pub time_ms: u32,
+    /// Control loop iteration counter (for rate dividers)
+    pub iteration: u32,
+    /// Channel status (for HEARTBEAT)
+    pub status: ChannelStatus,
+    /// State estimate (for ATTITUDE, POSITION)
+    pub state: StateEstimate,
+}
+
+// ============================================================================
+// TelemetryCycleFormatter trait (protocol-agnostic cycle formatting)
+// ============================================================================
+
+/// Protocol-agnostic telemetry cycle formatter
+///
+/// Implementations handle protocol-specific formatting (MAVLink, CCSDS, etc.)
+/// and push formatted frames to the telemetry queue.
+///
+/// This trait is used by `TelemetryTask` in aviate-runtime for protocol-agnostic
+/// telemetry output. The runtime code never imports MAVLink types directly.
+///
+/// ## Implementing
+///
+/// Protocol implementations (e.g., `MavlinkCycleFormatter`) should:
+/// 1. Check rate dividers based on `snapshot.iteration`
+/// 2. Format messages using protocol-specific helpers
+/// 3. Push formatted frames to the queue
+///
+/// ## Example Implementation
+///
+/// ```ignore
+/// impl TelemetryCycleFormatter for MavlinkCycleFormatter {
+///     fn format_cycle(&mut self, snapshot: &TelemetrySnapshot, queue: &mut DefaultTelemetryQueue) {
+///         if snapshot.iteration % self.heartbeat_div == 0 {
+///             if let Ok(len) = format_heartbeat(&snapshot.status, ..., &mut buf) {
+///                 let _ = queue.push(&buf[..len]);
+///             }
+///         }
+///         // ... other messages
+///     }
+/// }
+/// ```
+pub trait TelemetryCycleFormatter {
+    /// Format telemetry messages for current cycle and push to queue
+    ///
+    /// Called by `TelemetryTask::tick_and_flush()` in low-DAL context.
+    /// Implementations should check rate dividers and format appropriate messages.
+    fn format_cycle(&mut self, snapshot: &TelemetrySnapshot, queue: &mut DefaultTelemetryQueue);
+}
+
+// ============================================================================
+// TelemetryBackend trait (Low-DAL I/O sender)
+// ============================================================================
 
 /// High-level telemetry interface for low-DAL tasks.
 ///

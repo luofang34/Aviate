@@ -13,6 +13,7 @@ default = []
 
 [dependencies]
 aviate-core = { path = "../aviate-core" }
+aviate-config = { path = "../aviate-config" }
 aviate-hal-io = { path = "../aviate-hal/io" }
 # Note: MAVLink protocol is now integrated in src/mavlink/protocol.rs (no external dependency)
 

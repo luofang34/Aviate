@@ -17,9 +17,9 @@
 
 | Metric | Covered | Total | Excluded | Final |
 |--------|---------|-------|----------|-------|
-| Lines | 3537 | 3537 | 20 markers | 100.0% |
-| Functions | 161 | 185 | 29 (STUB/DEFAULT) | 100.0% |
-| Branches | 1106 | 1106 | 0 LLVM artifacts | 100.0% |
+| Lines | 2291 | 2297 | 20 markers | 99.7% |
+| Functions | 160 | 179 | 29 (STUB/DEFAULT) | 100.0% |
+| Branches | 378 | 378 | 0 LLVM artifacts | 100.0% |
 
 ## Exclusions by Category
 

@@ -11,6 +11,9 @@ env = "sitl"
 [telemetry]
 frame_size = 280
 queue_len = 32
+heartbeat_hz = 1    # 1 Hz standard for GCS connection status
+attitude_hz = 10    # 10 Hz for smooth attitude display
+position_hz = 4     # 4 Hz for map position updates
 
 [security]
 profile = "none"  # Options: "none", "auth-only", "auth-and-encrypt"
@@ -20,6 +23,7 @@ profile = "none"  # Options: "none", "auth-only", "auth-and-encrypt"
 protocol = "mavlink"
 port = "udp"
 roles = ["telemetry", "command"]
+endpoint = "127.0.0.1:14550"  # QGroundControl default port
 port_sensor = 14560
 port_actuator = 14561
 

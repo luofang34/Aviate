@@ -48,6 +48,11 @@ compile_error!("env-sitl and env-hitl are mutually exclusive");
 pub mod flight;
 pub mod sensor_cache;
 pub mod sim;
+pub mod telemetry;
+pub mod validation;
+
+// Re-export telemetry types (available in all environments)
+pub use telemetry::{FrameTx, TelemetrySnapshot, TelemetryTask};
 
 // Re-export AppRuntime based on environment
 #[cfg(feature = "env-flight")]
