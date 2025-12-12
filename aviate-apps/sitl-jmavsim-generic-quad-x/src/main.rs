@@ -45,9 +45,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use aviate_airframe_multirotor::GenericQuadX;
+use aviate_airframe_multirotor::{Airframe, GenericQuadX};
 use aviate_board_sitl_jmavsim::{JmavSimBoard, JmavSimConfig};
-use aviate_core::airframe::Airframe;
 
 /// Global flag for graceful shutdown
 static RUNNING: AtomicBool = AtomicBool::new(true);

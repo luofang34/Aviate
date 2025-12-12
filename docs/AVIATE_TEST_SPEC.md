@@ -323,9 +323,9 @@ Test reproducibility enables:
 
 ```bash
 # Single vehicle test
-./scripts/run_sitl.sh tests/quadcopter/basic_flight.toml
+./scripts/run_sitl.sh tests/xil-missions/basic_flight.toml
 
 # Multi-vehicle formation test
-./scripts/run_sitl.sh tests/quadcopter/two_vehicle_formation.toml
+./scripts/run_sitl.sh tests/xil-missions/two_vehicle_formation.toml
 ```
 

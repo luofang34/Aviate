@@ -8,12 +8,11 @@ use usb_device::prelude::*;
 use usbd_dfu::*;
 use core::mem::MaybeUninit;
 
-// Flash constants for STM32H743
-const FLASH_BASE: u32 = 0x0800_0000;
-const APP_START: u32 = 0x0802_0000;
-const FLASH_END: u32 = 0x0820_0000; // 2MB total
-const FLASH_KEY1: u32 = 0x4567_0123;
-const FLASH_KEY2: u32 = 0xCDEF_89AB;
+// Import memory layout constants from chip configuration
+use crate::memory::{
+    FLASH_BASE, APP_START, FLASH_END, SECTOR_SIZE,
+    FLASH_KEY1, FLASH_KEY2, DFU_MEM_INFO,
+};
 
 // Transfer buffer size (must match TRANSFER_SIZE)
 const BUFFER_SIZE: usize = 128;
@@ -130,7 +129,7 @@ impl DFUMemIO for FlashMemory {
     const PROGRAM_TIME_MS: u32 = 10;
     const ERASE_TIME_MS: u32 = 2500;
     const FULL_ERASE_TIME_MS: u32 = 20000;
-    const MEM_INFO_STRING: &'static str = "@Flash/0x08020000/15*128Ke";
+    const MEM_INFO_STRING: &'static str = DFU_MEM_INFO;
     const HAS_DOWNLOAD: bool = true;
     const HAS_UPLOAD: bool = true;
     const MANIFESTATION_TOLERANT: bool = false;
@@ -155,7 +154,7 @@ impl DFUMemIO for FlashMemory {
             return Err(DFUMemError::Address);
         }
 
-        let sector = ((address - FLASH_BASE) / (128 * 1024)) as u8;
+        let sector = ((address - FLASH_BASE) / SECTOR_SIZE) as u8;
 
         if sector == 0 {
             return Err(DFUMemError::Address);

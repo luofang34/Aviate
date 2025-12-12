@@ -11,6 +11,7 @@ mod update_backend;
 mod led_backend;
 mod delay_backend;
 mod app_backend;
+pub mod memory;
 
 pub use crash_backend::Stm32h743CrashBackend;
 pub use update_backend::Stm32h743UpdateBackend;
@@ -58,14 +59,8 @@ pub fn chip_main(led_metadata: Stm32LedMetadata) -> ! {
     // Configure flash wait states for boot clock (4 MHz CSI needs 0 wait states)
     // After reset, FLASH_ACR.LATENCY defaults to 7 (7 wait states)
     // This causes ~8x slowdown for low-speed boot code
-    // FLASH_ACR address: 0x52002000 (Bank1 ACR)
-    unsafe {
-        const FLASH_ACR: *mut u32 = 0x5200_2000 as *mut u32;
-        let acr = core::ptr::read_volatile(FLASH_ACR);
-        // Clear LATENCY bits [3:0] and set to 0
-        let acr = (acr & !0xF) | 0;
-        core::ptr::write_volatile(FLASH_ACR, acr);
-    }
+    // Use PAC for register access instead of hardcoded address
+    dp.FLASH.acr.modify(|_, w| unsafe { w.latency().bits(0) });
     cortex_m::asm::dsb();
 
     // Enable peripheral clocks using PAC (spec: use PAC/HAL, not hardcoded addresses!)

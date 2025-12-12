@@ -1,18 +1,19 @@
 //! SITL jMAVSim Board Configuration
 //!
 //! This board represents a simulated quadcopter using jMAVSim via MAVLink HIL protocol.
-//! It uses the existing `aviate-backend-mavlink-hil` for communication.
+//! It uses the shared `SitlRunner` from `aviate-runtime` for the control loop,
+//! with `HilBackend` providing the MAVLink HIL transport layer to jMAVSim.
 //!
 //! ## Architecture
 //!
 //! ```text
 //! SENSORS (Input):
-//! jMAVSim → UDP/MAVLink → HilBackend → FakeImu/Baro/... → BoardHal → SensorHal
-//!                                           ↓
-//!                                    Same kernel code
-//!                                           ↓
+//! jMAVSim → UDP/MAVLink HIL → HilBackend → SitlIO.feed_sensor_packet() → SitlRunner
+//!                                                    ↓
+//!                                              Same kernel code
+//!                                                    ↓
 //! ACTUATORS (Output):
-//! Kernel → BoardHal → FakeActuator → HilBackend → UDP/MAVLink → jMAVSim
+//! SitlRunner → SitlIO.take_actuator_cmd() → HilBackend → UDP/MAVLink → jMAVSim
 //! ```
 //!
 //! ## MAVLink HIL Protocol
@@ -26,7 +27,7 @@
 //! ## Usage
 //!
 //! ```ignore
-//! let mut board = JmavSimBoard::new(config)?;
+//! let mut board = JmavSimBoard::new()?;
 //! board.arm()?;  // Arm manually after init
 //! loop {
 //!     board.step();
@@ -43,41 +44,17 @@ use std::io;
 use aviate_backend_mavlink_hil::{HilBackend, HilBackendConfig};
 use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
-use aviate_core::hal::{ActuatorHal, SensorHal};
-use aviate_core::math::{Quaternion, Vector3};
-use aviate_core::mixer::{ActuatorCmd, ActuatorState, ModeConfig, QuadXMixer};
-use aviate_core::sensor::{BaroData, GnssData, ImuData, MagData, SensorReading, SensorSet};
-use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
-use aviate_core::types::{Meters, MetersPerSecond, Normalized, Seconds};
-use aviate_core::{ArmError, AviateKernel, ChannelId, InitState};
+use aviate_core::mixer::{ActuatorCmd, ModeConfig, QuadXMixer};
+use aviate_core::time::{TimeSource, Timestamp};
+use aviate_core::types::Normalized;
+use aviate_core::{ArmError, AviateKernel, InitState};
 
-use aviate_hal_io::{
-    BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag, GnssFix, RawBaroReading,
-    RawGnssReading, RawImuReading, RawMagReading,
+use aviate_core::hal::ActuatorHal;
+use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
+use aviate_hal_xil::{
+    SimBaroData, SimGnssData, SimImuData, SimMagData, SimSensorPacket, SitlConfig, SitlIO,
 };
-use aviate_hal_xil::{SimActuatorCmd, SimGnssFix};
-
-/// Time source for SITL using std::time
-pub struct SitlTime {
-    start: std::time::Instant,
-}
-
-impl SitlTime {
-    fn new() -> Self {
-        Self {
-            start: std::time::Instant::now(),
-        }
-    }
-}
-
-impl aviate_hal_io::TimeSource for SitlTime {
-    fn now_us(&self) -> u64 {
-        self.start.elapsed().as_micros() as u64
-    }
-}
-
-/// Type alias for the SITL board's HAL
-pub type SitlBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, SitlTime, FakeActuator>;
+use aviate_runtime::sim::{SitlRunner, SitlTime};
 
 /// jMAVSim board configuration
 ///
@@ -117,65 +94,16 @@ impl Default for JmavSimConfig {
 /// jMAVSim SITL board
 ///
 /// Uses MAVLink HIL protocol to communicate with jMAVSim simulator.
-/// Follows the same BoardHal pattern as real hardware boards.
+/// Delegates control loop to `SitlRunner` from `aviate-runtime`.
 pub struct JmavSimBoard {
     /// MAVLink HIL backend for communication with jMAVSim
     hil_backend: HilBackend,
 
-    /// Board HAL with fake sensors (same interface as real hardware)
-    board_hal: SitlBoardHal,
+    /// SITL runner (encapsulates transport, board HAL, and kernel)
+    runner: SitlRunner,
 
-    /// Flight controller kernel
-    kernel: AviateKernel<MultirotorController, QuadXMixer>,
-
-    /// Last command received
-    last_cmd: Command,
-
-    /// Last IMU timestamp for dt calculation
-    last_imu_time: Option<u64>,
-
-    /// Cached sensor readings for kernel
-    sensor_cache: SensorCache,
-
-    /// EKF initialization flag
-    ekf_initialized: bool,
-
-    /// Armed state
+    /// Armed state (for MAVLink heartbeat)
     armed: bool,
-}
-
-/// Cached sensor readings for kernel init
-struct SensorCache {
-    imu: Option<SensorReading<ImuData>>,
-    gnss: Option<SensorReading<GnssData>>,
-    baro: Option<SensorReading<BaroData>>,
-    mag: Option<SensorReading<MagData>>,
-}
-
-impl SensorCache {
-    fn new() -> Self {
-        Self {
-            imu: None,
-            gnss: None,
-            baro: None,
-            mag: None,
-        }
-    }
-
-    fn to_sensor_set(&self) -> SensorSet {
-        SensorSet {
-            imus: [
-                self.imu.unwrap_or_default(),
-                SensorReading::default(),
-                SensorReading::default(),
-            ],
-            gnss: [self.gnss.unwrap_or_default(), SensorReading::default()],
-            mags: [self.mag.unwrap_or_default(), SensorReading::default()],
-            baros: [self.baro.unwrap_or_default(), SensorReading::default()],
-            airspeeds: [SensorReading::default(), SensorReading::default()],
-            geometry: None,
-        }
-    }
 }
 
 impl JmavSimBoard {
@@ -186,6 +114,7 @@ impl JmavSimBoard {
 
     /// Create a new jMAVSim board with custom configuration
     pub fn with_config(config: JmavSimConfig) -> io::Result<Self> {
+        // Create HilBackend for MAVLink HIL communication with jMAVSim
         let hil_config = HilBackendConfig {
             local_port: config.local_port,
             simulator_addr: std::net::SocketAddr::from((
@@ -195,8 +124,11 @@ impl JmavSimBoard {
             sys_id: config.sys_id,
             comp_id: config.comp_id,
         };
-
         let hil_backend = HilBackend::new(hil_config)?;
+
+        // Create SitlIO for transport abstraction (same as Gazebo)
+        let sitl_config = SitlConfig::default();
+        let transport = SitlIO::new(sitl_config)?;
 
         // Create fake sensors and actuator - same interface as real hardware drivers
         let fake_imu = FakeImu::new();
@@ -217,16 +149,14 @@ impl JmavSimBoard {
         );
 
         let kernel = Self::create_kernel();
-        let last_cmd = Self::default_command();
+        let default_cmd = Self::default_command();
+
+        // Create SitlRunner with all components
+        let runner = SitlRunner::new(transport, board_hal, kernel, default_cmd);
 
         Ok(Self {
             hil_backend,
-            board_hal,
-            kernel,
-            last_cmd,
-            last_imu_time: None,
-            sensor_cache: SensorCache::new(),
-            ekf_initialized: false,
+            runner,
             armed: false,
         })
     }
@@ -266,143 +196,62 @@ impl JmavSimBoard {
     /// Run one iteration of the control loop
     ///
     /// This:
-    /// 1. Polls HilBackend for MAVLink HIL messages
-    /// 2. Feeds fake sensors with HIL data
-    /// 3. Reads sensors via BoardHal's SensorHal implementation
-    /// 4. Runs the kernel
-    /// 5. Sends actuator commands via MAVLink HIL
+    /// 1. Polls HilBackend for MAVLink HIL messages from jMAVSim
+    /// 2. Converts HIL data to SimSensorPacket and feeds to SitlIO
+    /// 3. Runs SitlRunner.step() (handles control loop)
+    /// 4. Gets actuator commands from SitlIO and sends to jMAVSim
     ///
     /// Returns the actuator command that was sent.
     pub fn step(&mut self) -> ActuatorCmd {
-        // 1. Poll HilBackend for incoming MAVLink HIL messages
+        // 1. Poll HilBackend for incoming MAVLink HIL messages from jMAVSim
         if let Some(packet) = self.hil_backend.poll() {
-            // Feed IMU data (convert SimImuData to RawImuReading)
-            if let Some(imu_data) = packet.imu {
-                self.board_hal.imu_mut().feed(RawImuReading {
-                    accel: imu_data.accel,
-                    gyro: imu_data.gyro,
-                    temperature: imu_data.temperature,
+            // 2. Convert HIL data to SimSensorPacket and feed to SitlIO
+            let mut sensor_packet = SimSensorPacket::default();
+
+            if let Some(imu) = packet.imu {
+                sensor_packet.imu = Some(SimImuData {
+                    accel: imu.accel,
+                    gyro: imu.gyro,
+                    temperature: imu.temperature,
                 });
             }
-            // Feed Baro data (convert SimBaroData to RawBaroReading)
-            if let Some(baro_data) = packet.baro {
-                self.board_hal.baro_mut().feed(RawBaroReading {
-                    pressure_pa: baro_data.pressure_pa,
-                    temperature_c: baro_data.temperature_c,
+
+            if let Some(baro) = packet.baro {
+                sensor_packet.baro = Some(SimBaroData {
+                    pressure_pa: baro.pressure_pa,
+                    temperature_c: baro.temperature_c,
                 });
             }
-            // Feed Mag data (convert SimMagData to RawMagReading)
-            if let Some(mag_data) = packet.mag {
-                self.board_hal.mag_mut().feed(RawMagReading {
-                    field_ut: mag_data.field_ut,
+
+            if let Some(mag) = packet.mag {
+                sensor_packet.mag = Some(SimMagData {
+                    field_ut: mag.field_ut,
                 });
             }
-            // Feed GNSS data (convert SimGnssData to RawGnssReading)
-            if let Some(gnss_data) = packet.gnss {
-                self.board_hal.gnss_mut().feed(RawGnssReading {
-                    lat_deg: gnss_data.lat_deg,
-                    lon_deg: gnss_data.lon_deg,
-                    alt_m: gnss_data.alt_m,
-                    vel_ned: gnss_data.vel_ned,
-                    fix: convert_gnss_fix(gnss_data.fix),
-                    h_acc: gnss_data.h_acc,
-                    v_acc: gnss_data.v_acc,
-                    satellites: gnss_data.satellites,
+
+            if let Some(gnss) = packet.gnss {
+                sensor_packet.gnss = Some(SimGnssData {
+                    lat_deg: gnss.lat_deg,
+                    lon_deg: gnss.lon_deg,
+                    alt_m: gnss.alt_m,
+                    vel_ned: gnss.vel_ned,
+                    fix: gnss.fix,
+                    h_acc: gnss.h_acc,
+                    v_acc: gnss.v_acc,
+                    satellites: gnss.satellites,
                 });
             }
+
+            // Feed sensor packet to SitlIO
+            self.runner.transport.feed_sensor_packet(&sensor_packet);
         }
 
-        // 2. Read sensors via BoardHal's SensorHal implementation
-        let mut current_dt = 0.001;
-        let mut current_delta_us = 1000u64;
+        // 3. Run SitlRunner step (handles control loop, same as Gazebo)
+        let actuator_cmd = self.runner.step();
 
-        if let Some(imu) = self.board_hal.read_imu() {
-            let current_time = imu.timestamp.ticks;
-            let delta_us_val = if let Some(last) = self.last_imu_time {
-                current_time.saturating_sub(last)
-            } else {
-                1000
-            };
-            current_dt = (delta_us_val as f32) * 1e-6;
-            current_delta_us = delta_us_val;
-            self.last_imu_time = Some(current_time);
-            current_dt = current_dt.clamp(0.0001, 0.1);
-            self.sensor_cache.imu = Some(imu);
-        }
-
-        if let Some(gnss) = self.board_hal.read_gnss() {
-            self.sensor_cache.gnss = Some(gnss);
-        }
-
-        if let Some(baro) = self.board_hal.read_baro() {
-            self.sensor_cache.baro = Some(baro);
-        }
-
-        if let Some(mag) = self.board_hal.read_mag() {
-            self.sensor_cache.mag = Some(mag);
-        }
-
-        let time_delta = TimeDelta {
-            dt_sec: Seconds(current_dt),
-            tick_delta: current_delta_us,
-        };
-
-        // 3. Initialize EKF once we have sensor data
-        if !self.ekf_initialized && self.sensor_cache.imu.is_some() {
-            self.kernel.ekf.init(
-                Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-                Vector3::new(
-                    MetersPerSecond(0.0),
-                    MetersPerSecond(0.0),
-                    MetersPerSecond(0.0),
-                ),
-                Quaternion::IDENTITY,
-            );
-            self.ekf_initialized = true;
-        }
-
-        // 4. Run init state machine
-        let sensors = self.sensor_cache.to_sensor_set();
-        if !self.kernel.is_ready() {
-            let ts = Timestamp {
-                ticks: self.hil_backend.now_us(),
-                source: TimeSource::Internal,
-            };
-            let prev_state = self.kernel.init_state;
-            self.kernel.init_step(&sensors, ts);
-
-            // Log state transitions
-            if self.kernel.init_state != prev_state {
-                eprintln!(
-                    "[FC] Init state: {:?} -> {:?}",
-                    prev_state, self.kernel.init_state
-                );
-            }
-        }
-
-        // 5. Step kernel
-        let result = self.kernel.update(
-            ChannelId(0),
-            time_delta,
-            &sensors,
-            &self.last_cmd,
-            &ActuatorState::default(),
-            None,
-        );
-        let actuator_cmd = result.actuator;
-
-        // 6. Write outputs via BoardHal (ActuatorHal implementation)
-        self.board_hal.write(&actuator_cmd);
-
-        // 7. Forward actuator command to jMAVSim via MAVLink HIL
-        if let Some(raw_cmd) = self.board_hal.actuator_mut().take_cmd() {
-            let sim_cmd = SimActuatorCmd {
-                timestamp_us: self.hil_backend.now_us(),
-                outputs: raw_cmd.outputs,
-                count: raw_cmd.count,
-                armed: self.armed,
-            };
-            // Ignore send errors (jMAVSim might not be connected yet)
+        // 4. Get actuator commands and send to jMAVSim via HilBackend
+        if let Some(sim_cmd) = self.runner.transport.take_actuator_cmd() {
+            // Forward to jMAVSim via MAVLink HIL
             let _ = self.hil_backend.send_actuators(&sim_cmd);
         }
 
@@ -412,10 +261,10 @@ impl JmavSimBoard {
     /// Run the main control loop indefinitely
     pub fn run(&mut self) -> ! {
         let loop_period_us = 2500; // 400Hz to match jMAVSim default rate
-        let mut last_tick = self.hil_backend.now_us();
+        let mut last_tick = self.runner.now_us();
 
         loop {
-            let now = self.hil_backend.now_us();
+            let now = self.runner.now_us();
             let elapsed = now.saturating_sub(last_tick);
 
             if elapsed >= loop_period_us {
@@ -432,13 +281,17 @@ impl JmavSimBoard {
 
     /// Arm the flight controller
     pub fn arm(&mut self) -> Result<(), ArmError> {
-        eprintln!("[INFO] Arm command (state={:?})", self.kernel.init_state);
-        eprintln!("[INFO] Faults: {:?}", self.kernel.faults);
+        eprintln!(
+            "[INFO] Arm command (state={:?})",
+            self.runner.kernel.init_state
+        );
+        eprintln!("[INFO] Faults: {:?}", self.runner.kernel.faults);
 
-        self.kernel.arm()?;
+        self.runner.kernel.arm()?;
 
         eprintln!("[INFO] Armed successfully");
-        self.board_hal.arm();
+        self.runner.board_hal.arm();
+        self.runner.transport.set_armed(true);
         self.armed = true;
         Ok(())
     }
@@ -446,43 +299,45 @@ impl JmavSimBoard {
     /// Disarm the flight controller
     pub fn disarm(&mut self) {
         eprintln!("[INFO] Disarm command");
-        self.kernel.disarm();
-        self.board_hal.disarm();
+        self.runner.kernel.disarm();
+        self.runner.board_hal.disarm();
+        self.runner.transport.set_armed(false);
         self.armed = false;
     }
 
     /// Set the flight command (attitude/thrust setpoint)
     pub fn set_command(&mut self, cmd: Command) {
-        self.kernel
+        self.runner
+            .kernel
             .checks
             .pre_arm
             .update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
-        self.last_cmd = cmd;
+        self.runner.last_cmd = cmd;
     }
 
     /// Check if the kernel is ready for flight
     pub fn is_ready(&self) -> bool {
-        self.kernel.is_ready()
+        self.runner.kernel.is_ready()
     }
 
     /// Check if the kernel is armed
     pub fn is_armed(&self) -> bool {
-        self.kernel.init_state == InitState::Armed
+        self.runner.kernel.init_state == InitState::Armed
     }
 
     /// Get a reference to the kernel
     pub fn kernel(&self) -> &AviateKernel<MultirotorController, QuadXMixer> {
-        &self.kernel
+        &self.runner.kernel
     }
 
     /// Get a mutable reference to the kernel
     pub fn kernel_mut(&mut self) -> &mut AviateKernel<MultirotorController, QuadXMixer> {
-        &mut self.kernel
+        &mut self.runner.kernel
     }
 
     /// Get current timestamp in microseconds
     pub fn now_us(&self) -> u64 {
-        self.hil_backend.now_us()
+        self.runner.now_us()
     }
 
     /// Get statistics (rx_count, tx_count, crc_errors)
@@ -522,17 +377,6 @@ fn sitl_timestamp() -> Timestamp {
     Timestamp {
         ticks: 0,
         source: TimeSource::Internal,
-    }
-}
-
-/// Convert SimGnssFix to GnssFix
-fn convert_gnss_fix(fix: SimGnssFix) -> GnssFix {
-    match fix {
-        SimGnssFix::None => GnssFix::None,
-        SimGnssFix::TwoD => GnssFix::TwoD,
-        SimGnssFix::ThreeD => GnssFix::ThreeD,
-        SimGnssFix::RtkFloat => GnssFix::RtkFloat,
-        SimGnssFix::RtkFixed => GnssFix::RtkFixed,
     }
 }
 

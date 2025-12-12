@@ -1,0 +1,11 @@
+# Cargo configuration for STM32H743 flight target
+# This file is copied to .cargo/config.toml for flight builds
+
+[build]
+target = "thumbv7em-none-eabihf"
+
+[target.thumbv7em-none-eabihf]
+rustflags = [
+    "-C", "link-arg=-Tlink.x",
+    "-C", "link-arg=-Tmemory.x",
+]

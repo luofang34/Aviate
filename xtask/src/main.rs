@@ -28,6 +28,14 @@ fn main() -> Result<()> {
             let port = args.get(3).map(|s| s.as_str());
             flash_firmware(firmware_path, port)?;
         }
+        "run" => {
+            if args.len() < 3 {
+                bail!("Usage: cargo xtask run <app-name> [serial_port]");
+            }
+            let app_name = &args[2];
+            let port = args.get(3).map(|s| s.as_str());
+            run_app(app_name, port)?;
+        }
         "dfu" => {
             let port = args.get(2).map(|s| s.as_str());
             enter_dfu_mode(port)?;
@@ -51,19 +59,22 @@ USAGE:
     cargo xtask <COMMAND> [OPTIONS]
 
 COMMANDS:
+    run <app-name> [port]        Build and flash app in one step
     flash <firmware.bin> [port]  Flash firmware via software DFU
     dfu [port]                   Enter DFU mode without flashing
     help                         Show this help
 
 EXAMPLES:
+    cargo xtask run my-app                 # Build and flash app
     cargo xtask flash app.bin              # Auto-detect serial port
     cargo xtask flash app.bin /dev/ttyACM0 # Linux/macOS
     cargo xtask flash app.bin COM3         # Windows
-    cargo xtask dfu                         # Just enter DFU mode
+    cargo xtask dfu                        # Just enter DFU mode
 
 REQUIREMENTS:
     - Device running firmware with software-bootloader feature
     - dfu-util installed and in PATH
+    - arm-none-eabi-objcopy for 'run' command
 "#
     );
 }
@@ -197,6 +208,74 @@ fn wait_for_dfu_device() -> Result<()> {
     bail!(
         "Timeout waiting for DFU device. Check if bootloader is properly installed."
     )
+}
+
+/// Build and flash an app in one step
+fn run_app(app_name: &str, port: Option<&str>) -> Result<()> {
+    // Determine app crate name (may or may not have aviate-app- prefix)
+    let app_crate = if app_name.starts_with("aviate-app-") {
+        app_name.to_string()
+    } else {
+        format!("aviate-app-{}", app_name)
+    };
+
+    // The binary name is the part after aviate-app-
+    let bin_name = app_crate
+        .strip_prefix("aviate-app-")
+        .unwrap_or(app_name);
+
+    eprintln!("Building {}...", app_crate);
+
+    // Build the app for hardware target
+    let status = Command::new("cargo")
+        .args([
+            "build",
+            "-p",
+            &app_crate,
+            "--release",
+            "--target",
+            "thumbv7em-none-eabihf",
+        ])
+        .status()
+        .context("Failed to run cargo build")?;
+
+    if !status.success() {
+        bail!("Build failed");
+    }
+
+    // Convert ELF to binary
+    let elf_path = format!(
+        "target/thumbv7em-none-eabihf/release/{}",
+        bin_name
+    );
+    let bin_path = format!("/tmp/{}.bin", bin_name);
+
+    eprintln!("Converting {} to binary...", elf_path);
+
+    // Check arm-none-eabi-objcopy is available
+    if Command::new("arm-none-eabi-objcopy")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        bail!(
+            "arm-none-eabi-objcopy not found. Please install ARM toolchain."
+        );
+    }
+
+    let status = Command::new("arm-none-eabi-objcopy")
+        .args(["-O", "binary", &elf_path, &bin_path])
+        .status()
+        .context("Failed to run objcopy")?;
+
+    if !status.success() {
+        bail!("objcopy failed");
+    }
+
+    eprintln!("Flashing {}...", bin_path);
+    flash_firmware(&bin_path, port)?;
+
+    Ok(())
 }
 
 /// Flash firmware to the device

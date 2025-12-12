@@ -27,7 +27,7 @@
 //! └──────────────────┬──────────────────────────────────────────┘
 //!                    │
 //! ┌──────────────────▼──────────────────────────────────────────┐
-//! │  aviate-mavlink (Protocol Layer)                            │
+//! │  mavlink module (Protocol Layer)                             │
 //! │  - MAVLink message types (Heartbeat, AttitudeQuaternion)    │
 //! │  - Parser + Serializer (pure protocol logic)                │
 //! └──────────────────┬──────────────────────────────────────────┘

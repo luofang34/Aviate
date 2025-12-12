@@ -1,0 +1,47 @@
+# Aviate Application Configuration
+# App: {{project-name}}
+
+[app]
+id = "{{project-name}}"
+board = "{{board}}"
+airframe = "{{airframe}}"
+env = "{{env}}"
+
+[telemetry]
+frame_size = 280
+queue_len = 32
+
+[security]
+profile = "none"  # Options: "none", "auth-only", "auth-and-encrypt"
+
+{% if board == "sitl-gazebo" %}
+# Transport 1: MAVLink over UDP for telemetry and commands
+[[transports]]
+protocol = "mavlink"
+port = "udp"
+roles = ["telemetry", "command"]
+port_sensor = 14560
+port_actuator = 14561
+
+[simulator]
+backend = "gazebo"
+headless = false
+lockstep = false
+{% elsif board == "sitl-jmavsim" %}
+# Transport: MAVLink HIL over UDP
+[[transports]]
+protocol = "mavlink-hil"
+port = "udp"
+roles = ["telemetry", "command"]
+simulator_port = 14560
+
+[simulator]
+backend = "jmavsim"
+headless = false
+{% elsif board == "micoair-h743-v2" %}
+# Transport: MAVLink over USB CDC
+[[transports]]
+protocol = "mavlink"
+port = "usb"
+roles = ["telemetry", "command"]
+{% endif %}

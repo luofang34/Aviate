@@ -10,6 +10,8 @@ name = "sitl-jmavsim-generic-quad-x"
 path = "src/main.rs"
 
 [dependencies]
+# Board (brings in aviate-core, aviate-runtime, aviate-hal-xil, backends, etc.)
 aviate-board-sitl-jmavsim = { path = "../../aviate-boards/sitl-jmavsim" }
+
+# Airframe selection
 aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor" }
-aviate-core = { path = "../../aviate-core" }

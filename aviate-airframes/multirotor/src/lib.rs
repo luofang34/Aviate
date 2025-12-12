@@ -30,7 +30,9 @@
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 
-use aviate_core::airframe::Airframe;
+// Re-export Airframe trait so apps can use it without depending on aviate-core directly
+pub use aviate_core::airframe::Airframe;
+
 use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::ConfigMode;
 use aviate_core::mixer::{ModeConfig, QuadXMixer};

@@ -14,18 +14,26 @@ name = "aviate_app_sitl_gazebo_x500"
 path = "src/lib.rs"
 
 [features]
-gz-plugin = ["aviate-backend-gz/gz-plugin", "aviate-board-sitl-gazebo/gz-plugin"]
+gz-plugin = ["aviate-board-sitl-gazebo/gz-plugin"]
 multi-vehicle = ["mavrouter"]
 default = ["gz-plugin"]
 
 [dependencies]
+# Config parsing
 aviate-config = { path = "../../aviate-config" }
-aviate-core = { path = "../../aviate-core" }
-aviate-link = { path = "../../aviate-link" }
-aviate-hal-xil = { path = "../../aviate-hal/xil" }
-aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", optional = true }
+
+# Board (brings in aviate-core, aviate-runtime, etc.)
 aviate-board-sitl-gazebo = { path = "../../aviate-boards/sitl-gazebo" }
+
+# Airframe selection
 aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor", features = ["x500"] }
+
+# Test infrastructure (for mission framework, world gen, etc.)
+# Note: This app is also a test harness, not just a minimal app
+aviate-core = { path = "../../aviate-core" }
+aviate-hal-xil = { path = "../../aviate-hal/xil" }
+aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz" }
+aviate-link = { path = "../../aviate-link" }
 
 # Multi-vehicle routing (optional)
 mavrouter = { version = "0.1.4", optional = true }

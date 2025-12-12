@@ -1,0 +1,44 @@
+# Aviate Application Template
+#
+# Generate a new Aviate flight controller application:
+#   cargo generate --path aviate-app-template --name my-app
+#
+# For more options:
+#   cargo generate --path aviate-app-template --name my-app -d board=sitl-gazebo -d model=x500 -d airframe=x500
+
+[template]
+name = "aviate-app"
+description = "Generate a new Aviate flight controller application"
+
+[placeholders.board]
+type = "string"
+prompt = "Target board"
+choices = ["sitl-gazebo", "sitl-jmavsim", "micoair-h743-v2"]
+default = "sitl-gazebo"
+
+[placeholders.model]
+type = "string"
+prompt = "Gazebo model (for SITL)"
+choices = ["x500", "x500_depth", "x500_vision", "x500_lidar_2d"]
+default = "x500"
+
+[placeholders.airframe]
+type = "string"
+prompt = "Airframe type (mixer configuration)"
+choices = ["x500", "quad-x", "generic-quad"]
+default = "x500"
+
+[placeholders.env]
+type = "string"
+prompt = "Environment"
+choices = ["sitl", "flight"]
+default = "sitl"
+
+[conditional.'board == "micoair-h743-v2"']
+ignore = [".cargo/config.toml.liquid", "src/lib.rs.liquid", "src/world_gen.rs.liquid", "src/mission_runner.rs.liquid", "src/router_gen.rs.liquid"]
+
+[conditional.'board != "micoair-h743-v2"']
+ignore = [".cargo-flight/config.toml.liquid", "memory.x.liquid", "build.rs.liquid"]
+
+[conditional.'board == "sitl-jmavsim"']
+ignore = ["src/lib.rs.liquid", "src/world_gen.rs.liquid", "src/mission_runner.rs.liquid", "src/router_gen.rs.liquid"]

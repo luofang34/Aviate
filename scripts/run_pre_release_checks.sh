@@ -23,7 +23,7 @@ echo ">> Running Memory Limit Checks..."
 
 # 4. Run SITL Flight Test
 echo ">> Running SITL Flight Test..."
-./scripts/run_sitl.sh --test
+./scripts/run_sitl.sh
 
 # Future checks can be added here (e.g., static analysis, special tests)
 # echo ">> Running Static Analysis..."

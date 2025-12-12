@@ -4,13 +4,8 @@
 
 use aviate_boot_core::AppBackend;
 
-// STM32H743 memory layout (match old working bootloader)
-const APP_START: u32 = 0x0802_0000;
-const APP_END: u32 = 0x081F_FFFF;
-
-// AXI SRAM (D1 domain) - where stm32h7xx-hal places stack by default
-const RAM_START: u32 = 0x2400_0000;
-const RAM_END: u32 = 0x2408_0000;
+// Import memory layout constants from chip configuration
+use crate::memory::{APP_START, APP_END, RAM_START, RAM_END};
 
 pub struct Stm32h743AppBackend;
 

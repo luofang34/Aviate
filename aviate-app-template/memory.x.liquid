@@ -1,0 +1,13 @@
+/* Memory layout for STM32H743 with Aviate bootloader
+ * Bootloader occupies 0x08000000-0x0801FFFF (128KB)
+ * Application starts at 0x08020000
+ */
+MEMORY
+{
+    FLASH : ORIGIN = 0x08020000, LENGTH = 1920K  /* 2MB - 128KB bootloader */
+    RAM   : ORIGIN = 0x24000000, LENGTH = 512K   /* AXI SRAM */
+    DTCM  : ORIGIN = 0x20000000, LENGTH = 128K   /* DTCM for stack */
+}
+
+/* Stack at end of DTCM */
+_stack_start = ORIGIN(DTCM) + LENGTH(DTCM);
