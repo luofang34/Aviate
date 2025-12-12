@@ -5,7 +5,7 @@
 use aviate_boot_core::AppBackend;
 
 // Import memory layout constants from chip configuration
-use crate::memory::{APP_START, APP_END, RAM_START, RAM_END};
+use crate::memory::{APP_END, APP_START, RAM_END, RAM_START};
 
 pub struct Stm32h743AppBackend;
 

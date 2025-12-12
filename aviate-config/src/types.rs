@@ -49,7 +49,7 @@ impl Default for TelemetryConfig {
 /// Security profile configuration
 #[derive(Debug, Deserialize)]
 pub struct SecurityConfig {
-    pub profile: String,  // "none", "auth-only", "auth-and-encrypt"
+    pub profile: String, // "none", "auth-only", "auth-and-encrypt"
 }
 
 impl Default for SecurityConfig {
@@ -77,7 +77,7 @@ pub struct TransportConfig {
 /// Simulator configuration (SITL only)
 #[derive(Debug, Deserialize)]
 pub struct SimulatorConfig {
-    pub backend: String,  // "gazebo", "jmavsim"
+    pub backend: String, // "gazebo", "jmavsim"
     #[serde(default)]
     pub headless: bool,
     #[serde(default)]

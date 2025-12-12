@@ -14,14 +14,14 @@ use crate::{AppConfig, ConfigError};
 pub fn validate(config: &AppConfig) -> Result<(), ConfigError> {
     // Validate environment
     match config.app.env.as_str() {
-        "flight" | "sitl" | "hitl" => {},
+        "flight" | "sitl" | "hitl" => {}
         _ => return Err(ConfigError::ValidationError),
     }
 
     // Validate security profile if present
     if let Some(ref security) = config.security {
         match security.profile.as_str() {
-            "none" | "auth-only" | "auth-and-encrypt" => {},
+            "none" | "auth-only" | "auth-and-encrypt" => {}
             _ => return Err(ConfigError::ValidationError),
         }
     }
@@ -37,7 +37,7 @@ pub fn validate(config: &AppConfig) -> Result<(), ConfigError> {
 
         // Validate protocol
         match transport.protocol.as_str() {
-            "mavlink" | "crsf" | "sbus" => {},
+            "mavlink" | "crsf" | "sbus" => {}
             _ => return Err(ConfigError::ValidationError),
         }
     }
@@ -45,7 +45,7 @@ pub fn validate(config: &AppConfig) -> Result<(), ConfigError> {
     // Validate simulator config if present
     if let Some(ref sim) = config.simulator {
         match sim.backend.as_str() {
-            "gazebo" | "jmavsim" => {},
+            "gazebo" | "jmavsim" => {}
             _ => return Err(ConfigError::ValidationError),
         }
     }

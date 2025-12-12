@@ -87,6 +87,12 @@ pub struct TelemetryQueue<const N: usize, const FRAME_SIZE: usize> {
     full: bool,
 }
 
+impl<const N: usize, const FRAME_SIZE: usize> Default for TelemetryQueue<N, FRAME_SIZE> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize, const FRAME_SIZE: usize> TelemetryQueue<N, FRAME_SIZE> {
     /// Create a new empty queue
     ///

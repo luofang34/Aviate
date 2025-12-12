@@ -3,15 +3,14 @@
 //! Implements USB DFU (Device Firmware Update) mode
 
 use aviate_boot_core::UpdateBackend;
+use core::mem::MaybeUninit;
 use stm32h7xx_hal::{pac, prelude::*, usb_hs};
 use usb_device::prelude::*;
 use usbd_dfu::*;
-use core::mem::MaybeUninit;
 
 // Import memory layout constants from chip configuration
 use crate::memory::{
-    FLASH_BASE, APP_START, FLASH_END, SECTOR_SIZE,
-    FLASH_KEY1, FLASH_KEY2, DFU_MEM_INFO,
+    APP_START, DFU_MEM_INFO, FLASH_BASE, FLASH_END, FLASH_KEY1, FLASH_KEY2, SECTOR_SIZE,
 };
 
 // Transfer buffer size (must match TRANSFER_SIZE)
@@ -37,8 +36,14 @@ impl FlashMemory {
 
     fn unlock(&mut self) {
         if self.flash.bank1().cr.read().lock().bit_is_set() {
-            self.flash.bank1().keyr.write(|w| unsafe { w.bits(FLASH_KEY1) });
-            self.flash.bank1().keyr.write(|w| unsafe { w.bits(FLASH_KEY2) });
+            self.flash
+                .bank1()
+                .keyr
+                .write(|w| unsafe { w.bits(FLASH_KEY1) });
+            self.flash
+                .bank1()
+                .keyr
+                .write(|w| unsafe { w.bits(FLASH_KEY2) });
         }
     }
 
@@ -69,14 +74,16 @@ impl FlashMemory {
         self.wait_ready();
 
         // Clear error flags
-        self.flash.bank1().ccr.write(|w| unsafe { w.bits(0x0FEF_0000) });
+        self.flash
+            .bank1()
+            .ccr
+            .write(|w| unsafe { w.bits(0x0FEF_0000) });
 
         // Start sector erase
-        self.flash.bank1().cr.modify(|_, w| unsafe {
-            w.ser().set_bit()
-                .snb().bits(sector & 0x7)
-                .start().set_bit()
-        });
+        self.flash
+            .bank1()
+            .cr
+            .modify(|_, w| unsafe { w.ser().set_bit().snb().bits(sector & 0x7).start().set_bit() });
 
         self.erase_pending = true;
     }
@@ -89,7 +96,10 @@ impl FlashMemory {
         buffer[..copy_len].copy_from_slice(&data[..copy_len]);
 
         // Clear error flags
-        self.flash.bank1().ccr.write(|w| unsafe { w.bits(0x0FEF_0000) });
+        self.flash
+            .bank1()
+            .ccr
+            .write(|w| unsafe { w.bits(0x0FEF_0000) });
 
         // Enable programming
         self.flash.bank1().cr.modify(|_, w| w.pg().set_bit());
@@ -116,7 +126,10 @@ impl FlashMemory {
 
         // Clear error flags if any
         if self.flash.bank1().sr.read().bits() & 0x0FEF_0000 != 0 {
-            self.flash.bank1().ccr.write(|w| unsafe { w.bits(0x0FEF_0000) });
+            self.flash
+                .bank1()
+                .ccr
+                .write(|w| unsafe { w.bits(0x0FEF_0000) });
         }
 
         // Disable programming
@@ -143,9 +156,7 @@ impl DFUMemIO for FlashMemory {
             return Err(DFUMemError::Address);
         }
 
-        let slice = unsafe {
-            core::slice::from_raw_parts(address as *const u8, length)
-        };
+        let slice = unsafe { core::slice::from_raw_parts(address as *const u8, length) };
         Ok(slice)
     }
 
@@ -220,10 +231,14 @@ impl DFUMemIO for FlashMemory {
 /// PA8 VBUS sensing configuration using PAC
 fn configure_vbus_sensing(gpioa: &pac::GPIOA) {
     // Set PA8 to input mode (clear bits 16-17 in MODER)
-    gpioa.moder.modify(|r, w| unsafe { w.bits(r.bits() & !(0b11 << 16)) });
+    gpioa
+        .moder
+        .modify(|r, w| unsafe { w.bits(r.bits() & !(0b11 << 16)) });
 
     // Set PA8 pull-down (10 in bits 16-17 of PUPDR)
-    gpioa.pupdr.modify(|r, w| unsafe { w.bits((r.bits() & !(0b11 << 16)) | (0b10 << 16)) });
+    gpioa
+        .pupdr
+        .modify(|r, w| unsafe { w.bits((r.bits() & !(0b11 << 16)) | (0b10 << 16)) });
 }
 
 pub struct Stm32h743UpdateBackend {
@@ -247,9 +262,7 @@ impl UpdateBackend for Stm32h743UpdateBackend {
         let pwrcfg = pwr.freeze();
 
         let rcc = dp.RCC.constrain();
-        let mut ccdr = rcc
-            .sys_ck(80.MHz())
-            .freeze(pwrcfg, &dp.SYSCFG);
+        let mut ccdr = rcc.sys_ck(80.MHz()).freeze(pwrcfg, &dp.SYSCFG);
 
         // Use HSI48 for USB clock
         if ccdr.clocks.hsi48_ck().is_none() {
@@ -261,7 +274,7 @@ impl UpdateBackend for Stm32h743UpdateBackend {
         ccdr.peripheral.kernel_usb_clk_mux(UsbClkSel::Hsi48);
 
         // Configure GPIO
-        let gpioa_pac = dp.GPIOA;  // Keep PAC reference for VBUS
+        let gpioa_pac = dp.GPIOA; // Keep PAC reference for VBUS
         configure_vbus_sensing(&gpioa_pac);
 
         // Split GPIOA for USB pins (consumes gpioa_pac)

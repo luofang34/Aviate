@@ -32,11 +32,11 @@ use crate::mission::{
 };
 use crate::{PortSlot, XilNetConfig};
 
-use aviate_link::mavlink::{
-    mav_cmd, parse_mavlink, serialize_mavlink, MavAutopilot, MavMessage, MavState, MavType,
-};
 use aviate_link::mavlink::protocol::{
     CommandLong, Heartbeat, SetAttitudeTarget, SetPositionTargetLocalNed,
+};
+use aviate_link::mavlink::{
+    mav_cmd, parse_mavlink, serialize_mavlink, MavAutopilot, MavMessage, MavState, MavType,
 };
 
 // ============================================================================

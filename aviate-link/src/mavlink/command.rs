@@ -177,7 +177,8 @@ impl<T: FrameRx> CommandLink for MavlinkCommandLink<T> {
         }
 
         // Parse MAVLink frame (extracts signature if present)
-        let (msg, mav_sig, consumed) = parse_mavlink(&buf[..len]).map_err(|_| LinkError::ParseError)?;
+        let (msg, mav_sig, consumed) =
+            parse_mavlink(&buf[..len]).map_err(|_| LinkError::ParseError)?;
 
         // Convert MAVLink signature to SignatureMeta (if present)
         let signature = mav_sig.map(|sig| SignatureMeta {

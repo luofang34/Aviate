@@ -11,8 +11,8 @@
 /// Boot magic constants (used internally by chip backends for encoding)
 pub mod magic {
     pub const BOOT_TO_BOOTLOADER: u32 = 0xb0_07_b0_07;
-    pub const CRASH_DETECTED:     u32 = 0xde_ad_be_ef;
-    pub const FIRMWARE_OK:        u32 = 0xb0_09_3a_26;
+    pub const CRASH_DETECTED: u32 = 0xde_ad_be_ef;
+    pub const FIRMWARE_OK: u32 = 0xb0_09_3a_26;
 }
 
 /// Boot/reset reason (MCU-specific)
@@ -29,8 +29,8 @@ pub enum BootReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BootFlags {
     pub want_bootloader: bool,
-    pub crash_detected:  bool,
-    pub firmware_ok:     bool,
+    pub crash_detected: bool,
+    pub firmware_ok: bool,
 }
 
 /// Crash/boot flag backend (implemented by each MCU)
@@ -126,44 +126,70 @@ impl<T> BootBackend for T where T: CrashBackend + StatusLeds + Delay + UpdateBac
 
 /// Generic combined backend (reusable across all chips)
 pub struct CombinedBackend<C, L, Dly, Upd, App> {
-    pub crash:  C,
-    pub leds:   L,
-    pub delay:  Dly,
+    pub crash: C,
+    pub leds: L,
+    pub delay: Dly,
     pub update: Upd,
-    pub app:    App,
+    pub app: App,
 }
 
 impl<C, L, Dly, Upd, App> CombinedBackend<C, L, Dly, Upd, App> {
     pub fn new(crash: C, leds: L, delay: Dly, update: Upd, app: App) -> Self {
-        Self { crash, leds, delay, update, app }
+        Self {
+            crash,
+            leds,
+            delay,
+            update,
+            app,
+        }
     }
 }
 
 // Trait delegations
 impl<C: CrashBackend, L, Dly, Upd, App> CrashBackend for CombinedBackend<C, L, Dly, Upd, App> {
-    fn load_flags(&self) -> BootFlags { self.crash.load_flags() }
-    fn store_flags(&mut self, flags: BootFlags) { self.crash.store_flags(flags) }
-    fn boot_reason(&self) -> BootReason { self.crash.boot_reason() }
+    fn load_flags(&self) -> BootFlags {
+        self.crash.load_flags()
+    }
+    fn store_flags(&mut self, flags: BootFlags) {
+        self.crash.store_flags(flags)
+    }
+    fn boot_reason(&self) -> BootReason {
+        self.crash.boot_reason()
+    }
     // Default helpers use load/store, so no more methods needed
 }
 
 impl<C, L: StatusLeds, Dly, Upd, App> StatusLeds for CombinedBackend<C, L, Dly, Upd, App> {
-    fn set_red(&mut self, on: bool) { self.leds.set_red(on) }
-    fn set_green(&mut self, on: bool) { self.leds.set_green(on) }
-    fn set_blue(&mut self, on: bool) { self.leds.set_blue(on) }
+    fn set_red(&mut self, on: bool) {
+        self.leds.set_red(on)
+    }
+    fn set_green(&mut self, on: bool) {
+        self.leds.set_green(on)
+    }
+    fn set_blue(&mut self, on: bool) {
+        self.leds.set_blue(on)
+    }
 }
 
 impl<C, L, Dly: Delay, Upd, App> Delay for CombinedBackend<C, L, Dly, Upd, App> {
-    fn delay_ms(&mut self, ms: u32) { self.delay.delay_ms(ms) }
+    fn delay_ms(&mut self, ms: u32) {
+        self.delay.delay_ms(ms)
+    }
 }
 
 impl<C, L, Dly, Upd: UpdateBackend, App> UpdateBackend for CombinedBackend<C, L, Dly, Upd, App> {
-    fn enter_update_mode(&mut self) -> ! { self.update.enter_update_mode() }
+    fn enter_update_mode(&mut self) -> ! {
+        self.update.enter_update_mode()
+    }
 }
 
 impl<C, L, Dly, Upd, App: AppBackend> AppBackend for CombinedBackend<C, L, Dly, Upd, App> {
-    fn validate_app(&self, app_start: u32) -> bool { self.app.validate_app(app_start) }
-    unsafe fn jump_to_app(&self, app_start: u32) -> ! { self.app.jump_to_app(app_start) }
+    fn validate_app(&self, app_start: u32) -> bool {
+        self.app.validate_app(app_start)
+    }
+    unsafe fn jump_to_app(&self, app_start: u32) -> ! {
+        self.app.jump_to_app(app_start)
+    }
 }
 
 /// Application start address (chip-specific, but 0x0802_0000 for most STM32)
@@ -172,7 +198,7 @@ pub const APP_START: u32 = 0x0802_0000;
 /// Bootloader state machine (MCU-agnostic)
 /// Priority: crash > explicit bootloader request > app validation > jump or DFU
 pub fn boot_sequence<B: BootBackend>(mut backend: B) -> ! {
-    let flags  = backend.load_flags();
+    let flags = backend.load_flags();
     let _reason = backend.boot_reason(); // For future use
 
     // 1. Crash detected → indicate + enter update mode (only with software-dfu feature)

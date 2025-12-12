@@ -66,7 +66,7 @@ impl AccelRange {
     }
 
     /// Convert to bmi2 crate's AccRange
-    fn to_bmi2(&self) -> Bmi2AccRange {
+    fn to_bmi2(self) -> Bmi2AccRange {
         match self {
             AccelRange::G2 => Bmi2AccRange::Range2g,
             AccelRange::G4 => Bmi2AccRange::Range4g,
@@ -106,7 +106,7 @@ impl GyroRange {
     }
 
     /// Convert to bmi2 crate's GyrRange
-    fn to_bmi2(&self) -> Bmi2GyrRange {
+    fn to_bmi2(self) -> Bmi2GyrRange {
         Bmi2GyrRange {
             range: match self {
                 GyroRange::Dps125 => GyrRangeVal::Range125,

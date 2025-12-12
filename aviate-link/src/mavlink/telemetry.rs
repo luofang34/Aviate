@@ -240,7 +240,14 @@ impl<T: FrameTx> TelemetryBackend for MavlinkTelemetry<T> {
 
     fn send_state(&mut self, state: &StateEstimate, time_ms: u32) -> TelemetryResult<()> {
         let mut buf = [0u8; 256];
-        let len = format_attitude(state, time_ms, self.sys_id, self.comp_id, &mut self.seq, &mut buf)?;
+        let len = format_attitude(
+            state,
+            time_ms,
+            self.sys_id,
+            self.comp_id,
+            &mut self.seq,
+            &mut buf,
+        )?;
         self.tx
             .try_send(&buf[..len])
             .map_err(TelemetryError::Transport)

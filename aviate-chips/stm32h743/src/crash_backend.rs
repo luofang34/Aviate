@@ -7,7 +7,7 @@
 //!
 //! Addresses verified from PAC: pac::RTC::ptr() = 0x5800_4000
 
-use aviate_boot_core::{BootFlags, BootReason, CrashBackend, magic};
+use aviate_boot_core::{magic, BootFlags, BootReason, CrashBackend};
 use stm32h7xx_hal::pac;
 
 pub struct Stm32h743CrashBackend {
@@ -41,8 +41,8 @@ impl CrashBackend for Stm32h743CrashBackend {
 
         BootFlags {
             want_bootloader: bk0 == magic::BOOT_TO_BOOTLOADER,
-            crash_detected:  bk1 == magic::CRASH_DETECTED,
-            firmware_ok:     bk2 == magic::FIRMWARE_OK,
+            crash_detected: bk1 == magic::CRASH_DETECTED,
+            firmware_ok: bk2 == magic::FIRMWARE_OK,
         }
     }
 
@@ -50,9 +50,21 @@ impl CrashBackend for Stm32h743CrashBackend {
         self.enable_backup_access();
 
         // Encode logical booleans to magic values
-        let bk0 = if flags.want_bootloader { magic::BOOT_TO_BOOTLOADER } else { 0 };
-        let bk1 = if flags.crash_detected  { magic::CRASH_DETECTED } else { 0 };
-        let bk2 = if flags.firmware_ok     { magic::FIRMWARE_OK } else { 0 };
+        let bk0 = if flags.want_bootloader {
+            magic::BOOT_TO_BOOTLOADER
+        } else {
+            0
+        };
+        let bk1 = if flags.crash_detected {
+            magic::CRASH_DETECTED
+        } else {
+            0
+        };
+        let bk2 = if flags.firmware_ok {
+            magic::FIRMWARE_OK
+        } else {
+            0
+        };
 
         self.rtc.bkpr[0].write(|w| unsafe { w.bits(bk0) });
         self.rtc.bkpr[1].write(|w| unsafe { w.bits(bk1) });

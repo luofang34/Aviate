@@ -20,7 +20,9 @@
 //! - `verify()`: O(msg_len), ~50 μs for 64-byte message (software HMAC)
 //! - `sign()`: O(msg_len), ~50 μs for 64-byte message (software HMAC)
 
-use aviate_hal_io::security::{CryptoAlgo, CryptoEngine, CryptoError, KeyPurpose, KeySelector, KeyStore};
+use aviate_hal_io::security::{
+    CryptoAlgo, CryptoEngine, CryptoError, KeyPurpose, KeySelector, KeyStore,
+};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
@@ -300,8 +302,7 @@ impl Stm32h7CryptoEngine {
     /// - Constant-time: YES (w.r.t. key and tag comparison)
     fn verify_hmac_sw(&self, key: &[u8], msg: &[u8], tag: &[u8]) -> Result<(), CryptoError> {
         // Create HMAC instance with key
-        let mut mac = HmacSha256::new_from_slice(key)
-            .map_err(|_| CryptoError::InvalidKey)?;
+        let mut mac = HmacSha256::new_from_slice(key).map_err(|_| CryptoError::InvalidKey)?;
 
         // Update with message
         mac.update(msg);
@@ -321,8 +322,7 @@ impl Stm32h7CryptoEngine {
     /// - WCET (engineering target): ~50 μs for 64-byte message @ 480 MHz
     fn sign_hmac_sw(&self, key: &[u8], msg: &[u8], out: &mut [u8]) -> Result<usize, CryptoError> {
         // Create HMAC instance with key
-        let mut mac = HmacSha256::new_from_slice(key)
-            .map_err(|_| CryptoError::InvalidKey)?;
+        let mut mac = HmacSha256::new_from_slice(key).map_err(|_| CryptoError::InvalidKey)?;
 
         // Update with message
         mac.update(msg);
@@ -385,12 +385,14 @@ mod tests {
         let mut tag = [0u8; 32];
 
         // Sign message
-        let len = crypto.sign(CryptoAlgo::HmacSha256, key, msg, &mut tag)
+        let len = crypto
+            .sign(CryptoAlgo::HmacSha256, key, msg, &mut tag)
             .expect("sign should succeed");
         assert_eq!(len, 32);
 
         // Verify signature
-        crypto.verify(CryptoAlgo::HmacSha256, key, msg, &tag)
+        crypto
+            .verify(CryptoAlgo::HmacSha256, key, msg, &tag)
             .expect("verify should succeed");
 
         // Tamper with tag - verification should fail

@@ -105,16 +105,18 @@ fn main() -> ExitCode {
     };
 
     // Validate configuration
-    if let Err(_) = aviate_config::validate(&app_config) {
+    if aviate_config::validate(&app_config).is_err() {
         eprintln!("[ERROR] Invalid configuration in AviateApp.toml");
         return ExitCode::FAILURE;
     }
 
     // Extract simulator config (CLI args override TOML defaults)
-    let headless = opts.headless || app_config.simulator
-        .as_ref()
-        .map(|s| s.headless)
-        .unwrap_or(false);
+    let headless = opts.headless
+        || app_config
+            .simulator
+            .as_ref()
+            .map(|s| s.headless)
+            .unwrap_or(false);
 
     // Print banner
     println!("===========================================");

@@ -177,7 +177,7 @@ mod tests {
         assert!(window.check_and_update(5, 1000).is_ok());
         // Replay with same timestamp
         match window.check_and_update(5, 1000) {
-            Err(AuthError::ReplayAttack) => {},
+            Err(AuthError::ReplayAttack) => {}
             _ => panic!("Expected ReplayAttack error"),
         }
     }
@@ -188,7 +188,7 @@ mod tests {
         assert!(window.check_and_update(5, 1000).is_ok());
         // Replay with older timestamp
         match window.check_and_update(5, 999) {
-            Err(AuthError::ReplayAttack) => {},
+            Err(AuthError::ReplayAttack) => {}
             _ => panic!("Expected ReplayAttack error"),
         }
     }
@@ -221,7 +221,7 @@ mod tests {
         let mut window = AntiReplayWindow::new();
         // Timestamp=0 rejected if it's not the first (all start at 0)
         match window.check_and_update(5, 0) {
-            Err(AuthError::ReplayAttack) => {},
+            Err(AuthError::ReplayAttack) => {}
             _ => panic!("Expected ReplayAttack for timestamp=0"),
         }
     }

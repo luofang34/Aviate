@@ -32,6 +32,7 @@ use embedded_hal::i2c::I2c;
 // Register Addresses
 // =============================================================================
 
+#[allow(dead_code)]
 mod reg {
     pub const PSR_B2: u8 = 0x00; // Pressure MSB
     pub const PSR_B1: u8 = 0x01;
@@ -259,7 +260,7 @@ where
 
         // Set bit shift for >8x oversampling
         self.write_reg(reg::CFG_REG, 0x04)?; // P_SHIFT=1, T_SHIFT=0
-        // Note: T_SHIFT should also be set for >8x temp oversampling
+                                             // Note: T_SHIFT should also be set for >8x temp oversampling
         self.write_reg(reg::CFG_REG, 0x0C)?; // P_SHIFT=1, T_SHIFT=1
 
         // Start continuous pressure and temperature measurement
@@ -297,8 +298,7 @@ where
         }
 
         // c10: 20 bits
-        self.coef.c10 =
-            (((buf[5] & 0x0F) as i32) << 16) | ((buf[6] as i32) << 8) | (buf[7] as i32);
+        self.coef.c10 = (((buf[5] & 0x0F) as i32) << 16) | ((buf[6] as i32) << 8) | (buf[7] as i32);
         if self.coef.c10 > 524287 {
             self.coef.c10 -= 1048576;
         }

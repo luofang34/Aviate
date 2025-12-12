@@ -28,11 +28,11 @@ impl Stm32h743DelayBackend {
 
         // Get base clock frequency
         let base_freq = match sws {
-            0 => 64_000_000,  // HSI (64 MHz) - DEFAULT after reset
-            1 => 4_000_000,   // CSI (4 MHz)
-            2 => 32_768,      // HSE (varies)
-            3 => 64_000_000,  // PLL (assume HSI source in bootloader)
-            _ => 64_000_000,  // Default to HSI
+            0 => 64_000_000, // HSI (64 MHz) - DEFAULT after reset
+            1 => 4_000_000,  // CSI (4 MHz)
+            2 => 32_768,     // HSE (varies)
+            3 => 64_000_000, // PLL (assume HSI source in bootloader)
+            _ => 64_000_000, // Default to HSI
         };
 
         // Read AHB prescaler (HPRE field in D1CFGR) to get actual CPU frequency
@@ -73,7 +73,7 @@ impl Stm32h743DelayBackend {
         }
         let end = cp.DWT.cyccnt.read();
 
-        end > start  // Return true only if counter is working
+        end > start // Return true only if counter is working
     }
 
     /// Delay using DWT cycle counter (accurate)
@@ -95,7 +95,7 @@ impl Stm32h743DelayBackend {
     #[inline(never)]
     fn delay_nop(&self, ms: u32) {
         let iterations = if ms == 500 {
-            25_000  // Exactly 1/20th of 500_000 (which gave 10s)
+            25_000 // Exactly 1/20th of 500_000 (which gave 10s)
         } else {
             ms * 50
         };
@@ -104,8 +104,10 @@ impl Stm32h743DelayBackend {
         let mut counter: u32 = 0;
         for _ in 0..iterations {
             unsafe {
-                core::ptr::write_volatile(&mut counter,
-                    core::ptr::read_volatile(&counter).wrapping_add(1));
+                core::ptr::write_volatile(
+                    &mut counter,
+                    core::ptr::read_volatile(&counter).wrapping_add(1),
+                );
             }
             cortex_m::asm::nop();
         }

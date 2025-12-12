@@ -2,9 +2,9 @@
 //!
 //! Controls RGB LEDs using GPIO HAL
 
+use crate::{Port, Stm32LedMetadata};
 use aviate_boot_core::StatusLeds;
 use stm32h7xx_hal::pac;
-use crate::{Port, Stm32LedMetadata};
 
 pub struct Stm32h743LedBackend {
     gpio: pac::GPIOE,

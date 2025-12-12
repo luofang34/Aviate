@@ -44,7 +44,10 @@ fn main() -> Result<()> {
             print_usage();
         }
         cmd => {
-            bail!("Unknown command: {}. Use 'cargo xtask help' for usage.", cmd);
+            bail!(
+                "Unknown command: {}. Use 'cargo xtask help' for usage.",
+                cmd
+            );
         }
     }
 
@@ -154,9 +157,7 @@ fn enter_dfu_mode(port: Option<&str>) -> Result<()> {
         Some(caps) => caps.get(1).unwrap().as_str(),
         None => {
             eprintln!("Response: {}", response_str);
-            bail!(
-                "No confirmation code received. Is software-bootloader feature enabled?"
-            );
+            bail!("No confirmation code received. Is software-bootloader feature enabled?");
         }
     };
 
@@ -205,9 +206,7 @@ fn wait_for_dfu_device() -> Result<()> {
         }
     }
 
-    bail!(
-        "Timeout waiting for DFU device. Check if bootloader is properly installed."
-    )
+    bail!("Timeout waiting for DFU device. Check if bootloader is properly installed.")
 }
 
 /// Build and flash an app in one step
@@ -220,9 +219,7 @@ fn run_app(app_name: &str, port: Option<&str>) -> Result<()> {
     };
 
     // The binary name is the part after aviate-app-
-    let bin_name = app_crate
-        .strip_prefix("aviate-app-")
-        .unwrap_or(app_name);
+    let bin_name = app_crate.strip_prefix("aviate-app-").unwrap_or(app_name);
 
     eprintln!("Building {}...", app_crate);
 
@@ -244,10 +241,7 @@ fn run_app(app_name: &str, port: Option<&str>) -> Result<()> {
     }
 
     // Convert ELF to binary
-    let elf_path = format!(
-        "target/thumbv7em-none-eabihf/release/{}",
-        bin_name
-    );
+    let elf_path = format!("target/thumbv7em-none-eabihf/release/{}", bin_name);
     let bin_path = format!("/tmp/{}.bin", bin_name);
 
     eprintln!("Converting {} to binary...", elf_path);
@@ -258,9 +252,7 @@ fn run_app(app_name: &str, port: Option<&str>) -> Result<()> {
         .output()
         .is_err()
     {
-        bail!(
-            "arm-none-eabi-objcopy not found. Please install ARM toolchain."
-        );
+        bail!("arm-none-eabi-objcopy not found. Please install ARM toolchain.");
     }
 
     let status = Command::new("arm-none-eabi-objcopy")

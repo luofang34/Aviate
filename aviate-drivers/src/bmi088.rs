@@ -96,7 +96,7 @@ impl GyroRange {
     }
 
     /// Convert to bmi088 crate's dps value
-    fn to_dps(&self) -> u32 {
+    fn to_dps(self) -> u32 {
         match self {
             GyroRange::Dps125 => 125,
             GyroRange::Dps250 => 250,
@@ -232,10 +232,7 @@ where
 {
     fn read(&mut self) -> SensorResult<RawImuReading> {
         // Read accelerometer
-        let accel_raw = self
-            .accel
-            .get_accel()
-            .map_err(|_| SensorError::BusError)?;
+        let accel_raw = self.accel.get_accel().map_err(|_| SensorError::BusError)?;
 
         // Read gyroscope
         let gyro_raw = self.gyro.get_gyro().map_err(|_| SensorError::BusError)?;

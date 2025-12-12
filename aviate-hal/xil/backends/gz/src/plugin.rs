@@ -66,8 +66,10 @@ extern "C" {
     fn aviate_gz_init_instance(instance: c_int) -> c_int;
     fn aviate_gz_shutdown_instance(instance: c_int);
     fn aviate_gz_get_model_state_instance(instance: c_int, out: *mut AviateModelState) -> c_int;
-    fn aviate_gz_set_motor_speeds_instance(instance: c_int, cmd: *const AviateMotorCommand)
-        -> c_int;
+    fn aviate_gz_set_motor_speeds_instance(
+        instance: c_int,
+        cmd: *const AviateMotorCommand,
+    ) -> c_int;
     fn aviate_gz_get_sim_time_us_instance(instance: c_int) -> u64;
     fn aviate_gz_is_connected_instance(instance: c_int) -> c_int;
     fn aviate_gz_set_lockstep_instance(instance: c_int, enabled: c_int);
@@ -205,8 +207,7 @@ impl GzPluginBridge {
         cmd.velocities[..n].copy_from_slice(&velocities[..n]);
         cmd.num_motors = n as c_int;
 
-        let result =
-            unsafe { aviate_gz_set_motor_speeds_instance(self.instance as c_int, &cmd) };
+        let result = unsafe { aviate_gz_set_motor_speeds_instance(self.instance as c_int, &cmd) };
         if result == 0 {
             Ok(())
         } else {
@@ -239,7 +240,9 @@ impl GzPluginBridge {
         if !self.initialized {
             return;
         }
-        unsafe { aviate_gz_set_lockstep_instance(self.instance as c_int, if enabled { 1 } else { 0 }) }
+        unsafe {
+            aviate_gz_set_lockstep_instance(self.instance as c_int, if enabled { 1 } else { 0 })
+        }
     }
 
     /// Get the current simulation step count

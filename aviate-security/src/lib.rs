@@ -71,13 +71,13 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-pub mod errors;
-pub mod auth;
 pub mod anti_replay;
+pub mod auth;
+pub mod errors;
 pub mod gateway;
 
 // Re-export key types
-pub use auth::{CommandAuth, PlainAuth, SignedAuth};
 pub use anti_replay::AntiReplayWindow;
+pub use auth::{CommandAuth, PlainAuth, SignedAuth};
 pub use errors::{AuthError, GatewayError};
 pub use gateway::CommandGateway;

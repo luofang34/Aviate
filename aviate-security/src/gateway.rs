@@ -170,7 +170,7 @@ impl<L: CommandLink, A: CommandAuth> CommandGateway<L, A> {
         match self.link.poll_command(now_ms)? {
             None => {
                 // No command available (not an error)
-                return Ok(None);
+                Ok(None)
             }
             Some(cmd) => {
                 // Step 2: Verify command authenticity
@@ -203,10 +203,10 @@ impl<L: CommandLink, A: CommandAuth> CommandGateway<L, A> {
 #[cfg(test)]
 mod tests {
     extern crate alloc;
-    use alloc::vec;
-    use alloc::vec::Vec;
     use super::*;
     use crate::auth::PlainAuth;
+    use alloc::vec;
+    use alloc::vec::Vec;
     use aviate_link::command::{CommandKind, SignatureMeta};
     use aviate_link::errors::LinkResult;
 

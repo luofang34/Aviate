@@ -116,8 +116,8 @@ impl From<std::io::Error> for GzBridgeError {
 mod ffi_bridge {
     use super::*;
     use crate::plugin::{enu_to_ned_f32, enu_vel_to_ned_f32, GzPluginBridge, GzPluginError};
-    use aviate_link::mavlink::{serialize_mavlink, MavMessage};
     use aviate_link::mavlink::protocol::LocalPositionNed;
+    use aviate_link::mavlink::{serialize_mavlink, MavMessage};
     use std::net::UdpSocket;
     use std::time::Instant;
 

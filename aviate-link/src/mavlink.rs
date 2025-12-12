@@ -70,15 +70,14 @@
 //! }
 //! ```
 
-pub mod protocol;
 pub mod command;
+pub mod protocol;
 pub mod telemetry;
 
 // Re-export protocol types for convenience
 pub use protocol::{
-    MavAutopilot, MavComponent, MavModeFlag, MavState, MavType,
-    mav_cmd, mav_result,
-    parse_mavlink, serialize_mavlink, MavMessage,
+    mav_cmd, mav_result, parse_mavlink, serialize_mavlink, MavAutopilot, MavComponent, MavMessage,
+    MavModeFlag, MavState, MavType,
 };
 
 // Re-export link implementations

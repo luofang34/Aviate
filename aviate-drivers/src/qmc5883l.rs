@@ -34,6 +34,7 @@ use crate::Rotation;
 // Register Addresses
 // =============================================================================
 
+#[allow(dead_code)]
 mod reg {
     pub const DATA_X_LSB: u8 = 0x00;
     pub const DATA_X_MSB: u8 = 0x01;

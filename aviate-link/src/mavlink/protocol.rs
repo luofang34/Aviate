@@ -609,7 +609,9 @@ pub fn parse_mavlink(buf: &[u8]) -> Result<(MavMessage, Option<MavSignature>, us
     // Extract signature if present
     let signature = if is_signed {
         let sig_offset = crc_offset + 2; // After CRC
-        Some(parse_signature(&buf[sig_offset..sig_offset + MAVLINK_SIGNATURE_LEN]))
+        Some(parse_signature(
+            &buf[sig_offset..sig_offset + MAVLINK_SIGNATURE_LEN],
+        ))
     } else {
         None
     };

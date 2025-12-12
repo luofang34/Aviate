@@ -49,11 +49,12 @@ use aviate_core::time::{TimeSource, Timestamp};
 
 use aviate_hal_io::{GnssFix, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading};
 
-use aviate_link::mavlink::{
-    mav_cmd, parse_mavlink, serialize_mavlink, MavAutopilot, MavMessage, MavModeFlag, MavState, MavType,
-};
 use aviate_link::mavlink::protocol::{
     CommandLong, Heartbeat, SetAttitudeTarget, SetPositionTargetLocalNed,
+};
+use aviate_link::mavlink::{
+    mav_cmd, parse_mavlink, serialize_mavlink, MavAutopilot, MavMessage, MavModeFlag, MavState,
+    MavType,
 };
 
 use crate::sim_types::{SimActuatorCmd, SimGnssFix, SimSensorPacket};

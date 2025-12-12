@@ -184,7 +184,8 @@ impl<K: KeyStore, C: CryptoEngine> SignedAuth<K, C> {
         // Per MAVLink spec: HMAC includes everything up to (but not including) signature
         let mut computed_sig = [0u8; 32]; // Full HMAC-SHA256 output
         use aviate_hal_io::security::CryptoAlgo;
-        self.crypto.sign(CryptoAlgo::HmacSha256, key, raw_frame, &mut computed_sig)?;
+        self.crypto
+            .sign(CryptoAlgo::HmacSha256, key, raw_frame, &mut computed_sig)?;
 
         // Compare first 6 bytes (MAVLink uses truncated HMAC)
         // Use constant-time comparison to prevent timing attacks
@@ -220,8 +221,8 @@ impl<K: KeyStore, C: CryptoEngine> CommandAuth for SignedAuth<K, C> {
 #[cfg(test)]
 mod tests {
     extern crate alloc;
-    use alloc::vec;
     use super::*;
+    use alloc::vec;
     use aviate_link::command::{CommandKind, SignatureMeta};
 
     #[test]

@@ -28,19 +28,18 @@
 
 extern crate alloc;
 
-mod types;
 mod parser;
+mod types;
 mod validation;
 
-pub use types::*;
 pub use parser::from_toml_str;
+pub use types::*;
 pub use validation::validate;
 
 // Convenience for desktop/SITL tools (std only)
 #[cfg(feature = "std")]
 pub fn load_config_from_path(path: &std::path::Path) -> Result<AppConfig, ConfigError> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|_| ConfigError::IoError)?;
+    let content = std::fs::read_to_string(path).map_err(|_| ConfigError::IoError)?;
     from_toml_str(&content)
 }
 
