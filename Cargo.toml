@@ -1,14 +1,18 @@
 [workspace]
 members = [
     "aviate-core",
-    "aviate-mavlink",
     "aviate-drivers",
+    "aviate-config",    # Configuration parsing (TOML, low-DAL only)
+    "aviate-runtime",   # Control loop, task scheduling, wiring (env-flight/env-sitl/env-hitl)
     "aviate-airframes/multirotor",
     "aviate-airframes/fixed-wing",
     "aviate-hal/io",
+    "aviate-hal/stm32h7",
     "aviate-hal/xil",
     "aviate-hal/xil/backends/gz",
     "aviate-hal/xil/backends/mavlink-hil",
+    "aviate-link",  # Note: MAVLink protocol now integrated in aviate-link/src/mavlink/
+    "aviate-security",
     "aviate-boards/sitl-gazebo",
     "aviate-boards/sitl-jmavsim",
     "aviate-boards/micoair-h743-v2",
@@ -21,6 +25,9 @@ exclude = [
     "external/spl06-007",
     "external/qmc5883l",
     "external/PX4-gazebo-models",
+    "aviate-bootloader",        # Bootloader has separate workspace (different target/memory layout)
+    "aviate-boot-core",         # Bootloader-specific protocol layer
+    "aviate-chips",             # Bootloader-specific chip backends
 ]
 resolver = "2"
 

@@ -49,9 +49,11 @@ use aviate_core::time::{TimeSource, Timestamp};
 
 use aviate_hal_io::{GnssFix, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading};
 
-use aviate_mavlink::{
-    mav_cmd, parse_mavlink, serialize_mavlink, CommandLong, Heartbeat, MavAutopilot, MavMessage,
-    MavModeFlag, MavState, MavType, SetAttitudeTarget, SetPositionTargetLocalNed,
+use aviate_link::mavlink::{
+    mav_cmd, parse_mavlink, serialize_mavlink, MavAutopilot, MavMessage, MavModeFlag, MavState, MavType,
+};
+use aviate_link::mavlink::protocol::{
+    CommandLong, Heartbeat, SetAttitudeTarget, SetPositionTargetLocalNed,
 };
 
 use crate::sim_types::{SimActuatorCmd, SimGnssFix, SimSensorPacket};
@@ -280,7 +282,7 @@ impl SitlIO {
     /// Process received MAVLink data
     fn process_mavlink_data(&mut self, data: &[u8], src: std::net::SocketAddr) {
         match parse_mavlink(data) {
-            Ok((msg, _consumed)) => {
+            Ok((msg, _sig, _consumed)) => {
                 self.rx_count += 1;
                 self.handle_message(msg, src);
             }

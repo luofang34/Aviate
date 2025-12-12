@@ -1,0 +1,37 @@
+[package]
+name = "aviate-hal-stm32h7"
+version = "0.1.0"
+edition = "2021"
+authors = ["Aviate Contributors"]
+license = "MIT OR Apache-2.0"
+description = "STM32H7 family HAL primitives for Aviate flight control system"
+keywords = ["embedded", "stm32h7", "hal", "flight-control", "no-std"]
+categories = ["embedded", "no-std"]
+
+[features]
+default = []
+# Enable OTP-based secure key storage (production)
+secure-keys = []
+# Enable hardware crypto acceleration (HASH/CRYP peripherals)
+hw-crypto = []
+
+[dependencies]
+# HAL trait definitions
+aviate-hal-io = { path = "../io" }
+
+# Embedded HAL traits
+embedded-hal = "1.0"
+
+# STM32H7xx HAL (optional, for peripherals like USB, UART, CAN)
+# Not included by default as chip HAL may be used without hardware
+# stm32h7xx-hal = { version = "0.16", optional = true }
+
+# Cryptography (software fallback)
+sha2 = { version = "0.10", default-features = false }
+hmac = { version = "0.12", default-features = false }
+
+[dev-dependencies]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

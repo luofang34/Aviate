@@ -34,9 +34,13 @@ use aviate_backend_gz::{enu_to_ned_f32, AviateModelState, GzPluginBridge};
 use aviate_hal_xil::{PortSlot, XilNetConfig};
 
 #[cfg(feature = "gz-plugin")]
-use aviate_mavlink::{
-    mav_cmd, parse_mavlink, serialize_mavlink, CommandLong, Heartbeat, MavAutopilot, MavMessage,
-    MavState, MavType, SetAttitudeTarget, SetPositionTargetLocalNed,
+use aviate_link::mavlink::{
+    mav_cmd, parse_mavlink, serialize_mavlink, MavAutopilot, MavMessage, MavState, MavType,
+};
+
+#[cfg(feature = "gz-plugin")]
+use aviate_link::mavlink::protocol::{
+    CommandLong, Heartbeat, SetAttitudeTarget, SetPositionTargetLocalNed,
 };
 
 /// MAVLink GCS client for sending commands to the FC
@@ -97,7 +101,7 @@ impl MavClient {
         let mut buf = [0u8; 512];
         match self.socket.recv_from(&mut buf) {
             Ok((len, _src)) => match parse_mavlink(&buf[..len]) {
-                Ok((msg, _)) => Some(msg),
+                Ok((msg, _sig, _consumed)) => Some(msg),
                 Err(_) => None,
             },
             Err(_) => None,

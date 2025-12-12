@@ -1,0 +1,23 @@
+[package]
+name = "aviate-link"
+version = "0.1.0"
+edition = "2021"
+authors = ["Aviate Contributors"]
+license = "MIT OR Apache-2.0"
+description = "Cross-protocol telemetry and command abstraction for Aviate flight control system"
+keywords = ["embedded", "telemetry", "mavlink", "flight-control", "no-std"]
+categories = ["embedded", "no-std"]
+
+[features]
+default = []
+
+[dependencies]
+aviate-core = { path = "../aviate-core" }
+aviate-hal-io = { path = "../aviate-hal/io" }
+# Note: MAVLink protocol is now integrated in src/mavlink/protocol.rs (no external dependency)
+
+[dev-dependencies]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

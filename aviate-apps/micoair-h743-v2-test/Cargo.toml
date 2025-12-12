@@ -17,7 +17,15 @@ default = ["software-bootloader"]
 software-bootloader = ["aviate-board-micoair-h743-v2/software-bootloader"]
 
 [dependencies]
+# Board (provides HAL traits + implementations via re-exports)
 aviate-board-micoair-h743-v2 = { path = "../../aviate-boards/micoair-h743-v2" }
+
+# Airframe (flight dynamics)
+aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor", features = ["quad-x"] }
+
+# Protocol and security layers (cross-cutting concerns)
+aviate-link = { path = "../../aviate-link" }
+aviate-security = { path = "../../aviate-security" }
 
 # STM32H7 HAL and support
 stm32h7xx-hal = { version = "0.16", features = ["stm32h743v", "rt", "usb_hs"] }

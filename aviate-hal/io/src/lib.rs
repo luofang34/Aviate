@@ -132,7 +132,9 @@
 pub mod board_hal;
 pub mod error;
 pub mod fake;
+pub mod security;
 pub mod traits;
+pub mod transport;
 
 // Main exports
 pub use board_hal::BoardHal;

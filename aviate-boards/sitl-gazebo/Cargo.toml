@@ -15,6 +15,7 @@ gz-plugin = ["aviate-backend-gz/gz-plugin"]
 
 [dependencies]
 aviate-core = { path = "../../aviate-core" }
+aviate-runtime = { path = "../../aviate-runtime", features = ["env-sitl"] }
 aviate-hal-io = { path = "../../aviate-hal/io" }
 aviate-hal-xil = { path = "../../aviate-hal/xil" }
 aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", optional = true }

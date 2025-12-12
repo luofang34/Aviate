@@ -1,0 +1,22 @@
+[package]
+name = "aviate-security"
+version = "0.1.0"
+edition = "2021"
+authors = ["Aviate Contributors"]
+license = "MIT OR Apache-2.0"
+description = "Security policy layer for Aviate flight control system"
+keywords = ["embedded", "security", "authentication", "no-std"]
+categories = ["embedded", "no-std"]
+
+[features]
+default = []
+
+[dependencies]
+aviate-hal-io = { path = "../aviate-hal/io" }
+aviate-link = { path = "../aviate-link" }
+
+[dev-dependencies]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

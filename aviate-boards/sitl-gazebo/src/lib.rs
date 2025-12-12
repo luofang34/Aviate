@@ -38,103 +38,25 @@ use std::io;
 
 use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
-use aviate_core::hal::{ActuatorHal, CommandHal, SensorHal, SystemCommand, SystemHal};
-use aviate_core::math::{Quaternion, Vector3};
-use aviate_core::mixer::{ActuatorCmd, ActuatorState, ModeConfig, QuadXMixer};
-use aviate_core::sensor::{BaroData, GnssData, ImuData, MagData, SensorReading, SensorSet};
-use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
-use aviate_core::types::{Meters, MetersPerSecond, Normalized, Seconds};
-use aviate_core::{AviateKernel, ChannelId, InitState};
+use aviate_core::mixer::{ActuatorCmd, ModeConfig, QuadXMixer};
+use aviate_core::time::{TimeSource, Timestamp};
+use aviate_core::types::Normalized;
+use aviate_core::AviateKernel;
 
+use aviate_runtime::SitlRunner;
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
-use aviate_hal_xil::{SimActuatorCmd, SitlConfig, SitlIO};
-
-/// Time source for SITL using std::time
-pub struct SitlTime {
-    start: std::time::Instant,
-}
-
-impl SitlTime {
-    fn new() -> Self {
-        Self {
-            start: std::time::Instant::now(),
-        }
-    }
-}
-
-impl aviate_hal_io::TimeSource for SitlTime {
-    fn now_us(&self) -> u64 {
-        self.start.elapsed().as_micros() as u64
-    }
-}
-
-/// Type alias for the SITL board's HAL
-///
-/// This is the same BoardHal that real hardware would use, just with
-/// fake sensor/actuator drivers instead of real hardware drivers.
-/// Implements both SensorHal and ActuatorHal.
-pub type SitlBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, SitlTime, FakeActuator>;
+use aviate_hal_xil::{SitlConfig, SitlIO};
 
 /// Gazebo SITL board configuration
 ///
 /// Uses the same BoardHal abstraction as real hardware boards, ensuring
 /// that SITL tests exercise the same code paths as real hardware.
+///
+/// **Phase 1**: Delegates to SitlRunner for control loop execution.
+/// This eliminates ~165 lines of duplication from the board implementation.
 pub struct GazeboSitlBoard {
-    /// SITL transport (receives sensor data, sends actuator commands)
-    transport: SitlIO,
-
-    /// Board HAL with fake sensors (same interface as real hardware)
-    /// This implements SensorHal via the generic BoardHal implementation
-    board_hal: SitlBoardHal,
-
-    /// Flight controller kernel
-    kernel: AviateKernel<MultirotorController, QuadXMixer>,
-
-    /// Last command received
-    last_cmd: Command,
-
-    /// Last IMU timestamp for dt calculation
-    last_imu_time: Option<u64>,
-
-    /// Cached sensor readings for kernel
-    sensor_cache: SensorCache,
-
-    /// EKF initialization flag
-    ekf_initialized: bool,
-}
-
-/// Cached sensor readings for kernel init
-struct SensorCache {
-    imu: Option<SensorReading<ImuData>>,
-    gnss: Option<SensorReading<GnssData>>,
-    baro: Option<SensorReading<BaroData>>,
-    mag: Option<SensorReading<MagData>>,
-}
-
-impl SensorCache {
-    fn new() -> Self {
-        Self {
-            imu: None,
-            gnss: None,
-            baro: None,
-            mag: None,
-        }
-    }
-
-    fn to_sensor_set(&self) -> SensorSet {
-        SensorSet {
-            imus: [
-                self.imu.unwrap_or_default(),
-                SensorReading::default(),
-                SensorReading::default(),
-            ],
-            gnss: [self.gnss.unwrap_or_default(), SensorReading::default()],
-            mags: [self.mag.unwrap_or_default(), SensorReading::default()],
-            baros: [self.baro.unwrap_or_default(), SensorReading::default()],
-            airspeeds: [SensorReading::default(), SensorReading::default()],
-            geometry: None,
-        }
-    }
+    /// SITL runner (encapsulates transport, board HAL, and kernel)
+    runner: SitlRunner,
 }
 
 impl GazeboSitlBoard {
@@ -152,7 +74,7 @@ impl GazeboSitlBoard {
         let fake_baro = FakeBaro::new();
         let fake_mag = FakeMag::new();
         let fake_gnss = FakeGnss::new();
-        let time = SitlTime::new();
+        let time = aviate_runtime::sim::SitlTime::new();
         let fake_actuator = FakeActuator::new();
 
         // Create BoardHal with fake sensors and actuator
@@ -167,17 +89,12 @@ impl GazeboSitlBoard {
         );
 
         let kernel = Self::create_kernel();
-        let last_cmd = Self::default_command();
+        let default_cmd = Self::default_command();
 
-        Ok(Self {
-            transport,
-            board_hal,
-            kernel,
-            last_cmd,
-            last_imu_time: None,
-            sensor_cache: SensorCache::new(),
-            ekf_initialized: false,
-        })
+        // Create SitlRunner with all components
+        let runner = SitlRunner::new(transport, board_hal, kernel, default_cmd);
+
+        Ok(Self { runner })
     }
 
     /// Create a new X500 SITL board with retry on port binding
@@ -246,176 +163,21 @@ impl GazeboSitlBoard {
 
     /// Run one iteration of the control loop
     ///
-    /// This:
-    /// 1. Polls MAVLink for HIL messages
-    /// 2. Feeds fake sensors with HIL data (via BoardHal accessors)
-    /// 3. Reads sensors via BoardHal's SensorHal implementation
-    /// 4. Runs the kernel
-    /// 5. Sends actuator commands via MAVLink
+    /// Delegates to SitlRunner for execution. See aviate-runtime/src/sim.rs
+    /// for the 12-step control loop implementation.
     ///
     /// Returns the actuator command that was sent.
     pub fn step(&mut self) -> ActuatorCmd {
-        // 1. Poll MAVLink for incoming messages
-        self.transport.poll();
-
-        // 2. Feed fake sensors with HIL data (via BoardHal accessors)
-        //    This is the key integration point - same pattern as real HW feeding real sensors
-        if let Some(sensor_data) = self.transport.take_sensor_data() {
-            // Feed IMU
-            self.board_hal.imu_mut().feed(sensor_data.imu);
-            // Feed Baro
-            self.board_hal.baro_mut().feed(sensor_data.baro);
-            // Feed Mag
-            self.board_hal.mag_mut().feed(sensor_data.mag);
-        }
-
-        if let Some(gps_data) = self.transport.take_gps_data() {
-            // Feed GNSS
-            self.board_hal.gnss_mut().feed(gps_data.gnss);
-        }
-
-        // 3. Read sensors via BoardHal's SensorHal implementation
-        //    This is the SAME code path that real hardware uses!
-        let mut current_dt = 0.001;
-        let mut current_delta_us = 1000u64;
-
-        if let Some(imu) = self.board_hal.read_imu() {
-            let current_time = imu.timestamp.ticks;
-            let delta_us_val = if let Some(last) = self.last_imu_time {
-                current_time.saturating_sub(last)
-            } else {
-                1000
-            };
-            current_dt = (delta_us_val as f32) * 1e-6;
-            current_delta_us = delta_us_val;
-            self.last_imu_time = Some(current_time);
-            current_dt = current_dt.clamp(0.0001, 0.1);
-            self.sensor_cache.imu = Some(imu);
-        }
-
-        if let Some(gnss) = self.board_hal.read_gnss() {
-            self.sensor_cache.gnss = Some(gnss);
-        }
-
-        if let Some(baro) = self.board_hal.read_baro() {
-            self.sensor_cache.baro = Some(baro);
-        }
-
-        if let Some(mag) = self.board_hal.read_mag() {
-            self.sensor_cache.mag = Some(mag);
-        }
-
-        let time_delta = TimeDelta {
-            dt_sec: Seconds(current_dt),
-            tick_delta: current_delta_us,
-        };
-
-        // 4. Receive commands via MAVLink
-        if let Some(sys_cmd) = self.transport.recv_command() {
-            match sys_cmd {
-                SystemCommand::FlightControl(cmd) => {
-                    self.kernel
-                        .checks
-                        .pre_arm
-                        .update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
-                    self.last_cmd = cmd;
-                }
-                SystemCommand::Arm => {
-                    eprintln!("[INFO] Arm command (state={:?})", self.kernel.init_state);
-                    eprintln!("[INFO] Faults: {:?}", self.kernel.faults);
-                    if let Err(e) = self.kernel.arm() {
-                        let pre_arm = &self.kernel.checks.pre_arm;
-                        eprintln!("[WARN] Arming failed: {:?}", e);
-                        eprintln!("[WARN] Missing pre-arm: {:?}", pre_arm.missing());
-                        eprintln!("[WARN] Faults: {:?}", self.kernel.faults);
-                    } else {
-                        eprintln!("[INFO] Armed successfully");
-                        // Only arm HAL and transport if kernel arm succeeded
-                        self.board_hal.arm();
-                        self.transport.set_armed(true);
-                    }
-                }
-                SystemCommand::Disarm => {
-                    eprintln!("[INFO] Disarm command");
-                    self.kernel.disarm();
-                    // Disarm through BoardHal and notify MAVLink
-                    self.board_hal.disarm();
-                    self.transport.set_armed(false);
-                }
-            }
-        }
-
-        // 5. Initialize EKF once we have sensor data
-        if !self.ekf_initialized && self.sensor_cache.imu.is_some() {
-            eprintln!("[INFO] Initializing EKF with sensor data");
-            self.kernel.ekf.init(
-                Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-                Vector3::new(
-                    MetersPerSecond(0.0),
-                    MetersPerSecond(0.0),
-                    MetersPerSecond(0.0),
-                ),
-                Quaternion::IDENTITY,
-            );
-            self.ekf_initialized = true;
-        }
-
-        // 6. Run init state machine
-        let sensors = self.sensor_cache.to_sensor_set();
-        if !self.kernel.is_ready() {
-            let ts = self.transport.now();
-            let prev_state = self.kernel.init_state;
-            self.kernel.init_step(&sensors, ts);
-
-            // Log state transitions
-            if self.kernel.init_state != prev_state {
-                eprintln!(
-                    "[FC] Init state: {:?} -> {:?}",
-                    prev_state, self.kernel.init_state
-                );
-            }
-        }
-
-        // 7. Step kernel
-        let result = self.kernel.update(
-            ChannelId(0),
-            time_delta,
-            &sensors,
-            &self.last_cmd,
-            &ActuatorState::default(),
-            None,
-        );
-        let actuator_cmd = result.actuator;
-
-        // 8. Write outputs via BoardHal (ActuatorHal implementation)
-        //    This writes to FakeActuator, same path as real hardware
-        self.board_hal.write(&actuator_cmd);
-
-        // 9. Forward actuator command to simulator via Rust API
-        //    Take command from FakeActuator and set for backend (gazebo_bridge) to retrieve
-        if let Some(raw_cmd) = self.board_hal.actuator_mut().take_cmd() {
-            let sim_cmd = SimActuatorCmd {
-                timestamp_us: self.transport.now_us(),
-                outputs: raw_cmd.outputs,
-                count: raw_cmd.count,
-                armed: self.is_armed(),
-            };
-            self.transport.set_actuator_cmd(sim_cmd);
-        }
-
-        // 10. Watchdog
-        self.transport.kick_watchdog();
-
-        actuator_cmd
+        self.runner.step()
     }
 
     /// Run the main control loop indefinitely
     pub fn run(&mut self) -> ! {
         let loop_period_us = 1000; // 1kHz
-        let mut last_tick = self.transport.now_us();
+        let mut last_tick = self.runner.now_us();
 
         loop {
-            let now = self.transport.now_us();
+            let now = self.runner.now_us();
             let elapsed = now.saturating_sub(last_tick);
 
             if elapsed >= loop_period_us {
@@ -432,32 +194,32 @@ impl GazeboSitlBoard {
 
     /// Check if the kernel is ready for flight
     pub fn is_ready(&self) -> bool {
-        self.kernel.is_ready()
+        self.runner.kernel.is_ready()
     }
 
     /// Check if the kernel is armed
     pub fn is_armed(&self) -> bool {
-        self.kernel.init_state == InitState::Armed
+        self.runner.is_armed()
     }
 
     /// Get a reference to the kernel
     pub fn kernel(&self) -> &AviateKernel<MultirotorController, QuadXMixer> {
-        &self.kernel
+        &self.runner.kernel
     }
 
     /// Get a mutable reference to the kernel
     pub fn kernel_mut(&mut self) -> &mut AviateKernel<MultirotorController, QuadXMixer> {
-        &mut self.kernel
+        &mut self.runner.kernel
     }
 
     /// Get current timestamp in microseconds
     pub fn now_us(&self) -> u64 {
-        self.transport.now_us()
+        self.runner.now_us()
     }
 
     /// Get a reference to the transport layer
     pub fn transport(&self) -> &SitlIO {
-        &self.transport
+        &self.runner.transport
     }
 
     /// Get a mutable reference to the transport layer
@@ -465,7 +227,7 @@ impl GazeboSitlBoard {
     /// Use this to feed sensor data from simulator backends or
     /// read actuator commands for forwarding to the simulator.
     pub fn transport_mut(&mut self) -> &mut SitlIO {
-        &mut self.transport
+        self.runner.transport_mut()
     }
 
     /// Get board ID

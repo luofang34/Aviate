@@ -1,0 +1,114 @@
+//! Error types for security layer
+//!
+//! This module defines high-level security errors that map to underlying
+//! HAL and link layer errors while adding security-specific semantics.
+//!
+//! ## Error Hierarchy (DO-178C Traceability)
+//!
+//! ```text
+//! GatewayError (Application-visible)
+//!   ├─ Link(LinkError)       ← From aviate-link
+//!   │   ├─ Transport(...)    ← From HAL transport
+//!   │   ├─ ParseError
+//!   │   └─ UnsupportedMsg
+//!   └─ Auth(AuthError)       ← Security policy errors
+//!       ├─ Crypto(...)       ← From HAL crypto
+//!       ├─ InvalidSignature
+//!       ├─ MissingSignature
+//!       └─ ReplayAttack
+//! ```
+
+use aviate_hal_io::security::CryptoError;
+use aviate_link::errors::LinkError;
+
+/// Authentication and signature verification errors
+///
+/// These errors represent security policy violations or cryptographic failures.
+#[derive(Debug)]
+pub enum AuthError {
+    /// Cryptographic operation failed (HAL-level error)
+    ///
+    /// Examples:
+    /// - Key not found in OTP/flash
+    /// - HMAC computation failed
+    /// - Hardware crypto accelerator error
+    Crypto(CryptoError),
+
+    /// Signature verification failed
+    ///
+    /// The HMAC-SHA256 signature does not match the expected value.
+    /// This indicates either:
+    /// - Wrong key used by sender
+    /// - Message tampered in transit
+    /// - Implementation bug (different HMAC computation)
+    InvalidSignature,
+
+    /// Command requires signature but none provided
+    ///
+    /// Security policy requires signed commands, but the received
+    /// command has no signature metadata.
+    MissingSignature,
+
+    /// Anti-replay check failed
+    ///
+    /// The command's timestamp is not strictly greater than the last
+    /// accepted timestamp for this link_id. This indicates either:
+    /// - Replay attack (old message retransmitted)
+    /// - Out-of-order delivery (not expected in MAVLink over USB/UART)
+    /// - Sender timestamp rollover (should not happen in practice)
+    ReplayAttack,
+}
+
+pub type AuthResult<T> = Result<T, AuthError>;
+
+/// High-level gateway errors (what applications see)
+///
+/// This combines errors from the link layer (transport, parsing) and
+/// the security layer (authentication, anti-replay).
+#[derive(Debug)]
+pub enum GatewayError {
+    /// Link layer error (transport or protocol parsing)
+    ///
+    /// Examples:
+    /// - USB disconnected
+    /// - MAVLink CRC mismatch
+    /// - Unsupported message type
+    Link(LinkError),
+
+    /// Authentication or security policy error
+    ///
+    /// Examples:
+    /// - Signature verification failed
+    /// - Replay attack detected
+    /// - Missing required signature
+    Auth(AuthError),
+
+    /// No command available (not an error, just no data)
+    ///
+    /// Used internally to distinguish "no command ready" from "error occurred".
+    /// Applications should treat this as Ok(None) in poll semantics.
+    NoCommand,
+}
+
+pub type GatewayResult<T> = Result<T, GatewayError>;
+
+/// Convert LinkError to GatewayError
+impl From<LinkError> for GatewayError {
+    fn from(err: LinkError) -> Self {
+        GatewayError::Link(err)
+    }
+}
+
+/// Convert AuthError to GatewayError
+impl From<AuthError> for GatewayError {
+    fn from(err: AuthError) -> Self {
+        GatewayError::Auth(err)
+    }
+}
+
+/// Convert CryptoError to AuthError
+impl From<CryptoError> for AuthError {
+    fn from(err: CryptoError) -> Self {
+        AuthError::Crypto(err)
+    }
+}

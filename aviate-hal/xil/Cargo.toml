@@ -17,5 +17,5 @@ xil-fault = ["aviate-hal-io/xil-fault"]
 
 [dependencies]
 aviate-core = { path = "../../aviate-core" }
-aviate-mavlink = { path = "../../aviate-mavlink" }
+aviate-link = { path = "../../aviate-link" }
 aviate-hal-io = { path = "../io" }

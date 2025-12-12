@@ -16,5 +16,5 @@ gz-plugin = []
 
 [dependencies]
 aviate-hal-xil = { path = "../.." }
-aviate-mavlink = { path = "../../../../aviate-mavlink" }
+aviate-link = { path = "../../../../aviate-link" }
 once_cell = "1.19"

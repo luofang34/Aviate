@@ -32,9 +32,11 @@ use crate::mission::{
 };
 use crate::{PortSlot, XilNetConfig};
 
-use aviate_mavlink::{
-    mav_cmd, parse_mavlink, serialize_mavlink, CommandLong, Heartbeat, MavAutopilot, MavMessage,
-    MavState, MavType, SetAttitudeTarget, SetPositionTargetLocalNed,
+use aviate_link::mavlink::{
+    mav_cmd, parse_mavlink, serialize_mavlink, MavAutopilot, MavMessage, MavState, MavType,
+};
+use aviate_link::mavlink::protocol::{
+    CommandLong, Heartbeat, SetAttitudeTarget, SetPositionTargetLocalNed,
 };
 
 // ============================================================================
@@ -177,7 +179,7 @@ impl MavClient {
         let mut buf = [0u8; 512];
         match self.socket.recv_from(&mut buf) {
             Ok((len, _src)) => match parse_mavlink(&buf[..len]) {
-                Ok((msg, _)) => Some(msg),
+                Ok((msg, _sig, _consumed)) => Some(msg),
                 Err(_) => None,
             },
             Err(_) => None,

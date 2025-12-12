@@ -63,6 +63,54 @@
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 
+/// Hardware Abstraction Layer (HAL) re-exports
+///
+/// This module re-exports HAL traits and implementations that this board provides.
+/// Applications should use these re-exports instead of depending on `aviate-hal-io`
+/// or `aviate-hal-stm32h7` directly.
+///
+/// ## Purpose
+///
+/// - **Encapsulation**: Apps don't need to know the board uses STM32H7
+/// - **Single source of truth**: Board declares what capabilities it provides
+/// - **Simplified dependencies**: Apps only depend on their board crate
+///
+/// ## Usage in Applications
+///
+/// ```ignore
+/// // Import from board's HAL re-exports
+/// use aviate_board_micoair_h743_v2::hal::{FrameTx, FrameRx};
+///
+/// // Write generic code using board's capabilities
+/// pub fn telemetry_task<T: FrameTx>(transport: &mut T) {
+///     // Works with any FrameTx implementation this board provides
+/// }
+/// ```
+///
+/// ## What This Board Provides
+///
+/// - **Transport traits**: `FrameTx`, `FrameRx`, `TransportError`
+/// - **Security traits**: `KeyStore`, `CryptoEngine`, `CryptoError`, `KeySelector`, `KeyPurpose`
+/// - **Security implementations**: `Stm32h7KeyStore`, `Stm32h7CryptoEngine`
+///
+/// ## Not Re-exported
+///
+/// Low-level chip-specific types (e.g., STM32H7 peripheral handles) are NOT re-exported.
+/// If you need chip-specific functionality, that indicates the abstraction is leaking
+/// and should be addressed by adding the capability to the board or HAL layer.
+pub mod hal {
+    // Transport traits (hardware-agnostic interfaces)
+    pub use aviate_hal_io::transport::{FrameRx, FrameTx, TransportError};
+
+    // Security traits (hardware-agnostic interfaces)
+    pub use aviate_hal_io::security::{
+        CryptoAlgo, CryptoEngine, CryptoError, KeyPurpose, KeySelector, KeyStore,
+    };
+
+    // Chip-specific implementations for this board (STM32H7)
+    pub use aviate_hal_stm32h7::{Stm32h7CryptoEngine, Stm32h7KeyStore};
+}
+
 /// Software-triggered bootloader entry (development/testing only)
 ///
 /// This module is only available when the `software-bootloader` feature is enabled.

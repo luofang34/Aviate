@@ -25,7 +25,8 @@ fn main() {
         println!("cargo:rustc-link-search=native={}", build_dir.display());
         println!("cargo:rustc-link-lib=static=aviate_gz_bridge_static");
 
-        // Link rt for POSIX shared memory (shm_open, mmap, etc.)
+        // Link rt for POSIX shared memory (shm_open, mmap, etc.) - Linux only
+        #[cfg(target_os = "linux")]
         println!("cargo:rustc-link-lib=rt");
 
         // Re-run if library changes

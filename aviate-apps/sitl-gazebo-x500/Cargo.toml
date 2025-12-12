@@ -20,7 +20,7 @@ default = ["gz-plugin"]
 
 [dependencies]
 aviate-core = { path = "../../aviate-core" }
-aviate-mavlink = { path = "../../aviate-mavlink" }
+aviate-link = { path = "../../aviate-link" }
 aviate-hal-xil = { path = "../../aviate-hal/xil" }
 aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", optional = true }
 aviate-board-sitl-gazebo = { path = "../../aviate-boards/sitl-gazebo" }

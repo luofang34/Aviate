@@ -2,7 +2,7 @@ use aviate_core::control::{Command, CommandSource, ControlMode, Setpoint};
 use aviate_core::math::Quaternion;
 use aviate_core::state::StateEstimate;
 use aviate_core::types::{Meters, MetersPerSecond, Normalized, Radians, RadiansPerSecond};
-use aviate_mavlink::{
+use aviate_link::mavlink::protocol::{
     position_target_typemask, AttitudeQuaternion, SetAttitudeTarget, SetPositionTargetLocalNed,
 };
 

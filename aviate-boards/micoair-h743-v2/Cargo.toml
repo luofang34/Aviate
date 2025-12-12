@@ -20,6 +20,7 @@ aio = []
 [dependencies]
 aviate-core = { path = "../../aviate-core" }
 aviate-hal-io = { path = "../../aviate-hal/io" }
+aviate-hal-stm32h7 = { path = "../../aviate-hal/stm32h7" }
 aviate-drivers = { path = "../../aviate-drivers" }
 
 # Bootloader chip backend (optional, for bootloader LED pin definitions)

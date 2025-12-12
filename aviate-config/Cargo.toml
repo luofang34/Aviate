@@ -1,0 +1,19 @@
+[package]
+name = "aviate-config"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Configuration parsing for Aviate apps (TOML support)"
+
+# CRITICAL: TOML parsing is LOW-DAL ONLY
+# - Parsing happens once at startup (init phase)
+# - High-DAL control loop NEVER calls TOML APIs
+# - See lib.rs docs for DAL separation details
+
+[features]
+default = []
+std = []  # Enable for file-based loading (SITL tools)
+
+[dependencies]
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+toml = { version = "0.8", default-features = false, features = ["parse"] }
