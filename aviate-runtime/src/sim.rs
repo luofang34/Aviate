@@ -4,27 +4,22 @@
 //!
 //! The `SitlRunner` struct encapsulates the control loop stepping logic.
 //!
-//! ## Phase 1 (Complete)
+//! ## Shared Components
 //!
-//! **Status**: Concrete types for Gazebo SITL (SitlIO transport)
-//! - Eliminates ~165 lines of duplication from GazeboSitlBoard
-//! - Single source of truth for SITL control loop
-//! - GazeboSitlBoard now delegates to SitlRunner
+//! This module provides factory functions and types that are shared across all SITL boards:
+//! - `create_kernel()` - Creates an AviateKernel with MultirotorController + QuadXMixer
+//! - `default_command()` - Creates a safe failsafe command with zero thrust
+//! - `sitl_timestamp()` - Returns a SITL timestamp
+//! - `BoardInfo` - Common board information structure
+//! - `run_control_loop()` - Configurable control loop with specified period
 //!
-//! ## Phase 2+ (Future Work)
+//! ## Backend Support
 //!
-//! **Goal**: Generalize to support jMAVSim (HilBackend transport)
+//! - **Gazebo (SitlIO)**: Shared memory FFI + MAVLink commands
+//! - **jMAVSim (HilBackend)**: Full MAVLink HIL (sensor + actuator)
 //!
-//! **Options**:
-//! 1. Define trait interface for transports (poll, take_sensor_data, etc.)
-//! 2. Create separate HilRunner for jMAVSim backend
-//! 3. Use enum dispatch pattern for backend abstraction
-//!
-//! **Multi-Backend Design Notes**:
-//! - SitlIO (Gazebo): Shared memory FFI + MAVLink commands
-//! - HilBackend (jMAVSim): Full MAVLink HIL (sensor + actuator)
-//! - Different field names, methods, and data flows
-//! - No common trait interface exists yet (would need to be designed)
+//! Both backends use `SitlRunner` for the core stepping logic but have different
+//! transport layer integrations.
 //!
 //! This module is only available when env-sitl or env-hitl features are enabled.
 
@@ -53,6 +48,12 @@ impl SitlTime {
         Self {
             start: std::time::Instant::now(),
         }
+    }
+}
+
+impl Default for SitlTime {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -302,6 +303,106 @@ impl SitlRunner {
     pub fn now_us(&self) -> u64 {
         self.transport.now_us()
     }
+}
+
+// ============================================================================
+// Shared Factory Functions (used by all SITL boards)
+// ============================================================================
+
+use aviate_core::control::{CommandSource, ConfigMode, ControlMode, Setpoint};
+use aviate_core::mixer::ModeConfig;
+use aviate_core::time::{TimeSource, Timestamp};
+use aviate_core::types::Normalized;
+
+/// Create an AviateKernel configured for SITL multirotor simulation
+///
+/// This is shared by all SITL boards (Gazebo, jMAVSim, etc.) to ensure
+/// consistent kernel initialization.
+pub fn create_kernel() -> SitlKernel {
+    let controller = MultirotorController::default();
+    let mixer = QuadXMixer {
+        timestamp_source: sitl_timestamp,
+    };
+    let mode_config = ModeConfig {
+        mode: ConfigMode::Hover,
+        groups: &[],
+    };
+
+    let mut kernel = AviateKernel::new(controller, mixer, mode_config);
+
+    // Initialize throttle check as satisfied (default command has low throttle)
+    kernel.checks.pre_arm.update_throttle(true);
+
+    kernel
+}
+
+/// Create a safe default/failsafe command with zero thrust
+///
+/// This is shared by all SITL boards to ensure consistent failsafe behavior.
+pub fn default_command() -> Command {
+    Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint {
+            collective_thrust: Normalized(0.0),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 0,
+        source: CommandSource::Failsafe,
+    }
+}
+
+/// SITL timestamp function for mixer
+pub fn sitl_timestamp() -> Timestamp {
+    Timestamp {
+        ticks: 0,
+        source: TimeSource::Internal,
+    }
+}
+
+/// Board information structure (shared across SITL boards)
+#[derive(Clone, Debug)]
+pub struct SitlBoardInfo {
+    pub name: &'static str,
+    pub description: &'static str,
+}
+
+/// Run a control loop with configurable period
+///
+/// This is the shared control loop implementation used by all SITL boards.
+/// The only difference between boards is the `loop_period_us` parameter:
+/// - Gazebo: 1000us (1kHz)
+/// - jMAVSim: 2500us (400Hz)
+///
+/// # Arguments
+/// * `runner` - The SitlRunner to step
+/// * `loop_period_us` - Control loop period in microseconds
+pub fn run_control_loop(runner: &mut SitlRunner, loop_period_us: u64) -> ! {
+    let mut last_tick = runner.now_us();
+
+    loop {
+        let now = runner.now_us();
+        let elapsed = now.saturating_sub(last_tick);
+
+        if elapsed >= loop_period_us {
+            last_tick = now;
+            runner.step();
+        } else {
+            let remaining_us = loop_period_us - elapsed;
+            if remaining_us > 100 {
+                std::thread::sleep(std::time::Duration::from_micros(remaining_us - 100));
+            }
+        }
+    }
+}
+
+/// Default loop periods for different simulators
+pub mod loop_periods {
+    /// Gazebo SITL loop period (1kHz)
+    pub const GAZEBO_US: u64 = 1000;
+    /// jMAVSim SITL loop period (400Hz to match jMAVSim default rate)
+    pub const JMAVSIM_US: u64 = 2500;
 }
 
 // Re-export for convenience (Phase 1 stub - Phase 2+ will use this for AppRuntime)

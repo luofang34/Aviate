@@ -31,7 +31,10 @@
 compile_error!("Exactly one of env-flight/env-sitl/env-hitl must be enabled");
 
 // Guard 2: env-flight cannot be combined with sim environments
-#[cfg(all(feature = "env-flight", any(feature = "env-sitl", feature = "env-hitl")))]
+#[cfg(all(
+    feature = "env-flight",
+    any(feature = "env-sitl", feature = "env-hitl")
+))]
 compile_error!("env-flight cannot be combined with env-sitl/env-hitl");
 
 // Guard 3: env-sitl and env-hitl are mutually exclusive
@@ -43,12 +46,27 @@ compile_error!("env-sitl and env-hitl are mutually exclusive");
 // ============================================================================
 
 pub mod flight;
-pub mod sim;
 pub mod sensor_cache;
+pub mod sim;
 
 // Re-export AppRuntime based on environment
 #[cfg(feature = "env-flight")]
 pub use flight::AppRuntime;
 
 #[cfg(any(feature = "env-sitl", feature = "env-hitl"))]
-pub use sim::{AppRuntime, SitlRunner};
+pub use sim::{
+    // Shared factory functions for SITL boards
+    create_kernel,
+    default_command,
+    loop_periods,
+    // Control loop utilities
+    run_control_loop,
+    sitl_timestamp,
+    AppRuntime,
+    SitlBoardHal,
+    // Shared types
+    SitlBoardInfo,
+    SitlKernel,
+    SitlRunner,
+    SitlTime,
+};

@@ -43,10 +43,8 @@ use std::io;
 
 use aviate_backend_mavlink_hil::{HilBackend, HilBackendConfig};
 use aviate_core::control::multirotor::MultirotorController;
-use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
-use aviate_core::mixer::{ActuatorCmd, ModeConfig, QuadXMixer};
-use aviate_core::time::{TimeSource, Timestamp};
-use aviate_core::types::Normalized;
+use aviate_core::control::Command;
+use aviate_core::mixer::{ActuatorCmd, QuadXMixer};
 use aviate_core::{ArmError, AviateKernel, InitState};
 
 use aviate_core::hal::ActuatorHal;
@@ -54,7 +52,9 @@ use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag
 use aviate_hal_xil::{
     SimBaroData, SimGnssData, SimImuData, SimMagData, SimSensorPacket, SitlConfig, SitlIO,
 };
-use aviate_runtime::sim::{SitlRunner, SitlTime};
+use aviate_runtime::{
+    create_kernel, default_command, loop_periods, SitlBoardInfo, SitlRunner, SitlTime,
+};
 
 /// jMAVSim board configuration
 ///
@@ -148,8 +148,8 @@ impl JmavSimBoard {
             fake_actuator,
         );
 
-        let kernel = Self::create_kernel();
-        let default_cmd = Self::default_command();
+        let kernel = create_kernel();
+        let default_cmd = default_command();
 
         // Create SitlRunner with all components
         let runner = SitlRunner::new(transport, board_hal, kernel, default_cmd);
@@ -159,38 +159,6 @@ impl JmavSimBoard {
             runner,
             armed: false,
         })
-    }
-
-    fn create_kernel() -> AviateKernel<MultirotorController, QuadXMixer> {
-        let controller = MultirotorController::default();
-        let mixer = QuadXMixer {
-            timestamp_source: sitl_timestamp,
-        };
-        let mode_config = ModeConfig {
-            mode: ConfigMode::Hover,
-            groups: &[],
-        };
-
-        let mut kernel = AviateKernel::new(controller, mixer, mode_config);
-
-        // Initialize throttle check as satisfied (default command has low throttle)
-        kernel.checks.pre_arm.update_throttle(true);
-
-        kernel
-    }
-
-    fn default_command() -> Command {
-        Command {
-            mode: ControlMode::Attitude,
-            setpoint: Setpoint {
-                collective_thrust: Normalized(0.0),
-                ..Default::default()
-            },
-            config_mode_request: None,
-            sensor_overrides: None,
-            sequence: 0,
-            source: CommandSource::Failsafe,
-        }
     }
 
     /// Run one iteration of the control loop
@@ -259,19 +227,22 @@ impl JmavSimBoard {
     }
 
     /// Run the main control loop indefinitely
+    ///
+    /// Uses the shared control loop from aviate-runtime with jMAVSim's 400Hz rate.
+    /// Note: This method cannot use `run_control_loop` directly because jMAVSim
+    /// requires the HilBackend bridge in each step. Uses the same timing logic.
     pub fn run(&mut self) -> ! {
-        let loop_period_us = 2500; // 400Hz to match jMAVSim default rate
         let mut last_tick = self.runner.now_us();
 
         loop {
             let now = self.runner.now_us();
             let elapsed = now.saturating_sub(last_tick);
 
-            if elapsed >= loop_period_us {
+            if elapsed >= loop_periods::JMAVSIM_US {
                 last_tick = now;
                 self.step();
             } else {
-                let remaining_us = loop_period_us - elapsed;
+                let remaining_us = loop_periods::JMAVSIM_US - elapsed;
                 if remaining_us > 100 {
                     std::thread::sleep(std::time::Duration::from_micros(remaining_us - 100));
                 }
@@ -373,25 +344,14 @@ impl JmavSimBoard {
     }
 }
 
-fn sitl_timestamp() -> Timestamp {
-    Timestamp {
-        ticks: 0,
-        source: TimeSource::Internal,
-    }
-}
-
 /// Board info for jMAVSim SITL
-pub const BOARD_INFO: BoardInfo = BoardInfo {
+pub const BOARD_INFO: SitlBoardInfo = SitlBoardInfo {
     name: "sitl-jmavsim",
     description: "jMAVSim SITL via MAVLink HIL protocol",
 };
 
-/// Board information structure
-#[derive(Clone, Debug)]
-pub struct BoardInfo {
-    pub name: &'static str,
-    pub description: &'static str,
-}
+/// Re-export BoardInfo type for backwards compatibility
+pub type BoardInfo = SitlBoardInfo;
 
 #[cfg(test)]
 mod tests {

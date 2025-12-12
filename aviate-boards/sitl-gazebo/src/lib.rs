@@ -37,15 +37,12 @@
 use std::io;
 
 use aviate_core::control::multirotor::MultirotorController;
-use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
-use aviate_core::mixer::{ActuatorCmd, ModeConfig, QuadXMixer};
-use aviate_core::time::{TimeSource, Timestamp};
-use aviate_core::types::Normalized;
+use aviate_core::mixer::{ActuatorCmd, QuadXMixer};
 use aviate_core::AviateKernel;
 
-use aviate_runtime::SitlRunner;
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{SitlConfig, SitlIO};
+use aviate_runtime::{create_kernel, default_command, loop_periods, SitlBoardInfo, SitlRunner};
 
 /// Gazebo SITL board configuration
 ///
@@ -88,8 +85,9 @@ impl GazeboSitlBoard {
             fake_actuator,
         );
 
-        let kernel = Self::create_kernel();
-        let default_cmd = Self::default_command();
+        // Use shared factory functions from aviate-runtime
+        let kernel = create_kernel();
+        let default_cmd = default_command();
 
         // Create SitlRunner with all components
         let runner = SitlRunner::new(transport, board_hal, kernel, default_cmd);
@@ -129,38 +127,6 @@ impl GazeboSitlBoard {
         unreachable!()
     }
 
-    fn create_kernel() -> AviateKernel<MultirotorController, QuadXMixer> {
-        let controller = MultirotorController::default();
-        let mixer = QuadXMixer {
-            timestamp_source: sitl_timestamp,
-        };
-        let mode_config = ModeConfig {
-            mode: ConfigMode::Hover,
-            groups: &[],
-        };
-
-        let mut kernel = AviateKernel::new(controller, mixer, mode_config);
-
-        // Initialize throttle check as satisfied (default command has low throttle)
-        kernel.checks.pre_arm.update_throttle(true);
-
-        kernel
-    }
-
-    fn default_command() -> Command {
-        Command {
-            mode: ControlMode::Attitude,
-            setpoint: Setpoint {
-                collective_thrust: Normalized(0.0),
-                ..Default::default()
-            },
-            config_mode_request: None,
-            sensor_overrides: None,
-            sequence: 0,
-            source: CommandSource::Failsafe,
-        }
-    }
-
     /// Run one iteration of the control loop
     ///
     /// Delegates to SitlRunner for execution. See aviate-runtime/src/sim.rs
@@ -172,24 +138,10 @@ impl GazeboSitlBoard {
     }
 
     /// Run the main control loop indefinitely
+    ///
+    /// Uses the shared control loop from aviate-runtime with Gazebo's 1kHz rate.
     pub fn run(&mut self) -> ! {
-        let loop_period_us = 1000; // 1kHz
-        let mut last_tick = self.runner.now_us();
-
-        loop {
-            let now = self.runner.now_us();
-            let elapsed = now.saturating_sub(last_tick);
-
-            if elapsed >= loop_period_us {
-                last_tick = now;
-                self.step();
-            } else {
-                let remaining_us = loop_period_us - elapsed;
-                if remaining_us > 100 {
-                    std::thread::sleep(std::time::Duration::from_micros(remaining_us - 100));
-                }
-            }
-        }
+        aviate_runtime::run_control_loop(&mut self.runner, loop_periods::GAZEBO_US)
     }
 
     /// Check if the kernel is ready for flight
@@ -236,25 +188,14 @@ impl GazeboSitlBoard {
     }
 }
 
-fn sitl_timestamp() -> Timestamp {
-    Timestamp {
-        ticks: 0,
-        source: TimeSource::Internal,
-    }
-}
-
 /// Board info for Gazebo SITL
-pub const BOARD_INFO: BoardInfo = BoardInfo {
+pub const BOARD_INFO: SitlBoardInfo = SitlBoardInfo {
     name: "sitl-gazebo",
     description: "Gazebo SITL simulation board",
 };
 
-/// Board information structure
-#[derive(Clone, Debug)]
-pub struct BoardInfo {
-    pub name: &'static str,
-    pub description: &'static str,
-}
+/// Re-export BoardInfo type for backwards compatibility
+pub type BoardInfo = SitlBoardInfo;
 
 #[cfg(test)]
 mod tests {

@@ -4,6 +4,29 @@
 //! This crate supports multiple board variants that share the same flight controller
 //! hardware but differ in integrated peripherals (ESC, BEC, form factor).
 //!
+//! ## Architecture
+//!
+//! This is a **configuration-only** crate. It provides:
+//! - Pin definitions and GPIO assignments
+//! - Sensor configurations (IMU, baro, mag)
+//! - Timer and peripheral mappings
+//! - Board identification constants
+//!
+//! Flight control logic lives in **applications** that combine:
+//! - This board config
+//! - `aviate-runtime` (with appropriate environment feature)
+//! - `aviate-core` kernel
+//!
+//! ## Environment Support
+//!
+//! The environment is controlled by `aviate-runtime` feature flags, NOT this crate:
+//!
+//! | Environment | Runtime Feature | Use Case |
+//! |-------------|-----------------|----------|
+//! | Flight      | `env-flight`    | Real hardware flight |
+//! | HITL        | `env-hitl`      | Real hardware + simulated dynamics |
+//! | SITL        | `env-sitl`      | Software simulation (not for this board) |
+//!
 //! ## Board Variants
 //!
 //! | Variant | Description | Feature Flag |
@@ -198,7 +221,7 @@ pub mod aio {
         /// PWM frequency (Hz)
         pub const PWM_FREQ_HZ: u32 = 48_000;
         /// Supported voltage range
-        pub const VOLTAGE_MIN_V: f32 = 5.6;  // 2S
+        pub const VOLTAGE_MIN_V: f32 = 5.6; // 2S
         pub const VOLTAGE_MAX_V: f32 = 27.0; // 6S
         /// Supported protocols
         pub const SUPPORTS_PWM: bool = true;
