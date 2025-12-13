@@ -30,7 +30,7 @@ use crate::config::TestConfig;
 use crate::mission::{
     Action, Criterion, CriterionResult, Mission, MissionResult, Phase, PhaseResult,
 };
-use crate::{PortSlot, XilNetConfig};
+use crate::XilNetConfig;
 
 use aviate_link::mavlink::protocol::{
     CommandLong, Heartbeat, SetAttitudeTarget, SetPositionTargetLocalNed,
@@ -147,12 +147,16 @@ impl MavClient {
     }
 
     /// Create a new MAVLink client with custom network configuration
-    pub fn new_with_net(instance: u8, net: XilNetConfig) -> Result<Self, SimulatorError> {
-        let socket = UdpSocket::bind("0.0.0.0:0")?;
+    ///
+    /// Binds to port 14550 (standard GCS port) to receive telemetry from the FC.
+    /// The FC sends telemetry to this port.
+    pub fn new_with_net(_instance: u8, _net: XilNetConfig) -> Result<Self, SimulatorError> {
+        // GCS listens on port 14550 - FC broadcasts to this port
+        let socket = UdpSocket::bind("127.0.0.1:14550")?;
         socket.set_nonblocking(true)?;
 
-        let port = net.port(instance as u16, PortSlot::SensorIn);
-        let target_addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        // We don't know the FC's ephemeral port yet - it will be learned when we receive a packet
+        let target_addr = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
 
         Ok(Self {
             socket,
@@ -175,13 +179,20 @@ impl MavClient {
     }
 
     /// Try to receive a MAVLink message (non-blocking)
+    /// Also learns the FC's address from the first received packet
     fn recv(&mut self) -> Option<MavMessage> {
         let mut buf = [0u8; 512];
         match self.socket.recv_from(&mut buf) {
-            Ok((len, _src)) => match parse_mavlink(&buf[..len]) {
-                Ok((msg, _sig, _consumed)) => Some(msg),
-                Err(_) => None,
-            },
+            Ok((len, src)) => {
+                // Learn FC address from first packet
+                if self.target_addr.port() == 0 {
+                    self.target_addr = src;
+                }
+                match parse_mavlink(&buf[..len]) {
+                    Ok((msg, _sig, _consumed)) => Some(msg),
+                    Err(_) => None,
+                }
+            }
             Err(_) => None,
         }
     }
@@ -275,18 +286,17 @@ impl MavClient {
         self.send(&MavMessage::SetPositionTargetLocalNed(tgt))
     }
 
-    /// Try to connect to FC (send heartbeats, wait for response)
+    /// Try to connect to FC (wait for heartbeat from FC broadcast)
+    ///
+    /// The FC broadcasts telemetry to port 14550 continuously.
+    /// We just need to wait to receive a heartbeat.
     pub fn try_connect(&mut self) -> bool {
-        for _ in 0..10 {
-            self.send_heartbeat();
-            std::thread::sleep(Duration::from_millis(10));
-        }
-
-        for _ in 0..10 {
+        // Wait for FC heartbeat (FC broadcasts continuously)
+        for _ in 0..50 {
             if let Some(MavMessage::Heartbeat(_)) = self.recv() {
                 return true;
             }
-            std::thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(Duration::from_millis(100));
         }
         false
     }
@@ -299,6 +309,7 @@ impl MavClient {
 /// Mission runner state
 ///
 /// Generic over the simulator backend. Each vehicle instance gets its own runner.
+/// Requires FC to be running - does not support direct motor control bypass.
 pub struct MissionRunner<B: SimulatorBackend> {
     backend: B,
     mav: MavClient,
@@ -308,7 +319,6 @@ pub struct MissionRunner<B: SimulatorBackend> {
     start_position: [f32; 3],
     armed: bool,
     max_altitude: f32,
-    fc_connected: bool,
 }
 
 impl<B: SimulatorBackend> MissionRunner<B> {
@@ -326,7 +336,6 @@ impl<B: SimulatorBackend> MissionRunner<B> {
             start_position: [0.0; 3],
             armed: false,
             max_altitude: 0.0,
-            fc_connected: false,
         })
     }
 
@@ -355,13 +364,18 @@ impl<B: SimulatorBackend> MissionRunner<B> {
         ));
         println!();
 
-        // Try to connect to FC via MAVLink
-        self.fc_connected = self.mav.try_connect();
-        if self.fc_connected {
-            self.log("Control mode: MAVLink (FC connected)");
-        } else {
-            self.log("Control mode: Direct (FC not running, using backend)");
+        // Connect to FC via MAVLink (required)
+        if !self.mav.try_connect() {
+            self.log("ERROR: FC not connected - mission runner requires FC");
+            return MissionResult {
+                mission_name: mission.name.clone(),
+                passed: false,
+                phases: vec![],
+                total_duration: Duration::ZERO,
+                max_altitude: 0.0,
+            };
         }
+        self.log("FC connected via MAVLink");
 
         // Enable lockstep if required
         if mission.lockstep {
@@ -503,17 +517,8 @@ impl<B: SimulatorBackend> MissionRunner<B> {
         }
     }
 
-    /// Execute an action
+    /// Execute an action via MAVLink
     fn execute_action(&mut self, action: &Action) {
-        if self.fc_connected {
-            self.execute_action_mavlink(action);
-        } else {
-            self.execute_action_direct(action);
-        }
-    }
-
-    /// Execute action via MAVLink
-    fn execute_action_mavlink(&mut self, action: &Action) {
         match action {
             Action::Wait => {
                 self.mav.send_heartbeat();
@@ -557,38 +562,6 @@ impl<B: SimulatorBackend> MissionRunner<B> {
             }
             Action::ClearFaults => {
                 self.log("CLEAR_FAULTS (not yet implemented)");
-            }
-        }
-    }
-
-    /// Execute action via direct motor control (bypass FC)
-    fn execute_action_direct(&mut self, action: &Action) {
-        match action {
-            Action::Wait => {}
-            Action::Arm => {
-                self.armed = true;
-            }
-            Action::Disarm => {
-                self.armed = false;
-                let _ = self.backend.set_motor_speeds(&[0.0, 0.0, 0.0, 0.0]);
-            }
-            Action::Thrust(t) => {
-                if self.armed {
-                    let speed = (*t * 1000.0) as f64;
-                    let _ = self.backend.set_motor_speeds(&[speed, speed, speed, speed]);
-                }
-            }
-            Action::AttitudeTarget { q: _, thrust } => {
-                if self.armed {
-                    let speed = (*thrust * 1000.0) as f64;
-                    let _ = self.backend.set_motor_speeds(&[speed, speed, speed, speed]);
-                }
-            }
-            Action::GoTo { .. } => {
-                // Position control requires FC
-            }
-            Action::InjectFault { .. } | Action::ClearFaults => {
-                // Fault injection requires FC
             }
         }
     }

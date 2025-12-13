@@ -10,7 +10,6 @@
 //! - **Gazebo Integration**: Zero-copy physics data via shared memory
 //! - **World Generation**: Dynamic SDF world file generation
 
-pub mod mission_runner;
 pub mod router_gen;
 pub mod world_gen;
 
@@ -29,9 +28,6 @@ pub use router_gen::{
     RouterParams, GCS_PORT,
 };
 pub use world_gen::{generate_temp_world, generate_world, generate_world_file, WorldParams};
-
-#[cfg(feature = "gz-plugin")]
-pub use mission_runner::{run_mission_suite, run_mission_suite_for_instance, MissionRunner};
 
 #[cfg(feature = "multi-vehicle")]
 pub use multi_vehicle::{start_router, RouterError, RouterHandle};

@@ -14,14 +14,16 @@
 //! # Headless mode (no GUI, wait for GCS):
 //! cargo run -p aviate-app-sitl-gazebo-x500 -- --headless
 //!
-//! # Test mode (run mission from TOML file):
-//! cargo run -p aviate-app-sitl-gazebo-x500 -- --test tests/basic_flight.toml
-//!
 //! # Mock mode (no Gazebo, for unit testing):
 //! cargo run -p aviate-app-sitl-gazebo-x500 -- --mock
 //!
 //! # Multi-vehicle instance:
 //! cargo run -p aviate-app-sitl-gazebo-x500 -- --instance 1
+//! ```
+//!
+//! For SITL testing with missions, use the gcs-test tool:
+//! ```bash
+//! cargo run -p gcs-test --features gazebo -- run --xil tests/xil-missions/basic_flight.toml
 //! ```
 //!
 //! ## Environment Variables
@@ -52,7 +54,6 @@ macro_rules! warn {
 struct Options {
     mock: bool,
     headless: bool,
-    test_config: Option<String>,
     instance: u8,
 }
 
@@ -67,12 +68,6 @@ impl Options {
         let headless = args.iter().any(|a| a == "--headless")
             || env::var("HEADLESS").map(|v| v == "1").unwrap_or(false);
 
-        // Check for --test <file>
-        let test_config = args
-            .iter()
-            .position(|a| a == "--test")
-            .and_then(|i| args.get(i + 1).cloned());
-
         // Check for --instance <N> or AVIATE_INSTANCE env
         let instance = args
             .iter()
@@ -85,7 +80,6 @@ impl Options {
         Self {
             mock,
             headless,
-            test_config,
             instance,
         }
     }
@@ -134,9 +128,6 @@ fn main() -> ExitCode {
         info!("Mode: Mock (no Gazebo)");
         run_mock();
         ExitCode::SUCCESS
-    } else if let Some(ref config_path) = opts.test_config {
-        info!("Mode: Test ({})", config_path);
-        run_test(config_path, opts.instance, headless)
     } else {
         info!(
             "Mode: Interactive (headless={})",
@@ -259,122 +250,6 @@ fn run_interactive(headless: bool, instance: u8) -> ExitCode {
 
 #[cfg(not(feature = "gz-plugin"))]
 fn run_interactive(_headless: bool, _instance: u8) -> ExitCode {
-    warn!("gz-plugin feature not enabled");
-    warn!("Rebuild with: cargo build -p aviate-app-sitl-gazebo-x500 --features gz-plugin");
-    ExitCode::FAILURE
-}
-
-/// Test mode: Run mission from TOML config file
-///
-/// Supports multi-vehicle: each vehicle in the config runs its mission
-/// in a separate thread with its own backend instance.
-#[cfg(feature = "gz-plugin")]
-fn run_test(config_path: &str, _instance: u8, headless: bool) -> ExitCode {
-    use aviate_app_sitl_gazebo_x500::{generate_temp_world, parse_test_config, WorldParams};
-    use aviate_backend_gz::GazeboSimBackend;
-    use aviate_hal_xil::run_test_config;
-    use std::time::Duration;
-
-    let config_file = Path::new(config_path);
-    if !config_file.exists() {
-        warn!("Config file not found: {}", config_path);
-        return ExitCode::FAILURE;
-    }
-
-    // Parse test configuration
-    let test_config = match parse_test_config(config_file) {
-        Ok(c) => c,
-        Err(e) => {
-            warn!("Failed to parse config: {}", e);
-            return ExitCode::FAILURE;
-        }
-    };
-
-    println!("Test: {}", test_config.name);
-    println!("Description: {}", test_config.description);
-    println!("Vehicles: {}", test_config.vehicles.len());
-    println!();
-
-    // Generate world (includes all vehicles from config)
-    let world_params = WorldParams {
-        lockstep: test_config.lockstep,
-        ..WorldParams::default()
-    };
-
-    let world_path = match generate_temp_world(&test_config, &world_params) {
-        Ok(p) => p,
-        Err(e) => {
-            warn!("Failed to generate world: {}", e);
-            return ExitCode::FAILURE;
-        }
-    };
-    info!("World file: {}", world_path.display());
-
-    // Clean up and launch Gazebo
-    cleanup_gazebo();
-    let gz_child = match launch_gazebo(&world_path, headless) {
-        Ok(child) => {
-            info!(
-                "Gazebo started (PID: {}, {})",
-                child.id(),
-                if headless { "headless" } else { "GUI" }
-            );
-            child
-        }
-        Err(e) => {
-            warn!("Failed to launch Gazebo: {}", e);
-            return ExitCode::FAILURE;
-        }
-    };
-
-    // Wait for plugin
-    info!("Waiting for Gazebo plugin...");
-    if !wait_for_shm(Duration::from_secs(30)) {
-        warn!("Timeout waiting for Gazebo plugin");
-        drop(gz_child);
-        cleanup_gazebo();
-        return ExitCode::FAILURE;
-    }
-
-    // Run all vehicles in parallel using the generic runner
-    info!("Running {} vehicle(s)...", test_config.vehicles.len());
-    let result = run_test_config(&test_config, |instance| {
-        GazeboSimBackend::connect_new(instance, 10000)
-    });
-
-    // Print results
-    println!();
-    println!("=== Test Results ===");
-    println!("Test: {}", result.name);
-    println!("Duration: {:.2}s", result.duration.as_secs_f32());
-    println!();
-
-    for (i, vr) in result.vehicle_results.iter().enumerate() {
-        println!(
-            "Vehicle {}: {} - {}",
-            i,
-            vr.mission_name,
-            if vr.passed { "PASSED" } else { "FAILED" }
-        );
-        println!("  Max Altitude: {:.2}m", vr.max_altitude);
-    }
-    println!();
-
-    // Cleanup
-    drop(gz_child);
-    cleanup_gazebo();
-
-    if result.passed {
-        println!("PASSED: {}", test_config.name);
-        ExitCode::SUCCESS
-    } else {
-        println!("FAILED: {}", test_config.name);
-        ExitCode::FAILURE
-    }
-}
-
-#[cfg(not(feature = "gz-plugin"))]
-fn run_test(_config_path: &str, _instance: u8, _headless: bool) -> ExitCode {
     warn!("gz-plugin feature not enabled");
     warn!("Rebuild with: cargo build -p aviate-app-sitl-gazebo-x500 --features gz-plugin");
     ExitCode::FAILURE

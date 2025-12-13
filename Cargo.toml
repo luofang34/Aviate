@@ -20,6 +20,7 @@ members = [
     "aviate-apps/sitl-jmavsim-generic-quad-x",
     "aviate-apps/test-gazebo-app",
     "tests/lint-verification",
+    "tests/gcs-test",
     "xtask",
 ]
 exclude = [

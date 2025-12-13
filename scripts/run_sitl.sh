@@ -3,7 +3,7 @@ set -e
 
 # Aviate SITL Test Runner
 #
-# Runs SITL flight tests with Gazebo simulation.
+# Runs SITL flight tests with Gazebo simulation using gcs-test.
 # All tests are config-based using TOML test definitions.
 #
 # Usage:
@@ -86,6 +86,7 @@ cleanup() {
     echo "Cleaning up..."
     pkill -9 -f "gz sim" 2>/dev/null || true
     pkill -9 -f "sitl-gazebo-x500" 2>/dev/null || true
+    pkill -9 -f "gcs-test" 2>/dev/null || true
     rm -f /dev/shm/aviate_gz_bridge* 2>/dev/null || true
     echo "Done."
 }
@@ -104,9 +105,9 @@ if ! command -v gz &> /dev/null; then
     exit 1
 fi
 
-# --- Step 2: Build the test binary ---
-echo "Building SITL binary..."
-cargo build -p aviate-app-sitl-gazebo-x500 2>&1 | tail -5
+# --- Step 2: Build gcs-test with Gazebo support ---
+echo "Building gcs-test with Gazebo support..."
+cargo build -p gcs-test --features gazebo 2>&1 | tail -5
 
 # Check plugin is available
 PLUGIN_DIR="${AVIATE_DIR}/aviate-hal/xil/backends/gz/plugin/build"
@@ -123,15 +124,15 @@ export LD_LIBRARY_PATH="${PLUGIN_DIR}:${LD_LIBRARY_PATH:-}"
 echo ""
 echo "=== Running Test ==="
 
-# --- Step 3: Run the test ---
-# sitl-gazebo-x500 --test handles:
+# --- Step 3: Run the test via gcs-test ---
+# gcs-test --xil handles:
 #   - World file generation from TOML
 #   - Gazebo launch with proper environment
 #   - Mission execution with lockstep
-#   - Multi-vehicle coordination
+#   - Multi-vehicle coordination (with mavrouter)
 #   - Result reporting
 
-./target/debug/sitl-gazebo-x500 --test "$TEST_CONFIG"
+./target/debug/gcs-test run --xil "$TEST_CONFIG"
 TEST_EXIT=$?
 
 echo ""

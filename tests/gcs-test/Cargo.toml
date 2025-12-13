@@ -1,0 +1,25 @@
+[package]
+name = "gcs-test"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GCS test tool for SITL mission testing"
+
+[[bin]]
+name = "gcs-test"
+path = "src/main.rs"
+
+[features]
+default = []
+# Enable Gazebo backend for ground truth and XIL mode (requires gz-plugin)
+gazebo = [
+    "dep:aviate-backend-gz",
+    "dep:aviate-app-sitl-gazebo-x500",
+    "aviate-backend-gz/gz-plugin",
+]
+
+[dependencies]
+aviate-hal-xil = { path = "../../aviate-hal/xil" }
+aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", optional = true }
+aviate-app-sitl-gazebo-x500 = { path = "../../aviate-apps/sitl-gazebo-x500", optional = true }
+clap = { version = "4", features = ["derive"] }
