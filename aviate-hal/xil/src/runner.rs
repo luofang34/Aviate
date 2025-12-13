@@ -148,21 +148,20 @@ impl MavClient {
 
     /// Create a new MAVLink client with custom network configuration
     ///
-    /// Binds to port 14550 (standard GCS port) to receive telemetry from the FC.
-    /// The FC sends telemetry to this port.
-    pub fn new_with_net(_instance: u8, _net: XilNetConfig) -> Result<Self, SimulatorError> {
-        // GCS listens on port 14550 - FC broadcasts to this port
-        let socket = UdpSocket::bind("127.0.0.1:14550")?;
+    /// Binds to ephemeral port and connects to 127.0.0.1:14550.
+    pub fn new_with_net(instance: u8, _net: XilNetConfig) -> Result<Self, SimulatorError> {
+        // Bind to ephemeral port to avoid conflicts in multi-vehicle tests
+        let socket = UdpSocket::bind("127.0.0.1:0")?;
         socket.set_nonblocking(true)?;
 
-        // We don't know the FC's ephemeral port yet - it will be learned when we receive a packet
-        let target_addr = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
+        // Target the standard GCS port (where FC or MavRouter is listening)
+        let target_addr = std::net::SocketAddr::from(([127, 0, 0, 1], 14550));
 
         Ok(Self {
             socket,
             target_addr,
             seq: 0,
-            target_system: 1,
+            target_system: instance + 1, // System ID = Instance + 1
             target_component: 1,
         })
     }
@@ -170,7 +169,8 @@ impl MavClient {
     /// Send a MAVLink message
     fn send(&mut self, msg: &MavMessage) -> bool {
         let mut buf = [0u8; 300];
-        if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
+        // Send as GCS (SysID 255, CompID 190)
+        if let Some(len) = serialize_mavlink(msg, self.seq, 255, 190, &mut buf) {
             self.seq = self.seq.wrapping_add(1);
             self.socket.send_to(&buf[..len], self.target_addr).is_ok()
         } else {
@@ -288,11 +288,13 @@ impl MavClient {
 
     /// Try to connect to FC (wait for heartbeat from FC broadcast)
     ///
-    /// The FC broadcasts telemetry to port 14550 continuously.
-    /// We just need to wait to receive a heartbeat.
+    /// The FC broadcasts telemetry to port 14550.
+    /// We send heartbeats to register ourselves with the FC/Router.
     pub fn try_connect(&mut self) -> bool {
-        // Wait for FC heartbeat (FC broadcasts continuously)
+        // Send HB to register, then check for response
         for _ in 0..50 {
+            self.send_heartbeat();
+            
             if let Some(MavMessage::Heartbeat(_)) = self.recv() {
                 return true;
             }

@@ -37,3 +37,6 @@ aviate-link = { path = "../../aviate-link" }
 
 # Multi-vehicle routing (optional)
 mavrouter = { version = "0.1.4", optional = true }
+
+log = "0.4"
+env_logger = "0.11"

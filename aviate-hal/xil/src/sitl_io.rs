@@ -44,6 +44,8 @@
 use std::io;
 use std::net::UdpSocket;
 
+use log::{info, warn};
+
 use aviate_core::hal::{CommandHal, SystemCommand, SystemHal};
 use aviate_core::time::{TimeSource, Timestamp};
 
@@ -133,6 +135,7 @@ impl SitlIO {
     /// Create a new SITL I/O transport
     pub fn new(config: XilConfig) -> io::Result<Self> {
         // Socket to receive sensor data from simulator (legacy path, may be unused for Gazebo FFI)
+        info!("SitlIO: Binding sensor port {}", config.sensor_port());
         let recv_socket = UdpSocket::bind(("0.0.0.0", config.sensor_port()))?;
         recv_socket.set_nonblocking(true)?;
 
@@ -307,8 +310,8 @@ impl SitlIO {
             }
             Err(e) => {
                 // Log parse errors to help debug GCS communication issues
-                eprintln!(
-                    "[WARN] MAVLink parse error from {}: {:?} (len={}, first_bytes={:02x?})",
+                warn!(
+                    "MAVLink parse error from {}: {:?} (len={}, first_bytes={:02x?})",
                     src,
                     e,
                     data.len(),
@@ -354,26 +357,26 @@ impl SitlIO {
     }
 
     fn handle_command_long(&mut self, cmd: CommandLong) {
-        eprintln!(
-            "[INFO] Received COMMAND_LONG: cmd={}, param1={}, target=({},{})",
+        info!(
+            "Received COMMAND_LONG: cmd={}, param1={}, target=({},{})",
             cmd.command, cmd.param1, cmd.target_system, cmd.target_component
         );
 
         let result = if cmd.command == mav_cmd::COMPONENT_ARM_DISARM {
             if cmd.param1 == 1.0 {
-                eprintln!("[INFO] Processing ARM command");
+                info!("Processing ARM command");
                 self.command = Some(SystemCommand::Arm);
                 mav_result::ACCEPTED
             } else if cmd.param1 == 0.0 {
-                eprintln!("[INFO] Processing DISARM command");
+                info!("Processing DISARM command");
                 self.command = Some(SystemCommand::Disarm);
                 mav_result::ACCEPTED
             } else {
-                eprintln!("[WARN] Invalid ARM param1: {}", cmd.param1);
+                warn!("Invalid ARM param1: {}", cmd.param1);
                 mav_result::DENIED
             }
         } else {
-            eprintln!("[WARN] Unsupported command: {}", cmd.command);
+            warn!("Unsupported command: {}", cmd.command);
             mav_result::UNSUPPORTED
         };
 
@@ -393,13 +396,13 @@ impl SitlIO {
         };
 
         if let Some(gcs_addr) = self.gcs_addr {
-            eprintln!(
-                "[INFO] Sending COMMAND_ACK to {}: cmd={}, result={}",
+            info!(
+                "Sending COMMAND_ACK to {}: cmd={}, result={}",
                 gcs_addr, command, result
             );
             self.send_message_to(&MavMessage::CommandAck(ack), gcs_addr);
         } else {
-            eprintln!("[WARN] Cannot send COMMAND_ACK - no GCS address known");
+            warn!("Cannot send COMMAND_ACK - no GCS address known");
         }
     }
 
@@ -422,7 +425,14 @@ impl SitlIO {
         };
 
         // Send heartbeat to GCS so it can discover our port
-        self.send_message_to(&MavMessage::Heartbeat(hb), self.config.gcs_addr);
+        self.send_message_to(&MavMessage::Heartbeat(hb.clone()), self.config.gcs_addr);
+
+        // Also send to learned GCS address (if active/different)
+        if let Some(gcs_addr) = self.gcs_addr {
+            if gcs_addr != self.config.gcs_addr {
+                self.send_message_to(&MavMessage::Heartbeat(hb), gcs_addr);
+            }
+        }
     }
 
     /// Send a MAVLink message to a specific address via GCS socket
@@ -431,7 +441,8 @@ impl SitlIO {
     /// that we're listening on for commands.
     fn send_message_to(&mut self, msg: &MavMessage, addr: std::net::SocketAddr) {
         let mut buf = [0u8; 300];
-        if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
+        // System ID = instance + 1, Component ID = 1 (Autopilot)
+        if let Some(len) = serialize_mavlink(msg, self.seq, self.config.instance + 1, 1, &mut buf) {
             self.seq = self.seq.wrapping_add(1);
             let _ = self.gcs_socket.send_to(&buf[..len], addr);
             self.tx_count += 1;
@@ -442,9 +453,9 @@ impl SitlIO {
     pub fn set_armed(&mut self, armed: bool) {
         self.armed = armed;
         if armed {
-            eprintln!("[INFO] MAVLink armed");
+            info!("MAVLink armed");
         } else {
-            eprintln!("[INFO] MAVLink disarmed");
+            info!("MAVLink disarmed");
         }
     }
 
@@ -502,12 +513,12 @@ impl SystemHal for SitlIO {
     fn kick_watchdog(&mut self) {}
 
     fn reboot(&mut self) -> ! {
-        eprintln!("[INFO] Reboot requested");
+        info!("Reboot requested");
         std::process::exit(0);
     }
 
     fn enter_bootloader(&mut self) -> ! {
-        eprintln!("[WARN] Bootloader not supported in SITL");
+        warn!("Bootloader not supported in SITL");
         std::process::exit(1);
     }
 }

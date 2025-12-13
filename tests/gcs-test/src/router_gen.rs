@@ -46,7 +46,7 @@ impl Default for RouterParams {
 
 /// Generate mavrouter TOML configuration from test configuration
 pub fn generate_router_config(config: &TestConfig, params: &RouterParams) -> String {
-    generate_router_config_with_net(config, params, XilNetConfig::default())
+    generate_router_config_with_net(config, params, XilNetConfig::from_env())
 }
 
 /// Generate mavrouter TOML configuration with custom network settings

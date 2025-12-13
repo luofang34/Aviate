@@ -45,6 +45,8 @@ impl ProcessHandle {
     }
 }
 
+use log::info;
+
 /// Gazebo spawner for SITL mode
 pub struct GazeboSpawner {
     child: Option<Child>,
@@ -67,7 +69,7 @@ impl GazeboSpawner {
         let child = launch_gazebo(world_path, headless)
             .map_err(|e| format!("Failed to launch Gazebo: {}", e))?;
 
-        eprintln!(
+        info!(
             "[GCS] Gazebo started (PID: {}, headless={})",
             child.id(),
             headless
@@ -78,6 +80,10 @@ impl GazeboSpawner {
 
         Ok(())
     }
+
+// ... <skip to spawn_router>
+
+
 
     /// Wait for Gazebo shared memory to be ready
     pub fn wait_for_ready(&self, timeout: Duration) -> bool {
@@ -167,8 +173,8 @@ impl Spawner {
             cmd.env("LD_LIBRARY_PATH", combined);
         }
 
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
+        cmd.stdout(Stdio::inherit());
+        cmd.stderr(Stdio::inherit());
 
         let child = cmd.spawn()?;
 
@@ -186,14 +192,14 @@ impl Spawner {
 
     /// Spawn mavrouter with the given config file
     pub fn spawn_router(&mut self, config_path: &Path) -> std::io::Result<()> {
-        let mut cmd = Command::new("mavrouter-rs");
+        let mut cmd = Command::new("mavrouter");
         cmd.arg("--config").arg(config_path);
-        cmd.stdout(Stdio::null());
-        cmd.stderr(Stdio::null());
+        cmd.stdout(Stdio::inherit());
+        cmd.stderr(Stdio::inherit());
 
         let child = cmd.spawn()?;
 
-        eprintln!("[GCS] mavrouter started (PID: {})", child.id());
+        info!("[GCS] mavrouter started (PID: {})", child.id());
 
         self.router_handle = Some(ProcessHandle {
             child,

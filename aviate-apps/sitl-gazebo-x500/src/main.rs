@@ -36,19 +36,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use aviate_board_sitl_gazebo::GazeboSitlBoard;
-
-/// Simple logging macros
-macro_rules! info {
-    ($($arg:tt)*) => {
-        eprintln!("[INFO] {}", format_args!($($arg)*));
-    };
-}
-
-macro_rules! warn {
-    ($($arg:tt)*) => {
-        eprintln!("[WARN] {}", format_args!($($arg)*));
-    };
-}
+use log::{info, warn, error};
 
 /// Command line options
 struct Options {
@@ -92,6 +80,8 @@ impl Options {
 }
 
 fn main() -> ExitCode {
+    env_logger::init();
+
     let opts = Options::parse();
 
     // Load application configuration (LOW-DAL init phase)
@@ -99,14 +89,14 @@ fn main() -> ExitCode {
     let app_config = match aviate_config::from_toml_str(APP_CONFIG_TOML) {
         Ok(config) => config,
         Err(_) => {
-            eprintln!("[ERROR] Failed to parse AviateApp.toml");
+            error!("Failed to parse AviateApp.toml");
             return ExitCode::FAILURE;
         }
     };
 
     // Validate configuration
     if aviate_config::validate(&app_config).is_err() {
-        eprintln!("[ERROR] Invalid configuration in AviateApp.toml");
+        error!("Invalid configuration in AviateApp.toml");
         return ExitCode::FAILURE;
     }
 

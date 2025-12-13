@@ -1074,34 +1074,50 @@ fn get_crc_extra(msg_id: u32) -> u8 {
 /// Serialize a MAVLink message to a byte buffer
 ///
 /// Returns the number of bytes written, or None if buffer is too small.
-pub fn serialize_mavlink(msg: &MavMessage, seq: u8, buf: &mut [u8]) -> Option<usize> {
+/// Serialize a MAVLink message to a byte buffer
+///
+/// Returns the number of bytes written, or None if buffer is too small.
+pub fn serialize_mavlink(
+    msg: &MavMessage,
+    seq: u8,
+    sys_id: u8,
+    comp_id: u8,
+    buf: &mut [u8],
+) -> Option<usize> {
     match msg {
-        MavMessage::Heartbeat(m) => serialize_heartbeat(m, seq, buf),
-        MavMessage::SystemTime(m) => serialize_system_time(m, seq, buf),
-        MavMessage::AttitudeQuaternion(m) => serialize_attitude_quaternion(m, seq, buf),
-        MavMessage::LocalPositionNed(m) => serialize_local_position_ned(m, seq, buf),
-        MavMessage::SetAttitudeTarget(m) => serialize_set_attitude_target(m, seq, buf),
+        MavMessage::Heartbeat(m) => serialize_heartbeat(m, seq, sys_id, comp_id, buf),
+        MavMessage::SystemTime(m) => serialize_system_time(m, seq, sys_id, comp_id, buf),
+        MavMessage::AttitudeQuaternion(m) => serialize_attitude_quaternion(m, seq, sys_id, comp_id, buf),
+        MavMessage::LocalPositionNed(m) => serialize_local_position_ned(m, seq, sys_id, comp_id, buf),
+        MavMessage::SetAttitudeTarget(m) => serialize_set_attitude_target(m, seq, sys_id, comp_id, buf),
         MavMessage::SetPositionTargetLocalNed(m) => {
-            serialize_set_position_target_local_ned(m, seq, buf)
+            serialize_set_position_target_local_ned(m, seq, sys_id, comp_id, buf)
         }
-        MavMessage::CommandLong(m) => serialize_command_long(m, seq, buf),
-        MavMessage::CommandAck(m) => serialize_command_ack(m, seq, buf),
-        MavMessage::RcChannelsOverride(m) => serialize_rc_channels_override(m, seq, buf),
-        MavMessage::ManualControl(m) => serialize_manual_control(m, seq, buf),
-        MavMessage::SysStatus(m) => serialize_sys_status(m, seq, buf),
-        MavMessage::Statustext(m) => serialize_statustext(m, seq, buf),
+        MavMessage::CommandLong(m) => serialize_command_long(m, seq, sys_id, comp_id, buf),
+        MavMessage::CommandAck(m) => serialize_command_ack(m, seq, sys_id, comp_id, buf),
+        MavMessage::RcChannelsOverride(m) => serialize_rc_channels_override(m, seq, sys_id, comp_id, buf),
+        MavMessage::ManualControl(m) => serialize_manual_control(m, seq, sys_id, comp_id, buf),
+        MavMessage::SysStatus(m) => serialize_sys_status(m, seq, sys_id, comp_id, buf),
+        MavMessage::Statustext(m) => serialize_statustext(m, seq, sys_id, comp_id, buf),
         MavMessage::Unknown { .. } => None,
     }
 }
 
-fn write_header(buf: &mut [u8], payload_len: u8, seq: u8, msgid: u32) -> usize {
+fn write_header(
+    buf: &mut [u8],
+    payload_len: u8,
+    seq: u8,
+    sys_id: u8,
+    comp_id: u8,
+    msgid: u32,
+) -> usize {
     buf[0] = MAVLINK_STX_V2;
     buf[1] = payload_len;
     buf[2] = 0; // incompat_flags
     buf[3] = 0; // compat_flags
     buf[4] = seq;
-    buf[5] = AVIATE_SYSTEM_ID;
-    buf[6] = AVIATE_COMPONENT_ID;
+    buf[5] = sys_id;
+    buf[6] = comp_id;
     buf[7] = (msgid & 0xFF) as u8;
     buf[8] = ((msgid >> 8) & 0xFF) as u8;
     buf[9] = ((msgid >> 16) & 0xFF) as u8;
@@ -1115,13 +1131,13 @@ fn write_crc(buf: &mut [u8], offset: usize, crc_extra: u8) -> usize {
     offset + 2
 }
 
-fn serialize_heartbeat(msg: &Heartbeat, seq: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_heartbeat(msg: &Heartbeat, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
     let frame_size = MavHeader::SIZE + Heartbeat::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
     }
 
-    let offset = write_header(buf, Heartbeat::PAYLOAD_LEN as u8, seq, Heartbeat::MSG_ID);
+    let offset = write_header(buf, Heartbeat::PAYLOAD_LEN as u8, seq, sys_id, comp_id, Heartbeat::MSG_ID);
 
     write_u32_le(buf, offset, msg.custom_mode);
     buf[offset + 4] = msg.mav_type;
@@ -1133,13 +1149,13 @@ fn serialize_heartbeat(msg: &Heartbeat, seq: u8, buf: &mut [u8]) -> Option<usize
     Some(write_crc(buf, offset + Heartbeat::PAYLOAD_LEN, 50))
 }
 
-fn serialize_system_time(msg: &SystemTime, seq: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_system_time(msg: &SystemTime, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
     let frame_size = MavHeader::SIZE + SystemTime::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
     }
 
-    let offset = write_header(buf, SystemTime::PAYLOAD_LEN as u8, seq, SystemTime::MSG_ID);
+    let offset = write_header(buf, SystemTime::PAYLOAD_LEN as u8, seq, sys_id, comp_id, SystemTime::MSG_ID);
 
     write_u64_le(buf, offset, msg.time_unix_usec);
     write_u32_le(buf, offset + 8, msg.time_boot_ms);
@@ -1150,6 +1166,8 @@ fn serialize_system_time(msg: &SystemTime, seq: u8, buf: &mut [u8]) -> Option<us
 fn serialize_attitude_quaternion(
     msg: &AttitudeQuaternion,
     seq: u8,
+    sys_id: u8,
+    comp_id: u8,
     buf: &mut [u8],
 ) -> Option<usize> {
     let frame_size = MavHeader::SIZE + AttitudeQuaternion::PAYLOAD_LEN + 2;
@@ -1161,6 +1179,8 @@ fn serialize_attitude_quaternion(
         buf,
         AttitudeQuaternion::PAYLOAD_LEN as u8,
         seq,
+        sys_id,
+        comp_id,
         AttitudeQuaternion::MSG_ID,
     );
 
@@ -1184,7 +1204,7 @@ fn serialize_attitude_quaternion(
     ))
 }
 
-fn serialize_local_position_ned(msg: &LocalPositionNed, seq: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_local_position_ned(msg: &LocalPositionNed, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
     let frame_size = MavHeader::SIZE + LocalPositionNed::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
@@ -1194,6 +1214,8 @@ fn serialize_local_position_ned(msg: &LocalPositionNed, seq: u8, buf: &mut [u8])
         buf,
         LocalPositionNed::PAYLOAD_LEN as u8,
         seq,
+        sys_id,
+        comp_id,
         LocalPositionNed::MSG_ID,
     );
 
@@ -1211,6 +1233,8 @@ fn serialize_local_position_ned(msg: &LocalPositionNed, seq: u8, buf: &mut [u8])
 fn serialize_set_attitude_target(
     msg: &SetAttitudeTarget,
     seq: u8,
+    sys_id: u8,
+    comp_id: u8,
     buf: &mut [u8],
 ) -> Option<usize> {
     let frame_size = MavHeader::SIZE + SetAttitudeTarget::PAYLOAD_LEN + 2;
@@ -1222,6 +1246,8 @@ fn serialize_set_attitude_target(
         buf,
         SetAttitudeTarget::PAYLOAD_LEN as u8,
         seq,
+        sys_id,
+        comp_id,
         SetAttitudeTarget::MSG_ID,
     );
 
@@ -1247,6 +1273,8 @@ fn serialize_set_attitude_target(
 fn serialize_set_position_target_local_ned(
     msg: &SetPositionTargetLocalNed,
     seq: u8,
+    sys_id: u8,
+    comp_id: u8,
     buf: &mut [u8],
 ) -> Option<usize> {
     let frame_size = MavHeader::SIZE + SetPositionTargetLocalNed::PAYLOAD_LEN + 2;
@@ -1258,6 +1286,8 @@ fn serialize_set_position_target_local_ned(
         buf,
         SetPositionTargetLocalNed::PAYLOAD_LEN as u8,
         seq,
+        sys_id,
+        comp_id,
         SetPositionTargetLocalNed::MSG_ID,
     );
 
@@ -1285,7 +1315,7 @@ fn serialize_set_position_target_local_ned(
     ))
 }
 
-fn serialize_command_long(msg: &CommandLong, seq: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_command_long(msg: &CommandLong, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
     let frame_size = MavHeader::SIZE + CommandLong::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
@@ -1295,6 +1325,8 @@ fn serialize_command_long(msg: &CommandLong, seq: u8, buf: &mut [u8]) -> Option<
         buf,
         CommandLong::PAYLOAD_LEN as u8,
         seq,
+        sys_id,
+        comp_id,
         CommandLong::MSG_ID,
     );
 
@@ -1313,13 +1345,13 @@ fn serialize_command_long(msg: &CommandLong, seq: u8, buf: &mut [u8]) -> Option<
     Some(write_crc(buf, offset + CommandLong::PAYLOAD_LEN, 152))
 }
 
-fn serialize_command_ack(msg: &CommandAck, seq: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_command_ack(msg: &CommandAck, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
     let frame_size = MavHeader::SIZE + CommandAck::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
     }
 
-    let offset = write_header(buf, CommandAck::PAYLOAD_LEN as u8, seq, CommandAck::MSG_ID);
+    let offset = write_header(buf, CommandAck::PAYLOAD_LEN as u8, seq, sys_id, comp_id, CommandAck::MSG_ID);
 
     write_u16_le(buf, offset, msg.command);
     buf[offset + 2] = msg.result;
@@ -1334,6 +1366,8 @@ fn serialize_command_ack(msg: &CommandAck, seq: u8, buf: &mut [u8]) -> Option<us
 fn serialize_rc_channels_override(
     msg: &RcChannelsOverride,
     seq: u8,
+    sys_id: u8,
+    comp_id: u8,
     buf: &mut [u8],
 ) -> Option<usize> {
     let frame_size = MavHeader::SIZE + RcChannelsOverride::PAYLOAD_LEN + 2;
@@ -1345,6 +1379,8 @@ fn serialize_rc_channels_override(
         buf,
         RcChannelsOverride::PAYLOAD_LEN as u8,
         seq,
+        sys_id,
+        comp_id,
         RcChannelsOverride::MSG_ID,
     );
 
@@ -1379,7 +1415,7 @@ fn serialize_rc_channels_override(
     ))
 }
 
-fn serialize_manual_control(msg: &ManualControl, seq: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_manual_control(msg: &ManualControl, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
     let frame_size = MavHeader::SIZE + ManualControl::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
@@ -1389,6 +1425,8 @@ fn serialize_manual_control(msg: &ManualControl, seq: u8, buf: &mut [u8]) -> Opt
         buf,
         ManualControl::PAYLOAD_LEN as u8,
         seq,
+        sys_id,
+        comp_id,
         ManualControl::MSG_ID,
     );
 
@@ -1413,13 +1451,13 @@ fn serialize_manual_control(msg: &ManualControl, seq: u8, buf: &mut [u8]) -> Opt
     Some(write_crc(buf, offset + ManualControl::PAYLOAD_LEN, 243))
 }
 
-fn serialize_sys_status(msg: &SysStatus, seq: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_sys_status(msg: &SysStatus, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
     let frame_size = MavHeader::SIZE + SysStatus::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
     }
 
-    let offset = write_header(buf, SysStatus::PAYLOAD_LEN as u8, seq, SysStatus::MSG_ID);
+    let offset = write_header(buf, SysStatus::PAYLOAD_LEN as u8, seq, sys_id, comp_id, SysStatus::MSG_ID);
 
     write_u32_le(buf, offset, msg.onboard_control_sensors_present);
     write_u32_le(buf, offset + 4, msg.onboard_control_sensors_enabled);
@@ -1456,13 +1494,13 @@ fn serialize_sys_status(msg: &SysStatus, seq: u8, buf: &mut [u8]) -> Option<usiz
     Some(write_crc(buf, offset + SysStatus::PAYLOAD_LEN, 124))
 }
 
-fn serialize_statustext(msg: &Statustext, seq: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_statustext(msg: &Statustext, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
     let frame_size = MavHeader::SIZE + Statustext::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
     }
 
-    let offset = write_header(buf, Statustext::PAYLOAD_LEN as u8, seq, Statustext::MSG_ID);
+    let offset = write_header(buf, Statustext::PAYLOAD_LEN as u8, seq, sys_id, comp_id, Statustext::MSG_ID);
 
     buf[offset] = msg.severity;
     for i in 0..50 {
@@ -1526,7 +1564,7 @@ mod tests {
     {
         let msg = create_msg();
         let mut buf = [0u8; 256];
-        let len = serialize_mavlink(&msg, 0, &mut buf).expect("Serialize failed");
+        let len = serialize_mavlink(&msg, 0, 1, 1, &mut buf).expect("Serialize failed");
         let (parsed, _sig, consumed) = parse_mavlink(&buf[..len]).expect("Parse failed");
         assert_eq!(consumed, len, "Consumed length mismatch");
         verify_msg(parsed);

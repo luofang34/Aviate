@@ -31,21 +31,21 @@ use std::time::Duration;
 
 use aviate_hal_xil::{parse_test_config, run_test_config, SimulatorBackend, SimulatorError};
 use clap::{Parser, Subcommand};
+use log::{info, warn, error};
 
 #[cfg(feature = "gazebo")]
 use router_gen::RouterParams;
 #[cfg(feature = "gazebo")]
 use spawner::Spawner;
 
-#[derive(Parser)]
-#[command(name = "gcs-test")]
-#[command(about = "GCS test tool for SITL mission testing")]
+#[derive(Parser, Debug)]
+#[command(name = "gcs-test", author, version, about = "GCS test tool for SITL mission testing", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum Commands {
     /// Run a mission test from a TOML config file
     Run {
@@ -70,6 +70,9 @@ enum Commands {
 }
 
 fn main() -> ExitCode {
+    // Initialize logger
+    env_logger::init();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -83,15 +86,15 @@ fn main() -> ExitCode {
             let test_config = match parse_test_config(&config) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("Failed to parse config: {}", e);
+                    error!("Failed to parse config: {}", e);
                     return ExitCode::FAILURE;
                 }
             };
 
-            println!("=== GCS Test: {} ===", test_config.name);
-            println!("Config: {}", config.display());
-            println!("Vehicles: {}", test_config.vehicles.len());
-            println!();
+            info!("=== GCS Test: {} ===", test_config.name);
+            info!("Config: {}", config.display());
+            info!("Vehicles: {}", test_config.vehicles.len());
+            info!("");
 
             if xil {
                 // XIL mode: spawn everything and run test
@@ -103,9 +106,9 @@ fn main() -> ExitCode {
         }
         Commands::List => {
             // List mission configs in tests/xil-missions/
-            let mission_dir = PathBuf::from("tests/xil-missions");
+            let mission_dir = PathBuf::from("tests/missions");
             if mission_dir.exists() {
-                println!("Available mission configs:");
+                info!("Available mission configs:");
                 if let Ok(entries) = std::fs::read_dir(&mission_dir) {
                     for entry in entries.flatten() {
                         if entry
@@ -114,12 +117,12 @@ fn main() -> ExitCode {
                             .map(|e| e == "toml")
                             .unwrap_or(false)
                         {
-                            println!("  {}", entry.path().display());
+                            info!("  {}", entry.path().display());
                         }
                     }
                 }
             } else {
-                println!("Mission directory not found: {}", mission_dir.display());
+                warn!("Mission directory not found: {}", mission_dir.display());
             }
             ExitCode::SUCCESS
         }
@@ -128,25 +131,25 @@ fn main() -> ExitCode {
 
 /// Run test in GCS-only mode (FC already running)
 fn run_gcs_test(test_config: &aviate_hal_xil::TestConfig, mavlink_only: bool) -> ExitCode {
-    println!("Mode: GCS-only (FC must be running)");
+    info!("Mode: GCS-only (FC must be running)");
 
     let result = if mavlink_only {
-        println!("Backend: MAVLink-only (no ground truth)");
+        info!("Backend: MAVLink-only (no ground truth)");
         run_test_config(test_config, |instance| {
             Ok(MavlinkOnlyBackend::new(instance))
         })
     } else {
         #[cfg(feature = "gazebo")]
         {
-            println!("Backend: Gazebo (with ground truth)");
+            info!("Backend: Gazebo (with ground truth)");
             run_test_config(test_config, |instance| {
                 aviate_backend_gz::GazeboSimBackend::connect_new(instance, 5000)
             })
         }
         #[cfg(not(feature = "gazebo"))]
         {
-            println!("Backend: MAVLink-only (no backend compiled)");
-            println!("Note: Build with --features gazebo for ground truth");
+            info!("Backend: MAVLink-only (no backend compiled)");
+            warn!("Note: Build with --features gazebo for ground truth");
             run_test_config(test_config, |instance| {
                 Ok(MavlinkOnlyBackend::new(instance))
             })
@@ -169,8 +172,8 @@ fn run_xil_test(
         use spawner::FcConfig;
         use std::path::PathBuf;
 
-        println!("Mode: XIL (Gazebo SITL)");
-        println!("Headless: {}", if headless { "yes" } else { "no (GUI)" });
+        info!("Mode: XIL (Gazebo SITL)");
+        info!("Headless: {}", if headless { "yes" } else { "no (GUI)" });
 
         let mut spawner = Spawner::new();
 
@@ -183,25 +186,25 @@ fn run_xil_test(
         let world_path = match generate_temp_world(test_config, &world_params) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("Failed to generate world: {}", e);
+                error!("Failed to generate world: {}", e);
                 return ExitCode::FAILURE;
             }
         };
-        eprintln!("[GCS] World file: {}", world_path.display());
+        info!("[GCS] World file: {}", world_path.display());
 
         // Launch Gazebo
         if let Err(e) = spawner.launch_gazebo(&world_path, headless) {
-            eprintln!("Failed to launch Gazebo: {}", e);
+            error!("Failed to launch Gazebo: {}", e);
             return ExitCode::FAILURE;
         }
 
         // Wait for Gazebo shared memory
-        eprintln!("[GCS] Waiting for Gazebo plugin...");
+        info!("[GCS] Waiting for Gazebo plugin...");
         if !spawner.wait_for_gazebo(Duration::from_secs(30)) {
-            eprintln!("Timeout waiting for Gazebo plugin");
+            error!("Timeout waiting for Gazebo plugin");
             return ExitCode::FAILURE;
         }
-        eprintln!("[GCS] Gazebo ready");
+        info!("[GCS] Gazebo ready");
 
         // Spawn FC process for each vehicle
         // Use --connect mode so FC doesn't launch its own Gazebo
@@ -214,19 +217,19 @@ fn run_xil_test(
             };
 
             if let Err(e) = spawner.spawn_fc(&fc_config) {
-                eprintln!("Failed to spawn FC for {}: {}", vehicle.id, e);
+                error!("Failed to spawn FC for {}: {}", vehicle.id, e);
                 return ExitCode::FAILURE;
             }
-            eprintln!(
+            info!(
                 "[GCS] Spawned FC for {} (instance {})",
                 vehicle.id, vehicle.instance
             );
         }
 
         // Wait for FC processes to initialize
-        eprintln!("[GCS] Waiting for FC(s) to initialize...");
+        info!("[GCS] Waiting for FC(s) to initialize...");
         if !spawner.wait_for_fc_ready(Duration::from_secs(15)) {
-            eprintln!("Warning: FC initialization timeout (continuing anyway)");
+            warn!("Warning: FC initialization timeout (continuing anyway)");
         }
 
         // Generate and spawn mavrouter (for multi-vehicle)
@@ -234,19 +237,19 @@ fn run_xil_test(
             let router_params = RouterParams::default();
             match router_gen::generate_temp_router_config(test_config, &router_params) {
                 Ok(router_path) => {
-                    eprintln!("[GCS] Router config: {}", router_path.display());
+                    info!("[GCS] Router config: {}", router_path.display());
                     if let Err(e) = spawner.spawn_router(&router_path) {
-                        eprintln!("Warning: Failed to spawn mavrouter: {}", e);
+                        warn!("Warning: Failed to spawn mavrouter: {}", e);
                     }
                 }
                 Err(e) => {
-                    eprintln!("Warning: Failed to generate router config: {}", e);
+                    warn!("Warning: Failed to generate router config: {}", e);
                 }
             }
         }
 
         // Run test with Gazebo backend
-        eprintln!("[GCS] Running {} vehicle(s)...", test_config.vehicles.len());
+        info!("[GCS] Running {} vehicle(s)...", test_config.vehicles.len());
 
         let result = if mavlink_only {
             run_test_config(test_config, |instance| {

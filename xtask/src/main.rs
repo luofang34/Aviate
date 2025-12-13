@@ -1,3 +1,4 @@
+
 //! Aviate development tools
 //!
 //! Cross-platform flash tool for STM32H743 boards with Aviate bootloader.
@@ -5,8 +6,11 @@
 use anyhow::{bail, Context, Result};
 use regex::Regex;
 use std::io::{Read, Write};
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::thread;
 use std::time::{Duration, Instant};
+use sysinfo::System;
 
 const DFU_VID_PID: &str = "0483:df11";
 const APP_FLASH_ADDRESS: &str = "0x08020000";
@@ -40,6 +44,13 @@ fn main() -> Result<()> {
             let port = args.get(2).map(|s| s.as_str());
             enter_dfu_mode(port)?;
         }
+        "cleanup" => {
+            run_cleanup()?;
+        }
+        "test" => {
+            let config = args.get(2).map(|s| s.as_str());
+            run_test(config)?;
+        }
         "help" | "--help" | "-h" => {
             print_usage();
         }
@@ -65,6 +76,8 @@ COMMANDS:
     run <app-name> [port]        Build and flash app in one step
     flash <firmware.bin> [port]  Flash firmware via software DFU
     dfu [port]                   Enter DFU mode without flashing
+    cleanup                      Clean up lingering SITL processes
+    test [config]                Run SITL test (defaults to basic_flight)
     help                         Show this help
 
 EXAMPLES:
@@ -73,6 +86,7 @@ EXAMPLES:
     cargo xtask flash app.bin /dev/ttyACM0 # Linux/macOS
     cargo xtask flash app.bin COM3         # Windows
     cargo xtask dfu                        # Just enter DFU mode
+    cargo xtask cleanup                    # Kill all SITL related processes
 
 REQUIREMENTS:
     - Device running firmware with software-bootloader feature
@@ -183,6 +197,57 @@ fn enter_dfu_mode(port: Option<&str>) -> Result<()> {
     wait_for_dfu_device()?;
 
     eprintln!("Device is now in DFU mode!");
+    Ok(())
+}
+
+fn run_cleanup() -> anyhow::Result<()> {
+    println!("Cleaning up SITL processes...");
+    let mut system = System::new_all();
+    system.refresh_all();
+
+    let targets = ["gz sim", "sitl-gazebo", "gcs-test", "mavrouter", "ruby"];
+    let mut killed_count = 0;
+
+    for process in system.processes().values() {
+        let name = process.name();
+        let cmd = process.cmd().join(" ");
+
+        for target in targets.iter() {
+            // Check process name or full command line
+            if name.contains(target) || cmd.contains(target) {
+                // Don't kill ourselves (xtask)
+                if name.contains("xtask") {
+                    continue;
+                }
+                
+                // If it's gcs-test, only kill if it's not the one we might be spawning (though we are xtask, so gcs-test shouldn't be running yet if we are cleaning up PRE-run)
+                // But if we run `xtask cleanup` manually, we kill everything.
+                
+                println!("  Killing: {} (PID: {})", name, process.pid());
+                process.kill();
+                killed_count += 1;
+            }
+        }
+    }
+    
+    // Clean up shared memory on Linux
+    #[cfg(target_os = "linux")]
+    {
+        let shm_path = Path::new("/dev/shm/aviate_gz_bridge");
+        if shm_path.exists() {
+             let _ = std::fs::remove_file(shm_path);
+             println!("  Cleaned: /dev/shm/aviate_gz_bridge");
+        }
+    }
+
+    if killed_count == 0 {
+        println!("  No lingering processes found.");
+    } else {
+        println!("  Killed {} processes.", killed_count);
+        // Wait a bit for processes to actually exit
+        thread::sleep(Duration::from_millis(500));
+    }
+
     Ok(())
 }
 
@@ -323,6 +388,65 @@ fn flash_firmware(firmware_path: &str, port: Option<&str>) -> Result<()> {
     match find_serial_port() {
         Ok(port) => eprintln!("Device running on {}", port),
         Err(_) => eprintln!("Device may still be starting up..."),
+    }
+
+    Ok(())
+}
+
+/// Run SITL test using gcs-test
+fn run_test(config: Option<&str>) -> Result<()> {
+    let config_path = config.unwrap_or("tests/missions/basic_flight.toml");
+
+    // Always cleanup before running test to ensure clean state
+    run_cleanup()?;
+
+    // 1. Build gcs-test and FC binary with gazebo feature
+    eprintln!("Building gcs-test and SITL app...");
+    let status = Command::new("cargo")
+        .args([
+            "build",
+            "-p",
+            "gcs-test",
+            "-p",
+            "aviate-app-sitl-gazebo-x500",
+            "--features",
+            "gazebo",
+        ])
+        .status()
+        .context("Failed to build gcs-test or sitl-gazebo-x500")?;
+
+    if !status.success() {
+        bail!("Failed to build tests");
+    }
+
+    // 2. Set up environment
+    let cwd = std::env::current_dir()?;
+    let plugin_dir = cwd.join("aviate-hal/xil/backends/gz/plugin/build");
+    
+    if !plugin_dir.join("libAviateGzPlugin.so").exists() {
+         bail!("AviateGzPlugin not found at {}. Build with CMake first.", plugin_dir.display());
+    }
+
+    // 3. Run gcs-test
+    eprintln!("Running test: {}", config_path);
+    let mut cmd = Command::new("target/debug/gcs-test");
+    cmd.args(["run", "--xil", config_path]);
+    
+    // Add plugin dir to LD_LIBRARY_PATH
+    if let Ok(current_ld) = std::env::var("LD_LIBRARY_PATH") {
+        cmd.env("LD_LIBRARY_PATH", format!("{}:{}", plugin_dir.display(), current_ld));
+    } else {
+        cmd.env("LD_LIBRARY_PATH", plugin_dir);
+    }
+
+    // Ensure cleanup on ctrl-c (basic handling)
+    // In a real runner we might want complex signal handling, 
+    // but gcs-test handles its own cleanup of child processes.
+
+    let status = cmd.status().context("Failed to run gcs-test")?;
+
+    if !status.success() {
+        bail!("Test failed");
     }
 
     Ok(())

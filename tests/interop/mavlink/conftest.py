@@ -324,7 +324,7 @@ def mav_connection_via_router():
 @pytest.fixture
 def mavrouter_two_vehicle():
     """Start mavrouter configured for two-vehicle formation test."""
-    test_config_path = Path(__file__).parent.parent / 'quadcopter' / 'two_vehicle_formation.toml'
+    test_config_path = Path(__file__).parents[2] / 'missions' / 'two_vehicle_formation.toml'
     if not test_config_path.exists():
         pytest.skip(f"Test config not found: {test_config_path}")
 
@@ -337,7 +337,7 @@ def mavrouter_two_vehicle():
 @pytest.fixture
 def mavrouter_single_vehicle():
     """Start mavrouter configured for single vehicle test."""
-    test_config_path = Path(__file__).parent.parent / 'quadcopter' / 'basic_flight.toml'
+    test_config_path = Path(__file__).parents[2] / 'missions' / 'basic_flight.toml'
     if not test_config_path.exists():
         pytest.skip(f"Test config not found: {test_config_path}")
 

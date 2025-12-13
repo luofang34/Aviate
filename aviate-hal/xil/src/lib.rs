@@ -194,7 +194,7 @@ pub struct XilConfig {
 impl XilConfig {
     /// Create config for a specific instance ID
     pub fn for_instance(instance: u8) -> Self {
-        Self::for_instance_with_net(instance, XilNetConfig::default())
+        Self::for_instance_with_net(instance, XilNetConfig::from_env())
     }
 
     /// Create config for a specific instance with custom network settings

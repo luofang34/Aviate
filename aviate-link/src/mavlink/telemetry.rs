@@ -74,8 +74,8 @@ use crate::telemetry::{TelemetryBackend, TelemetryCycleFormatter, TelemetrySnaps
 /// - `Err(TelemetryError::Protocol)`: Serialization failed
 pub fn format_heartbeat(
     _status: &ChannelStatus,
-    _sys_id: u8,
-    _comp_id: u8,
+    sys_id: u8,
+    comp_id: u8,
     seq: &mut u8,
     buf: &mut [u8],
 ) -> TelemetryResult<usize> {
@@ -89,7 +89,7 @@ pub fn format_heartbeat(
     };
 
     let msg = MavMessage::Heartbeat(heartbeat);
-    let len = serialize_mavlink(&msg, *seq, buf).ok_or(TelemetryError::Protocol)?;
+    let len = serialize_mavlink(&msg, *seq, sys_id, comp_id, buf).ok_or(TelemetryError::Protocol)?;
 
     *seq = seq.wrapping_add(1);
     Ok(len)
@@ -120,8 +120,8 @@ pub fn format_heartbeat(
 pub fn format_attitude(
     state: &StateEstimate,
     time_ms: u32,
-    _sys_id: u8,
-    _comp_id: u8,
+    sys_id: u8,
+    comp_id: u8,
     seq: &mut u8,
     buf: &mut [u8],
 ) -> TelemetryResult<usize> {
@@ -138,7 +138,7 @@ pub fn format_attitude(
     };
 
     let msg = MavMessage::AttitudeQuaternion(attitude);
-    let len = serialize_mavlink(&msg, *seq, buf).ok_or(TelemetryError::Protocol)?;
+    let len = serialize_mavlink(&msg, *seq, sys_id, comp_id, buf).ok_or(TelemetryError::Protocol)?;
 
     *seq = seq.wrapping_add(1);
     Ok(len)
@@ -169,8 +169,8 @@ pub fn format_attitude(
 pub fn format_local_position(
     state: &StateEstimate,
     time_ms: u32,
-    _sys_id: u8,
-    _comp_id: u8,
+    sys_id: u8,
+    comp_id: u8,
     seq: &mut u8,
     buf: &mut [u8],
 ) -> TelemetryResult<usize> {
@@ -185,7 +185,7 @@ pub fn format_local_position(
     };
 
     let msg = MavMessage::LocalPositionNed(position);
-    let len = serialize_mavlink(&msg, *seq, buf).ok_or(TelemetryError::Protocol)?;
+    let len = serialize_mavlink(&msg, *seq, sys_id, comp_id, buf).ok_or(TelemetryError::Protocol)?;
 
     *seq = seq.wrapping_add(1);
     Ok(len)

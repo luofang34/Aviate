@@ -23,7 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AVIATE_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Default test config
-DEFAULT_TEST="tests/xil-missions/basic_flight.toml"
+DEFAULT_TEST="tests/missions/basic_flight.toml"
 TEST_CONFIG=""
 
 # Parse arguments
@@ -39,8 +39,8 @@ while [[ "$#" -gt 0 ]]; do
             echo ""
             echo "Examples:"
             echo "  $0                                       # Run default test"
-            echo "  $0 tests/xil-missions/basic_flight.toml  # Basic flight test"
-            echo "  $0 tests/xil-missions/two_vehicle_formation.toml  # Multi-vehicle test"
+            echo "  $0 tests/missions/basic_flight.toml  # Basic flight test"
+            echo "  $0 tests/missions/two_vehicle_formation.toml  # Multi-vehicle test"
             echo ""
             echo "Test configs define:"
             echo "  - Vehicles: model, spawn position, instance ID"
@@ -69,7 +69,7 @@ fi
 if [ ! -f "$TEST_CONFIG" ]; then
     echo "Error: Test config not found: $TEST_CONFIG"
     echo "Available tests:"
-    ls -1 tests/xil-missions/*.toml 2>/dev/null || echo "  (none found)"
+    ls -1 tests/missions/*.toml 2>/dev/null || echo "  (none found)"
     exit 1
 fi
 

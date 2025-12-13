@@ -19,3 +19,4 @@ xil-fault = ["aviate-hal-io/xil-fault"]
 aviate-core = { path = "../../aviate-core" }
 aviate-link = { path = "../../aviate-link" }
 aviate-hal-io = { path = "../io" }
+log = "0.4"

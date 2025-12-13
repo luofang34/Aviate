@@ -19,3 +19,40 @@ Aviate is a minimal, deterministic, hard-real-time motion control kernel respons
 - ❌ File systems / logging
 - ❌ UI / GCS / cloud platforms
 - ❌ Operating system dependencies
+
+## 3. Testing
+
+Aviate uses `cargo xtask` for managing SITL (Software-In-The-Loop) tests.
+
+### Running Tests
+
+```bash
+# Run a specific mission test
+cargo xtask test tests/missions/basic_flight.toml
+
+# Run multi-vehicle formation test
+cargo xtask test tests/missions/two_vehicle_formation.toml
+```
+
+This command automatically:
+1. Cleans up lingering SITL processes (`gz`, `sitl-gazebo`, `mavrouter`).
+2. Rebuilds necessary binaries.
+3. Launches Gazebo, flight controllers, and MAVLink router.
+4. Executes the test mission.
+
+### Environment Configuration
+
+- **`XIL_BASE_PORT`**: Sets the base UDP port for SITL instances (default: 20000). Use this if you encounter "Address already in use" errors or need to run parallel tests.
+  ```bash
+  XIL_BASE_PORT=30000 cargo xtask test tests/missions/two_vehicle_formation.toml
+  ```
+- **`HEADLESS`**: Set to `false` to enable Gazebo GUI (default: `true`).
+- **`RUST_LOG`**: Set to `info` or `debug` for verbose output.
+
+### Manual Cleanup
+
+If a test crashes or hangs, you can manually force clean the environment:
+
+```bash
+cargo xtask cleanup
+```
