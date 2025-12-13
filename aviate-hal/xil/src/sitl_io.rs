@@ -305,8 +305,15 @@ impl SitlIO {
                 self.rx_count += 1;
                 self.handle_message(msg, src);
             }
-            Err(_e) => {
-                // Silently ignore parse errors (might be partial frames)
+            Err(e) => {
+                // Log parse errors to help debug GCS communication issues
+                eprintln!(
+                    "[WARN] MAVLink parse error from {}: {:?} (len={}, first_bytes={:02x?})",
+                    src,
+                    e,
+                    data.len(),
+                    &data[..data.len().min(10)]
+                );
             }
         }
     }
@@ -347,18 +354,26 @@ impl SitlIO {
     }
 
     fn handle_command_long(&mut self, cmd: CommandLong) {
+        eprintln!(
+            "[INFO] Received COMMAND_LONG: cmd={}, param1={}, target=({},{})",
+            cmd.command, cmd.param1, cmd.target_system, cmd.target_component
+        );
+
         let result = if cmd.command == mav_cmd::COMPONENT_ARM_DISARM {
             if cmd.param1 == 1.0 {
+                eprintln!("[INFO] Processing ARM command");
                 self.command = Some(SystemCommand::Arm);
                 mav_result::ACCEPTED
             } else if cmd.param1 == 0.0 {
+                eprintln!("[INFO] Processing DISARM command");
                 self.command = Some(SystemCommand::Disarm);
                 mav_result::ACCEPTED
             } else {
+                eprintln!("[WARN] Invalid ARM param1: {}", cmd.param1);
                 mav_result::DENIED
             }
         } else {
-            // Unsupported command
+            eprintln!("[WARN] Unsupported command: {}", cmd.command);
             mav_result::UNSUPPORTED
         };
 
@@ -378,7 +393,13 @@ impl SitlIO {
         };
 
         if let Some(gcs_addr) = self.gcs_addr {
+            eprintln!(
+                "[INFO] Sending COMMAND_ACK to {}: cmd={}, result={}",
+                gcs_addr, command, result
+            );
             self.send_message_to(&MavMessage::CommandAck(ack), gcs_addr);
+        } else {
+            eprintln!("[WARN] Cannot send COMMAND_ACK - no GCS address known");
         }
     }
 

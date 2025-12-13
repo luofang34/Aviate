@@ -55,6 +55,8 @@ struct Options {
     mock: bool,
     headless: bool,
     instance: u8,
+    /// Connect to existing Gazebo (don't launch new one)
+    connect: bool,
 }
 
 impl Options {
@@ -67,6 +69,9 @@ impl Options {
         // Check for --headless or HEADLESS env
         let headless = args.iter().any(|a| a == "--headless")
             || env::var("HEADLESS").map(|v| v == "1").unwrap_or(false);
+
+        // Check for --connect (skip Gazebo launch, assume it's already running)
+        let connect = args.iter().any(|a| a == "--connect");
 
         // Check for --instance <N> or AVIATE_INSTANCE env
         let instance = args
@@ -81,6 +86,7 @@ impl Options {
             mock,
             headless,
             instance,
+            connect,
         }
     }
 }
@@ -128,6 +134,9 @@ fn main() -> ExitCode {
         info!("Mode: Mock (no Gazebo)");
         run_mock();
         ExitCode::SUCCESS
+    } else if opts.connect {
+        info!("Mode: Connect (external Gazebo)");
+        run_connect(opts.instance)
     } else {
         info!(
             "Mode: Interactive (headless={})",
@@ -149,6 +158,72 @@ fn run_mock() {
         hal.kick_watchdog();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+}
+
+/// Connect mode: Connect to existing Gazebo (doesn't launch new one)
+/// Used when gcs-test spawns this FC process and manages Gazebo separately
+#[cfg(feature = "gz-plugin")]
+fn run_connect(instance: u8) -> ExitCode {
+    use aviate_backend_gz::GzPluginBridge;
+    use aviate_hal_xil::SitlConfig;
+    use std::time::Duration;
+
+    let config = SitlConfig::for_instance(instance);
+    info!("Sensor port: {}", config.sensor_port());
+
+    // Wait for shared memory to be ready (Gazebo launched by gcs-test)
+    info!("Waiting for Gazebo plugin (launched externally)...");
+    if !wait_for_shm(Duration::from_secs(30)) {
+        warn!("Timeout waiting for Gazebo plugin");
+        return ExitCode::FAILURE;
+    }
+    info!("Gazebo ready");
+
+    // Load app config for telemetry
+    const APP_CONFIG_TOML: &str = include_str!("../AviateApp.toml");
+    let app_config = aviate_config::from_toml_str(APP_CONFIG_TOML).ok();
+
+    // Create the board
+    let mut board = match GazeboSitlBoard::with_config_retry(config, 5, 1000) {
+        Ok(b) => b,
+        Err(e) => {
+            warn!("Failed to initialize board: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Initialize telemetry (sends HEARTBEAT, ATTITUDE, POSITION to GCS)
+    if let Some(ref cfg) = app_config {
+        board.init_telemetry(cfg, 1000); // 1kHz control loop
+    }
+
+    // Connect to Gazebo via shared memory
+    let plugin = match GzPluginBridge::connect_instance_with_retry(instance, 20, 500) {
+        Ok(p) => {
+            info!("Connected to Gazebo plugin");
+            p
+        }
+        Err(e) => {
+            warn!("Failed to connect to Gazebo: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    info!("Flight controller ready - waiting for GCS commands");
+    info!("Connect with QGroundControl or send MAVLink commands");
+    println!();
+
+    // Main control loop
+    run_control_loop(&mut board, &plugin);
+
+    ExitCode::SUCCESS
+}
+
+#[cfg(not(feature = "gz-plugin"))]
+fn run_connect(_instance: u8) -> ExitCode {
+    warn!("gz-plugin feature not enabled");
+    warn!("Rebuild with: cargo build -p aviate-app-sitl-gazebo-x500 --features gz-plugin");
+    ExitCode::FAILURE
 }
 
 /// Interactive mode: Launch Gazebo, run FC, wait for GCS commands

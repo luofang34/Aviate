@@ -204,10 +204,11 @@ fn run_xil_test(
         eprintln!("[GCS] Gazebo ready");
 
         // Spawn FC process for each vehicle
+        // Use --connect mode so FC doesn't launch its own Gazebo
         for vehicle in &test_config.vehicles {
             let fc_config = FcConfig {
                 binary_path: PathBuf::from("./target/debug/sitl-gazebo-x500"),
-                args: vec!["--interactive".to_string()],
+                args: vec!["--connect".to_string()],
                 instance: vehicle.instance,
                 headless,
             };
