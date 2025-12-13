@@ -12,8 +12,8 @@ env = "sitl"
 frame_size = 280
 queue_len = 32
 heartbeat_hz = 1    # 1 Hz standard for GCS connection status
-attitude_hz = 10    # 10 Hz for smooth attitude display
-position_hz = 4     # 4 Hz for map position updates
+attitude_hz = 60    # 60 Hz for smooth GCS attitude display
+position_hz = 15    # 15 Hz for position/velocity updates
 
 [security]
 profile = "none"  # Options: "none", "auth-only", "auth-and-encrypt"

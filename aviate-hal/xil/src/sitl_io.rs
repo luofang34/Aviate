@@ -50,11 +50,11 @@ use aviate_core::time::{TimeSource, Timestamp};
 use aviate_hal_io::{GnssFix, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading};
 
 use aviate_link::mavlink::protocol::{
-    CommandLong, Heartbeat, SetAttitudeTarget, SetPositionTargetLocalNed,
+    CommandAck, CommandLong, Heartbeat, SetAttitudeTarget, SetPositionTargetLocalNed,
 };
 use aviate_link::mavlink::{
-    mav_cmd, parse_mavlink, serialize_mavlink, MavAutopilot, MavMessage, MavModeFlag, MavState,
-    MavType,
+    mav_cmd, mav_result, parse_mavlink, serialize_mavlink, MavAutopilot, MavMessage, MavModeFlag,
+    MavState, MavType,
 };
 
 use crate::sim_types::{SimActuatorCmd, SimGnssFix, SimSensorPacket};
@@ -97,7 +97,8 @@ pub struct HilGpsData {
 /// ```
 pub struct SitlIO {
     recv_socket: UdpSocket,
-    send_socket: UdpSocket,
+    /// GCS socket for MAVLink command reception and heartbeat
+    gcs_socket: UdpSocket,
     config: XilConfig,
     start_time: std::time::Instant,
     armed: bool,
@@ -122,22 +123,27 @@ pub struct SitlIO {
 
     // Buffered actuator command for Rust API (direct FFI path)
     actuator_cmd: Option<SimActuatorCmd>,
+
+    /// Current system status for heartbeat (MAV_STATE value)
+    /// Updated by runtime via set_system_status()
+    system_status: u8,
 }
 
 impl SitlIO {
     /// Create a new SITL I/O transport
     pub fn new(config: XilConfig) -> io::Result<Self> {
-        // Socket to receive sensor data from simulator
+        // Socket to receive sensor data from simulator (legacy path, may be unused for Gazebo FFI)
         let recv_socket = UdpSocket::bind(("0.0.0.0", config.sensor_port()))?;
         recv_socket.set_nonblocking(true)?;
 
-        // Socket to send actuator commands to simulator
-        let send_socket = UdpSocket::bind("0.0.0.0:0")?;
-        send_socket.set_nonblocking(true)?;
+        // GCS socket for MAVLink commands and heartbeat
+        // Uses ephemeral port - sends TO gcs_addr (14550), GCS sends commands back to this port
+        let gcs_socket = UdpSocket::bind("0.0.0.0:0")?;
+        gcs_socket.set_nonblocking(true)?;
 
         Ok(Self {
             recv_socket,
-            send_socket,
+            gcs_socket,
             config,
             start_time: std::time::Instant::now(),
             armed: false,
@@ -150,6 +156,7 @@ impl SitlIO {
             rx_count: 0,
             tx_count: 0,
             actuator_cmd: None,
+            system_status: MavState::Boot as u8, // Start in BOOT state
         })
     }
 
@@ -160,9 +167,20 @@ impl SitlIO {
     pub fn poll(&mut self) {
         let mut buf = [0u8; 512];
 
-        // Process all available messages
+        // Process all available messages from sensor socket (Gazebo plugin)
         loop {
             match self.recv_socket.recv_from(&mut buf) {
+                Ok((len, src)) => {
+                    self.process_mavlink_data(&buf[..len], src);
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(_) => break,
+            }
+        }
+
+        // Process all available messages from GCS socket (QGroundControl, etc.)
+        loop {
+            match self.gcs_socket.recv_from(&mut buf) {
                 Ok((len, src)) => {
                     self.process_mavlink_data(&buf[..len], src);
                 }
@@ -329,16 +347,45 @@ impl SitlIO {
     }
 
     fn handle_command_long(&mut self, cmd: CommandLong) {
-        if cmd.command == mav_cmd::COMPONENT_ARM_DISARM {
+        let result = if cmd.command == mav_cmd::COMPONENT_ARM_DISARM {
             if cmd.param1 == 1.0 {
                 self.command = Some(SystemCommand::Arm);
+                mav_result::ACCEPTED
             } else if cmd.param1 == 0.0 {
                 self.command = Some(SystemCommand::Disarm);
+                mav_result::ACCEPTED
+            } else {
+                mav_result::DENIED
             }
+        } else {
+            // Unsupported command
+            mav_result::UNSUPPORTED
+        };
+
+        // Send COMMAND_ACK to GCS
+        self.send_command_ack(cmd.command, result);
+    }
+
+    /// Send COMMAND_ACK response to GCS
+    fn send_command_ack(&mut self, command: u16, result: u8) {
+        let ack = CommandAck {
+            command,
+            result,
+            progress: 0,
+            result_param2: 0,
+            target_system: 255, // Broadcast
+            target_component: 0,
+        };
+
+        if let Some(gcs_addr) = self.gcs_addr {
+            self.send_message_to(&MavMessage::CommandAck(ack), gcs_addr);
         }
     }
 
-    /// Send heartbeat message
+    /// Send heartbeat message to GCS
+    ///
+    /// For Gazebo, sensor/actuator data flows via FFI bridge - no MAVLink to simulator.
+    /// Heartbeat is only sent to GCS so it learns our port and can send commands back.
     fn send_heartbeat(&mut self) {
         let hb = Heartbeat {
             mav_type: MavType::Quadrotor as u8,
@@ -349,23 +396,23 @@ impl SitlIO {
                 MavModeFlag::HIL_ENABLED.0
             },
             custom_mode: 0,
-            system_status: MavState::Active as u8,
+            system_status: self.system_status,
             mavlink_version: 3,
         };
 
-        self.send_message(&MavMessage::Heartbeat(hb));
-
-        if let Some(gcs_addr) = self.gcs_addr {
-            self.send_message_to(&MavMessage::Heartbeat(hb), gcs_addr);
-        }
+        // Send heartbeat to GCS so it can discover our port
+        self.send_message_to(&MavMessage::Heartbeat(hb), self.config.gcs_addr);
     }
 
-    /// Send a MAVLink message to a specific address
+    /// Send a MAVLink message to a specific address via GCS socket
+    ///
+    /// Uses the GCS socket (port 14550) so responses come from the same port
+    /// that we're listening on for commands.
     fn send_message_to(&mut self, msg: &MavMessage, addr: std::net::SocketAddr) {
         let mut buf = [0u8; 300];
         if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
             self.seq = self.seq.wrapping_add(1);
-            let _ = self.send_socket.send_to(&buf[..len], addr);
+            let _ = self.gcs_socket.send_to(&buf[..len], addr);
             self.tx_count += 1;
         }
     }
@@ -380,21 +427,22 @@ impl SitlIO {
         }
     }
 
+    /// Set system status for heartbeat
+    ///
+    /// Maps FC init states to MAV_STATE:
+    /// - `MavState::Boot` (1): PowerOn, ConfigLoading
+    /// - `MavState::Calibrating` (2): SensorInit, EstimatorConverging
+    /// - `MavState::Standby` (3): Ready (disarmed, can be armed)
+    /// - `MavState::Active` (4): Armed
+    ///
+    /// Called by runtime when init state changes.
+    pub fn set_system_status(&mut self, status: MavState) {
+        self.system_status = status as u8;
+    }
+
     /// Check if armed
     pub fn is_armed(&self) -> bool {
         self.armed
-    }
-
-    /// Send a MAVLink message to simulator
-    fn send_message(&mut self, msg: &MavMessage) {
-        let mut buf = [0u8; 300];
-        if let Some(len) = serialize_mavlink(msg, self.seq, &mut buf) {
-            self.seq = self.seq.wrapping_add(1);
-            let _ = self
-                .send_socket
-                .send_to(&buf[..len], self.config.simulator_addr());
-            self.tx_count += 1;
-        }
     }
 
     /// Get statistics

@@ -28,7 +28,7 @@
 use crate::sensor_cache::SensorCache;
 use crate::telemetry::{FrameTx, TelemetrySnapshot, TelemetryTask};
 
-use aviate_link::mavlink::MavlinkCycleFormatter;
+use aviate_link::mavlink::{MavState, MavlinkCycleFormatter};
 
 use aviate_config::AppConfig;
 use aviate_core::control::multirotor::MultirotorController;
@@ -319,12 +319,15 @@ impl SitlRunner {
             let prev_state = self.kernel.init_state;
             self.kernel.init_step(&sensors, ts);
 
-            // Log state transitions
+            // Log state transitions and update MAVLink system status
             if self.kernel.init_state != prev_state {
                 eprintln!(
                     "[FC] Init state: {:?} -> {:?}",
                     prev_state, self.kernel.init_state
                 );
+                // Update MAVLink system_status based on init state
+                let mav_state = init_state_to_mav_state(self.kernel.init_state);
+                self.transport.set_system_status(mav_state);
             }
         }
 
@@ -440,6 +443,25 @@ pub fn default_command() -> Command {
         sensor_overrides: None,
         sequence: 0,
         source: CommandSource::Failsafe,
+    }
+}
+
+/// Map FC InitState to MAVLink MAV_STATE for heartbeat system_status
+///
+/// - `Boot` (1): PowerOn, ConfigLoading
+/// - `Calibrating` (2): SensorInit, EstimatorConverging, PreArm
+/// - `Standby` (3): Ready (disarmed, can be armed)
+/// - `Active` (4): Armed
+fn init_state_to_mav_state(state: InitState) -> MavState {
+    match state {
+        InitState::PowerOn | InitState::ConfigLoading => MavState::Boot,
+        InitState::SensorInit | InitState::EstimatorConverging | InitState::PreArm => {
+            MavState::Calibrating
+        }
+        InitState::Ready => MavState::Standby,
+        InitState::Armed => MavState::Active,
+        InitState::Disarmed => MavState::Standby,
+        InitState::Fault => MavState::Critical,
     }
 }
 
