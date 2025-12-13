@@ -6,8 +6,8 @@
 use anyhow::{bail, Context, Result};
 use regex::Regex;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::Path;
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 use sysinfo::System;
@@ -51,6 +51,9 @@ fn main() -> Result<()> {
             let config = args.get(2).map(|s| s.as_str());
             run_test(config)?;
         }
+        "test-mavlink" => {
+            run_python_test()?;
+        }
         "help" | "--help" | "-h" => {
             print_usage();
         }
@@ -77,6 +80,7 @@ COMMANDS:
     flash <firmware.bin> [port]  Flash firmware via software DFU
     dfu [port]                   Enter DFU mode without flashing
     cleanup                      Clean up lingering SITL processes
+    test-mavlink                 Run MAVLink heterogeneous tests (Python)
     test [config]                Run SITL test (defaults to basic_flight)
     help                         Show this help
 
@@ -87,6 +91,8 @@ EXAMPLES:
     cargo xtask flash app.bin COM3         # Windows
     cargo xtask dfu                        # Just enter DFU mode
     cargo xtask cleanup                    # Kill all SITL related processes
+    cargo xtask test-mavlink               # Run python verification
+    cargo xtask test                       # Run Rust verification
 
 REQUIREMENTS:
     - Device running firmware with software-bootloader feature
@@ -94,6 +100,66 @@ REQUIREMENTS:
     - arm-none-eabi-objcopy for 'run' command
 "#
     );
+}
+
+// ... existing helper functions ...
+
+// Note: I will insert run_python_test at the end
+
+/// Run Python heterogeneous tests
+fn run_python_test() -> Result<()> {
+    let config_path = "tests/missions/basic_flight.toml";
+    let script_path = "tests/python/test_connection.py";
+
+    // Always cleanup before running test to ensure clean state
+    run_cleanup()?;
+
+    // 1. Build gcs-test and FC binary with gazebo feature
+    eprintln!("Building gcs-test and SITL app...");
+    let status = Command::new("cargo")
+        .args([
+            "build",
+            "-p",
+            "gcs-test",
+            "-p",
+            "aviate-app-sitl-gazebo-x500",
+            "--features",
+            "gazebo",
+        ])
+        .status()
+        .context("Failed to build gcs-test or sitl-gazebo-x500")?;
+
+    if !status.success() {
+        bail!("Failed to build tests");
+    }
+
+    // 2. Set up environment
+    let cwd = std::env::current_dir()?;
+    let plugin_dir = cwd.join("aviate-hal/xil/backends/gz/plugin/build");
+    
+    if !plugin_dir.join("libAviateGzPlugin.so").exists() {
+         bail!("AviateGzPlugin not found at {}. Build with CMake first.", plugin_dir.display());
+    }
+
+    // 3. Run gcs-test in RunScript mode
+    eprintln!("Running python test: {}", script_path);
+    let mut cmd = Command::new("target/debug/gcs-test");
+    cmd.args(["run-script", config_path, script_path]);
+    
+    // Add plugin dir to LD_LIBRARY_PATH
+    if let Ok(current_ld) = std::env::var("LD_LIBRARY_PATH") {
+        cmd.env("LD_LIBRARY_PATH", format!("{}:{}", plugin_dir.display(), current_ld));
+    } else {
+        cmd.env("LD_LIBRARY_PATH", plugin_dir);
+    }
+
+    let status = cmd.status().context("Failed to run gcs-test")?;
+
+    if !status.success() {
+        bail!("Python test failed");
+    }
+
+    Ok(())
 }
 
 /// Find the first available USB CDC ACM port

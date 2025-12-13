@@ -209,9 +209,11 @@ impl Spawner {
         Ok(())
     }
 
-    /// Wait for FC to be ready (by polling)
-    pub fn wait_for_fc_ready(&self, timeout: Duration) -> bool {
-        std::thread::sleep(timeout);
+    /// Wait for FC to be ready
+    pub fn wait_for_fc_ready(&self, _timeout: Duration) -> bool {
+        // Minimal wait to allow process to start up.
+        // Connection logic is handled by MavClient checking for heartbeats.
+        std::thread::sleep(Duration::from_secs(2));
         true
     }
 

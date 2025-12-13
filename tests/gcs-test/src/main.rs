@@ -65,6 +65,18 @@ enum Commands {
         #[arg(long)]
         mavlink_only: bool,
     },
+    /// Run an external script (e.g. Python) against the SITL environment
+    RunScript {
+        /// Path to the mission config file (for environment setup)
+        config: PathBuf,
+        
+        /// Path to the script to execute
+        script: PathBuf,
+
+        /// Run in headless mode (no GUI)
+        #[arg(long, default_value = "true")]
+        headless: bool,
+    },
     /// List available mission configs
     List,
 }
@@ -103,6 +115,20 @@ fn main() -> ExitCode {
                 // GCS-only mode: FC is already running
                 run_gcs_test(&test_config, mavlink_only)
             }
+        }
+        Commands::RunScript {
+            config,
+            script,
+            headless,
+        } => {
+            let test_config = match parse_test_config(&config) {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Failed to parse config: {}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+            run_script_test(&test_config, &script, headless)
         }
         Commands::List => {
             // List mission configs in tests/xil-missions/
@@ -347,4 +373,123 @@ impl SimulatorBackend for MavlinkOnlyBackend {
     fn instance(&self) -> u8 {
         self.instance
     }
+}
+
+/// Run external script test in XIL mode
+#[cfg(feature = "gazebo")]
+fn run_script_test(
+    test_config: &aviate_hal_xil::TestConfig,
+    script: &std::path::Path,
+    headless: bool,
+) -> ExitCode {
+    use aviate_app_sitl_gazebo_x500::{generate_temp_world, WorldParams};
+    use spawner::{FcConfig, Spawner};
+    use std::time::Duration;
+
+    info!("Mode: Script (Gazebo SITL)");
+    info!("Script: {}", script.display());
+
+    let mut spawner = Spawner::new();
+
+    // Generate world file
+    let world_params = WorldParams {
+        lockstep: test_config.lockstep,
+        ..WorldParams::default()
+    };
+
+    let world_path = match generate_temp_world(test_config, &world_params) {
+        Ok(p) => p,
+        Err(e) => {
+            error!("Failed to generate world: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+    info!("[GCS] World file: {}", world_path.display());
+
+    // Launch Gazebo
+    if let Err(e) = spawner.launch_gazebo(&world_path, headless) {
+        error!("Failed to launch Gazebo: {}", e);
+        return ExitCode::FAILURE;
+    }
+
+    // Wait for Gazebo shared memory
+    info!("[GCS] Waiting for Gazebo plugin...");
+    if !spawner.wait_for_gazebo(Duration::from_secs(30)) {
+        error!("Timeout waiting for Gazebo plugin");
+        return ExitCode::FAILURE;
+    }
+    info!("[GCS] Gazebo ready");
+
+    // Spawn FC process for each vehicle
+    for vehicle in &test_config.vehicles {
+        let fc_config = FcConfig {
+            binary_path: std::path::PathBuf::from("./target/debug/sitl-gazebo-x500"),
+            args: vec!["--connect".to_string()],
+            instance: vehicle.instance,
+            headless,
+        };
+
+        if let Err(e) = spawner.spawn_fc(&fc_config) {
+            error!("Failed to spawn FC for {}: {}", vehicle.id, e);
+            return ExitCode::FAILURE;
+        }
+        info!(
+            "[GCS] Spawned FC for {} (instance {})",
+            vehicle.id, vehicle.instance
+        );
+    }
+
+    // Wait for FC processes to initialize
+    info!("[GCS] Waiting for FC(s) to initialize...");
+    if !spawner.wait_for_fc_ready(Duration::from_secs(15)) {
+        warn!("Warning: FC initialization timeout (continuing anyway)");
+    }
+
+    // Generate and spawn mavrouter (for multi-vehicle)
+    if test_config.vehicles.len() > 1 {
+        let router_params = router_gen::RouterParams::default();
+        match router_gen::generate_temp_router_config(test_config, &router_params) {
+            Ok(router_path) => {
+                info!("[GCS] Router config: {}", router_path.display());
+                if let Err(e) = spawner.spawn_router(&router_path) {
+                    warn!("Warning: Failed to spawn mavrouter: {}", e);
+                }
+            }
+            Err(e) => {
+                warn!("Warning: Failed to generate router config: {}", e);
+            }
+        }
+    }
+
+    // Run Script
+    info!("[GCS] Running script...");
+    let status = std::process::Command::new("python3")
+        .arg(script)
+        .status();
+
+    match status {
+        Ok(s) => {
+             if s.success() {
+                 info!("Script PASSED");
+                 ExitCode::SUCCESS
+             } else {
+                 error!("Script FAILED with exit code: {:?}", s.code());
+                 ExitCode::FAILURE
+             }
+        }
+        Err(e) => {
+            error!("Failed to execute script: {}", e);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(not(feature = "gazebo"))]
+fn run_script_test(
+    _test_config: &aviate_hal_xil::TestConfig,
+    _script: &std::path::Path,
+    _headless: bool,
+) -> ExitCode {
+    eprintln!("XIL mode requires --features gazebo");
+    ExitCode::FAILURE
 }

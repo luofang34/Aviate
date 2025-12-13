@@ -33,7 +33,7 @@ use crate::mission::{
 use crate::XilNetConfig;
 
 use aviate_link::mavlink::protocol::{
-    CommandLong, Heartbeat, SetAttitudeTarget, SetPositionTargetLocalNed,
+    CommandLong, Heartbeat, MavHeader, SetAttitudeTarget, SetPositionTargetLocalNed,
 };
 use aviate_link::mavlink::{
     mav_cmd, parse_mavlink, serialize_mavlink, MavAutopilot, MavMessage, MavState, MavType,
@@ -180,7 +180,7 @@ impl MavClient {
 
     /// Try to receive a MAVLink message (non-blocking)
     /// Also learns the FC's address from the first received packet
-    fn recv(&mut self) -> Option<MavMessage> {
+    fn recv(&mut self) -> Option<(MavHeader, MavMessage)> {
         let mut buf = [0u8; 512];
         match self.socket.recv_from(&mut buf) {
             Ok((len, src)) => {
@@ -189,7 +189,20 @@ impl MavClient {
                     self.target_addr = src;
                 }
                 match parse_mavlink(&buf[..len]) {
-                    Ok((msg, _sig, _consumed)) => Some(msg),
+                    Ok((msg, _sig, _consumed)) => {
+                        // Reconstruct header (parse_mavlink checks validity but drops header)
+                        // Safety: parse_mavlink ensured buffer is valid MAVLink v2
+                        let header = MavHeader {
+                            payload_len: buf[1],
+                            incompat_flags: buf[2],
+                            compat_flags: buf[3],
+                            seq: buf[4],
+                            sysid: buf[5],
+                            compid: buf[6],
+                            msgid: (buf[7] as u32) | ((buf[8] as u32) << 8) | ((buf[9] as u32) << 16),
+                        };
+                        Some((header, msg))
+                    }
                     Err(_) => None,
                 }
             }
@@ -290,13 +303,17 @@ impl MavClient {
     ///
     /// The FC broadcasts telemetry to port 14550.
     /// We send heartbeats to register ourselves with the FC/Router.
+    /// Returns true if we receive a heartbeat from our TARGET SYSTEM.
     pub fn try_connect(&mut self) -> bool {
         // Send HB to register, then check for response
-        for _ in 0..50 {
+        for _ in 0..100 { // Increased retry count (10s total)
             self.send_heartbeat();
             
-            if let Some(MavMessage::Heartbeat(_)) = self.recv() {
-                return true;
+            while let Some((header, MavMessage::Heartbeat(_))) = self.recv() {
+                if header.sysid == self.target_system {
+                    return true;
+                }
+                // Ignore heartbeats from other systems (e.g. other vehicles)
             }
             std::thread::sleep(Duration::from_millis(100));
         }
