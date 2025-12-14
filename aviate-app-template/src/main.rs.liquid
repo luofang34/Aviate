@@ -70,10 +70,24 @@ impl Options {
 }
 
 fn main() -> ExitCode {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info")
-    ).init();
     let opts = Options::parse();
+    let instance = opts.instance;
+
+    // Custom log format with vehicle instance ID and colored levels
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format(move |buf, record| {
+            use std::io::Write;
+            let level_style = buf.default_level_style(record.level());
+            writeln!(
+                buf,
+                "[{} {level_style}{}{level_style:#} fc{}] {}",
+                buf.timestamp(),
+                record.level(),
+                instance,
+                record.args()
+            )
+        })
+        .init();
 
     // Load application configuration
     const APP_CONFIG_TOML: &str = include_str!("../AviateApp.toml");
@@ -95,17 +109,13 @@ fn main() -> ExitCode {
         .map(|s| s.headless)
         .unwrap_or(false);
 
-    info!("===========================================");
-    info!("  {{project-name}}");
-    info!("===========================================");
-    info!("");
-    info!("App ID:   {}", app_config.app.id);
-    info!("Board:    {}", app_config.app.board);
-    info!("Airframe: {}", app_config.app.airframe);
-    info!("Model:    {{model}}");
-    info!("Env:      {}", app_config.app.env);
-    info!("Instance: {}", opts.instance);
-    info!("");
+    info!(
+        "==> {} | board={} airframe={} instance={} <==",
+        app_config.app.id,
+        app_config.app.board,
+        app_config.app.airframe,
+        opts.instance
+    );
 
     if opts.mock {
         info!("Mode: Mock (no Gazebo)");
@@ -520,15 +530,12 @@ fn main() -> ExitCode {
         }
     };
 
-    info!("===========================================");
-    info!("  {{project-name}}");
-    info!("===========================================");
-    info!("");
-    info!("App ID:   {}", app_config.app.id);
-    info!("Board:    {}", app_config.app.board);
-    info!("Airframe: {}", app_config.app.airframe);
-    info!("Env:      {}", app_config.app.env);
-    info!("");
+    info!(
+        "==> {} | board={} airframe={} <==",
+        app_config.app.id,
+        app_config.app.board,
+        app_config.app.airframe
+    );
 
     info!("Starting jMAVSim SITL...");
 

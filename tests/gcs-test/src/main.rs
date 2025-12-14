@@ -90,8 +90,21 @@ enum Commands {
 }
 
 fn main() -> ExitCode {
-    // Initialize logger
-    env_logger::init();
+    // Initialize logger with custom format showing target (vehicle ID) with colored levels
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format(|buf, record| {
+            use std::io::Write;
+            let level_style = buf.default_level_style(record.level());
+            writeln!(
+                buf,
+                "[{} {level_style}{}{level_style:#} {}] {}",
+                buf.timestamp(),
+                record.level(),
+                record.target(),
+                record.args()
+            )
+        })
+        .init();
 
     let cli = Cli::parse();
 
@@ -112,10 +125,10 @@ fn main() -> ExitCode {
                 }
             };
 
-            info!("=== GCS Test: {} ===", test_config.name);
-            info!("Config: {}", config.display());
-            info!("Vehicles: {}", test_config.vehicles.len());
-            info!("");
+            info!(target: "gcs", "=== GCS Test: {} ===", test_config.name);
+            info!(target: "gcs", "Config: {}", config.display());
+            info!(target: "gcs", "Vehicles: {}", test_config.vehicles.len());
+            info!(target: "gcs", "");
 
             if xil {
                 // XIL mode: spawn everything and run test
@@ -167,24 +180,24 @@ fn main() -> ExitCode {
 
 /// Run test in GCS-only mode (FC already running)
 fn run_gcs_test(test_config: &aviate_hal_xil::TestConfig, mavlink_only: bool) -> ExitCode {
-    info!("Mode: GCS-only (FC must be running)");
+    info!(target: "gcs", "Mode: GCS-only (FC must be running)");
 
     let result = if mavlink_only {
-        info!("Backend: MAVLink-only (no ground truth)");
+        info!(target: "gcs", "Backend: MAVLink-only (no ground truth)");
         run_test_config(test_config, |instance| {
             Ok(MavlinkOnlyBackend::new(instance))
         })
     } else {
         #[cfg(feature = "gazebo")]
         {
-            info!("Backend: Gazebo (with ground truth)");
+            info!(target: "gcs", "Backend: Gazebo (with ground truth)");
             run_test_config(test_config, |instance| {
                 aviate_backend_gz::GazeboSimBackend::connect_new(instance, 5000)
             })
         }
         #[cfg(not(feature = "gazebo"))]
         {
-            info!("Backend: MAVLink-only (no backend compiled)");
+            info!(target: "gcs", "Backend: MAVLink-only (no backend compiled)");
             warn!("Note: Build with --features gazebo for ground truth");
             run_test_config(test_config, |instance| {
                 Ok(MavlinkOnlyBackend::new(instance))
@@ -209,8 +222,8 @@ fn run_xil_test(
         use spawner::FcConfig;
         use std::path::PathBuf;
 
-        info!("Mode: XIL (Gazebo SITL)");
-        info!("Headless: {}", if headless { "yes" } else { "no (GUI)" });
+        info!(target: "gcs", "Mode: XIL (Gazebo SITL)");
+        info!(target: "gcs", "Headless: {}", if headless { "yes" } else { "no (GUI)" });
 
         let mut spawner = Spawner::new();
 
@@ -227,7 +240,7 @@ fn run_xil_test(
                 return ExitCode::FAILURE;
             }
         };
-        info!("[GCS] World file: {}", world_path.display());
+        info!(target: "gcs", "World file: {}", world_path.display());
 
         // Launch Gazebo
         if let Err(e) = spawner.launch_gazebo(&world_path, headless) {
@@ -236,12 +249,12 @@ fn run_xil_test(
         }
 
         // Wait for Gazebo shared memory
-        info!("[GCS] Waiting for Gazebo plugin...");
+        info!(target: "gcs", "Waiting for Gazebo plugin...");
         if !spawner.wait_for_gazebo(Duration::from_secs(30)) {
             error!("Timeout waiting for Gazebo plugin");
             return ExitCode::FAILURE;
         }
-        info!("[GCS] Gazebo ready");
+        info!(target: "gcs", "Gazebo ready");
 
         // Spawn FC process for each vehicle
         // Use --connect mode so FC doesn't launch its own Gazebo
@@ -267,13 +280,14 @@ fn run_xil_test(
                 return ExitCode::FAILURE;
             }
             info!(
-                "[GCS] Spawned FC for {} (instance {})",
+                target: "gcs",
+                "Spawned FC for {} (instance {})",
                 vehicle.id, vehicle.instance
             );
         }
 
         // Wait for FC processes to initialize
-        info!("[GCS] Waiting for FC(s) to initialize...");
+        info!(target: "gcs", "Waiting for FC(s) to initialize...");
         if !spawner.wait_for_fc_ready(Duration::from_secs(15)) {
             warn!("Warning: FC initialization timeout (continuing anyway)");
         }
@@ -283,7 +297,7 @@ fn run_xil_test(
             let router_params = RouterParams::default();
             match router_gen::generate_temp_router_config(test_config, &router_params) {
                 Ok(router_path) => {
-                    info!("[GCS] Router config: {}", router_path.display());
+                    info!(target: "gcs", "Router config: {}", router_path.display());
                     if let Err(e) = spawner.spawn_router(&router_path) {
                         warn!("Warning: Failed to spawn mavrouter: {}", e);
                     }
@@ -295,7 +309,7 @@ fn run_xil_test(
         }
 
         // Run test with Gazebo backend
-        info!("[GCS] Running {} vehicle(s)...", test_config.vehicles.len());
+        info!(target: "gcs", "Running {} vehicle(s)...", test_config.vehicles.len());
 
         let result = if mavlink_only {
             run_test_config(test_config, |instance| {
@@ -407,8 +421,8 @@ fn run_script_test(
     use spawner::{FcConfig, Spawner};
     use std::time::Duration;
 
-    info!("Mode: Script (Gazebo SITL)");
-    info!("Script: {}", script.display());
+    info!(target: "gcs", "Mode: Script (Gazebo SITL)");
+    info!(target: "gcs", "Script: {}", script.display());
 
     let mut spawner = Spawner::new();
 
@@ -425,7 +439,7 @@ fn run_script_test(
             return ExitCode::FAILURE;
         }
     };
-    info!("[GCS] World file: {}", world_path.display());
+    info!(target: "gcs", "World file: {}", world_path.display());
 
     // Launch Gazebo
     if let Err(e) = spawner.launch_gazebo(&world_path, headless) {
@@ -434,12 +448,12 @@ fn run_script_test(
     }
 
     // Wait for Gazebo shared memory
-    info!("[GCS] Waiting for Gazebo plugin...");
+    info!(target: "gcs", "Waiting for Gazebo plugin...");
     if !spawner.wait_for_gazebo(Duration::from_secs(30)) {
         error!("Timeout waiting for Gazebo plugin");
         return ExitCode::FAILURE;
     }
-    info!("[GCS] Gazebo ready");
+    info!(target: "gcs", "Gazebo ready");
 
     // Spawn FC process for each vehicle
     let binary_path = fc_binary
@@ -460,13 +474,14 @@ fn run_script_test(
             return ExitCode::FAILURE;
         }
         info!(
-            "[GCS] Spawned FC for {} (instance {})",
+            target: "gcs",
+            "Spawned FC for {} (instance {})",
             vehicle.id, vehicle.instance
         );
     }
 
     // Wait for FC processes to initialize
-    info!("[GCS] Waiting for FC(s) to initialize...");
+    info!(target: "gcs", "Waiting for FC(s) to initialize...");
     if !spawner.wait_for_fc_ready(Duration::from_secs(15)) {
         warn!("Warning: FC initialization timeout (continuing anyway)");
     }
@@ -476,7 +491,7 @@ fn run_script_test(
         let router_params = router_gen::RouterParams::default();
         match router_gen::generate_temp_router_config(test_config, &router_params) {
             Ok(router_path) => {
-                info!("[GCS] Router config: {}", router_path.display());
+                info!(target: "gcs", "Router config: {}", router_path.display());
                 if let Err(e) = spawner.spawn_router(&router_path) {
                     warn!("Warning: Failed to spawn mavrouter: {}", e);
                 }
@@ -488,7 +503,7 @@ fn run_script_test(
     }
 
     // Run Script
-    info!("[GCS] Running script...");
+    info!(target: "gcs", "Running script...");
     let status = std::process::Command::new("python3")
         .arg(script)
         .status();

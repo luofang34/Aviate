@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use log::{error, info};
+use log::error;
 
 use crate::config::TestConfig;
 use crate::mission::{
@@ -372,20 +372,25 @@ impl<B: SimulatorBackend> MissionRunner<B> {
         self.backend.instance()
     }
 
-    /// Log a message with vehicle prefix
+    /// Log an info message with vehicle target for env_logger formatting
     fn log(&self, msg: &str) {
-        info!("[{}:{}] {}", self.vehicle_id, self.backend.instance(), msg);
+        let target = format!("fc{}", self.backend.instance());
+        log::info!(target: &target, "{}", msg);
+    }
+
+    /// Log an error message with vehicle target for env_logger formatting
+    fn log_error(&self, msg: &str) {
+        let target = format!("fc{}", self.backend.instance());
+        log::error!(target: &target, "{}", msg);
     }
 
     /// Run a complete mission
     pub fn run(&mut self, mission: &Mission) -> MissionResult {
-        self.log(&format!("=== Mission: {} ===", mission.name));
-        self.log(&format!("Description: {}", mission.description));
         self.log(&format!(
-            "Lockstep: {}",
-            if mission.lockstep { "YES" } else { "NO" }
+            "==> {} | lockstep={} <==",
+            mission.name,
+            if mission.lockstep { "yes" } else { "no" }
         ));
-        info!("");
 
         // Connect to FC via MAVLink (required)
         if !self.mav.try_connect() {
@@ -437,24 +442,27 @@ impl<B: SimulatorBackend> MissionRunner<B> {
         let mut mission_passed = true;
 
         // Execute each phase
+        let total_phases = mission.phases.len();
         for (i, phase) in mission.phases.iter().enumerate() {
-            self.log(&format!(
-                "[Phase {}/{}] {}",
-                i + 1,
-                mission.phases.len(),
-                phase.name
-            ));
+            let phase_num = i + 1;
+            self.log(&format!("[Phase {}/{}] {}", phase_num, total_phases, phase.name));
 
             let result = self.run_phase(phase);
 
             if result.passed {
-                self.log(&format!("  PASSED (alt: {:.2}m)", result.max_altitude));
+                self.log(&format!(
+                    "[Phase {}/{}] {} PASSED (alt: {:.2}m)",
+                    phase_num, total_phases, phase.name, result.max_altitude
+                ));
             } else {
-                self.log("  FAILED");
+                self.log_error(&format!(
+                    "[Phase {}/{}] {} FAILED",
+                    phase_num, total_phases, phase.name
+                ));
                 for cr in &result.criteria_results {
                     if !cr.passed {
-                        self.log(&format!(
-                            "    - {}: expected {}, got {}",
+                        self.log_error(&format!(
+                            "  - {}: expected {}, got {}",
                             cr.criterion, cr.expected, cr.actual_value
                         ));
                     }
@@ -472,13 +480,19 @@ impl<B: SimulatorBackend> MissionRunner<B> {
 
         let total_duration = mission_start.elapsed();
 
-        info!("");
-        self.log(&format!(
-            "=== Mission {} ===",
-            if mission_passed { "PASSED" } else { "FAILED" }
-        ));
-        self.log(&format!("Duration: {:.2}s", total_duration.as_secs_f32()));
-        self.log(&format!("Max altitude: {:.2}m", self.max_altitude));
+        if mission_passed {
+            self.log(&format!(
+                "==> PASSED | duration={:.2}s max_alt={:.2}m <==",
+                total_duration.as_secs_f32(),
+                self.max_altitude
+            ));
+        } else {
+            self.log_error(&format!(
+                "==> FAILED | duration={:.2}s max_alt={:.2}m <==",
+                total_duration.as_secs_f32(),
+                self.max_altitude
+            ));
+        }
 
         MissionResult {
             mission_name: mission.name.clone(),

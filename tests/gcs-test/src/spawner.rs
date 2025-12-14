@@ -70,7 +70,8 @@ impl GazeboSpawner {
             .map_err(|e| format!("Failed to launch Gazebo: {}", e))?;
 
         info!(
-            "[GCS] Gazebo started (PID: {}, headless={})",
+            target: "gcs",
+            "Gazebo started (PID: {}, headless={})",
             child.id(),
             headless
         );
@@ -199,7 +200,7 @@ impl Spawner {
 
         let child = cmd.spawn()?;
 
-        info!("[GCS] mavrouter started (PID: {})", child.id());
+        info!(target: "gcs", "mavrouter started (PID: {})", child.id());
 
         self.router_handle = Some(ProcessHandle {
             child,
