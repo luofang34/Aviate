@@ -51,3 +51,6 @@ __pycache__/
 
 # Temporary docs
 aviate-chips/stm32h743/IWDG.md
+
+# App folders (local development)
+aviate-apps/*/

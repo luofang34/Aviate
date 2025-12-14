@@ -629,10 +629,8 @@ fn generate_and_build_app(airframe: &str, board: &str) -> Result<(String, std::p
     
     let mut cmd = Command::new("cargo");
     cmd.arg("build");
-    cmd.arg("--manifest-path");
-    cmd.arg(gen_target_dir.join("Cargo.toml"));
-    // cmd.arg("-p"); // Removed -p
-    // cmd.arg(format!("aviate-app-{}", gen_name)); // Removed package name arg
+    cmd.arg("-p");
+    cmd.arg(format!("aviate-app-{}", gen_name));
     
     if is_hardware {
         cmd.arg("--release");
