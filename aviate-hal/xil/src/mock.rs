@@ -2,6 +2,8 @@
 //!
 //! Provides a simple HAL that stores sensor data in memory for testing.
 
+use log::debug;
+
 use aviate_core::hal::{ActuatorHal, AviateHal, CommandHal, SensorHal, SystemCommand, SystemHal};
 
 use aviate_core::sensor::{BaroData, GnssData, ImuData, MagData, SensorReading};
@@ -94,20 +96,20 @@ impl SensorHal for SitlHal {
 impl ActuatorHal for SitlHal {
     fn write(&mut self, cmd: &ActuatorCmd) {
         if self.armed {
-            println!("ACTUATOR: {:?}", cmd.outputs);
+            debug!("ACTUATOR: {:?}", cmd.outputs);
         }
     }
 
     fn arm(&mut self) {
         self.armed = true;
 
-        println!("SITL: Armed");
+        debug!("SITL: Armed");
     }
 
     fn disarm(&mut self) {
         self.armed = false;
 
-        println!("SITL: Disarmed");
+        debug!("SITL: Disarmed");
     }
 
     fn is_armed(&self) -> bool {
@@ -138,13 +140,13 @@ impl SystemHal for SitlHal {
     }
 
     fn reboot(&mut self) -> ! {
-        println!("SITL Mock: Reboot requested");
+        debug!("SITL Mock: Reboot requested");
 
         std::process::exit(0);
     }
 
     fn enter_bootloader(&mut self) -> ! {
-        println!("SITL Mock: Bootloader mode not supported");
+        debug!("SITL Mock: Bootloader mode not supported");
 
         std::process::exit(1);
     }

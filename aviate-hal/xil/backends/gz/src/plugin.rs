@@ -23,6 +23,8 @@
 
 use std::ffi::c_int;
 
+use log::info;
+
 /// Model state from gz-sim (all values in SI units, ENU frame)
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -153,7 +155,7 @@ impl GzPluginBridge {
             match Self::for_instance(instance) {
                 Ok(bridge) => {
                     if attempt > 0 {
-                        eprintln!(
+                        info!(
                             "[GzPluginBridge] Instance {} connected after {} attempts",
                             instance,
                             attempt + 1

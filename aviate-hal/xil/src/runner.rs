@@ -26,6 +26,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use log::{error, info};
+
 use crate::config::TestConfig;
 use crate::mission::{
     Action, Criterion, CriterionResult, Mission, MissionResult, Phase, PhaseResult,
@@ -372,7 +374,7 @@ impl<B: SimulatorBackend> MissionRunner<B> {
 
     /// Log a message with vehicle prefix
     fn log(&self, msg: &str) {
-        println!("[{}:{}] {}", self.vehicle_id, self.backend.instance(), msg);
+        info!("[{}:{}] {}", self.vehicle_id, self.backend.instance(), msg);
     }
 
     /// Run a complete mission
@@ -383,7 +385,7 @@ impl<B: SimulatorBackend> MissionRunner<B> {
             "Lockstep: {}",
             if mission.lockstep { "YES" } else { "NO" }
         ));
-        println!();
+        info!("");
 
         // Connect to FC via MAVLink (required)
         if !self.mav.try_connect() {
@@ -470,7 +472,7 @@ impl<B: SimulatorBackend> MissionRunner<B> {
 
         let total_duration = mission_start.elapsed();
 
-        println!();
+        info!("");
         self.log(&format!(
             "=== Mission {} ===",
             if mission_passed { "PASSED" } else { "FAILED" }
@@ -698,7 +700,7 @@ where
                     Ok(backend) => match MissionRunner::new(backend, &vehicle_id) {
                         Ok(mut runner) => runner.run(&mission),
                         Err(e) => {
-                            eprintln!(
+                            error!(
                                 "[{}:{}] Failed to create runner: {}",
                                 vehicle_id, instance, e
                             );
@@ -712,7 +714,7 @@ where
                         }
                     },
                     Err(e) => {
-                        eprintln!(
+                        error!(
                             "[{}:{}] Failed to create backend: {}",
                             vehicle_id, instance, e
                         );

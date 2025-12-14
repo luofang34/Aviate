@@ -41,6 +41,8 @@
 
 use std::io;
 
+use log::info;
+
 use aviate_backend_mavlink_hil::{HilBackend, HilBackendConfig};
 use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::Command;
@@ -252,15 +254,15 @@ impl JmavSimBoard {
 
     /// Arm the flight controller
     pub fn arm(&mut self) -> Result<(), ArmError> {
-        eprintln!(
-            "[INFO] Arm command (state={:?})",
+        info!(
+            "Arm command (state={:?})",
             self.runner.kernel.init_state
         );
-        eprintln!("[INFO] Faults: {:?}", self.runner.kernel.faults);
+        info!("Faults: {:?}", self.runner.kernel.faults);
 
         self.runner.kernel.arm()?;
 
-        eprintln!("[INFO] Armed successfully");
+        info!("Armed successfully");
         self.runner.board_hal.arm();
         self.runner.transport.set_armed(true);
         self.armed = true;
@@ -269,7 +271,7 @@ impl JmavSimBoard {
 
     /// Disarm the flight controller
     pub fn disarm(&mut self) {
-        eprintln!("[INFO] Disarm command");
+        info!("Disarm command");
         self.runner.kernel.disarm();
         self.runner.board_hal.disarm();
         self.runner.transport.set_armed(false);

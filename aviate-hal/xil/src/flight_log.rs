@@ -25,6 +25,8 @@
 //! println!("Max altitude: {:.2}m", stats.max_altitude);
 //! ```
 
+use log::info;
+
 /// Flight log configuration
 #[derive(Clone, Debug)]
 pub struct FlightLogConfig {
@@ -271,20 +273,20 @@ impl FlightLog {
         data
     }
 
-    /// Print a summary to stderr
+    /// Print a summary
     pub fn print_summary(&self) {
         let stats = self.analyze();
-        eprintln!("[FlightLog] Summary:");
-        eprintln!("  Samples: {}", stats.sample_count);
-        eprintln!("  Duration: {:.1}s", stats.duration_ms as f32 / 1000.0);
-        eprintln!(
+        info!("[FlightLog] Summary:");
+        info!("  Samples: {}", stats.sample_count);
+        info!("  Duration: {:.1}s", stats.duration_ms as f32 / 1000.0);
+        info!(
             "  Max altitude: {:.2}m @ {:.1}s",
             stats.max_altitude,
             stats.peak_time_ms as f32 / 1000.0
         );
-        eprintln!("  Max h-speed: {:.2} m/s", stats.max_horizontal_speed);
-        eprintln!("  Max v-speed: {:.2} m/s", stats.max_vertical_speed);
-        eprintln!("  Final altitude: {:.2}m", stats.final_altitude);
+        info!("  Max h-speed: {:.2} m/s", stats.max_horizontal_speed);
+        info!("  Max v-speed: {:.2} m/s", stats.max_vertical_speed);
+        info!("  Final altitude: {:.2}m", stats.final_altitude);
     }
 }
 

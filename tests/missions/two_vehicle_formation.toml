@@ -19,7 +19,7 @@ spawn_position = [0.0, 0.0, 0.0]
 spawn_heading = 0.0
 
 [vehicles.mission]
-name = "leader_takeoff"
+name = "leader"
 
 [[vehicles.mission.phases]]
 name = "arm"
@@ -66,7 +66,7 @@ spawn_position = [10.0, 0.0, 0.0]  # 10m east of leader
 spawn_heading = 0.0
 
 [vehicles.mission]
-name = "follower_takeoff"
+name = "follower"
 
 [[vehicles.mission.phases]]
 name = "arm"

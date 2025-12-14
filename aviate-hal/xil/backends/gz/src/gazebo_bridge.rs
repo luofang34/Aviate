@@ -33,6 +33,7 @@
 use std::ffi::c_int;
 use std::sync::Mutex;
 
+use log::info;
 use once_cell::sync::Lazy;
 
 use aviate_hal_xil::{
@@ -195,7 +196,7 @@ pub extern "C" fn aviate_gz_bridge_init(instance: c_int) -> c_int {
     }
 
     *guard = Some(GazeboBridgeState::new(instance));
-    eprintln!("[GazeboBridge] Initialized for instance {}", instance);
+    info!("[GazeboBridge] Initialized for instance {}", instance);
     0
 }
 
@@ -204,7 +205,7 @@ pub extern "C" fn aviate_gz_bridge_init(instance: c_int) -> c_int {
 pub extern "C" fn aviate_gz_bridge_shutdown() {
     if let Ok(mut guard) = BRIDGE_STATE.lock() {
         if let Some(state) = guard.take() {
-            eprintln!("[GazeboBridge] Shutdown instance {}", state.instance);
+            info!("[GazeboBridge] Shutdown instance {}", state.instance);
         }
     }
 }

@@ -46,6 +46,10 @@ aviate-core = { path = "../../aviate-core" }
 aviate-hal-xil = { path = "../../aviate-hal/xil" }
 aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz" }
 aviate-link = { path = "../../aviate-link" }
+
+# Logging (SITL only)
+log = "0.4"
+env_logger = "0.11"
 {% elsif board == "sitl-jmavsim" %}
 [dependencies]
 # Config parsing
@@ -56,6 +60,10 @@ aviate-board-sitl-jmavsim = { path = "../../aviate-boards/sitl-jmavsim" }
 
 # Airframe selection (specifies mixer configuration)
 aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor", features = ["{{airframe}}"] }
+
+# Logging (SITL only)
+log = "0.4"
+env_logger = "0.11"
 {% elsif board == "micoair-h743-v2" %}
 # Standalone package (not part of main workspace due to different target)
 [workspace]

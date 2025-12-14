@@ -21,3 +21,4 @@ aviate-core = { path = "../aviate-core" }
 # Optional: only for sim environments (env-sitl, env-hitl)
 aviate-hal-io = { path = "../aviate-hal/io", optional = true }
 aviate-hal-xil = { path = "../aviate-hal/xil", optional = true }
+log = "0.4"

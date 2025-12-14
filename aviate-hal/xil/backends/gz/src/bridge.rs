@@ -4,6 +4,9 @@
 //! The actual bridge logic is in main.rs, which connects GzPluginBridge
 //! to the flight controller's SitlIO.
 
+#[cfg(feature = "gz-plugin")]
+use log::info;
+
 use aviate_hal_xil::{PortSlot, XilNetConfig};
 
 /// Gazebo bridge configuration
@@ -159,7 +162,7 @@ mod ffi_bridge {
         /// Connect to the Gazebo plugin via shared memory
         pub fn connect(&mut self, timeout_ms: u64) -> Result<(), GzBridgeError> {
             let max_attempts = (timeout_ms / 500).max(1) as u32;
-            eprintln!(
+            info!(
                 "[GzBridge] Instance {} connecting to AviateGzPlugin ({}ms timeout)...",
                 self.config.instance, timeout_ms
             );
@@ -170,7 +173,7 @@ mod ffi_bridge {
                 500,
             ) {
                 Ok(plugin) => {
-                    eprintln!("[GzBridge] Connected via shared memory FFI");
+                    info!("[GzBridge] Connected via shared memory FFI");
                     self.plugin = Some(plugin);
                     Ok(())
                 }

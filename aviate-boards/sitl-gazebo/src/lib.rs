@@ -36,6 +36,8 @@
 
 use std::io;
 
+use log::warn;
+
 use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::mixer::{ActuatorCmd, QuadXMixer};
 use aviate_core::AviateKernel;
@@ -111,8 +113,8 @@ impl GazeboSitlBoard {
                 Ok(board) => return Ok(board),
                 Err(e) => {
                     if i < max_retries - 1 {
-                        eprintln!(
-                            "[WARN] Failed to bind port {}: {}. Retrying in {}ms...",
+                        warn!(
+                            "Failed to bind port {}: {}. Retrying in {}ms...",
                             config.sensor_port(),
                             e,
                             retry_delay_ms

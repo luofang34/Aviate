@@ -515,7 +515,8 @@ fn run_script_test(
     _test_config: &aviate_hal_xil::TestConfig,
     _script: &std::path::Path,
     _headless: bool,
+    _fc_binary: Option<std::path::PathBuf>,
 ) -> ExitCode {
-    eprintln!("XIL mode requires --features gazebo");
+    error!("XIL mode requires --features gazebo");
     ExitCode::FAILURE
 }

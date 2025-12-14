@@ -25,6 +25,8 @@
 
 #![cfg(any(feature = "env-sitl", feature = "env-hitl"))]
 
+use log::{info, warn};
+
 use crate::sensor_cache::SensorCache;
 use crate::telemetry::{FrameTx, TelemetrySnapshot, TelemetryTask};
 
@@ -190,7 +192,7 @@ impl SitlRunner {
                      let formatter = MavlinkCycleFormatter::new(telem_cfg, loop_hz);
                      // Create protocol-agnostic task (from aviate-runtime)
                      self.telemetry = Some(TelemetryTask::new(tx, formatter));
-                     eprintln!("[INFO] Telemetry enabled: {} via {}", endpoint, t.protocol);
+                     info!("Telemetry enabled: {} via {}", endpoint, t.protocol);
                 }
             }
         }
@@ -280,22 +282,22 @@ impl SitlRunner {
                     self.last_cmd = cmd;
                 }
                 SystemCommand::Arm => {
-                    eprintln!("[INFO] Arm command (state={:?})", self.kernel.init_state);
-                    eprintln!("[INFO] Faults: {:?}", self.kernel.faults);
+                    info!("Arm command (state={:?})", self.kernel.init_state);
+                    info!("Faults: {:?}", self.kernel.faults);
                     if let Err(e) = self.kernel.arm() {
                         let pre_arm = &self.kernel.checks.pre_arm;
-                        eprintln!("[WARN] Arming failed: {:?}", e);
-                        eprintln!("[WARN] Missing pre-arm: {:?}", pre_arm.missing());
-                        eprintln!("[WARN] Faults: {:?}", self.kernel.faults);
+                        warn!("Arming failed: {:?}", e);
+                        warn!("Missing pre-arm: {:?}", pre_arm.missing());
+                        warn!("Faults: {:?}", self.kernel.faults);
                     } else {
-                        eprintln!("[INFO] Armed successfully");
+                        info!("Armed successfully");
                         // Only arm HAL and transport if kernel arm succeeded
                         self.board_hal.arm();
                         self.transport.set_armed(true);
                     }
                 }
                 SystemCommand::Disarm => {
-                    eprintln!("[INFO] Disarm command");
+                    info!("Disarm command");
                     self.kernel.disarm();
                     // Disarm through BoardHal and notify transport
                     self.board_hal.disarm();
@@ -315,7 +317,7 @@ impl SitlRunner {
 
         // 5. Initialize EKF once we have sensor data
         if !self.ekf_initialized && self.sensor_cache.imu.is_some() {
-            eprintln!("[INFO] Initializing EKF with sensor data");
+            info!("Initializing EKF with sensor data");
             self.kernel.ekf.init(
                 Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
                 Vector3::new(
@@ -337,8 +339,8 @@ impl SitlRunner {
 
             // Log state transitions and update MAVLink system status
             if self.kernel.init_state != prev_state {
-                eprintln!(
-                    "[FC] Init state: {:?} -> {:?}",
+                info!(
+                    "Init state: {:?} -> {:?}",
                     prev_state, self.kernel.init_state
                 );
                 // Update MAVLink system_status based on init state
