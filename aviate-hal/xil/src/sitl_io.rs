@@ -98,9 +98,9 @@ pub struct HilGpsData {
 /// GCS → SitlIO.recv_command() → board processes arm/disarm/setpoints
 /// ```
 pub struct SitlIO {
-    recv_socket: UdpSocket,
-    /// GCS socket for MAVLink command reception and heartbeat
-    gcs_socket: UdpSocket,
+    /// Combined MAVLink socket (GCS commands + Telem + Legacy)
+    /// Binds to Port 20000 + i*16 (Slot 0)
+    socket: UdpSocket,
     config: XilConfig,
     start_time: std::time::Instant,
     armed: bool,
@@ -134,19 +134,14 @@ pub struct SitlIO {
 impl SitlIO {
     /// Create a new SITL I/O transport
     pub fn new(config: XilConfig) -> io::Result<Self> {
-        // Socket to receive sensor data from simulator (legacy path, may be unused for Gazebo FFI)
-        info!("SitlIO: Binding sensor port {}", config.sensor_port());
-        let recv_socket = UdpSocket::bind(("0.0.0.0", config.sensor_port()))?;
-        recv_socket.set_nonblocking(true)?;
-
-        // GCS socket for MAVLink commands and heartbeat
-        // Uses ephemeral port - sends TO gcs_addr (14550), GCS sends commands back to this port
-        let gcs_socket = UdpSocket::bind("0.0.0.0:0")?;
-        gcs_socket.set_nonblocking(true)?;
+        // Bind to instance base port (Slot 0, e.g., 20000)
+        // Used for MAVLink GCS communication (Command/Telem)
+        info!("SitlIO: Binding MAVLink/GCS port {}", config.sensor_port());
+        let socket = UdpSocket::bind(("0.0.0.0", config.sensor_port()))?;
+        socket.set_nonblocking(true)?;
 
         Ok(Self {
-            recv_socket,
-            gcs_socket,
+            socket,
             config,
             start_time: std::time::Instant::now(),
             armed: false,
@@ -168,22 +163,11 @@ impl SitlIO {
     /// Receives all available messages, updates internal buffers, and sends heartbeat.
     /// Call this at the start of each control loop iteration.
     pub fn poll(&mut self) {
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; 1024]; // Increased buffer size
 
-        // Process all available messages from sensor socket (Gazebo plugin)
+        // Process all available messages from MAVLink socket
         loop {
-            match self.recv_socket.recv_from(&mut buf) {
-                Ok((len, src)) => {
-                    self.process_mavlink_data(&buf[..len], src);
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(_) => break,
-            }
-        }
-
-        // Process all available messages from GCS socket (QGroundControl, etc.)
-        loop {
-            match self.gcs_socket.recv_from(&mut buf) {
+            match self.socket.recv_from(&mut buf) {
                 Ok((len, src)) => {
                     self.process_mavlink_data(&buf[..len], src);
                 }
@@ -437,14 +421,14 @@ impl SitlIO {
 
     /// Send a MAVLink message to a specific address via GCS socket
     ///
-    /// Uses the GCS socket (port 14550) so responses come from the same port
+    /// Uses the MAVLink socket (port 20000+...) so responses come from the same port
     /// that we're listening on for commands.
     fn send_message_to(&mut self, msg: &MavMessage, addr: std::net::SocketAddr) {
         let mut buf = [0u8; 300];
         // System ID = instance + 1, Component ID = 1 (Autopilot)
         if let Some(len) = serialize_mavlink(msg, self.seq, self.config.instance + 1, 1, &mut buf) {
             self.seq = self.seq.wrapping_add(1);
-            let _ = self.gcs_socket.send_to(&buf[..len], addr);
+            let _ = self.socket.send_to(&buf[..len], addr);
             self.tx_count += 1;
         }
     }
@@ -490,6 +474,11 @@ impl SitlIO {
     /// Get the sensor port we're listening on
     pub fn sensor_port(&self) -> u16 {
         self.config.sensor_port()
+    }
+
+    /// Get the connected GCS address (if any)
+    pub fn gcs_addr(&self) -> Option<std::net::SocketAddr> {
+        self.gcs_addr
     }
 }
 

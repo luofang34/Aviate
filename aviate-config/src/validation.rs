@@ -27,7 +27,7 @@ pub fn validate(config: &AppConfig) -> Result<(), ConfigError> {
     }
 
     // Validate transport roles
-    const VALID_ROLES: &[&str] = &["telemetry", "command", "rc_input"];
+    const VALID_ROLES: &[&str] = &["telemetry", "command", "rc_input", "gcs"];
     for transport in &config.transports {
         for role in &transport.roles {
             if !VALID_ROLES.contains(&role.as_str()) {

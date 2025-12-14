@@ -64,6 +64,10 @@ enum Commands {
         /// Use MAVLink-only mode (no ground truth verification)
         #[arg(long)]
         mavlink_only: bool,
+
+        /// Path to the Flight Controller binary (for XIL mode)
+        #[arg(long)]
+        fc_binary: Option<PathBuf>,
     },
     /// Run an external script (e.g. Python) against the SITL environment
     RunScript {
@@ -72,6 +76,10 @@ enum Commands {
         
         /// Path to the script to execute
         script: PathBuf,
+
+        /// Path to the Flight Controller binary
+        #[arg(long)]
+        fc_binary: Option<PathBuf>,
 
         /// Run in headless mode (no GUI)
         #[arg(long, default_value = "true")]
@@ -93,6 +101,7 @@ fn main() -> ExitCode {
             xil,
             headless,
             mavlink_only,
+            fc_binary,
         } => {
             // Parse config
             let test_config = match parse_test_config(&config) {
@@ -110,7 +119,7 @@ fn main() -> ExitCode {
 
             if xil {
                 // XIL mode: spawn everything and run test
-                run_xil_test(&test_config, headless, mavlink_only)
+                run_xil_test(&test_config, headless, mavlink_only, fc_binary)
             } else {
                 // GCS-only mode: FC is already running
                 run_gcs_test(&test_config, mavlink_only)
@@ -120,6 +129,7 @@ fn main() -> ExitCode {
             config,
             script,
             headless,
+            fc_binary,
         } => {
             let test_config = match parse_test_config(&config) {
                 Ok(c) => c,
@@ -128,7 +138,7 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            run_script_test(&test_config, &script, headless)
+            run_script_test(&test_config, &script, headless, fc_binary)
         }
         Commands::List => {
             // List mission configs in tests/xil-missions/
@@ -191,6 +201,7 @@ fn run_xil_test(
     test_config: &aviate_hal_xil::TestConfig,
     headless: bool,
     mavlink_only: bool,
+    fc_binary: Option<PathBuf>,
 ) -> ExitCode {
     #[cfg(feature = "gazebo")]
     {
@@ -234,10 +245,19 @@ fn run_xil_test(
 
         // Spawn FC process for each vehicle
         // Use --connect mode so FC doesn't launch its own Gazebo
+        let binary_path = fc_binary
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| PathBuf::from("./target/debug/sitl-gazebo-x500"));
+
         for vehicle in &test_config.vehicles {
             let fc_config = FcConfig {
-                binary_path: PathBuf::from("./target/debug/sitl-gazebo-x500"),
-                args: vec!["--connect".to_string()],
+                binary_path: binary_path.clone(),
+                args: vec![
+                    "--connect".to_string(),
+                    "--instance".to_string(),
+                    vehicle.instance.to_string(),
+                ],
                 instance: vehicle.instance,
                 headless,
             };
@@ -381,6 +401,7 @@ fn run_script_test(
     test_config: &aviate_hal_xil::TestConfig,
     script: &std::path::Path,
     headless: bool,
+    fc_binary: Option<PathBuf>,
 ) -> ExitCode {
     use aviate_app_sitl_gazebo_x500::{generate_temp_world, WorldParams};
     use spawner::{FcConfig, Spawner};
@@ -421,9 +442,14 @@ fn run_script_test(
     info!("[GCS] Gazebo ready");
 
     // Spawn FC process for each vehicle
+    let binary_path = fc_binary
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from("./target/debug/sitl-gazebo-x500"));
+
     for vehicle in &test_config.vehicles {
         let fc_config = FcConfig {
-            binary_path: std::path::PathBuf::from("./target/debug/sitl-gazebo-x500"),
+            binary_path: binary_path.clone(),
             args: vec!["--connect".to_string()],
             instance: vehicle.instance,
             headless,

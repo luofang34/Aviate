@@ -114,6 +114,11 @@ where
             let _ = self.tx.try_send(frame);
         }) {}
     }
+
+    /// Access mutable reference to transport (e.g. to update target address)
+    pub fn frame_tx_mut(&mut self) -> &mut Tx {
+        &mut self.tx
+    }
 }
 
 #[cfg(test)]

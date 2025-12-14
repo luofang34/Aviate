@@ -44,6 +44,7 @@ struct Options {
     headless: bool,
     test_config: Option<String>,
     instance: u8,
+    connect: bool,
 }
 
 impl Options {
@@ -67,11 +68,14 @@ impl Options {
             .or_else(|| env::var("AVIATE_INSTANCE").ok()?.parse().ok())
             .unwrap_or(0);
 
+        let connect = args.iter().any(|a| a == "--connect");
+
         Self {
             mock,
             headless,
             test_config,
             instance,
+            connect,
         }
     }
 }
@@ -120,10 +124,11 @@ fn main() -> ExitCode {
         run_test(config_path, opts.instance, headless)
     } else {
         info!(
-            "Mode: Interactive (headless={})",
-            if headless { "yes" } else { "no" }
+            "Mode: Interactive (headless={}, connect={})",
+            if headless { "yes" } else { "no" },
+            opts.connect
         );
-        run_interactive(headless, opts.instance)
+        run_interactive(headless, opts.instance, opts.connect, &app_config)
     }
 }
 
@@ -141,7 +146,7 @@ fn run_mock() {
 }
 
 #[cfg(feature = "gz-plugin")]
-fn run_interactive(headless: bool, instance: u8) -> ExitCode {
+fn run_interactive(headless: bool, instance: u8, connect: bool, app_config: &aviate_config::AppConfig) -> ExitCode {
     use aviate_app_{{project-name | replace: "-", "_"}}::{generate_world, parse_test_config_str, WorldParams};
     use aviate_backend_gz::GzPluginBridge;
     use aviate_hal_xil::SitlConfig;
@@ -150,33 +155,39 @@ fn run_interactive(headless: bool, instance: u8) -> ExitCode {
     let config = SitlConfig::for_instance(instance);
     info!("Sensor port: {}", config.sensor_port());
 
-    // Generate a default world with single vehicle
-    let test_config = parse_test_config_str(DEFAULT_WORLD_CONFIG).expect("valid default config");
-    let world_params = WorldParams::default();
+    // Only launch Gazebo if not connecting to existing instance
+    let gz_child = if !connect {
+        // Generate a default world with single vehicle
+        let test_config = parse_test_config_str(DEFAULT_WORLD_CONFIG).expect("valid default config");
+        let world_params = WorldParams::default();
 
-    let world_sdf = generate_world(&test_config, &world_params);
-    let world_path = std::env::temp_dir().join("aviate_interactive.sdf");
-    std::fs::write(&world_path, &world_sdf).expect("write world file");
-    info!("World file: {}", world_path.display());
+        let world_sdf = generate_world(&test_config, &world_params);
+        let world_path = std::env::temp_dir().join("aviate_interactive.sdf");
+        std::fs::write(&world_path, &world_sdf).expect("write world file");
+        info!("World file: {}", world_path.display());
 
-    cleanup_gazebo();
+        cleanup_gazebo();
 
-    let gz_child = match launch_gazebo(&world_path, headless) {
-        Ok(child) => {
-            info!("Gazebo started (PID: {}, headless={})", child.id(), headless);
-            child
+        match launch_gazebo(&world_path, headless) {
+            Ok(child) => {
+                info!("Gazebo started (PID: {}, headless={})", child.id(), headless);
+                Some(child)
+            }
+            Err(e) => {
+                warn!("Failed to launch Gazebo: {}", e);
+                return ExitCode::FAILURE;
+            }
         }
-        Err(e) => {
-            warn!("Failed to launch Gazebo: {}", e);
-            return ExitCode::FAILURE;
-        }
+    } else {
+        info!("Connecting to existing Gazebo instance...");
+        None
     };
 
     info!("Waiting for Gazebo plugin...");
     if !wait_for_shm(Duration::from_secs(30)) {
         warn!("Timeout waiting for Gazebo plugin");
-        drop(gz_child);
-        cleanup_gazebo();
+        if let Some(child) = gz_child { drop(child); }
+        if !connect { cleanup_gazebo(); }
         return ExitCode::FAILURE;
     }
     info!("Gazebo ready");
@@ -185,11 +196,15 @@ fn run_interactive(headless: bool, instance: u8) -> ExitCode {
         Ok(b) => b,
         Err(e) => {
             warn!("Failed to initialize board: {}", e);
-            drop(gz_child);
-            cleanup_gazebo();
+             if let Some(child) = gz_child { drop(child); }
+             if !connect { cleanup_gazebo(); }
             return ExitCode::FAILURE;
         }
     };
+
+    // Initialize telemetry (GCS link)
+    board.init_telemetry(app_config, 1000);
+    info!("Telemetry initialized");
 
     let plugin = match GzPluginBridge::connect_instance_with_retry(instance, 20, 500) {
         Ok(p) => {
@@ -198,8 +213,8 @@ fn run_interactive(headless: bool, instance: u8) -> ExitCode {
         }
         Err(e) => {
             warn!("Failed to connect to Gazebo: {}", e);
-            drop(gz_child);
-            cleanup_gazebo();
+             if let Some(child) = gz_child { drop(child); }
+             if !connect { cleanup_gazebo(); }
             return ExitCode::FAILURE;
         }
     };
@@ -209,13 +224,13 @@ fn run_interactive(headless: bool, instance: u8) -> ExitCode {
 
     run_control_loop(&mut board, &plugin);
 
-    drop(gz_child);
-    cleanup_gazebo();
+    if let Some(child) = gz_child { drop(child); }
+    if !connect { cleanup_gazebo(); }
     ExitCode::SUCCESS
 }
 
 #[cfg(not(feature = "gz-plugin"))]
-fn run_interactive(_headless: bool, _instance: u8) -> ExitCode {
+fn run_interactive(_headless: bool, _instance: u8, _connect: bool, _app_config: &aviate_config::AppConfig) -> ExitCode {
     warn!("gz-plugin feature not enabled");
     warn!("Rebuild with: cargo build -p aviate-app-{{project-name}} --features gz-plugin");
     ExitCode::FAILURE

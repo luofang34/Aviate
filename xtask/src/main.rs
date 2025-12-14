@@ -33,12 +33,66 @@ fn main() -> Result<()> {
             flash_firmware(firmware_path, port)?;
         }
         "run" => {
-            if args.len() < 3 {
-                bail!("Usage: cargo xtask run <app-name> [serial_port]");
+            // Check for help
+            if args.contains(&"--help".to_string()) || args.contains(&"-h".to_string()) {
+                print_usage();
+                return Ok(());
             }
-            let app_name = &args[2];
-            let port = args.get(3).map(|s| s.as_str());
-            run_app(app_name, port)?;
+
+            // New run command parsing
+            let mut airframe = "x500".to_string();
+            let mut board = "sitl-gazebo".to_string();
+            let mut mission_config = None;
+            let mut gcs = false;
+            let mut headless = false;
+            let mut idx = 2;
+
+            while idx < args.len() {
+                match args[idx].as_str() {
+                    "--airframe" => {
+                        idx += 1;
+                        if idx < args.len() {
+                            airframe = args[idx].clone();
+                        }
+                    }
+                    "--board" => {
+                        idx += 1;
+                        if idx < args.len() {
+                            board = args[idx].clone();
+                        }
+                    }
+                    "--mission" => {
+                        idx += 1;
+                        if idx < args.len() {
+                            mission_config = Some(args[idx].clone());
+                        }
+                    }
+                    "--gcs" => {
+                        gcs = true;
+                    }
+                    "--headless" => {
+                        headless = true;
+                    }
+                    _ => {
+                        // Assume it's the airframe if it's the first positional arg? 
+                        // Or just enforce flags? Let's enforce flags but allow first arg to be airframe optionally if not a flag
+                        if !args[idx].starts_with("--") && idx == 2 {
+                             // Backward compatibility or shorthand: cargo xtask run [airframe]
+                             // But wait, existing usage was run <app-name>. We want to break that?
+                             // User requirement: "cargo xtask run [airframe default to x500 but configuable]"
+                             // So run x500 is valid.
+                             airframe = args[idx].clone();
+                        }
+                    }
+                }
+                idx += 1;
+            }
+
+            if board.starts_with("sitl") {
+                run_sitl(&airframe, &board, mission_config.as_deref(), gcs, headless)?;
+            } else {
+                run_hardware(&airframe, &board)?;
+            }
         }
         "dfu" => {
             let port = args.get(2).map(|s| s.as_str());
@@ -53,6 +107,24 @@ fn main() -> Result<()> {
         }
         "test-mavlink" => {
             run_python_test()?;
+        }
+        "create" => {
+            if args.len() < 3 {
+                bail!("Usage: cargo xtask create <app-name> [--board <board>]");
+            }
+            let app_name = &args[2];
+            let mut board = "sitl-gazebo";
+            let mut idx = 3;
+            while idx < args.len() {
+                if args[idx] == "--board" {
+                    idx += 1;
+                    if idx < args.len() {
+                        board = &args[idx];
+                    }
+                }
+                idx += 1;
+            }
+            run_create_app(app_name, board)?;
         }
         "help" | "--help" | "-h" => {
             print_usage();
@@ -76,28 +148,38 @@ USAGE:
     cargo xtask <COMMAND> [OPTIONS]
 
 COMMANDS:
-    run <app-name> [port]        Build and flash app in one step
+    run [options]                Run app (SITL or Hardware)
+                                 Options:
+                                   --airframe <name> (default: x500)
+                                   --board <name>    (default: sitl-gazebo)
+                                   --mission <path>  Run specific mission (SITL only)
+                                   --gcs             Run with GCS connected (SITL only)
+                                   --headless        Run headless (SITL only)
     flash <firmware.bin> [port]  Flash firmware via software DFU
     dfu [port]                   Enter DFU mode without flashing
     cleanup                      Clean up lingering SITL processes
     test-mavlink                 Run MAVLink heterogeneous tests (Python)
     test [config]                Run SITL test (defaults to basic_flight)
+    create <name> [--board B]    Create a new app from template (requires cargo-generate)
     help                         Show this help
 
 EXAMPLES:
-    cargo xtask run my-app                 # Build and flash app
-    cargo xtask flash app.bin              # Auto-detect serial port
+    cargo xtask run                      # Run default x500 on SITL Gazebo
+    cargo xtask run --airframe quad-x --board micoair-h743-v2  # Run on hardware
+    cargo xtask run --mission tests/missions/basic_flight.toml # Run mission
+    cargo xtask flash app.bin            # Auto-detect serial port
     cargo xtask flash app.bin /dev/ttyACM0 # Linux/macOS
     cargo xtask flash app.bin COM3         # Windows
-    cargo xtask dfu                        # Just enter DFU mode
-    cargo xtask cleanup                    # Kill all SITL related processes
-    cargo xtask test-mavlink               # Run python verification
-    cargo xtask test                       # Run Rust verification
+    cargo xtask dfu                      # Just enter DFU mode
+    cargo xtask cleanup                  # Kill all SITL related processes
+    cargo xtask test-mavlink             # Run python verification
+    cargo xtask test                     # Run Rust verification
 
 REQUIREMENTS:
-    - Device running firmware with software-bootloader feature
-    - dfu-util installed and in PATH
-    - arm-none-eabi-objcopy for 'run' command
+    - Device running firmware with software-bootloader feature (for hardware)
+    - dfu-util installed and in PATH (for hardware)
+    - arm-none-eabi-objcopy (for hardware build)
+    - cargo-generate (for app generation)
 "#
     );
 }
@@ -158,6 +240,71 @@ fn run_python_test() -> Result<()> {
     if !status.success() {
         bail!("Python test failed");
     }
+
+    Ok(())
+}
+
+
+/// Generate, build, and run on SITL
+
+
+/// Create a new app from template
+fn run_create_app(app_name: &str, board: &str) -> Result<()> {
+    // Check if cargo-generate is installed
+    if Command::new("cargo")
+        .arg("generate")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        bail!("cargo-generate not found. Please install it with: cargo install cargo-generate");
+    }
+
+    let template_path = "aviate-app-template";
+    if !std::path::Path::new(template_path).exists() {
+        bail!("Template directory '{}' not found", template_path);
+    }
+
+    // Determine target directory (aviate-apps/aviate-app-<name>)
+    // We want the folder name to be consistent with conventions
+    let project_name = if app_name.starts_with("aviate-app-") {
+        app_name.strip_prefix("aviate-app-").unwrap()
+    } else {
+        app_name
+    };
+    
+    let full_app_name = format!("aviate-app-{}", project_name);
+    let target_dir = Path::new("aviate-apps").join(&full_app_name);
+
+    if target_dir.exists() {
+        bail!("Target directory {} already exists", target_dir.display());
+    }
+
+    eprintln!("Creating new app '{}' for board '{}'...", full_app_name, board);
+    eprintln!("Destination: aviate-apps/");
+
+    let status = Command::new("cargo")
+        .arg("generate")
+        .arg("--path")
+        .arg(template_path)
+        .arg("--name")
+        .arg(&full_app_name)
+        .arg("--destination")
+        .arg("aviate-apps")
+        .arg("--define")
+        .arg(format!("board={}", board))
+        .arg("--define")
+        .arg(format!("project-name={}", project_name))
+        .arg("--silent") 
+        .status()
+        .context("Failed to run cargo generate")?;
+
+    if !status.success() {
+        bail!("cargo generate failed");
+    }
+
+    eprintln!("Created {} in aviate-apps/", full_app_name);
+    eprintln!("To build: cargo xtask run {}", project_name);
 
     Ok(())
 }
@@ -340,66 +487,198 @@ fn wait_for_dfu_device() -> Result<()> {
     bail!("Timeout waiting for DFU device. Check if bootloader is properly installed.")
 }
 
-/// Build and flash an app in one step
-fn run_app(app_name: &str, port: Option<&str>) -> Result<()> {
-    // Determine app crate name (may or may not have aviate-app- prefix)
-    let app_crate = if app_name.starts_with("aviate-app-") {
-        app_name.to_string()
+/// Generate, build, and run on SITL
+fn run_sitl(airframe: &str, board: &str, mission_config: Option<&str>, _gcs: bool, headless: bool) -> Result<()> {
+    // 1. Generate and Build App
+    let (_app_name, binary_path) = generate_and_build_app(airframe, board)?;
+    
+    // 2. Prepare Environment
+    let cwd = std::env::current_dir()?;
+    let plugin_dir = cwd.join("aviate-hal/xil/backends/gz/plugin/build");
+    
+    // Validating plugin existence only if using gazebo board
+    if board == "sitl-gazebo" && !plugin_dir.join("libAviateGzPlugin.so").exists() {
+         bail!("AviateGzPlugin not found at {}. Build with CMake first.", plugin_dir.display());
+    }
+
+    // 3. Run
+    // If mission_config is provided, use gcs-test in Run mode
+    if let Some(config_path) = mission_config {
+        eprintln!("Running mission: {}", config_path);
+        run_cleanup()?; // Ensure clean state
+        
+        // Build gcs-test first
+         let status = Command::new("cargo")
+            .args(["build", "-p", "gcs-test", "--features", "gazebo"])
+            .status()
+            .context("Failed to build gcs-test")?;
+        if !status.success() { bail!("Failed to build gcs-test"); }
+
+        let mut cmd = Command::new("target/debug/gcs-test");
+        cmd.arg("run");
+        cmd.arg("--xil");
+        cmd.arg(config_path);
+        
+        // Pass the custom binary path to gcs-test
+        cmd.arg("--fc-binary");
+        cmd.arg(&binary_path);
+
+        // Headless handling:
+        // gcs-test defaults to headless=true.
+        // User wants default GUI for interactive `run` command, but "tests should always be headless".
+        // If mission is executing, it is a test. So minimal/headless is better.
+        // If user explicitly requests headless (headless=true here), we pass --headless flag.
+        // If user explicitly wants GUI in test (how? we didn't add --gui flag), they are stuck with headless unless they don't pass headless flag via xtask?
+        // Wait, gcs-test defaults to headless=true. So if we DON'T pass --headless, it is headless.
+        // If we want GUI, we need to pass something to disable it, but gcs-test arg is flag for true.
+        // If I want to force GUI I might not be able to if default is true in clap.
+        // Ah, clap `conflicts_with` or `action = SetTrue`.
+        // Let's assume for MISSION run, headless is fine.
+        // If user wants headless, we pass --headless (redundant but safe).
+        if headless {
+            cmd.arg("--headless"); 
+        }
+        
+        if let Ok(current_ld) = std::env::var("LD_LIBRARY_PATH") {
+            cmd.env("LD_LIBRARY_PATH", format!("{}:{}", plugin_dir.display(), current_ld));
+        } else {
+            cmd.env("LD_LIBRARY_PATH", plugin_dir);
+        }
+
+        let status = cmd.status().context("Failed to run gcs-test")?;
+        if !status.success() { bail!("Mission failed"); }
+
     } else {
-        format!("aviate-app-{}", app_name)
-    };
+        // Interactive mode: Run the binary directly
+        // If gcs=true, we might want to also launch gcs-test in GCS-only mode?
+        // But for now, just launch the app.
+        eprintln!("Running interactive SITL: {}", binary_path.display());
+        run_cleanup()?; 
+        
+        // Launch Gazebo environment directly? 
+        // SITL binary usually launches Gazebo if it's the main one?
+        // Or do we need spawner?
+        // SitlGazeboBoard (in test-gazebo-app) launches Gazebo unless --connect is passed.
+        // Interactive mode `run_interactive` launches Gazebo.
+        // So just running the binary is enough.
+        
+        let mut cmd = Command::new(&binary_path);
+        if headless {
+            cmd.arg("--headless");
+        }
+        // If not headless, it will launch GUI (default for app).
+        
+        // Environment variables
+        if let Ok(current_ld) = std::env::var("LD_LIBRARY_PATH") {
+            cmd.env("LD_LIBRARY_PATH", format!("{}:{}", plugin_dir.display(), current_ld));
+        } else {
+            cmd.env("LD_LIBRARY_PATH", plugin_dir);
+        }
 
-    // The binary name is the part after aviate-app-
-    let bin_name = app_crate.strip_prefix("aviate-app-").unwrap_or(app_name);
-
-    eprintln!("Building {}...", app_crate);
-
-    // Build the app for hardware target
-    let status = Command::new("cargo")
-        .args([
-            "build",
-            "-p",
-            &app_crate,
-            "--release",
-            "--target",
-            "thumbv7em-none-eabihf",
-        ])
-        .status()
-        .context("Failed to run cargo build")?;
-
-    if !status.success() {
-        bail!("Build failed");
+        let status = cmd.status().context("Failed to run app")?;
+         if !status.success() { bail!("App exited with error"); }
     }
-
-    // Convert ELF to binary
-    let elf_path = format!("target/thumbv7em-none-eabihf/release/{}", bin_name);
-    let bin_path = format!("/tmp/{}.bin", bin_name);
-
-    eprintln!("Converting {} to binary...", elf_path);
-
-    // Check arm-none-eabi-objcopy is available
-    if Command::new("arm-none-eabi-objcopy")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
-        bail!("arm-none-eabi-objcopy not found. Please install ARM toolchain.");
-    }
-
-    let status = Command::new("arm-none-eabi-objcopy")
-        .args(["-O", "binary", &elf_path, &bin_path])
-        .status()
-        .context("Failed to run objcopy")?;
-
-    if !status.success() {
-        bail!("objcopy failed");
-    }
-
-    eprintln!("Flashing {}...", bin_path);
-    flash_firmware(&bin_path, port)?;
 
     Ok(())
 }
+
+/// Generate and build app from template
+fn generate_and_build_app(airframe: &str, board: &str) -> Result<(String, std::path::PathBuf)> {
+
+    
+    // We generate into aviate-apps/<board>-<airframe>
+    let gen_name = format!("{}-{}", board, airframe).replace("_", "-"); 
+    let gen_target_dir = Path::new("aviate-apps").join(&gen_name);
+    
+    if gen_target_dir.exists() {
+        eprintln!("Directory {} already exists. Overwriting as per HEADLESS/CI mode...", gen_target_dir.display());
+        std::fs::remove_dir_all(&gen_target_dir).context("Failed to clean generated app dir")?;
+    }
+    
+    let template_path = "aviate-app-template";
+    
+    eprintln!("Generating app {}...", gen_name);
+    eprintln!("  Board: {}", board);
+    eprintln!("  Airframe: {}", airframe);
+    
+    let status = Command::new("cargo")
+        .arg("generate")
+        .arg("--path")
+        .arg(template_path)
+        .arg("--name")
+        .arg(&gen_name)
+        .arg("--destination")
+        .arg("aviate-apps")
+        .arg("--define")
+        .arg(format!("board={}", board))
+        .arg("--define")
+        .arg(format!("airframe={}", airframe))
+        .arg("--define")
+        .arg(format!("project-name={}", gen_name))
+        .arg("--silent")
+        .status()
+        .context("Failed to run cargo generate")?;
+
+    if !status.success() { bail!("cargo generate failed"); }
+
+    eprintln!("Building {}...", gen_name);
+    
+    // Build
+    // If hardware, need thumbv7 target
+    let is_hardware = board != "sitl-gazebo" && board != "sitl-jmavsim";
+    
+    let mut cmd = Command::new("cargo");
+    cmd.arg("build");
+    cmd.arg("--manifest-path");
+    cmd.arg(gen_target_dir.join("Cargo.toml"));
+    // cmd.arg("-p"); // Removed -p
+    // cmd.arg(format!("aviate-app-{}", gen_name)); // Removed package name arg
+    
+    if is_hardware {
+        cmd.arg("--release");
+        cmd.arg("--target");
+        cmd.arg("thumbv7em-none-eabihf");
+    } else {
+         // SITL defaults to debug for now
+         // cmd.arg("--features");
+         // cmd.arg("gazebo"); 
+         // feature "gz-plugin" is default in template for sitl-gazebo 
+    }
+    
+    let status = cmd.status().context("Failed to build generated app")?;
+    if !status.success() { bail!("Build failed"); }
+    
+    // Locate binary
+    let bin_path_buf = if is_hardware {
+         Path::new("target/thumbv7em-none-eabihf/release").join(&gen_name)
+    } else {
+         Path::new("target/debug").join(&gen_name)
+    };
+    
+    Ok((gen_name, bin_path_buf))
+}
+
+/// Run on hardware
+fn run_hardware(airframe: &str, board: &str) -> Result<()> {
+    let (app_name, elf_path) = generate_and_build_app(airframe, board)?;
+    
+    // Objcopy
+    let bin_path = format!("/tmp/{}.bin", app_name);
+    eprintln!("Converting to binary...");
+    
+    let status = Command::new("arm-none-eabi-objcopy")
+        .args(["-O", "binary", elf_path.to_str().unwrap(), &bin_path])
+        .status()
+        .context("Failed to run objcopy")?;
+
+    if !status.success() { bail!("objcopy failed"); }
+    
+    // Flash
+    flash_firmware(&bin_path, None)?;
+    
+    Ok(())
+}
+
 
 /// Flash firmware to the device
 fn flash_firmware(firmware_path: &str, port: Option<&str>) -> Result<()> {

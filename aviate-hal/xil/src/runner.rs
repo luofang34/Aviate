@@ -148,14 +148,16 @@ impl MavClient {
 
     /// Create a new MAVLink client with custom network configuration
     ///
-    /// Binds to ephemeral port and connects to 127.0.0.1:14550.
-    pub fn new_with_net(instance: u8, _net: XilNetConfig) -> Result<Self, SimulatorError> {
+    /// Binds to ephemeral port and connects to target instance GCS port.
+    pub fn new_with_net(instance: u8, net: XilNetConfig) -> Result<Self, SimulatorError> {
         // Bind to ephemeral port to avoid conflicts in multi-vehicle tests
         let socket = UdpSocket::bind("127.0.0.1:0")?;
         socket.set_nonblocking(true)?;
 
-        // Target the standard GCS port (where FC or MavRouter is listening)
-        let target_addr = std::net::SocketAddr::from(([127, 0, 0, 1], 14550));
+        // Target the dedicated GCS port for this instance (Slot 0 / SensorIn)
+        let gcs_port = net.port(instance as u16, crate::PortSlot::SensorIn);
+        let target_addr = std::net::SocketAddr::from(([127, 0, 0, 1], gcs_port));
+        // info!("MavClient targeting {}", target_addr);
 
         Ok(Self {
             socket,

@@ -35,10 +35,10 @@ choices = ["sitl", "flight"]
 default = "sitl"
 
 [conditional.'board == "micoair-h743-v2"']
-ignore = [".cargo/config.toml.liquid", "src/lib.rs.liquid", "src/world_gen.rs.liquid", "src/mission_runner.rs.liquid", "src/router_gen.rs.liquid"]
+ignore = [".cargo/config.toml.liquid", "src/lib.rs.liquid", "src/world_gen.rs.liquid", "src/router_gen.rs.liquid"]
 
 [conditional.'board != "micoair-h743-v2"']
 ignore = [".cargo-flight/config.toml.liquid", "memory.x.liquid", "build.rs.liquid"]
 
 [conditional.'board == "sitl-jmavsim"']
-ignore = ["src/lib.rs.liquid", "src/world_gen.rs.liquid", "src/mission_runner.rs.liquid", "src/router_gen.rs.liquid"]
+ignore = ["src/lib.rs.liquid", "src/world_gen.rs.liquid", "src/router_gen.rs.liquid"]

@@ -23,6 +23,13 @@ roles = ["telemetry", "command"]
 port_sensor = 14560
 port_actuator = 14561
 
+# Transport 2: GCS (test runner or QGroundControl)
+[[transports]]
+protocol = "mavlink"
+port = "udp"
+roles = ["gcs"]
+endpoint = "127.0.0.1:14550"
+
 [simulator]
 backend = "gazebo"
 headless = false

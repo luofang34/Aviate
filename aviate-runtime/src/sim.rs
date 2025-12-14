@@ -90,6 +90,11 @@ impl UdpFrameTx {
     pub fn new(socket: UdpSocket, addr: SocketAddr) -> Self {
         Self { socket, addr }
     }
+
+    /// Update target address (e.g. after receiving from GCS)
+    pub fn set_addr(&mut self, addr: SocketAddr) {
+        self.addr = addr;
+    }
 }
 
 impl FrameTx for UdpFrameTx {
@@ -170,20 +175,22 @@ impl SitlRunner {
             if let Some(t) = cfg
                 .transports
                 .iter()
-                .find(|t| t.roles.iter().any(|r| r == "telemetry") && t.endpoint.is_some())
+                .find(|t| t.roles.iter().any(|r| r == "telemetry" || r == "gcs") && t.endpoint.is_some())
             {
                 if let Some(ref endpoint) = t.endpoint {
-                    if let Ok(addr) = endpoint.parse::<SocketAddr>() {
-                        if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
-                            let _ = sock.set_nonblocking(true);
-                            let tx = UdpFrameTx::new(sock, addr);
-                            // Create protocol-specific formatter (from aviate-link)
-                            let formatter = MavlinkCycleFormatter::new(telem_cfg, loop_hz);
-                            // Create protocol-agnostic task (from aviate-runtime)
-                            self.telemetry = Some(TelemetryTask::new(tx, formatter));
-                            eprintln!("[INFO] Telemetry enabled: {} via {}", endpoint, t.protocol);
-                        }
-                    }
+                     // Bind to ephemeral port for sending (target address is updated dynamically)
+                     let sock = UdpSocket::bind("0.0.0.0:0").expect("bind telemetry socket");
+                     sock.set_nonblocking(true).expect("set nonblocking");
+                     
+                     // Create frame transmitter with initial endpoint from config
+                     let addr = endpoint.parse::<SocketAddr>().expect("parse endpoint");
+                     let tx = UdpFrameTx::new(sock, addr);
+
+                     // Create protocol-specific formatter (from aviate-link)
+                     let formatter = MavlinkCycleFormatter::new(telem_cfg, loop_hz);
+                     // Create protocol-agnostic task (from aviate-runtime)
+                     self.telemetry = Some(TelemetryTask::new(tx, formatter));
+                     eprintln!("[INFO] Telemetry enabled: {} via {}", endpoint, t.protocol);
                 }
             }
         }
@@ -294,6 +301,15 @@ impl SitlRunner {
                     self.board_hal.disarm();
                     self.transport.set_armed(false);
                 }
+            }
+        }
+
+        // 4b. Sync Telemetry target address from SitlIO
+        //     SitlIO handles incoming MAVLink and learns the GCS address (e.g. gcs-test ephemeral port).
+        //     We must update the TelemetryTask to send data to that address.
+        if let Some(ref mut telem) = self.telemetry {
+            if let Some(addr) = self.transport.gcs_addr() {
+                telem.frame_tx_mut().set_addr(addr);
             }
         }
 

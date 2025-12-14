@@ -153,7 +153,7 @@ impl XilNetConfig {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PortSlot {
-    /// Sensor data from simulator
+    /// Sensor data from simulator (or MAVLink GCS Bidi)
     SensorIn = 0,
     /// Actuator commands to simulator
     ActuatorOut = 1,
