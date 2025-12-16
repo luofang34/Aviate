@@ -132,6 +132,9 @@ pub mod hal {
 
     // Chip-specific implementations for this board (STM32H7)
     pub use aviate_hal_stm32h7::{Stm32h7CryptoEngine, Stm32h7KeyStore};
+
+    // Re-export PAC for interrupt vectors and low-level peripheral access
+    pub use stm32h7xx_hal::pac;
 }
 
 /// Software-triggered bootloader entry (development/testing only)

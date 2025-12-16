@@ -1,8 +1,15 @@
-// Build script for STM32H743 flight target
-// Ensures memory.x is available to the linker
+{% if env == "flight" %}
+{% raw %}
+//! Build script for flight target
+//!
+//! This script:
+//! 1. Copies memory.x to OUT_DIR for linker
+//! 2. Generates compile-time config from AviateApp.toml
+//!
+//! The generated config is a `const` that can be included in the app.
 
 use std::env;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -16,6 +23,110 @@ fn main() {
         .unwrap();
 
     println!("cargo:rustc-link-search={}", out.display());
+
+    // Generate compile-time config from AviateApp.toml
+    generate_app_config(out);
+
+    // Rerun on config changes
     println!("cargo:rerun-if-changed=memory.x");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=AviateApp.toml");
 }
+
+/// Generate Rust const from AviateApp.toml
+///
+/// This avoids runtime TOML parsing in no_std environments.
+fn generate_app_config(out: &PathBuf) {
+    let toml_content = fs::read_to_string("AviateApp.toml")
+        .expect("Failed to read AviateApp.toml");
+
+    // Parse TOML (build script runs on host, has std)
+    let config: toml::Value = toml_content.parse()
+        .expect("Failed to parse AviateApp.toml");
+
+    let app = config.get("app").expect("Missing [app] section");
+    let app_id = app.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+    // Extract control rate (default 1000 Hz)
+    let control_rate_hz = config
+        .get("control")
+        .and_then(|c| c.get("rate_hz"))
+        .and_then(|v| v.as_integer())
+        .unwrap_or(1000) as u32;
+
+    // Extract transport config
+    let transport = generate_transport_config(&config);
+
+    // Generate Rust code
+    let generated = format!(
+        r#"// Auto-generated app config from AviateApp.toml
+// DO NOT EDIT - regenerated on each build
+
+/// Application name from AviateApp.toml
+pub const APP_ID: &str = {app_id:?};
+
+/// Control loop rate in Hz
+pub const CONTROL_RATE_HZ: u32 = {control_rate_hz};
+
+/// Control loop period in microseconds
+pub const LOOP_PERIOD_US: u32 = 1_000_000 / {control_rate_hz};
+
+/// Transport configuration
+pub const TRANSPORT_CONFIG: TransportConfig = {transport};
+
+/// Transport configuration enum (no heap allocation)
+#[derive(Debug, Clone, Copy)]
+pub enum TransportConfig {{
+    /// USB CDC only
+    UsbCdc,
+    /// UART with baud rate
+    Uart {{ baud: u32 }},
+    /// USB + UART combo (most common)
+    UsbUart {{ uart_baud: u32 }},
+}}
+"#
+    );
+
+    fs::write(out.join("app_config.rs"), generated)
+        .expect("Failed to write app_config.rs");
+}
+
+/// Generate transport config variant
+fn generate_transport_config(config: &toml::Value) -> String {
+    let transports = config.get("transports")
+        .and_then(|t| t.as_array());
+
+    match transports {
+        Some(arr) => {
+            let has_usb = arr.iter().any(|t| {
+                t.get("port").and_then(|p| p.as_str()) == Some("usb-cdc")
+            });
+            let uart = arr.iter().find(|t| {
+                t.get("port").and_then(|p| p.as_str())
+                    .map(|p| p.starts_with("uart"))
+                    .unwrap_or(false)
+            });
+
+            if has_usb && uart.is_some() {
+                let baud = uart.unwrap()
+                    .get("baud")
+                    .and_then(|b| b.as_integer())
+                    .unwrap_or(57600) as u32;
+                format!("TransportConfig::UsbUart {{ uart_baud: {} }}", baud)
+            } else if has_usb {
+                "TransportConfig::UsbCdc".to_string()
+            } else if let Some(u) = uart {
+                let baud = u.get("baud").and_then(|b| b.as_integer()).unwrap_or(115200) as u32;
+                format!("TransportConfig::Uart {{ baud: {} }}", baud)
+            } else {
+                "TransportConfig::UsbCdc".to_string()
+            }
+        }
+        None => "TransportConfig::UsbCdc".to_string(),
+    }
+}
+{% endraw %}
+{% else %}
+// No build script needed for SITL targets
+fn main() {}
+{% endif %}

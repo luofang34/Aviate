@@ -22,3 +22,7 @@ aviate-hal-xil = { path = "../../aviate-hal/xil" }
 aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", optional = true }
 aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor" }
 log = "0.4"
+
+[package.metadata.aviate-board]
+chip = "xil"           # Special: simulator, no flashing
+programmer = "none"    # Simulator board, no programming

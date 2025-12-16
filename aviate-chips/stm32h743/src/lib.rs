@@ -80,7 +80,17 @@ pub fn chip_main(led_metadata: Stm32LedMetadata) -> ! {
     dp.RCC
         .ahb4enr
         .modify(|r, w| unsafe { w.bits(r.bits() | (1 << 4)) }); // GPIOEEN bit 4
+
+    // Enable backup domain access and RTC APB access
+    dp.RCC
+        .apb4enr
+        .modify(|r, w| unsafe { w.bits(r.bits() | (1 << 16)) }); // RTCAPBEN bit 16
     cortex_m::asm::dsb();
+
+    // Small delay for clock to stabilize
+    for _ in 0..100 {
+        cortex_m::asm::nop();
+    }
 
     // Create individual backends
     let crash = Stm32h743CrashBackend::new(dp.PWR, dp.RTC, dp.RCC);
@@ -94,5 +104,5 @@ pub fn chip_main(led_metadata: Stm32LedMetadata) -> ! {
 
     // Call the protocol layer state machine (MCU-agnostic!)
     // This consumes backend and never returns
-    aviate_boot_core::boot_sequence(backend)
+    aviate_boot_core::boot_sequence(backend, memory::APP_START)
 }

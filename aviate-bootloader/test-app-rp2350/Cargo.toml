@@ -1,0 +1,22 @@
+[workspace]
+
+[package]
+name = "test-app-rp2350"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "test-app-rp2350"
+path = "src/main.rs"
+
+[dependencies]
+# Don't enable cortex-m's critical-section, rp235x-hal provides it
+cortex-m = { version = "0.7", default-features = false }
+cortex-m-rt = "0.7"
+rp235x-hal = { version = "0.3", features = ["rt", "critical-section-impl"] }
+panic-halt = "1.0"
+embedded-hal = "1.0"
+
+[profile.release]
+opt-level = "s"
+lto = true

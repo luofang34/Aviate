@@ -1,0 +1,22 @@
+[package]
+name = "aviate-chip-rp2350"
+edition = "2021"
+version = "0.0.0"
+license = "MIT OR Apache-2.0"
+description = "RP2350 chip backend for Aviate bootloader"
+
+[features]
+# Pass through software-dfu feature to boot-core
+software-dfu = ["aviate-boot-core/software-dfu"]
+
+[dependencies]
+aviate-boot-core = { path = "../../aviate-boot-core" }
+# Don't use cortex-m's critical-section, rp235x-hal provides it
+cortex-m = { version = "0.7", default-features = false }
+cortex-m-rt = "0.7"
+
+# RP2350 HAL - provides critical-section-impl
+rp235x-hal = { version = "0.3", features = ["rt", "critical-section-impl"] }
+
+panic-halt = "1.0"
+embedded-hal = "1.0"

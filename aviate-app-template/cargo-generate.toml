@@ -4,7 +4,7 @@
 #   cargo generate --path aviate-app-template --name my-app
 #
 # For more options:
-#   cargo generate --path aviate-app-template --name my-app -d board=sitl-gazebo -d model=x500 -d airframe=x500
+#   cargo generate --path aviate-app-template --name my-app -d board=sitl-gazebo -d airframe=x500
 
 [template]
 name = "aviate-app"
@@ -13,7 +13,8 @@ description = "Generate a new Aviate flight controller application"
 [placeholders.board]
 type = "string"
 prompt = "Target board"
-choices = ["sitl-gazebo", "sitl-jmavsim", "micoair-h743-v2"]
+# Board names come from aviate-boards/*/
+# Users can add custom boards by creating new board crates
 default = "sitl-gazebo"
 
 [placeholders.model]
@@ -30,15 +31,14 @@ default = "x500"
 
 [placeholders.env]
 type = "string"
-prompt = "Environment"
+prompt = "Environment (sitl or flight)"
 choices = ["sitl", "flight"]
 default = "sitl"
 
-[conditional.'board == "micoair-h743-v2"']
-ignore = [".cargo/config.toml.liquid", "src/lib.rs.liquid", "src/world_gen.rs.liquid", "src/router_gen.rs.liquid"]
+# SITL environment: ignore hardware-specific files
+[conditional.'env == "sitl"']
+ignore = [".cargo/config.toml", "memory.x", "build.rs"]
 
-[conditional.'board != "micoair-h743-v2"']
-ignore = [".cargo-flight/config.toml.liquid", "memory.x.liquid", "build.rs.liquid"]
-
-[conditional.'board == "sitl-jmavsim"']
-ignore = ["src/lib.rs.liquid", "src/world_gen.rs.liquid", "src/router_gen.rs.liquid"]
+# Flight environment: ignore SITL-specific files
+[conditional.'env == "flight"']
+ignore = ["src/lib.rs", "src/world_gen.rs", "src/router_gen.rs"]

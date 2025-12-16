@@ -10,10 +10,12 @@ categories = ["embedded", "no-std"]
 
 [features]
 default = []
+# Enable runtime config parsing (requires alloc, pulls in toml crate)
+config = ["aviate-config"]
 
 [dependencies]
 aviate-core = { path = "../aviate-core" }
-aviate-config = { path = "../aviate-config" }
+aviate-config = { path = "../aviate-config", optional = true }
 aviate-hal-io = { path = "../aviate-hal/io" }
 # Note: MAVLink protocol is now integrated in src/mavlink/protocol.rs (no external dependency)
 

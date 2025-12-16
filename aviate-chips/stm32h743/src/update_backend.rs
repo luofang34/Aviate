@@ -273,6 +273,19 @@ impl UpdateBackend for Stm32h743UpdateBackend {
         }
         ccdr.peripheral.kernel_usb_clk_mux(UsbClkSel::Hsi48);
 
+        // Enable USB voltage regulator (USB33DEN in PWR_CR3)
+        // Required for USB transceivers to work on STM32H7
+        // Safety: PWR peripheral was consumed by constrain(), use PAC directly
+        let pwr = unsafe { &*pac::PWR::ptr() };
+        pwr.cr3.modify(|_, w| w.usb33den().set_bit());
+
+        // Wait for USB supply ready (USB33RDY) - may not be set on all packages
+        // For LQFP100 package, VDD33USB is supplied via VDD, so USB33RDY won't be set
+        // Wait briefly for voltage stabilization
+        for _ in 0..10000 {
+            cortex_m::asm::nop();
+        }
+
         // Configure GPIO
         let gpioa_pac = dp.GPIOA; // Keep PAC reference for VBUS
         configure_vbus_sensing(&gpioa_pac);
@@ -315,6 +328,14 @@ impl UpdateBackend for Stm32h743UpdateBackend {
 
         // Turn on GREEN LED to indicate DFU mode is ready (using PAC)
         // PE2, active low - reset bit 2
+        // Enable GPIOE clock first
+        let rcc = unsafe { &*pac::RCC::ptr() };
+        rcc.ahb4enr.modify(|_, w| w.gpioeen().set_bit());
+        // Set PE2 as output (bits 4-5 = 01 for output mode)
+        dp.GPIOE
+            .moder
+            .modify(|r, w| unsafe { w.bits((r.bits() & !(0b11 << 4)) | (0b01 << 4)) });
+        // Drive PE2 low (active low LED)
         dp.GPIOE.bsrr.write(|w| unsafe { w.bits(1 << (2 + 16)) });
 
         // Main USB polling loop

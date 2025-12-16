@@ -63,13 +63,16 @@
 //! ```
 
 #![no_std]
-#![forbid(unsafe_code)]
+// Note: time.rs uses unsafe for DWT register access
 #![deny(clippy::panic)]
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 
 pub mod security;
-// pub mod transport;  // TODO: Implement USB CDC, UART, CAN wrappers
+pub mod time;
+pub mod transport;
 
 // Re-export for convenience
 pub use security::{Stm32h7CryptoEngine, Stm32h7KeyStore};
+pub use time::{NoSleep, SleepTimer, Stm32h7Time};
+pub use transport::{CanTransport, Stm32h7Transport, UartTransport, UsbCdcTransport};

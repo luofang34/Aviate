@@ -5,9 +5,9 @@
 MEMORY
 {
     FLASH : ORIGIN = 0x08020000, LENGTH = 1920K  /* 2MB - 128KB bootloader */
-    RAM   : ORIGIN = 0x24000000, LENGTH = 512K   /* AXI SRAM */
-    DTCM  : ORIGIN = 0x20000000, LENGTH = 128K   /* DTCM for stack */
+    RAM   : ORIGIN = 0x20000000, LENGTH = 128K   /* DTCM - fast, stack/bss here */
+    AXISRAM : ORIGIN = 0x24000000, LENGTH = 512K /* AXI SRAM for heap/large buffers */
 }
 
-/* Stack at end of DTCM */
-_stack_start = ORIGIN(DTCM) + LENGTH(DTCM);
+/* Stack at end of RAM (DTCM) */
+_stack_start = ORIGIN(RAM) + LENGTH(RAM);

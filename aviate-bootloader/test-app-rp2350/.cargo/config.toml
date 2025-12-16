@@ -1,0 +1,4 @@
+[build]
+target = "thumbv8m.main-none-eabihf"
+
+# Note: cortex-m-rt already adds -Tlink.x, don't add it again

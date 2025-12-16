@@ -25,13 +25,19 @@ use panic_halt as _;
 mod chip_select;
 mod board_pins;
 
+// RP2350 requires an Image Definition for the Boot ROM to execute the firmware
+#[cfg(feature = "chip-rp2350")]
+#[link_section = ".start_block"]
+#[used]
+pub static IMAGE_DEF: rp235x_hal::block::ImageDef = rp235x_hal::block::ImageDef::secure_exe();
+
 use chip_select::SelectedChip;
 use board_pins::SELECTED_BOARD_PINS;
 
 // Architecture-specific entry points (feature-gated)
 // Each calls the selected chip's chip_main() function with board-specific LED pins
 
-#[cfg(feature = "arch-cortex-m")]
+#[cfg(any(feature = "arch-cortex-m-stm32", feature = "arch-cortex-m-rp"))]
 #[cortex_m_rt::entry]
 fn main() -> ! {
     SelectedChip::chip_main(SELECTED_BOARD_PINS)
@@ -39,6 +45,7 @@ fn main() -> ! {
 
 // Compile-time check: exactly one architecture must be selected
 #[cfg(not(any(
-    feature = "arch-cortex-m",
+    feature = "arch-cortex-m-stm32",
+    feature = "arch-cortex-m-rp",
 )))]
 compile_error!("No architecture selected! Enable exactly one arch-* feature.");

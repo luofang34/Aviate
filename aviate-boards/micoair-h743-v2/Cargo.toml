@@ -32,3 +32,9 @@ cortex-m = "0.7"
 cortex-m-rt = "0.7"
 embedded-hal = "1.0"
 fugit = "0.3"
+
+[package.metadata.aviate-board]
+chip = "STM32H743VITx"        # probe-rs target name
+programmer = "stm32-rom-dfu"  # ROM DFU bootloader (dfu-util)
+layout_version = 1            # Schema version
+reserve_mode = "auto"         # Dev mode: compute from bootloader size

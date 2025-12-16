@@ -22,6 +22,9 @@
 //! cargo build --features env-sitl
 //! ```
 
+// Flight builds are no_std (embedded targets)
+#![cfg_attr(feature = "env-flight", no_std)]
+
 // ============================================================================
 // Environment Feature Guards (DO-178C Safety)
 // ============================================================================
@@ -45,18 +48,37 @@ compile_error!("env-sitl and env-hitl are mutually exclusive");
 // Module Structure
 // ============================================================================
 
+// Core modules (always available)
 pub mod flight;
+pub mod runner;
+
+// SITL/HITL-only modules
+#[cfg(any(feature = "env-sitl", feature = "env-hitl"))]
 pub mod sensor_cache;
+#[cfg(any(feature = "env-sitl", feature = "env-hitl"))]
 pub mod sim;
+#[cfg(any(feature = "env-sitl", feature = "env-hitl"))]
 pub mod telemetry;
+#[cfg(any(feature = "env-sitl", feature = "env-hitl"))]
 pub mod validation;
 
-// Re-export telemetry types (available in all environments)
+// Re-export telemetry types (SITL/HITL only)
+#[cfg(any(feature = "env-sitl", feature = "env-hitl"))]
 pub use telemetry::{FrameTx, TelemetrySnapshot, TelemetryTask};
 
-// Re-export AppRuntime based on environment
+// Re-export runner types (available in all environments)
+pub use runner::{BoardStep, FlightRunner, RunnerHealth, LINK_TIMEOUT_US, MAX_CATCH_UP};
+
+// Re-export based on environment
 #[cfg(feature = "env-flight")]
-pub use flight::AppRuntime;
+pub use flight::{
+    // Control loop utilities
+    run_control_loop,
+    // Hardware board info
+    HwBoardInfo,
+    // Loop periods
+    loop_periods,
+};
 
 #[cfg(any(feature = "env-sitl", feature = "env-hitl"))]
 pub use sim::{

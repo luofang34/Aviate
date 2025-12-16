@@ -36,7 +36,38 @@
 //! - ✅ No command parsing or reception logic
 //! - ✅ Format helpers are pure (no I/O, no side effects)
 
-use aviate_config::TelemetryConfig;
+// Conditionally use aviate_config for runtime config, or use local defaults
+#[cfg(feature = "config")]
+pub use aviate_config::TelemetryConfig;
+
+/// Telemetry rate configuration (compile-time defaults for embedded)
+///
+/// When the `config` feature is enabled, this is re-exported from aviate-config
+/// and can be loaded from TOML at runtime. Without the feature, use the
+/// `Default` impl which provides sensible defaults for flight controllers.
+#[cfg(not(feature = "config"))]
+#[derive(Clone, Debug)]
+pub struct TelemetryConfig {
+    pub frame_size: usize,
+    pub queue_len: usize,
+    pub heartbeat_hz: u8,
+    pub attitude_hz: u8,
+    pub position_hz: u8,
+}
+
+#[cfg(not(feature = "config"))]
+impl Default for TelemetryConfig {
+    fn default() -> Self {
+        Self {
+            frame_size: 280,
+            queue_len: 32,
+            heartbeat_hz: 1,
+            attitude_hz: 10,
+            position_hz: 4,
+        }
+    }
+}
+
 use aviate_core::mixer::ActuatorCmd;
 use aviate_core::state::StateEstimate;
 use aviate_core::ChannelStatus;

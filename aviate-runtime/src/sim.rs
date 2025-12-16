@@ -45,6 +45,8 @@ use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag
 use aviate_hal_xil::{SimActuatorCmd, SitlIO};
 
 /// Time source for SITL (re-exported for convenience)
+///
+/// Implements both `aviate_hal_io::TimeSource` (legacy) and `aviate_hal_io::TimeHal` (new).
 pub struct SitlTime {
     start: std::time::Instant,
 }
@@ -55,6 +57,11 @@ impl SitlTime {
             start: std::time::Instant::now(),
         }
     }
+
+    /// Get elapsed time in microseconds (internal helper)
+    fn elapsed_us(&self) -> u64 {
+        self.start.elapsed().as_micros() as u64
+    }
 }
 
 impl Default for SitlTime {
@@ -63,9 +70,24 @@ impl Default for SitlTime {
     }
 }
 
+// Legacy TimeSource impl (used by existing BoardHal)
 impl aviate_hal_io::TimeSource for SitlTime {
     fn now_us(&self) -> u64 {
-        self.start.elapsed().as_micros() as u64
+        self.elapsed_us()
+    }
+}
+
+// New TimeHal impl (for FlightRunner)
+impl aviate_hal_io::TimeHal for SitlTime {
+    fn now_us(&mut self) -> u64 {
+        self.elapsed_us()
+    }
+
+    fn sleep_until_us(&mut self, target_us: u64) {
+        let now = self.elapsed_us();
+        if target_us > now {
+            std::thread::sleep(std::time::Duration::from_micros(target_us - now));
+        }
     }
 }
 

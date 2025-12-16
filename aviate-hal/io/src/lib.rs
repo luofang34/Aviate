@@ -133,8 +133,10 @@ pub mod board_hal;
 pub mod error;
 pub mod fake;
 pub mod security;
+pub mod time_hal;
 pub mod traits;
 pub mod transport;
+pub mod transport_hal;
 
 // Main exports
 pub use board_hal::BoardHal;
@@ -142,11 +144,13 @@ pub use error::{ActuatorError, ActuatorResult, SensorError, SensorResult};
 #[cfg(feature = "xil-fault")]
 pub use fake::SensorFault;
 pub use fake::{FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag, FakeSensorSet};
+pub use time_hal::{Sample, TimeHal};
 pub use traits::{
     ActuatorDriver, ActuatorErrorFlags, ActuatorStatus, ActuatorTelemetry, BaroDriver, GnssDriver,
     GnssFix, ImuCalibration, ImuDriver, MagCalibration, MagDriver, RawActuatorCmd, RawBaroReading,
     RawGnssReading, RawImuReading, RawMagReading, TimeSource, MAX_ACTUATOR_OUTPUTS,
 };
+pub use transport_hal::{SystemState, TransportHal, TransportStatus};
 
 // Re-export core types for convenience
 pub use aviate_core::sensor::{BaroData, GnssData, ImuData, MagData, SensorHealth, SensorReading};

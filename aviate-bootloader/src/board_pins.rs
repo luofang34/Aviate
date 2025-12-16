@@ -18,8 +18,17 @@ pub const SELECTED_BOARD_PINS: LedMetadata = LedMetadata {
     blue: board_leds::BLUE,
 };
 
+/// Pico 2 - onboard LED on GPIO25
+#[cfg(feature = "pico2")]
+pub const SELECTED_BOARD_PINS: LedMetadata = LedMetadata {
+    red: Some(aviate_chip_rp2350::GpioPin(25)), // Use onboard LED as "red"
+    green: None,
+    blue: None,
+};
+
 // Compile-time check: exactly one board must be selected
 #[cfg(not(any(
     feature = "board-micoair-h743-v2",
+    feature = "pico2",
 )))]
 compile_error!("No board selected! Enable exactly one board-* feature.");

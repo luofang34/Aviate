@@ -22,16 +22,21 @@ default = []
 # Use: cargo build --release --features micoair-h743-v2,software-dfu
 
 # Board-level features (user-facing - ONLY use these!)
-micoair-h743-v2 = ["arch-cortex-m", "chip-stm32h743", "board-micoair-h743-v2"]
+micoair-h743-v2 = ["arch-cortex-m-stm32", "chip-stm32h743", "board-micoair-h743-v2"]
+pico2 = ["arch-cortex-m-rp", "chip-rp2350"]
 
 # Development feature: crash recovery and software bootloader request
-software-dfu = ["aviate-chip-stm32h743/software-dfu"]
+software-dfu = ["aviate-chip-stm32h743?/software-dfu", "aviate-chip-rp2350?/software-dfu"]
 
 # Internal: architecture-level wiring (enables optional runtime deps)
-arch-cortex-m = ["dep:cortex-m", "dep:cortex-m-rt"]
+# STM32 uses cortex-m's critical-section
+arch-cortex-m-stm32 = ["dep:cortex-m", "dep:cortex-m-rt", "cortex-m?/critical-section-single-core"]
+# RP2350 uses rp235x-hal's critical-section (don't enable cortex-m's)
+arch-cortex-m-rp = ["dep:cortex-m-rt"]
 
 # Internal: chip selection (enables optional chip crates)
 chip-stm32h743 = ["dep:aviate-chip-stm32h743"]
+chip-rp2350 = ["dep:aviate-chip-rp2350", "dep:rp235x-hal"]
 
 # Internal: board selection (enables optional board crates)
 board-micoair-h743-v2 = ["dep:aviate-board-micoair-h743-v2"]
@@ -41,16 +46,26 @@ aviate-boot-core = { path = "../aviate-boot-core" }
 
 # Chip crates (optional, selected by features)
 aviate-chip-stm32h743 = { path = "../aviate-chips/stm32h743", optional = true }
+aviate-chip-rp2350 = { path = "../aviate-chips/rp2350", optional = true }
+
+# RP2350 HAL for ImageDef (required for Boot ROM)
+rp235x-hal = { version = "0.3", optional = true, default-features = false }
 
 # Board crates (optional, selected by features)
 aviate-board-micoair-h743-v2 = { path = "../aviate-boards/micoair-h743-v2", features = ["aviate-chip-stm32h743"], optional = true }
 
 # Architecture-specific runtime dependencies (optional)
-cortex-m = { version = "0.7", features = ["critical-section-single-core"], optional = true }
+# critical-section is controlled per-arch feature, not here
+cortex-m = { version = "0.7", default-features = false, optional = true }
 cortex-m-rt = { version = "0.7", optional = true }
 
 # Panic handler
 panic-halt = "1.0"
+
+[build-dependencies]
+# probe-rs for dynamic memory.x generation from chip registry
+probe-rs = { version = "0.30", default-features = false, features = ["builtin-targets"] }
+anyhow = "1.0"
 
 [profile.release]
 opt-level = "s"

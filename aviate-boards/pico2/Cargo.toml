@@ -1,0 +1,21 @@
+[package]
+name = "aviate-board-pico2"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Raspberry Pi Pico 2 (RP2350) board for Aviate"
+
+[lib]
+name = "aviate_board_pico2"
+path = "src/lib.rs"
+
+[features]
+default = []
+
+[dependencies]
+
+[package.metadata.aviate-board]
+chip = "RP2350"                   # probe-rs target name
+programmer = "rp2040-bootsel"     # BOOTSEL mode (picotool)
+layout_version = 1
+reserve_mode = "auto"

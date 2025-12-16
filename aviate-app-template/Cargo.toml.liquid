@@ -1,34 +1,27 @@
-{% if board == "micoair-h743-v2" %}
 [package]
 name = "aviate-app-{{project-name}}"
+{% if env == "flight" %}
 edition = "2021"
 version = "0.0.0"
 license = "MIT OR Apache-2.0"
-description = "{{project-name}} Aviate application"
-
-[[bin]]
-name = "{{project-name}}"
-path = "src/main.rs"
 {% else %}
-[package]
-name = "aviate-app-{{project-name}}"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+{% endif %}
 description = "{{project-name}} Aviate application"
 
 [[bin]]
 name = "{{project-name}}"
 path = "src/main.rs"
-{% endif %}
 
-{% if board == "sitl-gazebo" %}
+{% if env == "sitl" %}
 [lib]
 name = "aviate_app_{{project-name | replace: "-", "_"}}"
 path = "src/lib.rs"
 
 [features]
-gz-plugin = ["aviate-board-sitl-gazebo/gz-plugin"]
+gz-plugin = ["aviate-board-{{board}}/gz-plugin"]
 default = ["gz-plugin"]
 
 [dependencies]
@@ -36,7 +29,7 @@ default = ["gz-plugin"]
 aviate-config = { path = "../../aviate-config" }
 
 # Board (brings in aviate-core, aviate-runtime, aviate-hal-xil, etc.)
-aviate-board-sitl-gazebo = { path = "../../aviate-boards/sitl-gazebo" }
+aviate-board-{{board}} = { path = "../../aviate-boards/{{board}}" }
 
 # Airframe selection (specifies mixer configuration)
 aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor", features = ["{{airframe}}"] }
@@ -50,39 +43,32 @@ aviate-link = { path = "../../aviate-link" }
 # Logging (SITL only)
 log = "0.4"
 env_logger = "0.11"
-{% elsif board == "sitl-jmavsim" %}
-[dependencies]
-# Config parsing
-aviate-config = { path = "../../aviate-config" }
-
-# Board (brings in aviate-core, aviate-runtime, aviate-hal-xil, backends, etc.)
-aviate-board-sitl-jmavsim = { path = "../../aviate-boards/sitl-jmavsim" }
-
-# Airframe selection (specifies mixer configuration)
-aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor", features = ["{{airframe}}"] }
-
-# Logging (SITL only)
-log = "0.4"
-env_logger = "0.11"
-{% elsif board == "micoair-h743-v2" %}
+{% elsif env == "flight" %}
 # Standalone package (not part of main workspace due to different target)
 [workspace]
 
 [features]
 default = ["software-bootloader"]
-software-bootloader = ["aviate-board-micoair-h743-v2/software-bootloader"]
+software-bootloader = ["aviate-board-{{board}}/software-bootloader"]
 
 [dependencies]
 # Board (brings in HAL, drivers, etc.)
-aviate-board-micoair-h743-v2 = { path = "../../aviate-boards/micoair-h743-v2" }
+aviate-board-{{board}} = { path = "../../aviate-boards/{{board}}" }
+
+# Runtime with flight environment
+aviate-runtime = { path = "../../aviate-runtime", features = ["env-flight"] }
 
 # Airframe selection
 aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor", features = ["{{airframe}}"] }
 
-# STM32H7 runtime (required for entry point)
+# Cortex-M runtime (required for entry point)
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7"
 panic-halt = "1.0"
+
+[build-dependencies]
+# For compile-time config parsing
+toml = "0.8"
 
 [profile.release]
 opt-level = "s"

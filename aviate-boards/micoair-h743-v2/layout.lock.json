@@ -1,0 +1,7 @@
+{
+  "layout_version": 1,
+  "flash_base": "0x8000000",
+  "bootloader_reserve": "0x20000",
+  "app_start": "0x8020000",
+  "computed_from_bootloader_size": 30604
+}

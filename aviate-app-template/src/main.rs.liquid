@@ -1,7 +1,7 @@
-{% if board == "sitl-gazebo" %}
+{% if env == "sitl" %}
 #![forbid(unsafe_code)]
 
-//! {{project-name}} - Aviate SITL Application (Gazebo)
+//! {{project-name}} - Aviate SITL Application
 //!
 //! ## Usage
 //!
@@ -13,9 +13,9 @@
 //! cargo run -p aviate-app-{{project-name}} -- --headless
 //!
 //! # Test mode (run mission from TOML file):
-//! cargo run -p aviate-app-{{project-name}} -- --test tests/xil-missions/basic_flight.toml
+//! cargo run -p aviate-app-{{project-name}} -- --test tests/missions/basic_flight.toml
 //!
-//! # Mock mode (no Gazebo, for unit testing):
+//! # Mock mode (no simulator, for unit testing):
 //! cargo run -p aviate-app-{{project-name}} -- --mock
 //! ```
 
@@ -25,7 +25,7 @@ use std::process::ExitCode;
 
 use log::{info, warn, error};
 
-use aviate_board_sitl_gazebo::GazeboSitlBoard;
+use aviate_board_{{board | replace: "-", "_"}}::*;
 
 /// Command line options
 struct Options {
@@ -99,7 +99,7 @@ fn main() -> ExitCode {
         }
     };
 
-    if let Err(_) = aviate_config::validate(&app_config) {
+    if aviate_config::validate(&app_config).is_err() {
         error!("Invalid configuration in AviateApp.toml");
         return ExitCode::FAILURE;
     }
@@ -118,7 +118,7 @@ fn main() -> ExitCode {
     );
 
     if opts.mock {
-        info!("Mode: Mock (no Gazebo)");
+        info!("Mode: Mock (no simulator)");
         run_mock();
         ExitCode::SUCCESS
     } else if let Some(ref config_path) = opts.test_config {
@@ -505,58 +505,22 @@ spawn_heading = 0.0
 name = "manual"
 phases = []
 "#;
-{% elsif board == "sitl-jmavsim" %}
-#![forbid(unsafe_code)]
-
-//! {{project-name}} - Aviate SITL Application (jMAVSim)
+{% elsif env == "flight" %}
+//! {{project-name}} - Aviate Flight Application
 //!
-//! Run with: cargo run -p aviate-app-{{project-name}}
-
-use std::process::ExitCode;
-
-use log::{info, error};
-
-use aviate_board_sitl_jmavsim::JmavSimBoard;
-
-fn main() -> ExitCode {
-    env_logger::init();
-
-    const APP_CONFIG_TOML: &str = include_str!("../AviateApp.toml");
-    let app_config = match aviate_config::from_toml_str(APP_CONFIG_TOML) {
-        Ok(config) => config,
-        Err(_) => {
-            error!("Failed to parse AviateApp.toml");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    info!(
-        "==> {} | board={} airframe={} <==",
-        app_config.app.id,
-        app_config.app.board,
-        app_config.app.airframe
-    );
-
-    info!("Starting jMAVSim SITL...");
-
-    let mut board = match JmavSimBoard::new() {
-        Ok(b) => b,
-        Err(e) => {
-            error!("Failed to initialize board: {}", e);
-            return ExitCode::FAILURE;
-        }
-    };
-
-    info!("Sending handshake to jMAVSim...");
-    board.send_handshake();
-
-    board.run()
-}
-{% elsif board == "micoair-h743-v2" %}
-//! {{project-name}} - Aviate Flight Application (MicoAir H743-V2)
+//! ## Architecture
 //!
-//! Build: cargo build --release --target thumbv7em-none-eabihf
-//! Flash: cargo xtask run {{project-name}}
+//! This app uses the same `FlightRunner` as SITL, but with:
+//! - Real sensors (board-specific)
+//! - Hardware time source (DWT CYCCNT)
+//! - USB/UART transport
+//!
+//! ## Build & Flash
+//!
+//! ```bash
+//! cargo build --release
+//! cargo xtask flash {{project-name}}
+//! ```
 
 #![no_std]
 #![no_main]
@@ -564,14 +528,29 @@ fn main() -> ExitCode {
 use panic_halt as _;
 use cortex_m_rt::entry;
 
-#[cfg(feature = "software-bootloader")]
-use aviate_board_micoair_h743_v2::bootloader;
+// Board support crate (provides PAC, pin configs, sensor configs)
+use aviate_board_{{board | replace: "-", "_"}} as board;
+
+// Include compile-time generated config (from build.rs)
+include!(concat!(env!("OUT_DIR"), "/app_config.rs"));
 
 #[entry]
 fn main() -> ! {
-    // TODO: Initialize peripherals
-    // TODO: Initialize sensors
-    // TODO: Run control loop
+    // Take peripherals (links interrupt vectors via board::hal::pac)
+    let _dp = board::hal::pac::Peripherals::take();
+    let _cp = cortex_m::Peripherals::take();
+
+    // Read board info and config to verify they're available
+    let _ = board::BOARD_INFO.name;
+    let _ = APP_ID;
+    let _ = LOOP_PERIOD_US;
+
+    // TODO: Full implementation will:
+    // 1. Initialize clocks (CCDRState)
+    // 2. Configure pins from board config
+    // 3. Initialize sensors
+    // 4. Create FlightRunner with real hardware
+    // 5. Run control loop
 
     loop {
         cortex_m::asm::wfi();

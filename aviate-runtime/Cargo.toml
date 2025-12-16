@@ -8,17 +8,19 @@ description = "Control loop, task scheduling, and wiring for Aviate apps"
 [features]
 # Exactly ONE of these must be chosen (enforced by compile_error! in lib.rs)
 env-flight = []                                      # Real hardware (DO-178C clean, NO sim code)
-env-sitl = ["dep:aviate-hal-io", "dep:aviate-hal-xil"]   # Software-in-the-loop simulation
-env-hitl = ["dep:aviate-hal-io", "dep:aviate-hal-xil"]   # Hardware-in-the-loop simulation
+env-sitl = ["dep:aviate-hal-xil", "dep:aviate-config", "aviate-link/config"]  # Software-in-the-loop simulation
+env-hitl = ["dep:aviate-hal-xil", "dep:aviate-config", "aviate-link/config"]  # Hardware-in-the-loop simulation
 default = []                                         # Force explicit choice
 
 [dependencies]
-aviate-config = { path = "../aviate-config" }
+aviate-config = { path = "../aviate-config", optional = true }
 aviate-link = { path = "../aviate-link" }
 aviate-security = { path = "../aviate-security" }
 aviate-core = { path = "../aviate-core" }
 
+# IO traits (TimeHal, TransportHal, Sample) - needed for FlightRunner in all environments
+aviate-hal-io = { path = "../aviate-hal/io" }
+
 # Optional: only for sim environments (env-sitl, env-hitl)
-aviate-hal-io = { path = "../aviate-hal/io", optional = true }
 aviate-hal-xil = { path = "../aviate-hal/xil", optional = true }
 log = "0.4"

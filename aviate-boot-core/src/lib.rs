@@ -192,18 +192,19 @@ impl<C, L, Dly, Upd, App: AppBackend> AppBackend for CombinedBackend<C, L, Dly, 
     }
 }
 
-/// Application start address (chip-specific, but 0x0802_0000 for most STM32)
-pub const APP_START: u32 = 0x0802_0000;
-
 /// Bootloader state machine (MCU-agnostic)
 /// Priority: crash > explicit bootloader request > app validation > jump or DFU
-pub fn boot_sequence<B: BootBackend>(mut backend: B) -> ! {
-    let flags = backend.load_flags();
+///
+/// # Parameters
+/// - `backend`: Platform-specific boot backend implementation
+/// - `app_start`: Address where the application is located (chip-specific)
+pub fn boot_sequence<B: BootBackend>(mut backend: B, app_start: u32) -> ! {
+    let _flags = backend.load_flags();
     let _reason = backend.boot_reason(); // For future use
 
     // 1. Crash detected → indicate + enter update mode (only with software-dfu feature)
     #[cfg(feature = "software-dfu")]
-    if flags.crash_detected {
+    if _flags.crash_detected {
         // 3 quick purple blinks (red+blue) to indicate crash recovery
         for _ in 0..3 {
             backend.set_red(true);
@@ -219,17 +220,17 @@ pub fn boot_sequence<B: BootBackend>(mut backend: B) -> ! {
 
     // 2. Software-requested bootloader (only with software-dfu feature)
     #[cfg(feature = "software-dfu")]
-    if flags.want_bootloader {
+    if _flags.want_bootloader {
         backend.clear_bootloader_request();
         backend.enter_update_mode(); // Never returns
     }
 
     // 3. Validate application
-    if backend.validate_app(APP_START) {
+    if backend.validate_app(app_start) {
         // App is valid - jump to it
         // Safety: validate_app confirmed the app has valid stack pointer and reset vector
         unsafe {
-            backend.jump_to_app(APP_START);
+            backend.jump_to_app(app_start);
         }
     }
 

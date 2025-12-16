@@ -409,7 +409,7 @@ impl SitlIO {
         };
 
         // Send heartbeat to GCS so it can discover our port
-        self.send_message_to(&MavMessage::Heartbeat(hb.clone()), self.config.gcs_addr);
+        self.send_message_to(&MavMessage::Heartbeat(hb), self.config.gcs_addr);
 
         // Also send to learned GCS address (if active/different)
         if let Some(gcs_addr) = self.gcs_addr {
