@@ -309,6 +309,7 @@ impl MicoAirBoard {
         let rcc = dp.RCC.constrain();
         let mut ccdr = rcc.sys_ck(400.MHz())
             .use_hse(25.MHz())
+            .pll1_q_ck(100.MHz()) // SPI1/2/3 Defaults to PLL1Q. Must be enabled!
             .freeze(pwrcfg, &dp.SYSCFG);
         ccdr.peripheral.kernel_usb_clk_mux(UsbClkSel::Hsi48);
 
@@ -379,11 +380,95 @@ impl MicoAirBoard {
 
         #[cfg(all(feature = "env-flight", not(feature = "env-hitl")))]
         let board_hal = {
-            // DEBUG: Force Fake Sensors to test USB stability
-            let boxed_imu = BoxedImu(Box::new(FakeImu::new()));
-            let boxed_baro = BoxedBaro(Box::new(FakeBaro::new()));
+            use embedded_hal_bus::spi::RefCellDevice;
+            use core::cell::RefCell;
+            use crate::hw::compat::{I2cWrapper, SysDelay};
+            use crate::drivers::{Bmi088Imu, Spl06Baro, Qmc5883lMag};
+
+            let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
+            let _gpioc = dp.GPIOC.split(ccdr.peripheral.GPIOC);
+            let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
+
+            // SPI2 Init for BMI088 (PB13/PB14/PB15)
+            let sck = gpiob.pb13.into_alternate();
+            let miso = gpiob.pb14.into_alternate();
+            let mosi = gpiob.pb15.into_alternate();
+            
+            let spi2 = dp.SPI2.spi(
+                (sck, miso, mosi),
+                stm32h7xx_hal::spi::MODE_0,
+                10.MHz(), 
+                ccdr.peripheral.SPI2,
+                &ccdr.clocks,
+            ).forward(); 
+
+            // Leak SPI bus to static lifetime to allow RefCellDevice in BoxedImu
+            let spi2_bus = Box::leak(Box::new(RefCell::new(spi2)));
+
+            let mut delay = SysDelay::new(400_000_000); // 400MHz System Clock
+            
+            // I2C2 Init for SPL06 (PB10/PB11)
+            let scl = gpiob.pb10.into_alternate_open_drain();
+            let sda = gpiob.pb11.into_alternate_open_drain();
+            
+            let i2c2 = dp.I2C2.i2c(
+                (scl, sda),
+                400.kHz(),
+                ccdr.peripheral.I2C2,
+                &ccdr.clocks,
+            );
+            
+            let i2c2 = I2cWrapper(i2c2);
+
+            use embedded_hal::digital::OutputPin;
+            let mut gyro_cs = gpiod.pd5.into_push_pull_output().forward();
+            let mut accel_cs = gpiod.pd4.into_push_pull_output().forward();
+            let _ = gyro_cs.set_high();
+            let _ = accel_cs.set_high();
+
+            // Safety delay to ensure sensors are powered up
+            use embedded_hal::delay::DelayNs;
+            delay.delay_ms(100);
+
+            // SPI Device wrappers (RefCellDevice)
+            let accel_dev = RefCellDevice::new(spi2_bus, accel_cs, delay.clone()).expect("Failed to create accel device");
+            let gyro_dev = RefCellDevice::new(spi2_bus, gyro_cs, delay.clone()).expect("Failed to create gyro device");
+            
+            // Step 1: Real BMI088
+            let boxed_imu = match Bmi088Imu::new(accel_dev, gyro_dev, &mut delay, crate::Rotation::None) {
+                Ok(dev) => BoxedImu(Box::new(dev)),
+                Err(_) => BoxedImu(Box::new(FakeImu::new())),
+            };
+
+            // Step 2: Real SPL06 (Baro)
+            let boxed_baro = match Spl06Baro::new(i2c2) {
+                Ok(dev) => BoxedBaro(Box::new(dev)),
+                Err(_) => BoxedBaro(Box::new(FakeBaro::new())),
+            };
+
+            // Step 3: Real QMC5883L (Mag) - on I2C1 (PB8/PB9)
+            let scl1 = gpiob.pb8.into_alternate_open_drain();
+            let sda1 = gpiob.pb9.into_alternate_open_drain();
+            let i2c1 = dp.I2C1.i2c(
+                (scl1, sda1),
+                400.kHz(),
+                ccdr.peripheral.I2C1,
+                &ccdr.clocks,
+            );
+            let i2c1 = I2cWrapper(i2c1);
+            
+            let boxed_mag = match Qmc5883lMag::new(i2c1, crate::Rotation::None) {
+                Ok(dev) => BoxedMag(Box::new(dev)),
+                Err(_) => BoxedMag(Box::new(FakeMag::new())),
+            };
+            
+            // Note: I2C init logic removed for checking SPI only
+
+            // Fake Mag (QMC5883L) - FORCE FAKE
             let boxed_mag = BoxedMag(Box::new(FakeMag::new()));
             
+            // Note: I2C init logic removed for checking SPI only
+
             BoardHal::new(
                 boxed_imu,
                 boxed_baro,
