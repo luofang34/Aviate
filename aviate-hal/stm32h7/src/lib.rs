@@ -68,11 +68,24 @@
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 
+pub mod clock;
+pub mod pwm;
 pub mod security;
 pub mod time;
 pub mod transport;
+pub mod usb_cdc;
+pub mod usb_rt;
+pub mod watchdog;
 
 // Re-export for convenience
+pub use clock::{init_clocks_400mhz, init_clocks_480mhz, ClockError, Clocks, UsbClkSource};
+pub use pwm::{PwmConfig, PwmMotors};
 pub use security::{Stm32h7CryptoEngine, Stm32h7KeyStore};
 pub use time::{NoSleep, SleepTimer, Stm32h7Time};
 pub use transport::{CanTransport, Stm32h7Transport, UartTransport, UsbCdcTransport};
+pub use usb_cdc::{get_usb_serial_number, Stm32h7UsbCdc, UsbMetrics, USB_PID, USB_VID};
+pub use usb_rt::{
+    clear_usb_irq_pending, enable_usb_irq, is_usb_irq_pending, usb_irq_count, SERVICE_MAX_BYTES,
+    SERVICE_MAX_ITERS, USB_IRQ_MASK_MAX_US,
+};
+pub use watchdog::{IwdgPrescaler, Stm32h7Watchdog};

@@ -11,7 +11,7 @@
 use std::env;
 use std::fs::{self, File};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn main() {
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
@@ -36,7 +36,7 @@ fn main() {
 /// Generate Rust const from AviateApp.toml
 ///
 /// This avoids runtime TOML parsing in no_std environments.
-fn generate_app_config(out: &PathBuf) {
+fn generate_app_config(out: &Path) {
     let toml_content = fs::read_to_string("AviateApp.toml")
         .expect("Failed to read AviateApp.toml");
 
@@ -107,8 +107,8 @@ fn generate_transport_config(config: &toml::Value) -> String {
                     .unwrap_or(false)
             });
 
-            if has_usb && uart.is_some() {
-                let baud = uart.unwrap()
+            if let (true, Some(u)) = (has_usb, uart) {
+                let baud = u
                     .get("baud")
                     .and_then(|b| b.as_integer())
                     .unwrap_or(57600) as u32;

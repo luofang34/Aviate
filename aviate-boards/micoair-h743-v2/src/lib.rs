@@ -80,11 +80,52 @@
 //! | Blue | PE4 | Low |
 
 #![no_std]
-// Production builds forbid unsafe code - bootloader entry requires physical button
-#![cfg_attr(not(feature = "software-bootloader"), forbid(unsafe_code))]
+// Production builds forbid unsafe code - except for features that require it
+// software-bootloader: bootloader entry via software command
+// usb: USB device stack requires static memory and hardware init
+#![cfg_attr(
+    not(any(feature = "software-bootloader", feature = "usb")),
+    forbid(unsafe_code)
+)]
 #![deny(clippy::panic)]
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
+
+/// Hardware abstraction for flight applications
+///
+/// This module provides `MicoAirBoard` which implements `BoardStep` for `FlightRunner`.
+///
+/// ## Flight Mode (real sensors)
+///
+/// Available with `env-flight` feature. Uses real BMI088/SPL06/QMC5883L sensor drivers.
+///
+/// ## HITL Mode (fake sensors)
+///
+/// Available with `env-hitl` feature. Uses FakeSensors fed via USB CDC MAVLink.
+#[cfg(any(feature = "env-flight", feature = "env-hitl"))]
+pub mod hw;
+
+/// Board-level watchdog implementation using IWDG
+#[cfg(any(feature = "env-flight", feature = "env-hitl"))]
+pub mod watchdog;
+
+/// Panic handler (crash to DFU)
+#[cfg(feature = "env-flight")]
+mod panic;
+
+/// Board-level USB CDC transport
+#[cfg(any(feature = "env-flight", feature = "env-hitl"))]
+pub mod usb_cdc;
+
+/// LED heartbeat module for visual status indication
+#[cfg(any(feature = "env-flight", feature = "env-hitl"))]
+pub mod led;
+
+/// Real sensor drivers implementing Aviate traits
+///
+/// Wrappers around embedded-hal 1.0 sensor drivers from crates.io.
+#[cfg(feature = "env-flight")]
+pub mod drivers;
 
 /// Hardware Abstraction Layer (HAL) re-exports
 ///

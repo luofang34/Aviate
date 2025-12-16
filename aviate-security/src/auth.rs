@@ -129,6 +129,7 @@ impl Default for PlainAuth {
 /// let auth = SignedAuth::new(keystore, crypto);
 /// let mut gateway = CommandGateway::new(link, auth);
 /// ```
+///
 pub struct SignedAuth<K: KeyStore, C: CryptoEngine> {
     /// Key storage (OTP, flash, TPM, etc.)
     keystore: K,
@@ -211,8 +212,12 @@ impl<K: KeyStore, C: CryptoEngine> CommandAuth for SignedAuth<K, C> {
         self.anti_replay
             .check_and_update(sig_meta.link_id, sig_meta.timestamp)?;
 
-        // Verify HMAC-SHA256 signature
-        self.verify_signature(sig_meta.link_id, &sig_meta.raw_frame, &sig_meta.sig)?;
+        // Verify HMAC-SHA256 signature (use raw_frame_len for actual data length)
+        self.verify_signature(
+            sig_meta.link_id,
+            &sig_meta.raw_frame[..sig_meta.raw_frame_len],
+            &sig_meta.sig,
+        )?;
 
         Ok(())
     }
@@ -220,10 +225,8 @@ impl<K: KeyStore, C: CryptoEngine> CommandAuth for SignedAuth<K, C> {
 
 #[cfg(test)]
 mod tests {
-    extern crate alloc;
     use super::*;
-    use alloc::vec;
-    use aviate_link::command::{CommandKind, SignatureMeta};
+    use aviate_link::command::{CommandKind, SignatureMeta, MAX_SIGNED_FRAME_SIZE};
 
     #[test]
     fn test_plain_auth_accepts_all() {
@@ -247,7 +250,8 @@ mod tests {
                 link_id: 5,
                 timestamp: 1000,
                 sig: [0xAA; 6],
-                raw_frame: vec![0u8; 32],
+                raw_frame: [0u8; MAX_SIGNED_FRAME_SIZE],
+                raw_frame_len: 32,
             }),
         };
         assert!(auth.verify(&cmd_signed).is_ok());

@@ -1,6 +1,7 @@
 use crate::control::{AuthorityProfile, Limits, Setpoint};
 use crate::math::{Quaternion, Vector3};
 use crate::state::StateEstimate;
+#[allow(unused_imports)] // FloatExt needed for no_std math methods
 use crate::types::{FloatExt, Meters, MetersPerSecond, Radians, RadiansPerSecond, Scalar};
 
 bitflags::bitflags! {

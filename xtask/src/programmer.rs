@@ -5,7 +5,9 @@
 // Allow dead code for future platform infrastructure
 #![allow(dead_code)]
 
+#[cfg(feature = "hardware")]
 use crate::device::DeviceSelector;
+#[cfg(feature = "hardware")]
 use crate::flash_plan::{FlashPlan, Segment};
 use anyhow::{bail, Context, Result};
 use std::process::Command;
@@ -98,6 +100,7 @@ impl Programmer {
 }
 
 /// Execute a flash plan by iterating segments
+#[cfg(feature = "hardware")]
 pub fn execute_flash_plan(
     programmer: Programmer,
     plan: &FlashPlan,
@@ -146,6 +149,7 @@ pub fn execute_flash_plan(
 }
 
 /// Flash a single segment with optional leave flag
+#[cfg(feature = "hardware")]
 fn flash_segment_with_leave(
     programmer: Programmer,
     seg: &Segment,
@@ -168,6 +172,7 @@ fn flash_segment_with_leave(
 }
 
 /// Erase flash sector using dfu-util (for preparing app sector before bootloader flash)
+#[cfg(feature = "hardware")]
 fn dfu_erase_sector(address: u32, device: &DeviceSelector) -> Result<()> {
     let addr_spec = format!("{:#x}", address);
 
@@ -192,6 +197,7 @@ fn dfu_erase_sector(address: u32, device: &DeviceSelector) -> Result<()> {
 }
 
 /// Flash using dfu-util (STM32 ROM DFU)
+#[cfg(feature = "hardware")]
 fn flash_dfu_util(seg: &Segment, path: &str, device: &DeviceSelector, leave: bool) -> Result<()> {
     // Only add :leave suffix on the last segment to avoid resetting between segments
     let addr_spec = if leave {
@@ -222,6 +228,7 @@ fn flash_dfu_util(seg: &Segment, path: &str, device: &DeviceSelector, leave: boo
 }
 
 /// Flash using probe-rs (ST-Link or other debug probes)
+#[cfg(feature = "hardware")]
 fn flash_probe_rs(seg: &Segment, path: &str, device: &DeviceSelector) -> Result<()> {
     let addr_str = format!("{:#x}", seg.address);
 
@@ -249,6 +256,7 @@ fn flash_probe_rs(seg: &Segment, path: &str, device: &DeviceSelector) -> Result<
 }
 
 /// Flash using stm32flash (UART bootloader)
+#[cfg(feature = "hardware")]
 fn flash_stm32flash(seg: &Segment, path: &str, device: &DeviceSelector) -> Result<()> {
     let port = device
         .port
@@ -270,6 +278,7 @@ fn flash_stm32flash(seg: &Segment, path: &str, device: &DeviceSelector) -> Resul
 }
 
 /// Flash using picotool (RP2040 BOOTSEL)
+#[cfg(feature = "hardware")]
 fn flash_picotool(seg: &Segment, path: &str, _device: &DeviceSelector) -> Result<()> {
     let addr_str = format!("{:#x}", seg.address);
 
@@ -286,6 +295,7 @@ fn flash_picotool(seg: &Segment, path: &str, _device: &DeviceSelector) -> Result
 }
 
 /// Flash using espflash (ESP32 ROM bootloader)
+#[cfg(feature = "hardware")]
 fn flash_espflash(seg: &Segment, path: &str, device: &DeviceSelector) -> Result<()> {
     let addr_str = format!("{:#x}", seg.address);
 

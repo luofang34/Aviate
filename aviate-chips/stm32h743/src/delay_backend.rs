@@ -57,7 +57,7 @@ impl Stm32h743DelayBackend {
 
     /// Try to enable DWT cycle counter
     fn try_enable_dwt() -> bool {
-        let mut cp = unsafe { cortex_m::Peripherals::steal() };
+        let cp = unsafe { cortex_m::Peripherals::steal() };
 
         // Enable DWT
         unsafe {

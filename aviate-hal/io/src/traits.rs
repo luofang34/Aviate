@@ -205,6 +205,17 @@ pub trait GnssDriver {
     }
 }
 
+/// No-op implementation for systems without GNSS
+impl GnssDriver for () {
+    fn read(&mut self) -> SensorResult<RawGnssReading> {
+        Ok(RawGnssReading::default())
+    }
+
+    fn data_ready(&mut self) -> SensorResult<bool> {
+        Ok(false)
+    }
+}
+
 // ============================================================================
 // Actuator Driver
 // ============================================================================

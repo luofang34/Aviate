@@ -1,3 +1,4 @@
+#[allow(unused_imports)] // FloatExt needed for no_std math methods
 use crate::types::{FloatExt, Scalar};
 
 /// Tolerance for quaternion unit-length validation (INV-27)

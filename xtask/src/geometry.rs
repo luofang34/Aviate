@@ -1,7 +1,11 @@
 //! Flash geometry retrieval from probe-rs registry
 //!
 //! Provides flash base, size, and sector layout for Cortex-M chips.
+//!
+//! This module requires the `hardware` feature to be enabled.
+//! It pulls in probe-rs which adds significant compile time.
 
+#![cfg(feature = "hardware")]
 // Allow dead code for future use
 #![allow(dead_code)]
 

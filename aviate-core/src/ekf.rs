@@ -3,6 +3,7 @@ use crate::sensor::{
     BaroData, GnssData, GnssFix, GnssHealth, ImuData, MagData, SensorHealth, SensorReading,
 };
 use crate::state::{EstimateQuality, StateEstimate, StateValidFlags};
+#[allow(unused_imports)] // FloatExt needed for no_std math methods
 use crate::types::{
     FloatExt, Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, RadiansPerSecond,
     Scalar, Validated,

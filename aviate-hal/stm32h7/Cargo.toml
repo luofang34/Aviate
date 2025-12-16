@@ -14,6 +14,12 @@ default = []
 secure-keys = []
 # Enable hardware crypto acceleration (HASH/CRYP peripherals)
 hw-crypto = []
+# USB pure polling mode (no IRQ) - for bring-up/debugging
+usb-poll-only = []
+# USB development mode - enables WCET measurement via DWT
+usb-dev = []
+# USB flight mode - restricted input (telemetry only, cannot arm/command)
+usb-flight = []
 
 [dependencies]
 # HAL trait definitions
@@ -22,9 +28,16 @@ aviate-hal-io = { path = "../io" }
 # Embedded HAL traits
 embedded-hal = "1.0"
 
-# STM32H7xx HAL (optional, for peripherals like USB, UART, CAN)
-# Not included by default as chip HAL may be used without hardware
-# stm32h7xx-hal = { version = "0.16", optional = true }
+# STM32H7xx HAL for USB, UART, CAN, timers
+stm32h7xx-hal = { version = "0.16", features = ["stm32h743v", "usb_hs", "rt"] }
+
+# USB device stack
+usb-device = "0.3"
+usbd-serial = "0.2"
+
+# Cortex-M for ISR and peripherals
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
 
 # Cryptography (software fallback)
 sha2 = { version = "0.10", default-features = false }

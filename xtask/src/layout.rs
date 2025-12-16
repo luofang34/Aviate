@@ -1,10 +1,14 @@
 //! Flash layout policy and lock file management
 //!
 //! Determines where bootloader and app are placed in flash.
+//!
+//! This module requires the `hardware` feature.
 
+#![cfg(feature = "hardware")]
 // Allow dead code for future platform infrastructure (ESP32, RP2040)
 #![allow(dead_code)]
 
+use crate::boards::ReserveMode;
 use crate::geometry::FlashGeometry;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -38,16 +42,6 @@ pub struct LayoutLock {
     pub app_start: u32,
     /// Bootloader size this lock was computed from
     pub computed_from_bootloader_size: u32,
-}
-
-/// Reserve mode for layout computation
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ReserveMode {
-    /// Compute reserve from bootloader size, grow lock if needed
-    #[default]
-    Auto,
-    /// Use fixed reserve from lock, error if bootloader outgrows it
-    Fixed,
 }
 
 /// Policy for computing flash layout

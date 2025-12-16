@@ -14,7 +14,10 @@ members = [
     "aviate-link",  # Note: MAVLink protocol now integrated in aviate-link/src/mavlink/
     "aviate-security",
     "aviate-boards/*",
-    "aviate-apps/*",
+    # SITL apps only - flight apps have separate workspaces (different target)
+    "aviate-apps/sitl-gazebo-x500",
+    "aviate-apps/sitl-jmavsim-generic-quad-x",
+
     "tests/lint-verification",
     "tests/gcs-test",
     "xtask",
@@ -26,7 +29,8 @@ exclude = [
     "aviate-bootloader",        # Bootloader has separate workspace (different target/memory layout)
     "aviate-boot-core",         # Bootloader-specific protocol layer
     "aviate-chips",             # Bootloader-specific chip backends
-    "aviate-apps/micoair-h743-v2-quad-x",
+    "aviate-apps/micoair-h743-v2-quad-x",  # Flight app (separate workspace, different target)
+    "aviate-apps/micoair-h743-v2-x500",
 ]
 resolver = "2"
 

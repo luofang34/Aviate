@@ -10,10 +10,11 @@
 //!
 //! This module only handles: protocol bytes → Command struct (syntax parsing)
 
-// Import alloc for Vec in no_std
-extern crate alloc;
-
 use crate::errors::LinkResult;
+
+/// Maximum frame size for signature verification (MAVLink v2 max + signature)
+/// MAVLink v2: 12 header + 255 payload + 2 CRC + 13 signature = 282 bytes
+pub const MAX_SIGNED_FRAME_SIZE: usize = 300;
 
 /// Signature metadata extracted from signed commands
 ///
@@ -26,12 +27,12 @@ use crate::errors::LinkResult;
 /// - `link_id`: Identifies which key to use (0-255)
 /// - `timestamp`: Remote monotonic counter (48-bit, 10μs resolution for MAVLink)
 /// - `sig`: Truncated signature bytes (6 bytes for MAVLink HMAC-SHA256)
-/// - `raw_frame`: Original frame bytes for HMAC verification
+/// - `raw_frame`: Original frame bytes for HMAC verification (static buffer)
 ///
-/// ## Lifetime
+/// ## DO-178C Compliance
 ///
-/// We store an owned copy of the frame (`Vec<u8>`) to avoid lifetime issues.
-/// The security layer needs the raw frame bytes to recompute the HMAC.
+/// Uses fixed-size static buffer instead of Vec for deterministic memory usage.
+/// No heap allocation required.
 #[derive(Clone, Debug)]
 pub struct SignatureMeta {
     /// Link identifier (maps to KeySelector)
@@ -47,11 +48,14 @@ pub struct SignatureMeta {
     /// For MAVLink: First 6 bytes of HMAC-SHA256
     pub sig: [u8; 6],
 
-    /// Original frame for HMAC verification
+    /// Original frame for HMAC verification (static buffer)
     ///
-    /// Owned copy to avoid lifetime issues. The security layer will
-    /// recompute HMAC over this exact byte sequence.
-    pub raw_frame: alloc::vec::Vec<u8>,
+    /// Fixed-size buffer to avoid heap allocation. The security layer will
+    /// recompute HMAC over raw_frame[..raw_frame_len].
+    pub raw_frame: [u8; MAX_SIGNED_FRAME_SIZE],
+
+    /// Actual length of data in raw_frame
+    pub raw_frame_len: usize,
 }
 
 /// Domain-level command representation (protocol-agnostic).

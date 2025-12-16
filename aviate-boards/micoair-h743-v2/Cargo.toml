@@ -16,22 +16,48 @@ default = []
 software-bootloader = []
 # AIO variant with integrated 4x45A ESC (AM32 firmware)
 aio = []
+# USB CDC serial transport (uses unsafe code for static memory and hardware init)
+usb = []
+# Flight environment - enables hw.rs with real hardware support
+env-flight = ["dep:aviate-runtime", "aviate-runtime/env-flight", "usb"]
+# HITL environment - enables hw.rs with fake sensors for HIL testing
+env-hitl = ["dep:aviate-runtime", "aviate-runtime/env-hitl", "usb"]
 
 [dependencies]
 aviate-core = { path = "../../aviate-core" }
+aviate-boot-core = { path = "../../aviate-boot-core" }
 aviate-hal-io = { path = "../../aviate-hal/io" }
 aviate-hal-stm32h7 = { path = "../../aviate-hal/stm32h7" }
 aviate-drivers = { path = "../../aviate-drivers" }
+aviate-runtime = { path = "../../aviate-runtime", optional = true }
+aviate-link = { path = "../../aviate-link" }
 
 # Bootloader chip backend (optional, for bootloader LED pin definitions)
 aviate-chip-stm32h743 = { path = "../../aviate-chips/stm32h743", optional = true }
 
-# STM32H7 HAL
-stm32h7xx-hal = { version = "0.16", features = ["stm32h743v", "rt"] }
+# STM32H7 HAL with USB support
+# Note: usb_hs feature provides USB OTG support (can be configured for FS mode)
+stm32h7xx-hal = { version = "0.16", features = ["stm32h743v", "rt", "usb_hs"] }
 cortex-m = "0.7"
 cortex-m-rt = "0.7"
 embedded-hal = "1.0"
 fugit = "0.3"
+
+embedded-alloc = "0.5"
+# USB device stack
+
+
+# Lock-free queues for USB buffers
+
+
+# Sensor drivers from crates.io (embedded-hal 1.0)
+bmi088 = "0.2"
+spl06-007 = { path = "../../external/spl06-007" }
+qmc5883l = { path = "../../external/qmc5883l" }
+
+# embedded-hal 0.2 → 1.0 compatibility layer
+embedded-hal-compat = "0.13"
+embedded-hal-bus = "0.2"
 
 [package.metadata.aviate-board]
 chip = "STM32H743VITx"        # probe-rs target name

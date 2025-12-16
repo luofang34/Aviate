@@ -14,7 +14,6 @@
 //! │  - try_send_telemetry(&[u8]) -> bool                       │
 //! │  - set_system_state(SystemState)                           │
 //! │  - set_armed(bool)                                         │
-//! │  - kick_watchdog()                                         │
 //! │  - poll()                                                   │
 //! │  - status() -> TransportStatus                             │
 //! └─────────────────────────────────────────────────────────────┘
@@ -378,13 +377,6 @@ impl<C> TransportHal<C> for Stm32h7Transport {
                 uart.armed = armed;
             }
         }
-        // COV:EXCL_STOP
-    }
-
-    fn kick_watchdog(&mut self) {
-        // COV:EXCL_START(STUB) - Hardware-only stub
-        // TODO: Kick hardware watchdog (IWDG)
-        // This should be called once per control tick
         // COV:EXCL_STOP
     }
 

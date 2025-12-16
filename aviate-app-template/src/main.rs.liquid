@@ -511,9 +511,9 @@ phases = []
 //! ## Architecture
 //!
 //! This app uses the same `FlightRunner` as SITL, but with:
-//! - Real sensors (board-specific)
-//! - Hardware time source (DWT CYCCNT)
-//! - USB/UART transport
+//! - Real hardware (STM32H743)
+//! - Phase 1: HIL mode with FakeSensors fed via MAVLink
+//! - Phase 3: Real sensors (BMI088, SPL06)
 //!
 //! ## Build & Flash
 //!
@@ -521,9 +521,20 @@ phases = []
 //! cargo build --release
 //! cargo xtask flash {{project-name}}
 //! ```
+//!
+//! ## HIL Testing
+//!
+//! Connect via USB CDC and send MAVLink HIL_SENSOR messages:
+//! ```bash
+//! mavproxy.py --master=/dev/ttyACM0
+//! ```
 
 #![no_std]
 #![no_main]
+// DO-178C compliance: forbid panic-prone code
+#![deny(clippy::panic)]
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
 
 use panic_halt as _;
 use cortex_m_rt::entry;
@@ -537,23 +548,42 @@ include!(concat!(env!("OUT_DIR"), "/app_config.rs"));
 #[entry]
 fn main() -> ! {
     // Take peripherals (links interrupt vectors via board::hal::pac)
-    let _dp = board::hal::pac::Peripherals::take();
-    let _cp = cortex_m::Peripherals::take();
+    // Safety: entry point, peripherals can only be taken once
+    // Use match instead of unwrap() for DO-178C compliance
+    let dp = match board::hal::pac::Peripherals::take() {
+        Some(p) => p,
+        None => loop { cortex_m::asm::wfi(); },
+    };
+    let cp = match cortex_m::Peripherals::take() {
+        Some(p) => p,
+        None => loop { cortex_m::asm::wfi(); },
+    };
 
     // Read board info and config to verify they're available
     let _ = board::BOARD_INFO.name;
     let _ = APP_ID;
-    let _ = LOOP_PERIOD_US;
 
-    // TODO: Full implementation will:
-    // 1. Initialize clocks (CCDRState)
-    // 2. Configure pins from board config
-    // 3. Initialize sensors
-    // 4. Create FlightRunner with real hardware
-    // 5. Run control loop
+    // Create board and runner
+    // Phase 1: Uses FakeSensors for HIL testing on real MCU
+    // Phase 3+: Will use real sensor drivers
+    #[cfg(feature = "flight")]
+    {
+        // FlightBoard is a generic type alias exported by all boards for template compatibility
+        let flight_board = board::hw::FlightBoard::new(dp, cp);
+        let mut runner = flight_board.into_runner();
 
-    loop {
-        cortex_m::asm::wfi();
+        // Run control loop at configured rate (typically 1kHz = 1000us period)
+        runner.run(LOOP_PERIOD_US);
+    }
+
+    // Fallback for builds without flight feature (should not happen in normal builds)
+    #[cfg(not(feature = "flight"))]
+    {
+        let _ = dp;
+        let _ = cp;
+        loop {
+            cortex_m::asm::wfi();
+        }
     }
 }
 {% endif %}

@@ -48,14 +48,18 @@ env_logger = "0.11"
 [workspace]
 
 [features]
-default = ["software-bootloader"]
+default = ["software-bootloader", "flight"]
 software-bootloader = ["aviate-board-{{board}}/software-bootloader"]
+# Flight mode: Real hardware (no_std compatible)
+# Phase 1: Uses FakeSensors for HIL testing on real MCU
+# Phase 3+: Will use real BMI088/SPL06 sensor drivers
+flight = ["aviate-board-{{board}}/env-flight"]
 
 [dependencies]
 # Board (brings in HAL, drivers, etc.)
 aviate-board-{{board}} = { path = "../../aviate-boards/{{board}}" }
 
-# Runtime with flight environment
+# Runtime with flight environment (no_std compatible)
 aviate-runtime = { path = "../../aviate-runtime", features = ["env-flight"] }
 
 # Airframe selection

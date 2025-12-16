@@ -17,7 +17,7 @@ pub struct Stm32h743CrashBackend {
 }
 
 impl Stm32h743CrashBackend {
-    pub fn new(mut pwr: pac::PWR, rtc: pac::RTC, rcc: pac::RCC) -> Self {
+    pub fn new(pwr: pac::PWR, rtc: pac::RTC, rcc: pac::RCC) -> Self {
         // Enable backup domain access immediately (needed for reading RTC backup registers)
         pwr.cr1.modify(|_, w| w.dbp().set_bit());
         cortex_m::asm::dsb();
@@ -66,9 +66,9 @@ impl CrashBackend for Stm32h743CrashBackend {
             0
         };
 
-        self.rtc.bkpr[0].write(|w| unsafe { w.bits(bk0) });
-        self.rtc.bkpr[1].write(|w| unsafe { w.bits(bk1) });
-        self.rtc.bkpr[2].write(|w| unsafe { w.bits(bk2) });
+        self.rtc.bkpr[0].write(|w| w.bits(bk0));
+        self.rtc.bkpr[1].write(|w| w.bits(bk1));
+        self.rtc.bkpr[2].write(|w| w.bits(bk2));
         cortex_m::asm::dsb();
     }
 

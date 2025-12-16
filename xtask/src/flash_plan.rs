@@ -1,7 +1,10 @@
 //! Flash plan abstraction for multi-segment flashing
 //!
 //! Supports single-segment (app-only) and multi-segment (bootloader + app) flashing.
+//!
+//! This module requires the `hardware` feature.
 
+#![cfg(feature = "hardware")]
 // Allow dead code for future platform infrastructure (ESP32, RP2040)
 #![allow(dead_code)]
 

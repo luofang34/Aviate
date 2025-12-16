@@ -242,12 +242,12 @@ fn configure_vbus_sensing(gpioa: &pac::GPIOA) {
 }
 
 pub struct Stm32h743UpdateBackend {
-    _usb_otg_hs: pac::OTG2_HS_GLOBAL,
+    _usb_otg: pac::OTG2_HS_GLOBAL,
 }
 
 impl Stm32h743UpdateBackend {
-    pub fn new(_usb_otg_hs: pac::OTG2_HS_GLOBAL) -> Self {
-        Self { _usb_otg_hs }
+    pub fn new(_usb_otg: pac::OTG2_HS_GLOBAL) -> Self {
+        Self { _usb_otg }
     }
 }
 
@@ -255,22 +255,23 @@ impl UpdateBackend for Stm32h743UpdateBackend {
     fn enter_update_mode(&mut self) -> ! {
         use stm32h7xx_hal::rcc::rec::UsbClkSel;
 
+        // Safety: steal() is used because peripherals were taken in chip_main()
+        // This is the only place that accesses these peripherals after chip_main
         let dp = unsafe { pac::Peripherals::steal() };
 
-        // Configure clocks
+        // Enable HSI48 oscillator before HAL takes ownership of RCC
+        // Required for USB 48MHz clock source (RM0433 Section 8.5.3)
+        dp.RCC.cr.modify(|_, w| w.hsi48on().set_bit());
+        while !dp.RCC.cr.read().hsi48rdy().bit_is_set() {
+            cortex_m::asm::nop();
+        }
+
+        // Configure clocks with HSI48 for USB
         let pwr = dp.PWR.constrain();
         let pwrcfg = pwr.freeze();
 
         let rcc = dp.RCC.constrain();
         let mut ccdr = rcc.sys_ck(80.MHz()).freeze(pwrcfg, &dp.SYSCFG);
-
-        // Use HSI48 for USB clock
-        if ccdr.clocks.hsi48_ck().is_none() {
-            loop {
-                // Error: HSI48 not running
-                cortex_m::asm::nop();
-            }
-        }
         ccdr.peripheral.kernel_usb_clk_mux(UsbClkSel::Hsi48);
 
         // Enable USB voltage regulator (USB33DEN in PWR_CR3)
@@ -286,13 +287,19 @@ impl UpdateBackend for Stm32h743UpdateBackend {
             cortex_m::asm::nop();
         }
 
-        // Configure GPIO
+        // Enable GPIOA clock FIRST, then configure GPIO
+        // (VBUS sensing must happen before gpioa.split() consumes the PAC reference)
+        let rcc_ahb4 = unsafe { &*pac::RCC::ptr() };
+        rcc_ahb4.ahb4enr.modify(|_, w| w.gpioaen().set_bit());
+        cortex_m::asm::dsb(); // Ensure clock is enabled before GPIO access
+
         let gpioa_pac = dp.GPIOA; // Keep PAC reference for VBUS
         configure_vbus_sensing(&gpioa_pac);
 
-        // Split GPIOA for USB pins (consumes gpioa_pac)
+        // Split GPIOA for USB pins (consumes gpioa_pac, clock already enabled)
         let gpioa = gpioa_pac.split(ccdr.peripheral.GPIOA);
 
+        // USB2 (OTG2_HS in FS mode) uses PA11/PA12 internal PHY
         let usb = usb_hs::USB2::new(
             dp.OTG2_HS_GLOBAL,
             dp.OTG2_HS_DEVICE,
@@ -306,7 +313,8 @@ impl UpdateBackend for Stm32h743UpdateBackend {
         static mut EP_MEMORY: MaybeUninit<[u32; 1024]> = MaybeUninit::uninit();
 
         let usb_bus = unsafe {
-            let buf = EP_MEMORY.assume_init_mut();
+            let buf = &mut *core::ptr::addr_of_mut!(EP_MEMORY);
+            let buf = buf.assume_init_mut();
             for word in buf.iter_mut() {
                 *word = 0;
             }
@@ -317,14 +325,22 @@ impl UpdateBackend for Stm32h743UpdateBackend {
         let flash = FlashMemory::new(dp.FLASH);
         let mut dfu = DFUClass::new(&usb_bus, flash);
 
-        let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x0483, 0xDF11))
+        // Build USB device - use match to handle string descriptor errors without panic
+        let usb_dev_builder = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x0483, 0xDF11))
             .strings(&[StringDescriptors::default()
                 .manufacturer("Aviate")
                 .product("Aviate Bootloader")
-                .serial_number("AVT001")])
-            .expect("string descriptor")
-            .device_class(0x00)
-            .build();
+                .serial_number("AVT001")]);
+
+        let mut usb_dev = match usb_dev_builder {
+            Ok(builder) => builder.device_class(0x00).build(),
+            Err(_) => {
+                // Fallback: build without string descriptors
+                UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x0483, 0xDF11))
+                    .device_class(0x00)
+                    .build()
+            }
+        };
 
         // Turn on GREEN LED to indicate DFU mode is ready (using PAC)
         // PE2, active low - reset bit 2

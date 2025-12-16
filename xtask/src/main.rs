@@ -1,23 +1,38 @@
 //! Aviate development tools
 //!
 //! Cross-platform flash tool for embedded boards with Aviate.
+//!
+//! ## Features
+//!
+//! - `hardware`: Enable hardware flash support (includes probe-rs for chip geometry)
+//!   Required for: `flash`, `layout`, and hardware `run` commands
 
 mod boards;
 mod device;
+#[cfg(feature = "hardware")]
 mod flash_plan;
+#[cfg(feature = "hardware")]
 mod geometry;
+#[cfg(feature = "hardware")]
 mod layout;
 mod programmer;
 
 use anyhow::{bail, Context, Result};
+#[cfg(feature = "hardware")]
 use boards::BoardMetadata;
+#[cfg(feature = "hardware")]
 use device::{DeviceSelector, DeviceState};
+#[cfg(feature = "hardware")]
 use flash_plan::FlashPlan;
+#[cfg(feature = "hardware")]
 use layout::LayoutPolicy;
+#[cfg(feature = "hardware")]
 use programmer::Programmer;
 use regex::Regex;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "hardware")]
+use std::path::PathBuf;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -33,37 +48,43 @@ fn main() -> Result<()> {
 
     match args[1].as_str() {
         "flash" => {
-            if args.len() < 3 {
-                bail!("Usage: cargo xtask flash <firmware.bin> [--board <board>] [--device <selector>]");
-            }
-            let firmware_path = &args[2];
-            let mut board_name = None;
-            let mut device_arg = None;
-            let mut idx = 3;
-            while idx < args.len() {
-                match args[idx].as_str() {
-                    "--board" => {
-                        idx += 1;
-                        if idx < args.len() {
-                            board_name = Some(args[idx].clone());
-                        }
-                    }
-                    "--device" => {
-                        idx += 1;
-                        if idx < args.len() {
-                            device_arg = Some(args[idx].clone());
-                        }
-                    }
-                    _ => {
-                        // Legacy: positional port argument
-                        if !args[idx].starts_with("--") && device_arg.is_none() {
-                            device_arg = Some(args[idx].clone());
-                        }
-                    }
+            #[cfg(not(feature = "hardware"))]
+            bail!("Hardware commands require the 'hardware' feature.\nRun: cargo xtask --features hardware flash ...");
+
+            #[cfg(feature = "hardware")]
+            {
+                if args.len() < 3 {
+                    bail!("Usage: cargo xtask flash <firmware.bin> [--board <board>] [--device <selector>]");
                 }
-                idx += 1;
+                let firmware_path = &args[2];
+                let mut board_name = None;
+                let mut device_arg = None;
+                let mut idx = 3;
+                while idx < args.len() {
+                    match args[idx].as_str() {
+                        "--board" => {
+                            idx += 1;
+                            if idx < args.len() {
+                                board_name = Some(args[idx].clone());
+                            }
+                        }
+                        "--device" => {
+                            idx += 1;
+                            if idx < args.len() {
+                                device_arg = Some(args[idx].clone());
+                            }
+                        }
+                        _ => {
+                            // Legacy: positional port argument
+                            if !args[idx].starts_with("--") && device_arg.is_none() {
+                                device_arg = Some(args[idx].clone());
+                            }
+                        }
+                    }
+                    idx += 1;
+                }
+                flash_firmware_cmd(firmware_path, board_name.as_deref(), device_arg.as_deref())?;
             }
-            flash_firmware_cmd(firmware_path, board_name.as_deref(), device_arg.as_deref())?;
         }
         "run" => {
             // Check for help
@@ -78,6 +99,7 @@ fn main() -> Result<()> {
             let mut mission_config = None;
             let mut gcs = false;
             let mut headless = false;
+            #[cfg(feature = "hardware")]
             let mut device_arg = None;
             let mut idx = 2;
 
@@ -103,6 +125,7 @@ fn main() -> Result<()> {
                     }
                     "--device" => {
                         idx += 1;
+                        #[cfg(feature = "hardware")]
                         if idx < args.len() {
                             device_arg = Some(args[idx].clone());
                         }
@@ -123,31 +146,42 @@ fn main() -> Result<()> {
                 idx += 1;
             }
 
-            if board.starts_with("sitl") {
+            let is_simulator = board.starts_with("sitl") || board.starts_with("hitl") || board.starts_with("xil");
+            if is_simulator {
                 run_sitl(&airframe, &board, mission_config.as_deref(), gcs, headless)?;
             } else {
+                #[cfg(not(feature = "hardware"))]
+                bail!("Hardware run requires the 'hardware' feature.\nRun: cargo xtask --features hardware run --board {} ...", board);
+
+                #[cfg(feature = "hardware")]
                 run_hardware(&airframe, &board, device_arg.as_deref())?;
             }
         }
         "layout" => {
-            // Layout management subcommand
-            if args.len() < 3 {
-                bail!("Usage: cargo xtask layout <show|reset> --board <board>");
-            }
-            let subcmd = &args[2];
-            let mut board_name = None;
-            let mut idx = 3;
-            while idx < args.len() {
-                if args[idx] == "--board" {
-                    idx += 1;
-                    if idx < args.len() {
-                        board_name = Some(args[idx].clone());
-                    }
+            #[cfg(not(feature = "hardware"))]
+            bail!("Layout commands require the 'hardware' feature.\nRun: cargo xtask --features hardware layout ...");
+
+            #[cfg(feature = "hardware")]
+            {
+                // Layout management subcommand
+                if args.len() < 3 {
+                    bail!("Usage: cargo xtask layout <show|reset> --board <board>");
                 }
-                idx += 1;
+                let subcmd = &args[2];
+                let mut board_name = None;
+                let mut idx = 3;
+                while idx < args.len() {
+                    if args[idx] == "--board" {
+                        idx += 1;
+                        if idx < args.len() {
+                            board_name = Some(args[idx].clone());
+                        }
+                    }
+                    idx += 1;
+                }
+                let board_name = board_name.ok_or_else(|| anyhow::anyhow!("--board is required"))?;
+                run_layout_cmd(subcmd, &board_name)?;
             }
-            let board_name = board_name.ok_or_else(|| anyhow::anyhow!("--board is required"))?;
-            run_layout_cmd(subcmd, &board_name)?;
         }
         "dfu" => {
             let port = args.get(2).map(|s| s.as_str());
@@ -709,6 +743,7 @@ fn generate_and_build_app(airframe: &str, board: &str) -> Result<(String, std::p
 /// - ROM DFU: Build production bootloader (no software-dfu) + app, flash both
 /// - Running app: Software DFU entry, flash app only
 /// - Not found: Error with ROM DFU instructions
+#[cfg(feature = "hardware")]
 fn run_hardware(airframe: &str, board: &str, device_arg: Option<&str>) -> Result<()> {
     // Resolve board metadata
     let board_meta = boards::resolve_board(board)?;
@@ -810,6 +845,7 @@ fn run_hardware(airframe: &str, board: &str, device_arg: Option<&str>) -> Result
 }
 
 /// Get app start address for a board
+#[cfg(feature = "hardware")]
 fn get_app_address_for_board(board_meta: &BoardMetadata) -> Result<u32> {
     // Try to load existing layout lock
     if let Some(lock) = layout::load_layout_lock(&board_meta.board_dir)? {
@@ -844,6 +880,7 @@ fn get_app_address_for_board(board_meta: &BoardMetadata) -> Result<u32> {
 }
 
 /// Flash firmware command (standalone flash)
+#[cfg(feature = "hardware")]
 fn flash_firmware_cmd(
     firmware_path: &str,
     board_name: Option<&str>,
@@ -909,6 +946,7 @@ fn flash_firmware_cmd(
 }
 
 /// Layout management command
+#[cfg(feature = "hardware")]
 fn run_layout_cmd(subcmd: &str, board_name: &str) -> Result<()> {
     let board_meta = boards::resolve_board(board_name)?;
 
@@ -1022,6 +1060,7 @@ fn find_serial_port() -> Result<String> {
 ///
 /// production=true: no software-dfu (for ROM DFU first-time flash)
 /// production=false: with software-dfu (for dev bootloader)
+#[cfg(feature = "hardware")]
 fn build_bootloader(board: &str, production: bool) -> Result<PathBuf> {
     let features = if production {
         board.to_string()
@@ -1065,6 +1104,7 @@ fn build_bootloader(board: &str, production: bool) -> Result<PathBuf> {
 }
 
 /// Convert ELF to binary using arm-none-eabi-objcopy
+#[cfg(feature = "hardware")]
 fn convert_to_binary(elf_path: &Path, name: &str) -> Result<PathBuf> {
     let bin_path = PathBuf::from(format!("/tmp/{}.bin", name));
 

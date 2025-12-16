@@ -137,6 +137,7 @@ pub mod time_hal;
 pub mod traits;
 pub mod transport;
 pub mod transport_hal;
+pub mod watchdog_hal;
 
 // Main exports
 pub use board_hal::BoardHal;
@@ -151,6 +152,7 @@ pub use traits::{
     RawGnssReading, RawImuReading, RawMagReading, TimeSource, MAX_ACTUATOR_OUTPUTS,
 };
 pub use transport_hal::{SystemState, TransportHal, TransportStatus};
+pub use watchdog_hal::{FakeWatchdog, WatchdogHal};
 
 // Re-export core types for convenience
 pub use aviate_core::sensor::{BaroData, GnssData, ImuData, MagData, SensorHealth, SensorReading};

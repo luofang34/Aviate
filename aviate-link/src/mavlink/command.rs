@@ -57,7 +57,7 @@ use aviate_hal_io::transport::FrameRx;
 
 use super::protocol::{mav_cmd, parse_mavlink, CommandLong, MavMessage};
 
-use crate::command::{Command, CommandKind, CommandLink, SignatureMeta};
+use crate::command::{Command, CommandKind, CommandLink, SignatureMeta, MAX_SIGNED_FRAME_SIZE};
 use crate::errors::{LinkError, LinkResult};
 
 /// MAVLink command link (parses MAVLink → Command)
@@ -95,20 +95,6 @@ impl<T: FrameRx> MavlinkCommandLink<T> {
     }
 
     /// Map MAVLink message to domain-level Command
-    ///
-    /// This is a pure function that maps protocol-specific messages
-    /// to domain-level commands.
-    ///
-    /// ## Parameters
-    ///
-    /// - `msg`: Parsed MAVLink message
-    /// - `now_ms`: Current system time (for timestamp)
-    /// - `signature`: Optional signature metadata (if frame was signed)
-    ///
-    /// ## Returns
-    ///
-    /// - `Some(cmd)`: Message mapped to Command
-    /// - `None`: Message not recognized or not mapped
     fn map_mavlink_to_command(
         msg: MavMessage,
         now_ms: u32,
@@ -116,18 +102,13 @@ impl<T: FrameRx> MavlinkCommandLink<T> {
     ) -> Option<Command> {
         match msg {
             MavMessage::CommandLong(cmd) => Self::map_command_long(&cmd, now_ms, signature),
-            MavMessage::SetAttitudeTarget(tgt) => {
-                Some(Command {
-                    kind: CommandKind::SetAttitude,
-                    params: [tgt.q[0], tgt.q[1], tgt.q[2], tgt.q[3], tgt.thrust, 0.0, 0.0],
-                    timestamp_ms: now_ms,
-                    signature,
-                })
-            }
-            // Future: Add support for other command messages
-            // MavMessage::CommandInt(cmd) => ...
-            // MavMessage::SetPositionTargetLocalNed(cmd) => ...
-            _ => None, // Ignore unrecognized messages
+            MavMessage::SetAttitudeTarget(tgt) => Some(Command {
+                kind: CommandKind::SetAttitude,
+                params: [tgt.q[0], tgt.q[1], tgt.q[2], tgt.q[3], tgt.thrust, 0.0, 0.0],
+                timestamp_ms: now_ms,
+                signature,
+            }),
+            _ => None,
         }
     }
 
@@ -138,35 +119,22 @@ impl<T: FrameRx> MavlinkCommandLink<T> {
         signature: Option<SignatureMeta>,
     ) -> Option<Command> {
         match cmd.command {
-            // MAV_CMD_COMPONENT_ARM_DISARM (400)
             mav_cmd::COMPONENT_ARM_DISARM => {
-                let arm = cmd.param1 > 0.5; // param1: 1.0 = arm, 0.0 = disarm
+                let arm = cmd.param1 > 0.5;
                 Some(Command {
-                    kind: if arm {
-                        CommandKind::Arm
-                    } else {
-                        CommandKind::Disarm
-                    },
+                    kind: if arm { CommandKind::Arm } else { CommandKind::Disarm },
                     params: [0.0; 7],
                     timestamp_ms: now_ms,
                     signature,
                 })
             }
-
-            // MAV_CMD_DO_SET_MODE (176)
-            mav_cmd::DO_SET_MODE => {
-                // param1: mode (custom mode interpretation)
-                Some(Command {
-                    kind: CommandKind::SetMode,
-                    params: [cmd.param1, cmd.param2, 0.0, 0.0, 0.0, 0.0, 0.0],
-                    timestamp_ms: now_ms,
-                    signature,
-                })
-            }
-
-            // Future: Add more MAVLink commands as needed
-            // MAV_CMD_NAV_TAKEOFF, MAV_CMD_NAV_LAND, etc.
-            _ => None, // Unsupported command
+            mav_cmd::DO_SET_MODE => Some(Command {
+                kind: CommandKind::SetMode,
+                params: [cmd.param1, cmd.param2, 0.0, 0.0, 0.0, 0.0, 0.0],
+                timestamp_ms: now_ms,
+                signature,
+            }),
+            _ => None,
         }
     }
 }
@@ -188,11 +156,18 @@ impl<T: FrameRx> CommandLink for MavlinkCommandLink<T> {
             parse_mavlink(&buf[..len]).map_err(|_| LinkError::ParseError)?;
 
         // Convert MAVLink signature to SignatureMeta (if present)
-        let signature = mav_sig.map(|sig| SignatureMeta {
-            link_id: sig.link_id,
-            timestamp: sig.timestamp,
-            sig: sig.signature,
-            raw_frame: buf[..consumed].to_vec(), // Owned copy for HMAC verification
+        // Uses static buffer instead of Vec for DO-178C compliance
+        let signature = mav_sig.map(|sig| {
+            let mut raw_frame = [0u8; MAX_SIGNED_FRAME_SIZE];
+            let copy_len = consumed.min(MAX_SIGNED_FRAME_SIZE);
+            raw_frame[..copy_len].copy_from_slice(&buf[..copy_len]);
+            SignatureMeta {
+                link_id: sig.link_id,
+                timestamp: sig.timestamp,
+                sig: sig.signature,
+                raw_frame,
+                raw_frame_len: copy_len,
+            }
         });
 
         // Map to domain-level Command

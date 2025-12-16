@@ -76,7 +76,11 @@ pub enum SystemState {
 /// 1. **`try_recv_command()`**: Returns immediately, `None` if no command
 /// 2. **`try_send_telemetry()`**: Returns immediately, `false` if buffer full
 /// 3. **`poll()`**: Fast and bounded, services hardware state machines
-/// 4. **`kick_watchdog()`**: Call once per control tick (windowed-safe)
+///
+/// ## Watchdog Note
+///
+/// Watchdog kicking is handled separately via `WatchdogHal` trait.
+/// This keeps transport concerns separate from system liveness concerns.
 ///
 /// ## Generic Parameter `Cmd`
 ///
@@ -122,14 +126,6 @@ pub trait TransportHal<Cmd> {
     ///
     /// Transport implementations include this in system status messages.
     fn set_armed(&mut self, armed: bool);
-
-    /// Kick hardware watchdog (call once per control tick)
-    ///
-    /// # Safety
-    ///
-    /// Safe for windowed watchdogs when called once per tick.
-    /// Do NOT call more frequently (e.g., in outer spin loop).
-    fn kick_watchdog(&mut self);
 
     /// Poll transport state machine (service DMA, USB, interrupts, etc.)
     ///

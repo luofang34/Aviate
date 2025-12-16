@@ -5,8 +5,17 @@
 // Allow dead code for future platform infrastructure
 #![allow(dead_code)]
 
-use crate::layout::ReserveMode;
 use crate::programmer::Programmer;
+
+/// Reserve mode for layout computation
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReserveMode {
+    /// Compute reserve from bootloader size, grow lock if needed
+    #[default]
+    Auto,
+    /// Use fixed reserve from lock, error if bootloader outgrows it
+    Fixed,
+}
 use anyhow::{bail, Context, Result};
 use cargo_metadata::{MetadataCommand, Package};
 use serde::Deserialize;

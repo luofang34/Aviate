@@ -17,15 +17,23 @@ pub enum SensorError {
     InvalidState,
     /// Calibration data invalid or missing
     CalibrationError,
+    /// Initialization failed (sensor not responding, ID mismatch)
+    InitFailed,
+    /// Configuration failed (invalid parameter, write error)
+    ConfigFailed,
 }
 
 impl SensorError {
     /// Convert sensor error to health status
     pub fn to_health(self) -> SensorHealth {
         match self {
-            SensorError::BusError | SensorError::DeviceNotFound => SensorHealth::Failed,
+            SensorError::BusError | SensorError::DeviceNotFound | SensorError::InitFailed => {
+                SensorHealth::Failed
+            }
             SensorError::Timeout | SensorError::InvalidData => SensorHealth::Degraded,
-            SensorError::InvalidState | SensorError::CalibrationError => SensorHealth::Degraded,
+            SensorError::InvalidState
+            | SensorError::CalibrationError
+            | SensorError::ConfigFailed => SensorHealth::Degraded,
         }
     }
 }

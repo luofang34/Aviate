@@ -1,4 +1,5 @@
 use crate::math::{Quaternion, Vector3};
+#[allow(unused_imports)] // FloatExt needed for no_std math methods
 use crate::types::{FloatExt, MetersPerSecond, Normalized, Scalar};
 
 #[derive(Clone, Debug)]

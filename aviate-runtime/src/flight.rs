@@ -81,14 +81,15 @@ pub use crate::runner::{BoardStep, FlightRunner, RunnerHealth, LINK_TIMEOUT_US, 
 /// let mut runner = board.into_runner();
 /// aviate_runtime::flight::run_control_loop(&mut runner, 1000);
 /// ```
-pub fn run_control_loop<Board, Time, Transport, Cmd>(
-    runner: &mut FlightRunner<Board, Time, Transport, Cmd>,
+pub fn run_control_loop<Board, Time, Transport, Watchdog, Cmd>(
+    runner: &mut FlightRunner<Board, Time, Transport, Watchdog, Cmd>,
     period_us: u32,
 ) -> !
 where
     Board: BoardStep<Cmd = Cmd>,
     Time: aviate_hal_io::TimeHal,
     Transport: aviate_hal_io::TransportHal<Cmd>,
+    Watchdog: aviate_hal_io::WatchdogHal,
     Cmd: Clone,
 {
     runner.run(period_us)

@@ -7,7 +7,7 @@
 //! ## Architecture
 //!
 //! ```text
-//! FlightRunner<Board, Time, Transport>
+//! FlightRunner<Board, Time, Transport, Watchdog>
 //! │
 //! ├── run(period_us) -> !
 //! │   ├── poll transport
@@ -19,7 +19,7 @@
 //!     ├── try_recv_command (non-blocking)
 //!     ├── update link_ok from timeout
 //!     ├── delegate to board_step() for sensor/actuator handling
-//!     └── kick_watchdog
+//!     └── watchdog.kick()
 //! ```
 //!
 //! ## Time Parameters
@@ -35,7 +35,7 @@
 //! - Single time read per tick execution
 //! - Watchdog kicked once per tick (windowed-safe)
 
-use aviate_hal_io::{TimeHal, TransportHal, TransportStatus};
+use aviate_hal_io::{TimeHal, TransportHal, TransportStatus, WatchdogHal};
 
 /// Link timeout in microseconds (1 second)
 ///
@@ -151,12 +151,14 @@ pub trait BoardStep {
 /// - `Board`: Implements `BoardStep` for sensor/actuator handling
 /// - `Time`: Implements `TimeHal` for monotonic time and sleep
 /// - `Transport`: Implements `TransportHal<Cmd>` for command/telemetry I/O
+/// - `Watchdog`: Implements `WatchdogHal` for hardware watchdog
 /// - `Cmd`: Command type (e.g., `aviate_link::Command`)
-pub struct FlightRunner<Board, Time, Transport, Cmd>
+pub struct FlightRunner<Board, Time, Transport, Watchdog, Cmd>
 where
     Board: BoardStep<Cmd = Cmd>,
     Time: TimeHal,
     Transport: TransportHal<Cmd>,
+    Watchdog: WatchdogHal,
 {
     /// Board HAL (sensors, actuators, kernel)
     pub board: Board,
@@ -164,17 +166,20 @@ where
     pub time: Time,
     /// Transport for commands and telemetry
     pub transport: Transport,
+    /// Hardware watchdog (kicked once per control tick)
+    pub watchdog: Watchdog,
     /// Last command received (or default/failsafe)
     pub last_cmd: Cmd,
     /// Health status for arming gates and failsafe
     pub health: RunnerHealth,
 }
 
-impl<Board, Time, Transport, Cmd> FlightRunner<Board, Time, Transport, Cmd>
+impl<Board, Time, Transport, Watchdog, Cmd> FlightRunner<Board, Time, Transport, Watchdog, Cmd>
 where
     Board: BoardStep<Cmd = Cmd>,
     Time: TimeHal,
     Transport: TransportHal<Cmd>,
+    Watchdog: WatchdogHal,
     Cmd: Clone,
 {
     /// Create a new flight runner
@@ -184,12 +189,20 @@ where
     /// * `board` - Board HAL with sensors and actuators
     /// * `time` - Time source for scheduling
     /// * `transport` - Transport for commands and telemetry
+    /// * `watchdog` - Hardware watchdog (kicked once per tick)
     /// * `default_cmd` - Default/failsafe command when no input received
-    pub fn new(board: Board, time: Time, transport: Transport, default_cmd: Cmd) -> Self {
+    pub fn new(
+        board: Board,
+        time: Time,
+        transport: Transport,
+        watchdog: Watchdog,
+        default_cmd: Cmd,
+    ) -> Self {
         Self {
             board,
             time,
             transport,
+            watchdog,
             last_cmd: default_cmd,
             health: RunnerHealth::new(),
         }
@@ -232,7 +245,7 @@ where
         self.health.ekf_converged = self.board.ekf_converged();
 
         // 5. Kick watchdog (once per tick, windowed-safe)
-        self.transport.kick_watchdog();
+        self.watchdog.kick();
     }
 
     /// Run the control loop (never returns)
