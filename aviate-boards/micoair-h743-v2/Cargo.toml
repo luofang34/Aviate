@@ -10,7 +10,7 @@ name = "aviate_board_micoair_h743_v2"
 path = "src/lib.rs"
 
 [features]
-default = []
+default = ["software-bootloader"]
 # Enable software-triggered bootloader entry (uses unsafe code)
 # For development/testing only - disable for production builds
 software-bootloader = []

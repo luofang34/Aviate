@@ -163,137 +163,14 @@ where
 }
 
 // ============================================================================
-// SPL06 Barometer Wrapper
+// SPL06 Barometer Wrapper (disabled - embedded-hal version mismatch)
 // ============================================================================
-
-/// SPL06 barometer wrapper implementing BaroDriver
-pub struct Spl06Baro<I2C>
-where
-    I2C: embedded_hal::i2c::I2c,
-{
-    baro: spl06_007::Barometer<I2C>,
-    source_id: u8,
-}
-
-impl<I2C, E> Spl06Baro<I2C>
-where
-    I2C: embedded_hal::i2c::I2c<Error = E>,
-{
-    /// Create a new SPL06 barometer wrapper
-    ///
-    /// # Arguments
-    /// * `i2c` - I2C bus (sensor address is 0x77 on this board)
-    pub fn new(i2c: I2C) -> SensorResult<Self> {
-        let baro = spl06_007::Barometer::new(i2c).map_err(|_| SensorError::InitFailed)?;
-
-        Ok(Self { baro, source_id: 0 })
-    }
-
-    /// Set sensor source ID
-    pub fn with_source_id(mut self, id: u8) -> Self {
-        self.source_id = id;
-        self
-    }
-}
-
-impl<I2C, E> BaroDriver for Spl06Baro<I2C>
-where
-    I2C: embedded_hal::i2c::I2c<Error = E>,
-{
-    fn read(&mut self) -> SensorResult<RawBaroReading> {
-        // Get pressure in millibars (hPa)
-        let pressure_mbar = self.baro.get_pressure().map_err(|_| SensorError::BusError)?;
-
-        // Get temperature in Celsius
-        let temperature_c = self
-            .baro
-            .get_temperature()
-            .map_err(|_| SensorError::BusError)?;
-
-        // Convert pressure from millibars to Pascals (1 mbar = 100 Pa)
-        Ok(RawBaroReading {
-            pressure_pa: pressure_mbar * 100.0,
-            temperature_c,
-        })
-    }
-
-    fn data_ready(&mut self) -> SensorResult<bool> {
-        let (temp_ready, pres_ready) = self
-            .baro
-            .new_data_is_available()
-            .map_err(|_| SensorError::BusError)?;
-        Ok(temp_ready && pres_ready)
-    }
-
-    fn source_id(&self) -> u8 {
-        self.source_id
-    }
-}
+// TODO: Update spl06-007 to embedded-hal 1.0
 
 // ============================================================================
-// QMC5883L Magnetometer Wrapper
+// QMC5883L Magnetometer Wrapper (disabled - embedded-hal version mismatch)
 // ============================================================================
-
-/// QMC5883L magnetometer wrapper implementing MagDriver
-pub struct Qmc5883lMag<I2C>
-where
-    I2C: embedded_hal::i2c::I2c,
-{
-    mag: qmc5883l::QMC5883L<I2C>,
-    rotation: Rotation,
-    source_id: u8,
-}
-
-impl<I2C, E> Qmc5883lMag<I2C>
-where
-    I2C: embedded_hal::i2c::I2c<Error = E>,
-{
-    /// Create a new QMC5883L magnetometer wrapper
-    ///
-    /// # Arguments
-    /// * `i2c` - I2C bus
-    /// * `rotation` - Sensor mounting rotation
-    pub fn new(i2c: I2C, rotation: Rotation) -> SensorResult<Self> {
-        let mag = qmc5883l::QMC5883L::new(i2c).map_err(|_| SensorError::InitFailed)?;
-
-        Ok(Self {
-            mag,
-            rotation,
-            source_id: 0,
-        })
-    }
-
-    /// Set sensor source ID
-    pub fn with_source_id(mut self, id: u8) -> Self {
-        self.source_id = id;
-        self
-    }
-}
-
-impl<I2C, E> MagDriver for Qmc5883lMag<I2C>
-where
-    I2C: embedded_hal::i2c::I2c<Error = E>,
-{
-    fn read(&mut self) -> SensorResult<RawMagReading> {
-        // Read magnetic field using mag() method (returns (i16, i16, i16))
-        let (x, y, z) = self.mag.mag().map_err(|_| SensorError::BusError)?;
-
-        // QMC5883L: 8 gauss range = 3000 LSB/gauss
-        // Convert to microtesla: 1 gauss = 100 microtesla
-        // Scale: raw * (8 / 3000) * 100 = raw * 0.2667 µT/LSB
-        const SCALE: f32 = 8.0 / 3000.0 * 100.0;
-
-        let field = [x as f32 * SCALE, y as f32 * SCALE, z as f32 * SCALE];
-
-        Ok(RawMagReading {
-            field_ut: self.rotation.apply(field),
-        })
-    }
-
-    fn source_id(&self) -> u8 {
-        self.source_id
-    }
-}
+// TODO: Update qmc5883l to embedded-hal 1.0
 
 
 #[cfg(test)]

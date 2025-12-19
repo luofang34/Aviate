@@ -5,7 +5,7 @@
 use aviate_boot_core::AppBackend;
 
 // Import memory layout constants from chip configuration
-use crate::memory::{APP_END, APP_START, RAM_END, RAM_START};
+use crate::memory::{APP_END, APP_START, AXI_END, AXI_START, DTCM_END, DTCM_START};
 
 pub struct Stm32h743AppBackend;
 
@@ -55,8 +55,13 @@ impl AppBackend for Stm32h743AppBackend {
         let app_stack = unsafe { core::ptr::read_volatile(app_start as *const u32) };
         let app_reset = unsafe { core::ptr::read_volatile((app_start + 4) as *const u32) };
 
-        // Stack pointer should point to valid RAM (AXI SRAM where HAL places stack)
-        let stack_valid = (RAM_START..=RAM_END).contains(&app_stack);
+        // Stack pointer should point to valid RAM:
+        // - DTCM (0x20000000-0x20020000): Fastest RAM, preferred for stack
+        // - AXI SRAM (0x24000000-0x24080000): Large RAM, sometimes used for stack
+        // Note: Stack pointer at region END is valid (stack grows down)
+        let stack_in_dtcm = app_stack >= DTCM_START && app_stack <= DTCM_END;
+        let stack_in_axi = app_stack >= AXI_START && app_stack <= AXI_END;
+        let stack_valid = stack_in_dtcm || stack_in_axi;
 
         // Reset vector should point to application flash region
         let reset_valid = (APP_START..=APP_END).contains(&app_reset);

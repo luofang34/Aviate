@@ -48,16 +48,51 @@ pub const SECTOR_SIZE: u32 = 128 * 1024;
 /// it can never be accidentally erased during app updates.
 pub const BOOTLOADER_SIZE: u32 = SECTOR_SIZE;
 
+/// DTCM RAM start address (D1 domain, RM0433 Table 7)
+///
+/// DTCM (128KB) is the fastest RAM for stack - zero wait states.
+/// Applications typically place stack here for best performance.
+pub const DTCM_START: u32 = 0x2000_0000;
+
+/// DTCM RAM end address (exclusive, 128KB)
+pub const DTCM_END: u32 = 0x2002_0000;
+
 /// AXI SRAM start address (D1 domain, RM0433 Table 7)
 ///
-/// This is memory-mapped hardware - no PAC/HAL abstraction exists.
-/// The stm32h7xx-hal places the stack in AXI SRAM by default.
-pub const RAM_START: u32 = 0x2400_0000;
+/// AXI SRAM (512KB) is used for heap and large buffers.
+/// Some applications may place stack here instead of DTCM.
+pub const AXI_START: u32 = 0x2400_0000;
 
 /// AXI SRAM end address (exclusive, 512KB)
+pub const AXI_END: u32 = 0x2408_0000;
+
+// =============================================================================
+// Boot flags (RTC backup registers)
+// =============================================================================
+//
+// Two systems share RTC backup registers with non-conflicting magic values:
+//
+// 1. Software DFU (checked first by bootloader):
+//    - BK0R = 0xB007_B007: Request DFU mode, cleared immediately
+//    - Simple single-word check, no structure
+//
+// 2. Crash backend (used if no DFU request):
+//    - BK0R = 0x5241_4D42 (BOOT_FLAGS_MAGIC): Structure header
+//    - BK1R-BK3R: Boot flags data (want_bootloader, crash_detected, firmware_ok)
+//
+// These don't conflict since 0xB007_B007 != 0x5241_4D42.
+
+/// Boot flags address (RTC backup registers, used by crash backend)
 ///
-/// End of the main RAM region used for stack validation.
-pub const RAM_END: u32 = 0x2408_0000;
+/// RTC_BKP0R is at RTC base (0x5800_4000) + 0x50
+/// Requires PWR.CR1.DBP to be set for write access.
+pub const BOOT_FLAGS_ADDR: u32 = 0x5800_4050;
+
+/// Boot flags magic value for crash backend ("RAMB" = RAM Boot)
+///
+/// Used to validate that crash backend flags structure is initialized.
+/// Note: Software DFU uses 0xB007_B007 which is checked separately.
+pub const BOOT_FLAGS_MAGIC: u32 = 0x5241_4D42;
 
 /// Flash unlock key 1 (RM0433 section 4.3.10)
 ///
@@ -160,7 +195,8 @@ const _: () = {
     assert!(APP_START == FLASH_BASE + BOOTLOADER_SIZE);
     assert!(APP_END == FLASH_END - 1);
     assert!(FLASH_END - FLASH_BASE == 2 * 1024 * 1024);
-    assert!(RAM_END - RAM_START == 512 * 1024);
+    assert!(DTCM_END - DTCM_START == 128 * 1024); // DTCM is 128KB
+    assert!(AXI_END - AXI_START == 512 * 1024); // AXI SRAM is 512KB
 };
 
 #[cfg(test)]
@@ -178,8 +214,11 @@ mod tests {
         // Verify application region spans from sector 1 to end
         assert_eq!(APP_END + 1, FLASH_END);
 
-        // Verify RAM size is 512KB
-        assert_eq!(RAM_END - RAM_START, 512 * 1024);
+        // Verify DTCM size is 128KB
+        assert_eq!(DTCM_END - DTCM_START, 128 * 1024);
+
+        // Verify AXI SRAM size is 512KB
+        assert_eq!(AXI_END - AXI_START, 512 * 1024);
 
         // Verify sector size matches HAL expectation (128KB for non-rm0455)
         assert_eq!(SECTOR_SIZE, 0x2_0000);

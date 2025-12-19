@@ -11,12 +11,14 @@ mod crash_backend;
 mod delay_backend;
 mod led_backend;
 pub mod memory;
+mod rtc_crash_backend;
 mod update_backend;
 
 pub use app_backend::Stm32h743AppBackend;
 pub use crash_backend::Stm32h743CrashBackend;
 pub use delay_backend::Stm32h743DelayBackend;
 pub use led_backend::Stm32h743LedBackend;
+pub use rtc_crash_backend::RtcCrashBackend;
 pub use update_backend::Stm32h743UpdateBackend;
 
 use aviate_boot_core::CombinedBackend;
@@ -47,8 +49,10 @@ pub struct Stm32LedMetadata {
 }
 
 /// Type alias for STM32H743 backend
+///
+/// Uses RtcCrashBackend for boot flags storage in RTC backup registers.
 pub type Stm32Backend = CombinedBackend<
-    Stm32h743CrashBackend,
+    RtcCrashBackend,
     Stm32h743LedBackend,
     Stm32h743DelayBackend,
     Stm32h743UpdateBackend,
@@ -84,19 +88,51 @@ pub fn chip_main(led_metadata: Stm32LedMetadata) -> ! {
         .ahb4enr
         .modify(|r, w| unsafe { w.bits(r.bits() | (1 << 4)) }); // GPIOEEN bit 4
 
-    // Enable backup domain access and RTC APB access
+    // Enable RTC APB clock (RTCAPBEN bit 16)
     dp.RCC
         .apb4enr
         .modify(|r, w| unsafe { w.bits(r.bits() | (1 << 16)) }); // RTCAPBEN bit 16
     cortex_m::asm::dsb();
 
-    // Small delay for clock to stabilize
-    for _ in 0..100 {
+    // Enable backup domain write access (PWR.CR1.DBP bit 8)
+    // Required for reading/writing RTC backup registers
+    dp.PWR
+        .cr1
+        .modify(|r, w| unsafe { w.bits(r.bits() | (1 << 8)) }); // DBP bit 8
+
+    // Wait for DBP to take effect
+    for _ in 0..1000 {
         cortex_m::asm::nop();
+    }
+    cortex_m::asm::dsb();
+
+    // Software DFU: Check boot magic and enter DFU mode if requested
+    // Simplified approach matching old working bootloader:
+    // - Single magic value 0xB007_B007 in RTC_BK0R
+    #[cfg(feature = "software-dfu")]
+    {
+        const RTC_BK0R: u32 = 0x5800_4050;
+        const BOOT_MAGIC: u32 = 0xB007_B007;
+
+        // Read boot magic from RTC backup register
+        let magic = unsafe { core::ptr::read_volatile(RTC_BK0R as *const u32) };
+
+        if magic == BOOT_MAGIC {
+            // Clear the magic before entering DFU
+            unsafe {
+                core::ptr::write_volatile(RTC_BK0R as *mut u32, 0);
+                cortex_m::asm::dsb();
+            }
+
+            // Enter DFU mode
+            use aviate_boot_core::UpdateBackend;
+            let mut update = Stm32h743UpdateBackend::new(dp.OTG2_HS_GLOBAL);
+            update.enter_update_mode();
+        }
     }
 
     // Create individual backends
-    let crash = Stm32h743CrashBackend::new(dp.PWR, dp.RTC, dp.RCC);
+    let crash = RtcCrashBackend::new();
     let leds = Stm32h743LedBackend::new(dp.GPIOE, led_metadata);
     let delay = Stm32h743DelayBackend::new();
     let update = Stm32h743UpdateBackend::new(dp.OTG2_HS_GLOBAL);

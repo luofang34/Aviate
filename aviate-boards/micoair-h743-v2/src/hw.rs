@@ -45,7 +45,7 @@ use embedded_hal_compat::ForwardCompat;
 
 // Real sensor drivers
 #[cfg(all(feature = "env-flight", not(feature = "env-hitl")))]
-use crate::drivers::{Bmi088Imu, Qmc5883lMag, Spl06Baro};
+use crate::drivers::Bmi088Imu;
 #[cfg(all(feature = "env-flight", not(feature = "env-hitl")))]
 use alloc::boxed::Box;
 
@@ -383,7 +383,7 @@ impl MicoAirBoard {
             use embedded_hal_bus::spi::RefCellDevice;
             use core::cell::RefCell;
             use crate::hw::compat::{I2cWrapper, SysDelay};
-            use crate::drivers::{Bmi088Imu, Spl06Baro, Qmc5883lMag};
+            use crate::drivers::Bmi088Imu;
 
             let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
             let _gpioc = dp.GPIOC.split(ccdr.peripheral.GPIOC);
@@ -440,11 +440,9 @@ impl MicoAirBoard {
                 Err(_) => BoxedImu(Box::new(FakeImu::new())),
             };
 
-            // Step 2: Real SPL06 (Baro)
-            let boxed_baro = match Spl06Baro::new(i2c2) {
-                Ok(dev) => BoxedBaro(Box::new(dev)),
-                Err(_) => BoxedBaro(Box::new(FakeBaro::new())),
-            };
+            // Step 2: Fake SPL06 (Baro) - embedded-hal version mismatch
+            let _i2c2 = i2c2;
+            let boxed_baro = BoxedBaro(Box::new(FakeBaro::new()));
 
             // Step 3: Real QMC5883L (Mag) - on I2C1 (PB8/PB9)
             let scl1 = gpiob.pb8.into_alternate_open_drain();
@@ -455,16 +453,10 @@ impl MicoAirBoard {
                 ccdr.peripheral.I2C1,
                 &ccdr.clocks,
             );
-            let i2c1 = I2cWrapper(i2c1);
-            
-            let boxed_mag = match Qmc5883lMag::new(i2c1, crate::Rotation::None) {
-                Ok(dev) => BoxedMag(Box::new(dev)),
-                Err(_) => BoxedMag(Box::new(FakeMag::new())),
-            };
-            
-            // Note: I2C init logic removed for checking SPI only
+            // I2C1 initialized but magnetometer disabled (embedded-hal version mismatch)
+            let _i2c1 = I2cWrapper(i2c1);
 
-            // Fake Mag (QMC5883L) - FORCE FAKE
+            // Fake Mag (QMC5883L) - using fake for now
             let boxed_mag = BoxedMag(Box::new(FakeMag::new()));
             
             // Note: I2C init logic removed for checking SPI only

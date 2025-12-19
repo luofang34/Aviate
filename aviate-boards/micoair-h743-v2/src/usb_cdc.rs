@@ -175,6 +175,8 @@ pub struct SerialTransport {
     tx_seq: u8,
     /// Tick counter for heartbeat timing
     tick_counter: u32,
+    #[cfg(feature = "software-bootloader")]
+    dfu_state: DfuState,
 }
 
 impl SerialTransport {
@@ -189,6 +191,8 @@ impl SerialTransport {
             armed: false,
             tx_seq: 0,
             tick_counter: 0,
+            #[cfg(feature = "software-bootloader")]
+            dfu_state: DfuState::default(),
         }
     }
 
@@ -197,10 +201,15 @@ impl SerialTransport {
         self.usb.init(usb2);
     }
 
-    /// Service USB hardware (call frequently from poll())
+    /// Service USB hardware (call at tick rate from poll())
+    ///
+    /// USB CDC requires frequent polling to process IN/OUT tokens.
+    /// Multiple service() calls ensure data is flushed to host.
     fn service_usb(&mut self) {
-        // Delegate to HAL driver
-        self.usb.service();
+        // Service multiple times per tick to ensure USB events are processed
+        for _ in 0..4 {
+            self.usb.service();
+        }
     }
 
     /// Send heartbeat if interval elapsed
@@ -248,11 +257,16 @@ impl SerialTransport {
         if let Some(len) = serialize_mavlink(&msg, self.tx_seq, 1, 1, &mut buf) {
             self.tx_seq = self.tx_seq.wrapping_add(1);
             let _ = self.usb.try_write(&buf[..len]);
+            // Flush immediately after write
+            self.usb.service();
         }
     }
 
     /// Try to parse incoming protocol data and convert to SystemCommand
     fn try_parse_command(&mut self) -> Option<SystemCommand> {
+        #[cfg(feature = "software-bootloader")]
+        self.update_dfu_state();
+
         // Feed RX buffer bytes to parser
         let mut rx_buf = [0u8; 64];
         
@@ -260,6 +274,11 @@ impl SerialTransport {
         let count = self.usb.try_read(&mut rx_buf);
         
         for &byte in &rx_buf[..count] {
+            #[cfg(feature = "software-bootloader")]
+            if self.handle_dfu_protocol(byte) {
+                continue;
+            }
+
             if self.parser.feed(byte) {
                 // Complete frame, try to parse
                 if let Some(msg) = self.parser.parse_frame() {
@@ -348,6 +367,228 @@ impl SerialTransport {
     /// Access inner metrics
     pub fn metrics(&self) -> UsbMetrics {
         *self.usb.metrics()
+    }
+}
+
+// =============================================================================
+// Software DFU Implementation
+// =============================================================================
+
+/// DFU confirmation timeout in ticks (10 seconds at 1kHz = 10000 ticks)
+#[cfg(feature = "software-bootloader")]
+const DFU_TIMEOUT_TICKS: u32 = 10000;
+
+/// DFU retransmit interval in ticks (200ms at 1kHz = 200 ticks)
+#[cfg(feature = "software-bootloader")]
+const DFU_RETRANSMIT_TICKS: u32 = 200;
+
+#[cfg(feature = "software-bootloader")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DfuState {
+    Idle,
+    /// Matching "dfu" command
+    WaitDfu(usize),
+    /// Waiting for confirmation code response
+    WaitConfirm {
+        /// Random 4-digit confirmation code (1000-9999)
+        code: u16,
+        /// Index into receive buffer
+        idx: usize,
+        /// Receive buffer for user response (4 digits + \r + \n)
+        buf: [u8; 6],
+        /// Tick counter when challenge was sent (for retransmit)
+        last_sent: u32,
+        /// Tick counter when challenge started (for timeout)
+        start_tick: u32,
+    }
+}
+
+#[cfg(feature = "software-bootloader")]
+impl Default for DfuState {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+#[cfg(feature = "software-bootloader")]
+impl SerialTransport {
+    /// Generate a pseudo-random 4-digit code (1000-9999) from DWT cycle counter
+    fn generate_dfu_code() -> u16 {
+        // Read DWT cycle counter for randomness
+        // Safety: DWT is initialized in hw.rs before USB transport
+        let cyccnt = unsafe { (*cortex_m::peripheral::DWT::PTR).cyccnt.read() };
+        // Map to range 1000-9999 (4-digit code)
+        1000 + ((cyccnt % 9000) as u16)
+    }
+
+    /// Handle software DFU protocol sniffed from RX stream
+    /// Returns true if bytes were consumed (should not pass to MAVLink)
+    fn handle_dfu_protocol(&mut self, byte: u8) -> bool {
+        match self.dfu_state {
+            DfuState::Idle => {
+                if byte == b'd' {
+                    self.dfu_state = DfuState::WaitDfu(1);
+                    // Safe to consume as MAVLink starts with 0xFD
+                    return true;
+                }
+                false
+            }
+            DfuState::WaitDfu(idx) => {
+                let target = b"dfu";
+                if byte == target[idx] {
+                    if idx == target.len() - 1 {
+                        // Match "dfu" complete! Generate code and send confirmation.
+                        let now = self.tick_counter;
+                        let code = Self::generate_dfu_code();
+                        self.send_dfu_confirm(code);
+                        self.dfu_state = DfuState::WaitConfirm {
+                            code,
+                            idx: 0,
+                            buf: [0; 6],
+                            last_sent: now,
+                            start_tick: now,
+                        };
+                    } else {
+                        self.dfu_state = DfuState::WaitDfu(idx + 1);
+                    }
+                    true
+                } else {
+                    // Mismatch, reset
+                    self.dfu_state = DfuState::Idle;
+                    false
+                }
+            }
+            DfuState::WaitConfirm { code, mut idx, mut buf, last_sent, start_tick } => {
+                // Ignore whitespace/control chars
+                if byte == b'\r' || byte == b'\n' {
+                    // If we have 4 digits, check match
+                    if idx >= 4 {
+                        let received = Self::parse_code(&buf[..4]);
+                        if received == Some(code) {
+                            let _ = self.usb.try_write(b"REBOOTING\r\n");
+                            self.usb.service();
+                            self.reboot_to_bootloader();
+                        }
+                        // Wrong code, reset
+                        let _ = self.usb.try_write(b"DFU:WRONGCODE\r\n");
+                        self.dfu_state = DfuState::Idle;
+                    }
+                    return true;
+                }
+
+                // Only accept ASCII digits for the code
+                if byte >= b'0' && byte <= b'9' {
+                    if idx < 4 {
+                        buf[idx] = byte;
+                        idx += 1;
+
+                        // Check match when we have exactly 4 digits
+                        if idx == 4 {
+                            let received = Self::parse_code(&buf[..4]);
+                            if received == Some(code) {
+                                let _ = self.usb.try_write(b"REBOOTING\r\n");
+                                self.usb.service();
+                                self.reboot_to_bootloader();
+                            }
+                            // Code doesn't match, but wait for \r\n to confirm
+                        }
+
+                        // Update state
+                        self.dfu_state = DfuState::WaitConfirm { code, idx, buf, last_sent, start_tick };
+                    } else {
+                        // More than 4 digits = wrong code, reset
+                        self.dfu_state = DfuState::Idle;
+                    }
+                    return true;
+                }
+
+                // Non-digit, non-whitespace byte (e.g., MAVLink 0xFD) - ignore it
+                // Don't consume so MAVLink parser can still process if needed
+                // But stay in WaitConfirm state
+                false
+            }
+        }
+    }
+
+    /// Parse 4 ASCII digit bytes into a u16
+    fn parse_code(bytes: &[u8]) -> Option<u16> {
+        if bytes.len() < 4 {
+            return None;
+        }
+        let mut val: u16 = 0;
+        for &b in &bytes[..4] {
+            if b < b'0' || b > b'9' {
+                return None;
+            }
+            val = val * 10 + (b - b'0') as u16;
+        }
+        Some(val)
+    }
+
+    /// Send DFU confirmation challenge with the given code
+    fn send_dfu_confirm(&mut self, code: u16) {
+        // Format: "CONFIRM:XXXX\r\n" where XXXX is the 4-digit code
+        let mut msg = *b"CONFIRM:0000\r\n";
+        msg[8] = b'0' + ((code / 1000) % 10) as u8;
+        msg[9] = b'0' + ((code / 100) % 10) as u8;
+        msg[10] = b'0' + ((code / 10) % 10) as u8;
+        msg[11] = b'0' + (code % 10) as u8;
+        let _ = self.usb.try_write(&msg);
+        // Flush immediately after write
+        self.usb.service();
+    }
+
+    /// Periodic update to handle retransmission and timeout
+    fn update_dfu_state(&mut self) {
+        match self.dfu_state {
+            DfuState::WaitConfirm { code, idx, buf, last_sent, start_tick } => {
+                let now = self.tick_counter;
+
+                // Check timeout (5 seconds)
+                if now.wrapping_sub(start_tick) > DFU_TIMEOUT_TICKS {
+                    let _ = self.usb.try_write(b"DFU:TIMEOUT\r\n");
+                    self.dfu_state = DfuState::Idle;
+                    return;
+                }
+
+                // Retransmit every 200ms
+                if now.wrapping_sub(last_sent) > DFU_RETRANSMIT_TICKS {
+                    self.send_dfu_confirm(code);
+                    self.dfu_state = DfuState::WaitConfirm {
+                        code, idx, buf, last_sent: now, start_tick
+                    };
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn reboot_to_bootloader(&mut self) -> ! {
+        // Simplified approach matching the old working bootloader code:
+        // - Single magic value 0xB007_B007 in RTC_BK0R
+        // - No PWREN/RTCAPBEN, just DBP enable
+        const RTC_BK0R: u32 = 0x5800_4050;
+        const BOOT_MAGIC: u32 = 0xB007_B007;
+
+        unsafe {
+            // Enable backup domain write access (PWR.CR1.DBP bit 8)
+            // The old working code only set DBP, didn't touch PWREN/RTCAPBEN
+            let pwr = &*stm32h7xx_hal::pac::PWR::ptr();
+            pwr.cr1.modify(|r, w| w.bits(r.bits() | (1 << 8)));
+
+            // Memory barrier
+            cortex_m::asm::dsb();
+
+            // Write magic to RTC_BK0R
+            let ptr = RTC_BK0R as *mut u32;
+            core::ptr::write_volatile(ptr, BOOT_MAGIC);
+
+            // Memory barrier to ensure write completes
+            cortex_m::asm::dsb();
+
+            // System Reset
+            cortex_m::peripheral::SCB::sys_reset();
+        }
     }
 }
 

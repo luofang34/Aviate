@@ -271,6 +271,7 @@ EXAMPLES:
     cargo xtask layout show --board micoair-h743-v2              # Show layout
     cargo xtask layout reset --board micoair-h743-v2             # Reset layout lock
     cargo xtask dfu                                              # Enter DFU mode
+    cargo xtask test tests/missions/two_vehicle_formation.toml   # Run SITL test
     cargo xtask cleanup                                          # Kill SITL processes
 
 REQUIREMENTS:
@@ -425,46 +426,50 @@ fn enter_dfu_mode(port: Option<&str>) -> Result<()> {
         .open()
         .with_context(|| format!("Failed to open serial port: {}", port_name))?;
 
-    // Wait for connection to stabilize
-    std::thread::sleep(Duration::from_millis(500));
+    // Brief stabilization delay
+    std::thread::sleep(Duration::from_millis(300));
 
     // Clear any pending data
     let _ = serial.clear(serialport::ClearBuffer::All);
 
     // Send dfu command
     eprintln!("Sending 'dfu' command...");
-    serial.write_all(b"dfu\r\n")?;
+    serial.write_all(b"dfu")?;
     serial.flush()?;
 
-    // Read response
-    std::thread::sleep(Duration::from_millis(500));
-    let mut response = vec![0u8; 256];
-    let n = serial.read(&mut response).unwrap_or(0);
-    let response_str = String::from_utf8_lossy(&response[..n]);
-
-    // Parse confirmation code
+    // Read in a loop until we get the confirmation code, then send immediately
     let code_regex = Regex::new(r"CONFIRM:(\d{4})").unwrap();
-    let code = match code_regex.captures(&response_str) {
-        Some(caps) => caps.get(1).unwrap().as_str(),
-        None => {
-            eprintln!("Response: {}", response_str);
-            bail!("No confirmation code received. Is software-bootloader feature enabled?");
+    let mut accumulated = String::new();
+    let start = std::time::Instant::now();
+    let timeout = Duration::from_secs(5);
+
+    let code = loop {
+        if start.elapsed() > timeout {
+            bail!("Timeout waiting for confirmation code. Is software-bootloader feature enabled?");
+        }
+
+        std::thread::sleep(Duration::from_millis(100));
+        let mut buf = vec![0u8; 512];
+        match serial.read(&mut buf) {
+            Ok(n) if n > 0 => {
+                accumulated.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if let Some(caps) = code_regex.captures(&accumulated) {
+                    break caps.get(1).unwrap().as_str().to_string();
+                }
+            }
+            _ => {}
         }
     };
 
-    eprintln!("Got confirmation code: {}", code);
+    eprintln!("Got confirmation code: {}, sending immediately...", code);
 
-    // Send confirmation code
-    eprintln!("Confirming reboot...");
-    serial.write_all(format!("{}\r\n", code).as_bytes())?;
+    // Send confirmation with newline immediately
+    let code_with_newline = format!("{}\r\n", code);
+    serial.write_all(code_with_newline.as_bytes())?;
     serial.flush()?;
 
-    // Wait for device to reboot (connection will drop)
-    std::thread::sleep(Duration::from_millis(500));
-
-    // Try to read final response (may fail if device already rebooted)
-    let mut final_response = vec![0u8; 256];
-    let _ = serial.read(&mut final_response);
+    // Wait for device to reboot
+    std::thread::sleep(Duration::from_millis(2000));
 
     drop(serial);
 
