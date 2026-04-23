@@ -26,9 +26,9 @@
 //! ## Coordinate Frame Conversion
 //!
 //! Gazebo uses ENU (East-North-Up), avionics uses NED (North-East-Down):
-//! - Position: ENU [x,y,z] → NED [y,x,-z]
+//! - Position: ENU \[x,y,z\] → NED \[y,x,-z\]
 //! - Velocity: same conversion
-//! - Angular velocity: ENU [wx,wy,wz] → NED [wx,-wy,-wz] (body frame)
+//! - Angular velocity: ENU \[wx,wy,wz\] → NED \[wx,-wy,-wz\] (body frame)
 
 use std::ffi::c_int;
 use std::sync::Mutex;

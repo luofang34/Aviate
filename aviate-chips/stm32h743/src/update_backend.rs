@@ -326,11 +326,13 @@ impl UpdateBackend for Stm32h743UpdateBackend {
         let mut dfu = DFUClass::new(&usb_bus, flash);
 
         // Build USB device - use match to handle string descriptor errors without panic
-        let usb_dev_builder = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x0483, 0xDF11))
-            .strings(&[StringDescriptors::default()
-                .manufacturer("Aviate")
-                .product("Aviate Bootloader")
-                .serial_number("AVT001")]);
+        let usb_dev_builder =
+            UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x0483, 0xDF11)).strings(&[
+                StringDescriptors::default()
+                    .manufacturer("Aviate")
+                    .product("Aviate Bootloader")
+                    .serial_number("AVT001"),
+            ]);
 
         let mut usb_dev = match usb_dev_builder {
             Ok(builder) => builder.device_class(0x00).build(),

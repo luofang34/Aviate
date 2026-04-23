@@ -85,10 +85,7 @@ pub enum DeviceState {
 /// 2. Custom bootloader DFU (for app-only flash)
 /// 3. Running app via serial (for software DFU entry)
 /// 4. Not found
-pub fn detect_device_state(
-    vid: Option<u16>,
-    bootloader_pid: Option<u16>,
-) -> Result<DeviceState> {
+pub fn detect_device_state(vid: Option<u16>, bootloader_pid: Option<u16>) -> Result<DeviceState> {
     if let (Some(vid), Some(pid)) = (vid, bootloader_pid) {
         // Check ROM DFU first (allows full flash including bootloader)
         if crate::programmer::is_rom_dfu_present(vid, pid)? {

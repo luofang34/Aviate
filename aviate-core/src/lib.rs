@@ -274,9 +274,10 @@ pub struct CrossChannelData {
 }
 
 /// Channel health status (spec §16)
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum ChannelHealthV1 {
     /// Channel fully operational
+    #[default]
     Operative,
     /// Channel functional but with reduced capability
     Degraded,
@@ -284,12 +285,6 @@ pub enum ChannelHealthV1 {
     Failed,
     /// Channel in test/maintenance mode
     Offline,
-}
-
-impl Default for ChannelHealthV1 {
-    fn default() -> Self {
-        Self::Operative
-    }
 }
 
 impl ChannelHealthV1 {

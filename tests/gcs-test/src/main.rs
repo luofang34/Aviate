@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use aviate_hal_xil::{parse_test_config, run_test_config, SimulatorBackend, SimulatorError};
 use clap::{Parser, Subcommand};
-use log::{info, warn, error};
+use log::{error, info, warn};
 
 #[cfg(feature = "gazebo")]
 use router_gen::RouterParams;
@@ -73,7 +73,7 @@ enum Commands {
     RunScript {
         /// Path to the mission config file (for environment setup)
         config: PathBuf,
-        
+
         /// Path to the script to execute
         script: PathBuf,
 
@@ -504,19 +504,17 @@ fn run_script_test(
 
     // Run Script
     info!(target: "gcs", "Running script...");
-    let status = std::process::Command::new("python3")
-        .arg(script)
-        .status();
+    let status = std::process::Command::new("python3").arg(script).status();
 
     match status {
         Ok(s) => {
-             if s.success() {
-                 info!("Script PASSED");
-                 ExitCode::SUCCESS
-             } else {
-                 error!("Script FAILED with exit code: {:?}", s.code());
-                 ExitCode::FAILURE
-             }
+            if s.success() {
+                info!("Script PASSED");
+                ExitCode::SUCCESS
+            } else {
+                error!("Script FAILED with exit code: {:?}", s.code());
+                ExitCode::FAILURE
+            }
         }
         Err(e) => {
             error!("Failed to execute script: {}", e);

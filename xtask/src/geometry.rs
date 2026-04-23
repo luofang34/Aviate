@@ -281,7 +281,12 @@ fn test_rp235x_geometry() {
         let result = get_geometry_from_probe_rs(name);
         println!("{}: {:?}", name, result.is_ok());
         if let Ok(geo) = result {
-            println!("  base={:#x} size={:#x} sectors={}", geo.flash_base, geo.flash_size, geo.sectors.len());
+            println!(
+                "  base={:#x} size={:#x} sectors={}",
+                geo.flash_base,
+                geo.flash_size,
+                geo.sectors.len()
+            );
         }
     }
 }

@@ -125,14 +125,7 @@ pub trait BoardStep {
     /// * `dt_us` - Fixed period for controller math
     /// * `cmd` - Last command (or default/failsafe)
     /// * `link_ok` - Whether link is healthy (for failsafe decisions)
-    fn board_step(
-        &mut self,
-        tick_us: u64,
-        now_us: u64,
-        dt_us: u32,
-        cmd: &Self::Cmd,
-        link_ok: bool,
-    );
+    fn board_step(&mut self, tick_us: u64, now_us: u64, dt_us: u32, cmd: &Self::Cmd, link_ok: bool);
 
     /// Check if sensors are returning fresh data
     fn sensors_ok(&self) -> bool;
@@ -232,13 +225,8 @@ where
         self.health.update_link_status(now_us);
 
         // 3. Delegate to board for sensor/actuator handling
-        self.board.board_step(
-            tick_us,
-            now_us,
-            dt_us,
-            &self.last_cmd,
-            self.health.link_ok,
-        );
+        self.board
+            .board_step(tick_us, now_us, dt_us, &self.last_cmd, self.health.link_ok);
 
         // 4. Update health from board
         self.health.sensors_ok = self.board.sensors_ok();

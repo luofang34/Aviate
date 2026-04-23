@@ -23,7 +23,7 @@
 //!    - `format_attitude()` - Format state → MAVLink ATTITUDE_QUATERNION
 //!    - No I/O, bounded runtime, can be called from control loop
 //!
-//! 2. **MavlinkTelemetry<T>** (low-DAL I/O sender):
+//! 2. **`MavlinkTelemetry<T>`** (low-DAL I/O sender):
 //!    - Implements `TelemetryBackend` trait
 //!    - Performs I/O via `FrameTx`
 //!    - MUST NOT be called from high-DAL control code
@@ -120,7 +120,8 @@ pub fn format_heartbeat(
     };
 
     let msg = MavMessage::Heartbeat(heartbeat);
-    let len = serialize_mavlink(&msg, *seq, sys_id, comp_id, buf).ok_or(TelemetryError::Protocol)?;
+    let len =
+        serialize_mavlink(&msg, *seq, sys_id, comp_id, buf).ok_or(TelemetryError::Protocol)?;
 
     *seq = seq.wrapping_add(1);
     Ok(len)
@@ -169,7 +170,8 @@ pub fn format_attitude(
     };
 
     let msg = MavMessage::AttitudeQuaternion(attitude);
-    let len = serialize_mavlink(&msg, *seq, sys_id, comp_id, buf).ok_or(TelemetryError::Protocol)?;
+    let len =
+        serialize_mavlink(&msg, *seq, sys_id, comp_id, buf).ok_or(TelemetryError::Protocol)?;
 
     *seq = seq.wrapping_add(1);
     Ok(len)
@@ -216,7 +218,8 @@ pub fn format_local_position(
     };
 
     let msg = MavMessage::LocalPositionNed(position);
-    let len = serialize_mavlink(&msg, *seq, sys_id, comp_id, buf).ok_or(TelemetryError::Protocol)?;
+    let len =
+        serialize_mavlink(&msg, *seq, sys_id, comp_id, buf).ok_or(TelemetryError::Protocol)?;
 
     *seq = seq.wrapping_add(1);
     Ok(len)

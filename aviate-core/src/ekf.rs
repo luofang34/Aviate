@@ -29,7 +29,7 @@ pub struct EkfConfig {
     pub meas_noise_gnss_pos: Scalar,
     pub meas_noise_gnss_vel: Scalar,
     pub meas_noise_baro: Scalar,
-    /// Heading measurement noise [rad²]
+    /// Heading measurement noise \[rad²\]
     pub meas_noise_mag: Scalar,
     /// Innovation gate threshold (sigma)
     pub innovation_gate: Scalar,
@@ -39,9 +39,9 @@ pub struct EkfConfig {
     pub mag_inclination_decay_start: Scalar,
     /// Inclination vertical ratio at which fusion stops (default 0.95)
     pub mag_inclination_limit: Scalar,
-    /// Minimum valid field strength [μT] (default 20.0)
+    /// Minimum valid field strength \[μT\] (default 20.0)
     pub mag_field_min: Scalar,
-    /// Maximum valid field strength [μT] (default 70.0)
+    /// Maximum valid field strength \[μT\] (default 70.0)
     pub mag_field_max: Scalar,
     /// Mag bias random walk process noise [μT²/s] (default 1e-5)
     pub process_noise_mag_bias: Scalar,
@@ -145,12 +145,17 @@ impl Ekf {
     /// Returns IDENTITY and sets quat_fault if normalization fails.
     fn sanitize_quat(&mut self, q: Quaternion) -> Quaternion {
         let q = q.normalize();
+        // COV:EXCL_START(DEFENSIVE: INV-27 numerical-corruption guard;
+        // is_normalized(QUAT_NORM_EPS) fails only when the normalize()
+        // output is NaN/Inf, which requires a corrupted input quaternion.
+        // Not reachable from finite sensor paths.)
         if !q.is_normalized(QUAT_NORM_EPS) {
             self.quat_fault = true;
             Quaternion::IDENTITY
         } else {
             q
         }
+        // COV:EXCL_STOP
     }
 
     pub fn init(&mut self, pos: Vector3<Meters>, vel: Vector3<MetersPerSecond>, quat: Quaternion) {
@@ -485,10 +490,16 @@ impl Ekf {
             }
         };
 
-        // If weight is too low, skip fusion
+        // If weight is too low, skip fusion.
+        // COV:EXCL_START(DEFENSIVE: reachable only in a narrow numerical
+        // sliver where vertical_ratio is within ~1% of mag_inclination_limit;
+        // the upstream `vertical_ratio >= limit` check (line 471) already
+        // returns for the polar-inclination case, so this guard is a
+        // belt-and-suspenders against floating-point boundary conditions.)
         if incl_weight < 0.01 {
             return;
         }
+        // COV:EXCL_STOP
 
         // Step 4: Apply EKF-Estimated Mag Bias Correction
         let mag_corrected_x = mag_x - self.mag_bias.x.0;

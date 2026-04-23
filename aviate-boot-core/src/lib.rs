@@ -202,7 +202,6 @@ pub fn boot_sequence<B: BootBackend>(mut backend: B, app_start: u32) -> ! {
     let _flags = backend.load_flags();
     let _reason = backend.boot_reason(); // For future use
 
-
     // 1. Crash detected → indicate + enter update mode (only with software-dfu feature)
     #[cfg(feature = "software-dfu")]
     if _flags.crash_detected {

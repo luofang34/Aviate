@@ -1087,15 +1087,23 @@ pub fn serialize_mavlink(
     match msg {
         MavMessage::Heartbeat(m) => serialize_heartbeat(m, seq, sys_id, comp_id, buf),
         MavMessage::SystemTime(m) => serialize_system_time(m, seq, sys_id, comp_id, buf),
-        MavMessage::AttitudeQuaternion(m) => serialize_attitude_quaternion(m, seq, sys_id, comp_id, buf),
-        MavMessage::LocalPositionNed(m) => serialize_local_position_ned(m, seq, sys_id, comp_id, buf),
-        MavMessage::SetAttitudeTarget(m) => serialize_set_attitude_target(m, seq, sys_id, comp_id, buf),
+        MavMessage::AttitudeQuaternion(m) => {
+            serialize_attitude_quaternion(m, seq, sys_id, comp_id, buf)
+        }
+        MavMessage::LocalPositionNed(m) => {
+            serialize_local_position_ned(m, seq, sys_id, comp_id, buf)
+        }
+        MavMessage::SetAttitudeTarget(m) => {
+            serialize_set_attitude_target(m, seq, sys_id, comp_id, buf)
+        }
         MavMessage::SetPositionTargetLocalNed(m) => {
             serialize_set_position_target_local_ned(m, seq, sys_id, comp_id, buf)
         }
         MavMessage::CommandLong(m) => serialize_command_long(m, seq, sys_id, comp_id, buf),
         MavMessage::CommandAck(m) => serialize_command_ack(m, seq, sys_id, comp_id, buf),
-        MavMessage::RcChannelsOverride(m) => serialize_rc_channels_override(m, seq, sys_id, comp_id, buf),
+        MavMessage::RcChannelsOverride(m) => {
+            serialize_rc_channels_override(m, seq, sys_id, comp_id, buf)
+        }
         MavMessage::ManualControl(m) => serialize_manual_control(m, seq, sys_id, comp_id, buf),
         MavMessage::SysStatus(m) => serialize_sys_status(m, seq, sys_id, comp_id, buf),
         MavMessage::Statustext(m) => serialize_statustext(m, seq, sys_id, comp_id, buf),
@@ -1131,13 +1139,26 @@ fn write_crc(buf: &mut [u8], offset: usize, crc_extra: u8) -> usize {
     offset + 2
 }
 
-fn serialize_heartbeat(msg: &Heartbeat, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_heartbeat(
+    msg: &Heartbeat,
+    seq: u8,
+    sys_id: u8,
+    comp_id: u8,
+    buf: &mut [u8],
+) -> Option<usize> {
     let frame_size = MavHeader::SIZE + Heartbeat::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
     }
 
-    let offset = write_header(buf, Heartbeat::PAYLOAD_LEN as u8, seq, sys_id, comp_id, Heartbeat::MSG_ID);
+    let offset = write_header(
+        buf,
+        Heartbeat::PAYLOAD_LEN as u8,
+        seq,
+        sys_id,
+        comp_id,
+        Heartbeat::MSG_ID,
+    );
 
     write_u32_le(buf, offset, msg.custom_mode);
     buf[offset + 4] = msg.mav_type;
@@ -1149,13 +1170,26 @@ fn serialize_heartbeat(msg: &Heartbeat, seq: u8, sys_id: u8, comp_id: u8, buf: &
     Some(write_crc(buf, offset + Heartbeat::PAYLOAD_LEN, 50))
 }
 
-fn serialize_system_time(msg: &SystemTime, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_system_time(
+    msg: &SystemTime,
+    seq: u8,
+    sys_id: u8,
+    comp_id: u8,
+    buf: &mut [u8],
+) -> Option<usize> {
     let frame_size = MavHeader::SIZE + SystemTime::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
     }
 
-    let offset = write_header(buf, SystemTime::PAYLOAD_LEN as u8, seq, sys_id, comp_id, SystemTime::MSG_ID);
+    let offset = write_header(
+        buf,
+        SystemTime::PAYLOAD_LEN as u8,
+        seq,
+        sys_id,
+        comp_id,
+        SystemTime::MSG_ID,
+    );
 
     write_u64_le(buf, offset, msg.time_unix_usec);
     write_u32_le(buf, offset + 8, msg.time_boot_ms);
@@ -1204,7 +1238,13 @@ fn serialize_attitude_quaternion(
     ))
 }
 
-fn serialize_local_position_ned(msg: &LocalPositionNed, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_local_position_ned(
+    msg: &LocalPositionNed,
+    seq: u8,
+    sys_id: u8,
+    comp_id: u8,
+    buf: &mut [u8],
+) -> Option<usize> {
     let frame_size = MavHeader::SIZE + LocalPositionNed::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
@@ -1315,7 +1355,13 @@ fn serialize_set_position_target_local_ned(
     ))
 }
 
-fn serialize_command_long(msg: &CommandLong, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_command_long(
+    msg: &CommandLong,
+    seq: u8,
+    sys_id: u8,
+    comp_id: u8,
+    buf: &mut [u8],
+) -> Option<usize> {
     let frame_size = MavHeader::SIZE + CommandLong::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
@@ -1345,13 +1391,26 @@ fn serialize_command_long(msg: &CommandLong, seq: u8, sys_id: u8, comp_id: u8, b
     Some(write_crc(buf, offset + CommandLong::PAYLOAD_LEN, 152))
 }
 
-fn serialize_command_ack(msg: &CommandAck, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_command_ack(
+    msg: &CommandAck,
+    seq: u8,
+    sys_id: u8,
+    comp_id: u8,
+    buf: &mut [u8],
+) -> Option<usize> {
     let frame_size = MavHeader::SIZE + CommandAck::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
     }
 
-    let offset = write_header(buf, CommandAck::PAYLOAD_LEN as u8, seq, sys_id, comp_id, CommandAck::MSG_ID);
+    let offset = write_header(
+        buf,
+        CommandAck::PAYLOAD_LEN as u8,
+        seq,
+        sys_id,
+        comp_id,
+        CommandAck::MSG_ID,
+    );
 
     write_u16_le(buf, offset, msg.command);
     buf[offset + 2] = msg.result;
@@ -1415,7 +1474,13 @@ fn serialize_rc_channels_override(
     ))
 }
 
-fn serialize_manual_control(msg: &ManualControl, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_manual_control(
+    msg: &ManualControl,
+    seq: u8,
+    sys_id: u8,
+    comp_id: u8,
+    buf: &mut [u8],
+) -> Option<usize> {
     let frame_size = MavHeader::SIZE + ManualControl::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
@@ -1451,13 +1516,26 @@ fn serialize_manual_control(msg: &ManualControl, seq: u8, sys_id: u8, comp_id: u
     Some(write_crc(buf, offset + ManualControl::PAYLOAD_LEN, 243))
 }
 
-fn serialize_sys_status(msg: &SysStatus, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_sys_status(
+    msg: &SysStatus,
+    seq: u8,
+    sys_id: u8,
+    comp_id: u8,
+    buf: &mut [u8],
+) -> Option<usize> {
     let frame_size = MavHeader::SIZE + SysStatus::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
     }
 
-    let offset = write_header(buf, SysStatus::PAYLOAD_LEN as u8, seq, sys_id, comp_id, SysStatus::MSG_ID);
+    let offset = write_header(
+        buf,
+        SysStatus::PAYLOAD_LEN as u8,
+        seq,
+        sys_id,
+        comp_id,
+        SysStatus::MSG_ID,
+    );
 
     write_u32_le(buf, offset, msg.onboard_control_sensors_present);
     write_u32_le(buf, offset + 4, msg.onboard_control_sensors_enabled);
@@ -1494,13 +1572,26 @@ fn serialize_sys_status(msg: &SysStatus, seq: u8, sys_id: u8, comp_id: u8, buf: 
     Some(write_crc(buf, offset + SysStatus::PAYLOAD_LEN, 124))
 }
 
-fn serialize_statustext(msg: &Statustext, seq: u8, sys_id: u8, comp_id: u8, buf: &mut [u8]) -> Option<usize> {
+fn serialize_statustext(
+    msg: &Statustext,
+    seq: u8,
+    sys_id: u8,
+    comp_id: u8,
+    buf: &mut [u8],
+) -> Option<usize> {
     let frame_size = MavHeader::SIZE + Statustext::PAYLOAD_LEN + 2;
     if buf.len() < frame_size {
         return None;
     }
 
-    let offset = write_header(buf, Statustext::PAYLOAD_LEN as u8, seq, sys_id, comp_id, Statustext::MSG_ID);
+    let offset = write_header(
+        buf,
+        Statustext::PAYLOAD_LEN as u8,
+        seq,
+        sys_id,
+        comp_id,
+        Statustext::MSG_ID,
+    );
 
     buf[offset] = msg.severity;
     for i in 0..50 {
@@ -2007,9 +2098,8 @@ mod tests {
     // - command=400 (ARM_DISARM), param1=1.0 (ARM)
     // - Uses CRC extra 152 for COMMAND_LONG
     const PYTHON_TEST_COMMAND_LONG_ARM: &[u8] = &[
-        253, 33, 0, 0, 0, 255, 0, 76, 0, 0, 0, 0, 128, 63, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 144, 1, 1, 1, 0, 255, 144,
+        253, 33, 0, 0, 0, 255, 0, 76, 0, 0, 0, 0, 128, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 144, 1, 1, 1, 0, 255, 144,
     ];
 
     #[test]

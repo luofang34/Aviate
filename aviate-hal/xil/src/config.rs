@@ -134,10 +134,8 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
                     "lockstep" => config.lockstep = value == "true",
                     _ => {}
                 },
-                "world" => {
-                    if key == "file" {
-                        config.world_file = value;
-                    }
+                "world" if key == "file" => {
+                    config.world_file = value;
                 }
                 "vehicles" => {
                     if let Some(ref mut vehicle) = current_vehicle {
