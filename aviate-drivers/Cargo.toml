@@ -19,9 +19,13 @@ embedded-hal = "1.0"
 # Math for no_std (powf, etc.)
 libm = "0.2"
 
-# External sensor drivers (embedded-hal 1.0 compatible)
+# External sensor drivers (embedded-hal 1.0 compatible).
+# Cargo.lock is gitignored in this repo, so CI resolves to latest-compatible
+# on every run. bmi2 0.1.2 is API-incompatible with our bmi270.rs (Bmi2 gained
+# two generics and new_spi gained a delay argument); pin exactly until the
+# code is updated to the new shape.
 bmi088 = "0.2"
-bmi2 = "0.1"
+bmi2 = "=0.1.1"
 
 # Forked sensor drivers (will be upgraded to embedded-hal 1.0)
 # spl06-007 = { path = "external/spl06-007" }
