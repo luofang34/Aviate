@@ -1,0 +1,34 @@
+//! Aggregate check bundle owned by the kernel.
+//!
+//! `KernelChecks` holds the three check categories (pre-arm, in-flight,
+//! transition) as a single owned value so kernel code can borrow them
+//! together without juggling three fields.
+
+use super::in_flight::InFlightStatus;
+use super::pre_arm::{PreArmFlags, PreArmStatus};
+use super::transition::TransitionStatus;
+
+/// All checks managed by the kernel
+#[derive(Clone, Debug, Default)]
+pub struct KernelChecks {
+    /// Pre-arm checks (InitState transitions)
+    pub pre_arm: PreArmStatus,
+    /// In-flight checks (continuous monitoring)
+    pub in_flight: InFlightStatus,
+    /// Transition checks (ConfigMode changes)
+    pub transition: TransitionStatus,
+}
+
+impl KernelChecks {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create with custom pre-arm requirements
+    pub fn with_pre_arm_required(required: PreArmFlags) -> Self {
+        Self {
+            pre_arm: PreArmStatus::with_required(required),
+            ..Default::default()
+        }
+    }
+}
