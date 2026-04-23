@@ -139,7 +139,7 @@ pub struct LawProfile {
     pub authority: AuthorityProfile,
     pub chain: &'static [ControlLawV1],
     // capabilities...
-}
+} // COV:EXCL(phantom DA from enums.rs re-export; real line has no code)
 
 #[derive(Clone, Debug)]
 pub struct AxisCommand {
@@ -155,15 +155,18 @@ pub trait VehicleController {
         state: &StateEstimate,
         command: &Command, // Note: This now refers to the new Command struct
         mode: ConfigMode,
-        limits: &Limits,
-    ) -> AxisCommand;
-}
+        limits: &Limits, // COV:EXCL(phantom DA from enums.rs re-export; param decl)
+    ) -> AxisCommand; // COV:EXCL(phantom DA from enums.rs re-export; return type)
+} // COV:EXCL(phantom DA from enums.rs re-export; real line has no code)
 
+// COV:EXCL_START(phantom DA from enums.rs re-export: these mod decls carry
+//   coverage attributions from enums.rs items re-exported via `pub use`.)
 pub mod attitude;
 pub mod envelope;
 pub mod position;
 pub mod rate;
 pub mod velocity;
+// COV:EXCL_STOP
 
 #[cfg(feature = "mc")]
 pub mod multirotor;
