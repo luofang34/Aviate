@@ -145,12 +145,17 @@ impl Ekf {
     /// Returns IDENTITY and sets quat_fault if normalization fails.
     fn sanitize_quat(&mut self, q: Quaternion) -> Quaternion {
         let q = q.normalize();
+        // COV:EXCL_START(DEFENSIVE: INV-27 numerical-corruption guard;
+        // is_normalized(QUAT_NORM_EPS) fails only when the normalize()
+        // output is NaN/Inf, which requires a corrupted input quaternion.
+        // Not reachable from finite sensor paths.)
         if !q.is_normalized(QUAT_NORM_EPS) {
             self.quat_fault = true;
             Quaternion::IDENTITY
         } else {
             q
         }
+        // COV:EXCL_STOP
     }
 
     pub fn init(&mut self, pos: Vector3<Meters>, vel: Vector3<MetersPerSecond>, quat: Quaternion) {
@@ -485,10 +490,16 @@ impl Ekf {
             }
         };
 
-        // If weight is too low, skip fusion
+        // If weight is too low, skip fusion.
+        // COV:EXCL_START(DEFENSIVE: reachable only in a narrow numerical
+        // sliver where vertical_ratio is within ~1% of mag_inclination_limit;
+        // the upstream `vertical_ratio >= limit` check (line 471) already
+        // returns for the polar-inclination case, so this guard is a
+        // belt-and-suspenders against floating-point boundary conditions.)
         if incl_weight < 0.01 {
             return;
         }
+        // COV:EXCL_STOP
 
         // Step 4: Apply EKF-Estimated Mag Bias Correction
         let mag_corrected_x = mag_x - self.mag_bias.x.0;

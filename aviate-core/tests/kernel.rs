@@ -2372,6 +2372,7 @@ fn handle_degradation_all_reasons() {
         ),
         (DegradationReason::BaroDegraded, ControlLawV1::Alternate),
         (DegradationReason::RcLost, ControlLawV1::Alternate),
+        (DegradationReason::TimingViolation, ControlLawV1::Alternate),
     ];
 
     for (reason, expected_law) in reasons_and_expected_laws {
@@ -3065,4 +3066,61 @@ fn report_timing_violation_counts_total() {
     // Total unchanged, consecutive reset
     assert_eq!(kernel.timing_stats.deadline_violations, 10);
     assert_eq!(kernel.timing_stats.consecutive_violations, 0);
+}
+
+/// Drive the timing-violation degradation branch in `update()`.
+///
+/// After `TIMING_VIOLATION_THRESHOLD` (3) consecutive reported
+/// violations, the next armed `update()` call must degrade to
+/// `ControlLawV1::Alternate` via `DegradationReason::TimingViolation`.
+/// Covers the `if self.timing_stats.consecutive_violations >=
+/// TIMING_VIOLATION_THRESHOLD` branch in the per-cycle path.
+#[test]
+fn update_degrades_on_persistent_timing_violation() {
+    let mut kernel = make_kernel();
+    let sensors = make_valid_sensors();
+
+    kernel.ekf.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
+        Quaternion::IDENTITY,
+    );
+    for _ in 0..150 {
+        kernel.init_step(&sensors, dummy_timestamp());
+    }
+    kernel.arm().unwrap();
+
+    // Record 3 consecutive violations — the threshold.
+    for _ in 0..aviate_core::TIMING_VIOLATION_THRESHOLD {
+        kernel.report_timing_violation(true);
+    }
+
+    let cmd = Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint::default(),
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 0,
+        source: CommandSource::Pilot,
+    };
+    let actuator_state = kernel.actuator_state.clone();
+    let result = kernel.update(
+        ChannelId::PRIMARY,
+        dummy_time_delta(),
+        &sensors,
+        &cmd,
+        &actuator_state,
+        None,
+    );
+
+    let event = result
+        .degradation
+        .expect("threshold-crossing call should emit a degradation event");
+    assert_eq!(event.reason, DegradationReason::TimingViolation);
+    assert_eq!(event.to, ControlLawV1::Alternate);
+    assert_eq!(kernel.control_law, ControlLawV1::Alternate);
 }
