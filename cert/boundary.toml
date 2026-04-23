@@ -1,0 +1,58 @@
+# Navigate Certification Boundary Configuration
+# Schema version: 0.0.1
+
+[schema]
+version = "0.0.1"
+
+[scope]
+# In-scope crates implement the three kernel responsibilities declared
+# in docs/AVIATE_SPEC.md §2.1: state estimation, stabilization control,
+# and actuation output. Everything else (HAL backends, SITL, GCS,
+# tooling) is integration/test infrastructure and stays out of scope.
+in_scope = [
+    "aviate-core",
+    "aviate-link",
+    "aviate-hal-io",
+    "aviate-airframe-multirotor",
+    "aviate-airframe-fixed-wing",
+    "aviate-drivers",
+]
+
+trace_roots = ["cert/trace"]
+
+# Crates that must never appear in an in-scope dependency closure.
+# Simulator/test backends belong to integration infrastructure, not
+# to the flight build.
+explicit_forbidden = [
+    "aviate-hal-xil",
+    "aviate-backend-gz",
+    "aviate-backend-mavlink-hil",
+]
+
+[policy]
+# NOTE: these three flags are reserved for upcoming real enforcement.
+# Until each one's cargo-metadata-backed check lands, enabling it
+# causes `cargo evidence generate` to refuse the run — the tool will
+# not silently produce a bundle stamped cert-ready under a rule it
+# never actually checked. Flip to `true` per rule once this release
+# notes that rule as enforced.
+
+# Forbid dependencies on out-of-scope workspace crates (enforcement TBD)
+no_out_of_scope_deps = false
+
+# Forbid build.rs in boundary crates (enforcement TBD; DO-178C determinism)
+forbid_build_rs = false
+
+# Forbid proc-macros in boundary crates (enforcement TBD; DO-178C auditability)
+forbid_proc_macros = false
+
+[forbidden_external]
+# External crates that are forbidden with reasons
+# "crate_name" = "reason"
+
+[dal]
+# Starting at DAL-D until trace chain (SYS/HLR/LLR/Test) is populated
+# and a cert/QUALIFICATION.md gap statement exists. Promoting to DAL-B
+# turns on DOCTOR_TRACE_INVALID and DOCTOR_QUALIFICATION_MISSING gates,
+# which flight-control work eventually needs to clear.
+default_dal = "D"

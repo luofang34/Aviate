@@ -133,6 +133,37 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  evidence:
+    name: Evidence Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-evidence-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-evidence
+        run: cargo install cargo-evidence --locked
+
+      - name: Run cargo evidence doctor
+        run: cargo evidence doctor
+
+      - name: Run cargo evidence check
+        run: cargo evidence check
+
+      - name: Run cargo evidence floors
+        run: cargo evidence floors
+
   doc:
     name: Documentation
     runs-on: ubuntu-latest

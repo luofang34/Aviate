@@ -1,0 +1,17 @@
+# High-Level Requirements
+#
+# Each [[requirements]] entry must include:
+#   uid    - unique identifier (e.g. "HLR-001")
+#   id     - human-readable slug
+#   title  - short description
+# Optional fields: owner, description, rationale, sort_key,
+#   scope, category, source, verification_methods
+
+requirements = []
+
+[schema]
+version = "0.0.1"
+
+[meta]
+document_id = "HLR-DOC-001"
+revision = "1"

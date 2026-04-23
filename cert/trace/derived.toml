@@ -1,0 +1,18 @@
+# Derived Requirements
+#
+# Each [[requirements]] entry must include:
+#   uid            - unique identifier (e.g. "DRQ-001")
+#   id             - human-readable slug
+#   title          - short description
+#   rationale      - why this requirement was derived
+# Optional fields: owner, description, sort_key,
+#   safety_impact ("none" | "low" | "medium" | "high"), source
+
+requirements = []
+
+[schema]
+version = "0.0.1"
+
+[meta]
+document_id = "DRQ-DOC-001"
+revision = "1"

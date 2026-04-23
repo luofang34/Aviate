@@ -1,0 +1,25 @@
+# System Requirements
+#
+# The top of the DO-178C §5.1 trace chain: system-level assumptions the
+# software is supposed to enforce. Each HLR below should traces_to at
+# least one SYS entry at DAL-A/B.
+#
+# Each [[requirements]] entry must include:
+#   uid    - unique identifier (e.g. "SYS-001")
+#   id     - human-readable slug
+#   title  - short description
+# Optional fields: owner, description, rationale,
+#   verification_methods, source.
+
+# Requirements are added as docs/AVIATE_SPEC.md invariants (§§7-20, 31-37)
+# are broken down into traceable entries. Empty until then — shipping
+# placeholder UIDs that downstream traces would inherit is worse than
+# absence.
+requirements = []
+
+[schema]
+version = "0.0.1"
+
+[meta]
+document_id = "SYS-DOC-001"
+revision = "1"

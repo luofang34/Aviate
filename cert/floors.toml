@@ -1,0 +1,24 @@
+# Ratcheting-floors config — rigor only moves up.
+#
+# Each dimension listed under [floors] becomes a CI gate: the current
+# measurement must be >= the committed floor. Lowering a value requires
+# a `Lower-Floor: <dimension> <reason>` line in the PR body; without it,
+# CI fires FLOORS_LOWERED_WITHOUT_JUSTIFICATION. Only dimensions listed
+# are enforced — missing ones are skipped, not assumed zero.
+#
+# This project uses an `aviate-*` top-level crate layout rather than the
+# `crates/*/src/` default that some measurement helpers assume. Before
+# pinning a real dimension, verify that `cargo evidence floors` reports
+# a non-zero current measurement for it in this layout; otherwise the
+# floor will appear violated from day one. See the cargo-evidence README
+# section "`cargo evidence floors` — the ratchet".
+
+[floors]
+# Floors will be added as the corresponding measurement helpers are
+# validated against this layout. Intentionally empty for now — the file's
+# presence satisfies DOCTOR_FLOORS_MISSING; each added floor is its own
+# reviewable PR.
+
+[delta_ceilings]
+# Reserved for delta-based gates (new dead-code allows, new library
+# panics). Parsed today, enforced via a follow-up release.

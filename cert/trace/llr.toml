@@ -1,0 +1,18 @@
+# Low-Level Requirements
+#
+# Each [[requirements]] entry must include:
+#   uid         - unique identifier (e.g. "LLR-001")
+#   id          - human-readable slug
+#   title       - short description
+#   traces_to   - list of HLR UIDs this LLR derives from
+# Optional fields: owner, description, rationale, sort_key,
+#   derived (bool), modules, verification_methods, source
+
+requirements = []
+
+[schema]
+version = "0.0.1"
+
+[meta]
+document_id = "LLR-DOC-001"
+revision = "1"

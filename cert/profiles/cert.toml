@@ -1,0 +1,17 @@
+# Certification Profile
+# Strict checks for certification builds
+
+[profile]
+name = "cert"
+description = "Certification profile with strict compliance checks"
+
+[checks]
+require_clean_git = true
+require_coverage = true
+allow_all_features = false
+offline_required = true
+
+[evidence]
+include_timestamps = false
+strict_hash_validation = true
+fail_on_dirty = true

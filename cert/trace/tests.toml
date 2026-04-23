@@ -1,0 +1,18 @@
+# Test Cases
+#
+# Each [[tests]] entry must include:
+#   uid        - unique identifier (e.g. "TST-001")
+#   id         - human-readable slug
+#   title      - short description
+#   traces_to  - list of LLR UIDs this test verifies
+# Optional fields: owner, description, sort_key, category,
+#   test_selector (e.g. "crate::module::test_fn"), source
+
+tests = []
+
+[schema]
+version = "0.0.1"
+
+[meta]
+document_id = "TST-DOC-001"
+revision = "1"
