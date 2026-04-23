@@ -36,7 +36,12 @@ pub use crate::checks::{
 };
 
 pub use crate::kernel::{init_core, AviateKernel, AviateKernelImpl, InitState, Watchdog};
-pub use crate::kernel_trait::AviateKernelTrait;
+// AviateKernelTrait is deliberately NOT re-exported at the crate root:
+// rustc's coverage debug info attributes re-exported trait-impl items to
+// SF:lib.rs with the defining file's line numbers, producing phantom DA
+// entries and phantom FN entries that can't be silenced by COV:EXCL on
+// the defining file. Consumers import via `aviate_core::kernel_trait::
+// AviateKernelTrait` — no external callers use the short path today.
 pub use crate::kernel_types::{
     ArmError, ChannelHealthV1, ChannelId, ChannelStatus, Config, ConfigBlock, ConfigError,
     ConfigTransitionState, CrossChannelData, CycleTiming, DegradationEvent, EnumValidationError,
