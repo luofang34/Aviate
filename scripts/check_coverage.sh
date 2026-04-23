@@ -112,6 +112,42 @@ grcov . \
     $LLVM_PATH \
     --output-path "$OUTPUT_DIR/html"
 
+# Strip phantom DA/BRDA entries that point past the end of a source file.
+# Rust re-exports (pub use foo::Bar) cause rustc's coverage debug info to
+# attribute inlined items to BOTH the re-exporting file and the defining
+# file — but with the DEFINING file's line numbers. In lcov.info this
+# shows up as DA entries under SF:control.rs at lines that only exist in
+# control/enums.rs, which later reports as "uncovered" in a shorter file.
+# Filter them out once before any downstream aggregation sees them.
+awk '
+/^SF:/ {
+    f = $0
+    sub(/^SF:/, "", f)
+    fl = 0
+    if ((getline line < f) >= 0) {
+        close(f)
+        cmd = "wc -l < \"" f "\" 2>/dev/null"
+        cmd | getline fl
+        close(cmd)
+        fl = fl + 0
+    }
+    print
+    next
+}
+/^DA:/ || /^BRDA:/ {
+    if (fl > 0) {
+        split($0, a, ":")
+        split(a[2], b, ",")
+        ln = b[1] + 0
+        if (ln > fl) next
+    }
+    print
+    next
+}
+{ print }
+' "$OUTPUT_DIR/lcov.info" > "$OUTPUT_DIR/lcov.info.filtered"
+mv "$OUTPUT_DIR/lcov.info.filtered" "$OUTPUT_DIR/lcov.info"
+
 # Calculate metrics
 read -r LINE_HIT LINE_TOTAL BRANCH_HIT BRANCH_TOTAL < <(
     awk '
