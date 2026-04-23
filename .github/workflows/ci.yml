@@ -23,6 +23,11 @@ jobs:
         with:
           submodules: recursive
 
+      # libudev-sys (transitive via `serialport`) needs libudev headers
+      # at build time on Linux. macOS/Windows are fine without this.
+      - name: Install system libudev
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -60,6 +65,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install system libudev
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -82,6 +90,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Install system libudev
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
 
       - name: Install Rust nightly + llvm-tools
         run: |
@@ -140,6 +151,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Install system libudev
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
