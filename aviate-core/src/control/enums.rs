@@ -139,8 +139,7 @@ impl ControlLawV1 {
             }
         } // COV:EXCL(LLVM: for-loop exit edge artifact)
         best
-    } // COV:EXCL_START(LLVM: function boundary artifact)
-      // COV:EXCL_STOP
+    } // COV:EXCL(LLVM: function boundary artifact)
 
     /// Returns the 16-bit center-code for this variant
     pub const fn to_code(self) -> u16 {
@@ -152,9 +151,7 @@ impl ControlLawV1 {
         }
     }
 
-    // COV:EXCL_START(STUB: Future ECC decode for wire/cross-channel, not yet used)
     /// Future: ECC decode allowing 1-2 bit correction
-    #[allow(dead_code)]
     pub fn try_from_with_ecc(value: u16) -> Result<(Self, u8), EnumValidationError> {
         let (law, d, _) = Self::decode_center(value);
         if d <= 2 {
@@ -163,7 +160,6 @@ impl ControlLawV1 {
             Err(EnumValidationError)
         }
     }
-    // COV:EXCL_STOP
 }
 
 /// v0.5.1: Strict center-only decode - all non-center codes → EnumInvalid

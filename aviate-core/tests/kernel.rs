@@ -3068,6 +3068,52 @@ fn report_timing_violation_counts_total() {
     assert_eq!(kernel.timing_stats.consecutive_violations, 0);
 }
 
+/// Drive the in-flight-checks degradation branch in `update()`.
+///
+/// When `consecutive_violations < TIMING_VIOLATION_THRESHOLD` but
+/// `get_degradation_trigger()` returns `Some(reason)`, the `else if`
+/// arm fires. Achieved here by forcing the kernel into `Armed` with an
+/// un-initialized EKF — `update_from_state` then sees empty valid_flags
+/// and clears ATTITUDE_VALID, which `get_degradation_trigger` maps to
+/// `DegradationReason::AttitudeLost` (priority 1).
+#[test]
+fn update_degrades_on_in_flight_trigger() {
+    let mut kernel = make_kernel();
+    let sensors = make_valid_sensors();
+
+    // Armed but EKF never initialized — valid_flags will be empty.
+    kernel.init_state = InitState::Armed;
+    assert!(!kernel.ekf.is_initialized());
+
+    // Ensure timing-violation branch is NOT the one that fires.
+    assert_eq!(kernel.timing_stats.consecutive_violations, 0);
+
+    let cmd = Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint::default(),
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 0,
+        source: CommandSource::Pilot,
+    };
+    let actuator_state = kernel.actuator_state.clone();
+    let result = kernel.update(
+        ChannelId::PRIMARY,
+        dummy_time_delta(),
+        &sensors,
+        &cmd,
+        &actuator_state,
+        None,
+    );
+
+    let event = result
+        .degradation
+        .expect("uninitialized EKF + armed should trigger an in-flight degradation");
+    assert_eq!(event.reason, DegradationReason::AttitudeLost);
+    // AttitudeLost maps to Backup.
+    assert_eq!(event.to, ControlLawV1::Backup);
+}
+
 /// Drive the timing-violation degradation branch in `update()`.
 ///
 /// After `TIMING_VIOLATION_THRESHOLD` (3) consecutive reported
