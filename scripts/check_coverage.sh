@@ -79,6 +79,7 @@ grcov . \
     --ignore "aviate-apps/*" \
     --ignore "aviate-hal/*" \
     --keep-only "aviate-core/src/*" \
+    --keep-only "aviate-core/src/**/*" \
     --excl-line "COV:EXCL" \
     --excl-start "COV:EXCL_START" \
     --excl-stop "COV:EXCL_STOP" \
@@ -101,6 +102,7 @@ grcov . \
     --ignore "aviate-apps/*" \
     --ignore "aviate-hal/*" \
     --keep-only "aviate-core/src/*" \
+    --keep-only "aviate-core/src/**/*" \
     --excl-line "COV:EXCL" \
     --excl-start "COV:EXCL_START" \
     --excl-stop "COV:EXCL_STOP" \
