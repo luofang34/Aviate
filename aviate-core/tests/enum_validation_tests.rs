@@ -664,3 +664,33 @@ fn command_validate_enums_with_config_mode_request() {
         );
     }
 }
+
+// ============================================================================
+// ControlLawV1::try_from_with_ecc coverage
+// ============================================================================
+
+/// Exercise `try_from_with_ecc` at each Hamming-distance regime so it
+/// stops needing `COV:EXCL_START/STOP` to reach 100% line coverage.
+#[test]
+fn control_law_try_from_with_ecc_at_each_distance() {
+    // Exact center — distance 0, Ok.
+    let (law, d) = ControlLawV1::try_from_with_ecc(0x0000).expect("exact center decodes");
+    assert_eq!(law, ControlLawV1::Primary);
+    assert_eq!(d, 0);
+
+    // One-bit flip from Primary — distance 1, still Ok.
+    let (law, d) = ControlLawV1::try_from_with_ecc(0x0001).expect("1-bit flip within ECC budget");
+    assert_eq!(law, ControlLawV1::Primary);
+    assert_eq!(d, 1);
+
+    // Two-bit flip from Alternate (0x5555 → 0x5556) — distance 2, at budget.
+    let (law, d) = ControlLawV1::try_from_with_ecc(0x5556).expect("2-bit flip within ECC budget");
+    assert_eq!(law, ControlLawV1::Alternate);
+    assert_eq!(d, 2);
+
+    // Three-bit flip from Primary (0x0000 → 0x0007) — distance 3, over budget → Err.
+    assert_eq!(
+        ControlLawV1::try_from_with_ecc(0x0007),
+        Err(EnumValidationError)
+    );
+}
