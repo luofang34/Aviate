@@ -2,7 +2,7 @@
 //!
 //! Standard MAVLink v2 HIL (Hardware-In-The-Loop) messages for legacy simulator
 //! compatibility. These messages are defined in the MAVLink common message set:
-//! https://mavlink.io/en/messages/common.html
+//! <https://mavlink.io/en/messages/common.html>
 //!
 //! Supported messages:
 //! - HEARTBEAT (0): Connection heartbeat
@@ -119,7 +119,7 @@ pub const HIL_ACTUATOR_CONTROLS_ID: u8 = 93;
 /// Sent from simulator to autopilot.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HilSensor {
-    /// Timestamp (UNIX Epoch time or time since system boot) [us]
+    /// Timestamp (UNIX Epoch time or time since system boot) \[us\]
     pub time_usec: u64,
     /// X acceleration [m/s^2]
     pub xacc: f32,
@@ -133,19 +133,19 @@ pub struct HilSensor {
     pub ygyro: f32,
     /// Angular speed around Z axis in body frame [rad/s]
     pub zgyro: f32,
-    /// X Magnetic field [gauss]
+    /// X Magnetic field \[gauss\]
     pub xmag: f32,
-    /// Y Magnetic field [gauss]
+    /// Y Magnetic field \[gauss\]
     pub ymag: f32,
-    /// Z Magnetic field [gauss]
+    /// Z Magnetic field \[gauss\]
     pub zmag: f32,
-    /// Absolute pressure [hPa]
+    /// Absolute pressure \[hPa\]
     pub abs_pressure: f32,
-    /// Differential pressure (airspeed) [hPa]
+    /// Differential pressure (airspeed) \[hPa\]
     pub diff_pressure: f32,
     /// Altitude calculated from pressure
     pub pressure_alt: f32,
-    /// Temperature [degC]
+    /// Temperature \[degC\]
     pub temperature: f32,
     /// Bitmap for fields that have updated since last message
     pub fields_updated: u32,
@@ -210,13 +210,13 @@ impl HilSensor {
 /// Sent from simulator to autopilot. Values in GPS frame (right-handed, Z-up).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HilGps {
-    /// Timestamp (UNIX Epoch time or time since system boot) [us]
+    /// Timestamp (UNIX Epoch time or time since system boot) \[us\]
     pub time_usec: u64,
-    /// Latitude [degE7]
+    /// Latitude \[degE7\]
     pub lat: i32,
-    /// Longitude [degE7]
+    /// Longitude \[degE7\]
     pub lon: i32,
-    /// Altitude MSL [mm]
+    /// Altitude MSL \[mm\]
     pub alt: i32,
     /// GPS HDOP horizontal dilution of position [unitless * 100]
     pub eph: u16,
@@ -230,7 +230,7 @@ pub struct HilGps {
     pub ve: i16,
     /// GPS velocity in down direction (NED) [cm/s]
     pub vd: i16,
-    /// Course over ground [cdeg], 0..35999, 65535 if unknown
+    /// Course over ground \[cdeg\], 0..35999, 65535 if unknown
     pub cog: u16,
     /// GPS fix type: 0-1=no fix, 2=2D, 3=3D, 4=DGPS, 5=RTK
     pub fix_type: u8,
@@ -238,7 +238,7 @@ pub struct HilGps {
     pub satellites_visible: u8,
     /// GPS ID (zero indexed, extension field)
     pub id: u8,
-    /// Yaw of vehicle relative to Earth's North [cdeg], 0=not available, 36000=north
+    /// Yaw of vehicle relative to Earth's North \[cdeg\], 0=not available, 36000=north
     pub yaw: u16,
 }
 
@@ -306,7 +306,7 @@ impl HilGps {
 /// and acceleration for ground truth or sensor fusion.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HilStateQuaternion {
-    /// Timestamp (UNIX Epoch time or time since system boot) [us]
+    /// Timestamp (UNIX Epoch time or time since system boot) \[us\]
     pub time_usec: u64,
     /// Vehicle attitude quaternion [w, x, y, z] (normalized, Hamilton convention)
     pub attitude_quaternion: [f32; 4],
@@ -316,11 +316,11 @@ pub struct HilStateQuaternion {
     pub pitchspeed: f32,
     /// Body frame yaw rate [rad/s]
     pub yawspeed: f32,
-    /// Latitude [degE7]
+    /// Latitude \[degE7\]
     pub lat: i32,
-    /// Longitude [degE7]
+    /// Longitude \[degE7\]
     pub lon: i32,
-    /// Altitude MSL [mm]
+    /// Altitude MSL \[mm\]
     pub alt: i32,
     /// Ground X speed (latitude direction) [cm/s]
     pub vx: i16,
@@ -332,11 +332,11 @@ pub struct HilStateQuaternion {
     pub ind_airspeed: u16,
     /// True airspeed [cm/s]
     pub true_airspeed: u16,
-    /// X-axis acceleration [mG] (milliGs)
+    /// X-axis acceleration \[mG\] (milliGs)
     pub xacc: i16,
-    /// Y-axis acceleration [mG] (milliGs)
+    /// Y-axis acceleration \[mG\] (milliGs)
     pub yacc: i16,
-    /// Z-axis acceleration [mG] (milliGs)
+    /// Z-axis acceleration \[mG\] (milliGs)
     pub zacc: i16,
 }
 
@@ -405,7 +405,7 @@ impl HilStateQuaternion {
 /// Sent from autopilot to simulator.
 #[derive(Clone, Copy, Debug)]
 pub struct HilActuatorControls {
-    /// Timestamp (UNIX Epoch time or time since system boot) [us]
+    /// Timestamp (UNIX Epoch time or time since system boot) \[us\]
     pub time_usec: u64,
     /// Control outputs -1..1, channel assignment depends on simulated hardware
     pub controls: [f32; 16],

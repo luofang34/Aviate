@@ -46,7 +46,7 @@ use aviate_link::mavlink::{
 /// Backend-agnostic vehicle state
 #[derive(Clone, Debug, Default)]
 pub struct VehicleState {
-    /// Position in NED frame [m]
+    /// Position in NED frame \[m\]
     pub position: [f32; 3],
     /// Velocity in NED frame [m/s]
     pub velocity: [f32; 3],

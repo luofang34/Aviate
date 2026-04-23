@@ -23,7 +23,7 @@
 //!    - `format_attitude()` - Format state → MAVLink ATTITUDE_QUATERNION
 //!    - No I/O, bounded runtime, can be called from control loop
 //!
-//! 2. **MavlinkTelemetry<T>** (low-DAL I/O sender):
+//! 2. **`MavlinkTelemetry<T>`** (low-DAL I/O sender):
 //!    - Implements `TelemetryBackend` trait
 //!    - Performs I/O via `FrameTx`
 //!    - MUST NOT be called from high-DAL control code

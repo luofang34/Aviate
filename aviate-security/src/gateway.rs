@@ -53,8 +53,8 @@ use crate::errors::GatewayResult;
 ///
 /// ## Type Parameters
 ///
-/// - `L`: CommandLink implementation (e.g., MavlinkCommandLink<UsbRx>)
-/// - `A`: CommandAuth implementation (e.g., SignedAuth<KeyStore, CryptoEngine>)
+/// - `L`: CommandLink implementation (e.g., `MavlinkCommandLink<UsbRx>`)
+/// - `A`: CommandAuth implementation (e.g., `SignedAuth<KeyStore, CryptoEngine>`)
 ///
 /// ## DO-178C Contract
 ///

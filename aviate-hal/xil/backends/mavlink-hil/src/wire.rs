@@ -1,7 +1,7 @@
 //! MAVLink v2 Wire Protocol
 //!
 //! Implements the MAVLink v2 framing protocol for packet serialization and parsing.
-//! Reference: https://mavlink.io/en/guide/serialization.html
+//! Reference: <https://mavlink.io/en/guide/serialization.html>
 //!
 //! Frame structure:
 //! ```text
@@ -20,7 +20,7 @@ pub const MAVLINK_STX_V2: u8 = 0xFD;
 /// MAVLink v1 start byte (for compatibility)
 pub const MAVLINK_STX_V1: u8 = 0xFE;
 
-/// Minimum header size for v2 (STX + LEN + INC + CMP + SEQ + SYS + CMP + MSG_ID[3])
+/// Minimum header size for v2 (STX + LEN + INC + CMP + SEQ + SYS + CMP + MSG_ID\[3\])
 pub const HEADER_SIZE: usize = 10;
 
 /// Header size for v1 (STX + LEN + SEQ + SYS + CMP + MSG_ID)
