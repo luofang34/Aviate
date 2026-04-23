@@ -151,9 +151,11 @@ impl Ekf {
     pub fn is_initialized(&self) -> bool {
         self.initialized
     }
+    // COV:EXCL(phantom DA from ekf/ submodule impl blocks; blank line)
 
     /// Returns true if a quaternion normalization fault has occurred (INV-27).
     /// Fault latches until init() is called.
+    // COV:EXCL(phantom DA from ekf/ submodule impl blocks; doc comment)
     pub fn has_numeric_fault(&self) -> bool {
         self.quat_fault
     }
