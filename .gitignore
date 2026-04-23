@@ -26,12 +26,15 @@ GEMINI*.md
 # Rust tooling
 /.cargo/
 /.rustup/
-Cargo.lock
 **/*.rs.bk
 
 # Workspace-specific
 **/target/
-**/Cargo.lock
+# Cargo.lock is intentionally committed: this is a flight-controller
+# workspace (application, not library). Pinning the dependency graph is
+# a prerequisite for reproducible builds and DO-178C evidence. See
+# `cargo evidence` + CONTRIBUTING.md's Override-Deterministic-Baseline
+# protocol for how to legitimately update the lock.
 
 # IDE/editor cruft
 .idea/
