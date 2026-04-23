@@ -36,7 +36,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use aviate_board_sitl_gazebo::GazeboSitlBoard;
-use log::{info, warn, error};
+use log::{error, info, warn};
 
 /// Command line options
 struct Options {

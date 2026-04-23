@@ -40,14 +40,17 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Verify workspace manifest
+        run: cargo metadata --no-deps --format-version 1 > /dev/null
+
       - name: Check workspace (host)
-        run: cargo check --workspace --exclude aviate-app-quadcopter-stm32h7
+        run: cargo check --workspace
 
       - name: Check embedded target
-        run: cargo check -p aviate-app-quadcopter-stm32h7 --target thumbv7em-none-eabihf
+        run: cargo check --manifest-path aviate-apps/micoair-h743-v2-test/Cargo.toml --target thumbv7em-none-eabihf
 
       - name: Clippy (host)
-        run: cargo clippy --workspace --exclude aviate-app-quadcopter-stm32h7 -- -D warnings
+        run: cargo clippy --workspace -- -D warnings
 
   test:
     name: Tests
@@ -70,7 +73,7 @@ jobs:
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests
-        run: cargo test --workspace --exclude aviate-app-quadcopter-stm32h7
+        run: cargo test --workspace
 
   coverage:
     name: Coverage (DO-178C LLVM)
@@ -142,6 +145,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build documentation
-        run: cargo doc --workspace --exclude aviate-app-quadcopter-stm32h7 --no-deps
+        run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"

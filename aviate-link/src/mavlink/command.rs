@@ -116,14 +116,12 @@ impl<T: FrameRx> MavlinkCommandLink<T> {
     ) -> Option<Command> {
         match msg {
             MavMessage::CommandLong(cmd) => Self::map_command_long(&cmd, now_ms, signature),
-            MavMessage::SetAttitudeTarget(tgt) => {
-                Some(Command {
-                    kind: CommandKind::SetAttitude,
-                    params: [tgt.q[0], tgt.q[1], tgt.q[2], tgt.q[3], tgt.thrust, 0.0, 0.0],
-                    timestamp_ms: now_ms,
-                    signature,
-                })
-            }
+            MavMessage::SetAttitudeTarget(tgt) => Some(Command {
+                kind: CommandKind::SetAttitude,
+                params: [tgt.q[0], tgt.q[1], tgt.q[2], tgt.q[3], tgt.thrust, 0.0, 0.0],
+                timestamp_ms: now_ms,
+                signature,
+            }),
             // Future: Add support for other command messages
             // MavMessage::CommandInt(cmd) => ...
             // MavMessage::SetPositionTargetLocalNed(cmd) => ...

@@ -294,7 +294,7 @@ impl MavClient {
         // Send HB to register, then check for response
         for _ in 0..50 {
             self.send_heartbeat();
-            
+
             if let Some(MavMessage::Heartbeat(_)) = self.recv() {
                 return true;
             }

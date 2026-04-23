@@ -1,4 +1,3 @@
-
 //! Aviate development tools
 //!
 //! Cross-platform flash tool for STM32H743 boards with Aviate bootloader.
@@ -6,8 +5,7 @@
 use anyhow::{bail, Context, Result};
 use regex::Regex;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 use sysinfo::System;
@@ -219,24 +217,24 @@ fn run_cleanup() -> anyhow::Result<()> {
                 if name.contains("xtask") {
                     continue;
                 }
-                
+
                 // If it's gcs-test, only kill if it's not the one we might be spawning (though we are xtask, so gcs-test shouldn't be running yet if we are cleaning up PRE-run)
                 // But if we run `xtask cleanup` manually, we kill everything.
-                
+
                 println!("  Killing: {} (PID: {})", name, process.pid());
                 process.kill();
                 killed_count += 1;
             }
         }
     }
-    
+
     // Clean up shared memory on Linux
     #[cfg(target_os = "linux")]
     {
-        let shm_path = Path::new("/dev/shm/aviate_gz_bridge");
+        let shm_path = std::path::Path::new("/dev/shm/aviate_gz_bridge");
         if shm_path.exists() {
-             let _ = std::fs::remove_file(shm_path);
-             println!("  Cleaned: /dev/shm/aviate_gz_bridge");
+            let _ = std::fs::remove_file(shm_path);
+            println!("  Cleaned: /dev/shm/aviate_gz_bridge");
         }
     }
 
@@ -422,25 +420,31 @@ fn run_test(config: Option<&str>) -> Result<()> {
     // 2. Set up environment
     let cwd = std::env::current_dir()?;
     let plugin_dir = cwd.join("aviate-hal/xil/backends/gz/plugin/build");
-    
+
     if !plugin_dir.join("libAviateGzPlugin.so").exists() {
-         bail!("AviateGzPlugin not found at {}. Build with CMake first.", plugin_dir.display());
+        bail!(
+            "AviateGzPlugin not found at {}. Build with CMake first.",
+            plugin_dir.display()
+        );
     }
 
     // 3. Run gcs-test
     eprintln!("Running test: {}", config_path);
     let mut cmd = Command::new("target/debug/gcs-test");
     cmd.args(["run", "--xil", config_path]);
-    
+
     // Add plugin dir to LD_LIBRARY_PATH
     if let Ok(current_ld) = std::env::var("LD_LIBRARY_PATH") {
-        cmd.env("LD_LIBRARY_PATH", format!("{}:{}", plugin_dir.display(), current_ld));
+        cmd.env(
+            "LD_LIBRARY_PATH",
+            format!("{}:{}", plugin_dir.display(), current_ld),
+        );
     } else {
         cmd.env("LD_LIBRARY_PATH", plugin_dir);
     }
 
     // Ensure cleanup on ctrl-c (basic handling)
-    // In a real runner we might want complex signal handling, 
+    // In a real runner we might want complex signal handling,
     // but gcs-test handles its own cleanup of child processes.
 
     let status = cmd.status().context("Failed to run gcs-test")?;

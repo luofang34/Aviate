@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use aviate_hal_xil::{parse_test_config, run_test_config, SimulatorBackend, SimulatorError};
 use clap::{Parser, Subcommand};
-use log::{info, warn, error};
+use log::{error, info, warn};
 
 #[cfg(feature = "gazebo")]
 use router_gen::RouterParams;

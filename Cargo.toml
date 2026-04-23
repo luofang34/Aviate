@@ -7,18 +7,15 @@ members = [
     "aviate-airframes/multirotor",
     "aviate-airframes/fixed-wing",
     "aviate-hal/io",
-    "aviate-hal/stm32h7",
     "aviate-hal/xil",
     "aviate-hal/xil/backends/gz",
     "aviate-hal/xil/backends/mavlink-hil",
-    "aviate-link",  # Note: MAVLink protocol now integrated in aviate-link/src/mavlink/
+    "aviate-link",
     "aviate-security",
     "aviate-boards/sitl-gazebo",
     "aviate-boards/sitl-jmavsim",
-    "aviate-boards/micoair-h743-v2",
     "aviate-apps/sitl-gazebo-x500",
     "aviate-apps/sitl-jmavsim-generic-quad-x",
-    "aviate-apps/test-gazebo-app",
     "tests/lint-verification",
     "tests/gcs-test",
     "xtask",
@@ -27,9 +24,12 @@ exclude = [
     "external/spl06-007",
     "external/qmc5883l",
     "external/PX4-gazebo-models",
-    "aviate-bootloader",        # Bootloader has separate workspace (different target/memory layout)
-    "aviate-boot-core",         # Bootloader-specific protocol layer
-    "aviate-chips",             # Bootloader-specific chip backends
+    "aviate-bootloader",              # Separate workspace (different target/memory layout)
+    "aviate-boot-core",               # Bootloader-specific protocol layer
+    "aviate-chips",                   # Bootloader-specific chip backends
+    "aviate-hal/stm32h7",             # Requires thumbv7em target; stm32h7 crate LLVM-rejects host codegen
+    "aviate-boards/micoair-h743-v2",  # Requires thumbv7em target via aviate-hal-stm32h7
+    "aviate-apps/micoair-h743-v2-test", # Standalone workspace; embedded target only
 ]
 resolver = "2"
 
@@ -39,7 +39,7 @@ version = "0.0.0"
 license = "MIT OR Apache-2.0"
 
 [workspace.metadata]
-description = "Aviate workspace — see docs/specs/AVIATE_SPEC_v0.5.md and docs/language/AVIATE_LANGUAGE_PROFILE.md for constraints."
+description = "Aviate workspace — see docs/AVIATE_SPEC.md and docs/AVIATE_LANGUAGE_PROFILE.md for constraints."
 
 [workspace.metadata.release]
 pre-release-hook = ["./scripts/run_pre_release_checks.sh"]
