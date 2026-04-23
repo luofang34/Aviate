@@ -50,8 +50,8 @@
 //! - `usb-flight`: Flight mode with restricted input (telemetry-only)
 
 use crate::usb_rt::{
-    clear_usb_irq_pending, enable_usb_irq, is_usb_irq_pending, SERVICE_MAX_BYTES, SERVICE_MAX_ITERS,
-    USB_BUS_STORAGE,
+    clear_usb_irq_pending, enable_usb_irq, is_usb_irq_pending, SERVICE_MAX_BYTES,
+    SERVICE_MAX_ITERS, USB_BUS_STORAGE,
 };
 
 use core::cell::RefCell;
@@ -260,10 +260,11 @@ impl Stm32h7UsbCdc {
                 let serial_bytes = get_usb_serial_number();
                 let buf_ptr = core::ptr::addr_of_mut!(SERIAL_NUMBER_BUF);
                 (*buf_ptr).copy_from_slice(&serial_bytes);
-                
+
                 // Convert to str for descriptor
                 let buf_slice = &*buf_ptr;
-                let serial_str = core::str::from_utf8(buf_slice).unwrap_or("000000000000000000000000");
+                let serial_str =
+                    core::str::from_utf8(buf_slice).unwrap_or("000000000000000000000000");
 
                 // Build USB device (serial number uses static buffer)
                 let usb_dev = UsbDeviceBuilder::new(bus, UsbVidPid(USB_VID, USB_PID))
@@ -286,12 +287,12 @@ impl Stm32h7UsbCdc {
                     USB_DEVICE.borrow(cs).replace(Some(usb_dev));
                 });
             }
-            
-            // Enable OTG_FS IRQ (unless usb-poll-only)
+
+            // Enable OTG_FS IRQ (unless usb-poll-only). Already inside the
+            // outer `unsafe` block at line 241, so no second `unsafe` here.
             #[cfg(not(feature = "usb-poll-only"))]
             {
-                use stm32h7xx_hal::pac::Interrupt;
-                unsafe { stm32h7xx_hal::pac::NVIC::unmask(stm32h7xx_hal::pac::Interrupt::OTG_FS) };
+                stm32h7xx_hal::pac::NVIC::unmask(stm32h7xx_hal::pac::Interrupt::OTG_FS);
             }
         }
 
@@ -347,7 +348,8 @@ impl Stm32h7UsbCdc {
                             Ok(count) if count > 0 => {
                                 let pushed = self.rx_push_slice(&rx_chunk[..count]);
                                 if pushed < count {
-                                    self.metrics.rx_dropped = self.metrics.rx_dropped.saturating_add(1);
+                                    self.metrics.rx_dropped =
+                                        self.metrics.rx_dropped.saturating_add(1);
                                 }
                                 bytes_read += count;
                                 if bytes_read >= SERVICE_MAX_BYTES {
@@ -369,7 +371,7 @@ impl Stm32h7UsbCdc {
                         break;
                     }
                     let chunk_size = available.min(64);
-                    
+
                     // Peek at data without consuming yet
                     let count = self.tx_peek(&mut tx_chunk[..chunk_size]);
                     if count > 0 {
@@ -408,13 +410,13 @@ impl Stm32h7UsbCdc {
 
         // Extra iterations while pending was observed (bounded)
         let mut iters: u32 = 1;
-        while clear_usb_irq_pending() && iters < SERVICE_MAX_ITERS as u32 {
+        while clear_usb_irq_pending() && iters < SERVICE_MAX_ITERS {
             self.service();
             iters += 1;
         }
 
         // Track budget overruns
-        if iters >= SERVICE_MAX_ITERS as u32 {
+        if iters >= SERVICE_MAX_ITERS {
             self.metrics.budget_overruns = self.metrics.budget_overruns.saturating_add(1);
         }
 
@@ -475,8 +477,10 @@ impl Stm32h7UsbCdc {
             if self.tx_push(byte) {
                 count += 1;
             } else {
-                self.metrics.tx_dropped =
-                    self.metrics.tx_dropped.saturating_add((data.len() - count) as u32);
+                self.metrics.tx_dropped = self
+                    .metrics
+                    .tx_dropped
+                    .saturating_add((data.len() - count) as u32);
                 break;
             }
         }
@@ -620,7 +624,7 @@ impl Stm32h7UsbCdc {
         let mut count = 0;
         let mut idx = self.tx_tail;
         let len = self.tx_len();
-        
+
         while count < buf.len() && count < len {
             buf[count] = self.tx_buf[idx];
             idx = (idx + 1) % self.tx_buf.len();

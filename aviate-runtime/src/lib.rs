@@ -72,12 +72,12 @@ pub use runner::{BoardStep, FlightRunner, RunnerHealth, LINK_TIMEOUT_US, MAX_CAT
 // Re-export based on environment
 #[cfg(feature = "env-flight")]
 pub use flight::{
+    // Loop periods
+    loop_periods,
     // Control loop utilities
     run_control_loop,
     // Hardware board info
     HwBoardInfo,
-    // Loop periods
-    loop_periods,
 };
 
 #[cfg(any(feature = "env-sitl", feature = "env-hitl"))]

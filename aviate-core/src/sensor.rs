@@ -3,18 +3,13 @@ use crate::types::{
     Celsius, Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Pascals, RadiansPerSecond,
 };
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum SensorHealth {
     Good,
     Degraded,
     Failed,
+    #[default]
     NotAvailable,
-}
-
-impl Default for SensorHealth {
-    fn default() -> Self {
-        Self::NotAvailable
-    }
 }
 
 #[derive(Copy, Clone, Debug)]

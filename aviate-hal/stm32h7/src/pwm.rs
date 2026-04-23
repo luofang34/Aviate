@@ -229,7 +229,12 @@ impl ActuatorDriver for PwmMotors {
         let mut duties = [0u32; MAX_ACTUATOR_OUTPUTS];
         let count = (cmd.count as usize).min(self.motor_count as usize);
 
-        for (i, (duty, &output)) in duties.iter_mut().zip(cmd.outputs.iter()).enumerate().take(count) {
+        for (i, (duty, &output)) in duties
+            .iter_mut()
+            .zip(cmd.outputs.iter())
+            .enumerate()
+            .take(count)
+        {
             *duty = self.throttle_to_duty(output);
             self.outputs[i] = output;
         }
@@ -330,7 +335,9 @@ mod tests {
         pwm.arm();
 
         let cmd = RawActuatorCmd {
-            outputs: [0.5, 0.6, 0.7, 0.8, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            outputs: [
+                0.5, 0.6, 0.7, 0.8, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ],
             count: 4,
         };
 

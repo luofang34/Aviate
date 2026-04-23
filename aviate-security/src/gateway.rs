@@ -53,8 +53,8 @@ use crate::errors::GatewayResult;
 ///
 /// ## Type Parameters
 ///
-/// - `L`: CommandLink implementation (e.g., MavlinkCommandLink<UsbRx>)
-/// - `A`: CommandAuth implementation (e.g., SignedAuth<KeyStore, CryptoEngine>)
+/// - `L`: CommandLink implementation (e.g., `MavlinkCommandLink<UsbRx>`)
+/// - `A`: CommandAuth implementation (e.g., `SignedAuth<KeyStore, CryptoEngine>`)
 ///
 /// ## DO-178C Contract
 ///
@@ -270,7 +270,8 @@ mod tests {
                 link_id: 5,
                 timestamp: 1000,
                 sig: [0xAA; 6],
-                raw_frame: vec![0u8; 32],
+                raw_frame: [0u8; aviate_link::command::MAX_SIGNED_FRAME_SIZE],
+                raw_frame_len: 32,
             }),
         };
         let link = MockLink::new(vec![cmd]);

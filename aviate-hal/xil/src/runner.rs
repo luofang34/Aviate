@@ -48,7 +48,7 @@ use aviate_link::mavlink::{
 /// Backend-agnostic vehicle state
 #[derive(Clone, Debug, Default)]
 pub struct VehicleState {
-    /// Position in NED frame [m]
+    /// Position in NED frame \[m\]
     pub position: [f32; 3],
     /// Velocity in NED frame [m/s]
     pub velocity: [f32; 3],
@@ -203,7 +203,9 @@ impl MavClient {
                             seq: buf[4],
                             sysid: buf[5],
                             compid: buf[6],
-                            msgid: (buf[7] as u32) | ((buf[8] as u32) << 8) | ((buf[9] as u32) << 16),
+                            msgid: (buf[7] as u32)
+                                | ((buf[8] as u32) << 8)
+                                | ((buf[9] as u32) << 16),
                         };
                         Some((header, msg))
                     }
@@ -310,9 +312,10 @@ impl MavClient {
     /// Returns true if we receive a heartbeat from our TARGET SYSTEM.
     pub fn try_connect(&mut self) -> bool {
         // Send HB to register, then check for response
-        for _ in 0..100 { // Increased retry count (10s total)
+        for _ in 0..100 {
+            // Increased retry count (10s total)
             self.send_heartbeat();
-            
+
             while let Some((header, MavMessage::Heartbeat(_))) = self.recv() {
                 if header.sysid == self.target_system {
                     return true;
@@ -445,7 +448,10 @@ impl<B: SimulatorBackend> MissionRunner<B> {
         let total_phases = mission.phases.len();
         for (i, phase) in mission.phases.iter().enumerate() {
             let phase_num = i + 1;
-            self.log(&format!("[Phase {}/{}] {}", phase_num, total_phases, phase.name));
+            self.log(&format!(
+                "[Phase {}/{}] {}",
+                phase_num, total_phases, phase.name
+            ));
 
             let result = self.run_phase(phase);
 

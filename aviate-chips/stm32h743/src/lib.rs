@@ -70,7 +70,9 @@ pub fn chip_main(led_metadata: Stm32LedMetadata) -> ! {
     // Take peripherals - safe because this is the entry point
     let dp = match pac::Peripherals::take() {
         Some(p) => p,
-        None => loop { cortex_m::asm::wfi(); }, // Should never happen
+        None => loop {
+            cortex_m::asm::wfi();
+        }, // Should never happen
     };
 
     // Configure flash wait states for boot clock (4 MHz CSI needs 0 wait states)

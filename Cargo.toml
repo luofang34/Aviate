@@ -7,15 +7,15 @@ members = [
     "aviate-airframes/multirotor",
     "aviate-airframes/fixed-wing",
     "aviate-hal/io",
-    "aviate-hal/stm32h7",
     "aviate-hal/xil",
     "aviate-hal/xil/backends/gz",
     "aviate-hal/xil/backends/mavlink-hil",
     "aviate-link",  # Note: MAVLink protocol now integrated in aviate-link/src/mavlink/
     "aviate-security",
     "aviate-boards/*",
-    # SITL apps only - flight apps have separate workspaces (different target)
-    "aviate-apps/sitl-gazebo-x500",
+    # SITL apps only - flight apps have separate workspaces (different target).
+    # sitl-gazebo-x500 was removed in 0b63a22; the gz-based flow now lives
+    # behind gcs-test's `gazebo` feature + the gz plugin alone.
     "aviate-apps/sitl-jmavsim-generic-quad-x",
 
     "tests/lint-verification",
@@ -31,6 +31,13 @@ exclude = [
     "aviate-chips",             # Bootloader-specific chip backends
     "aviate-apps/micoair-h743-v2-quad-x",  # Flight app (separate workspace, different target)
     "aviate-apps/micoair-h743-v2-x500",
+    # Hardware-only crates. Transitively pull in the stm32h7 PAC whose
+    # interrupt vector table uses a section attribute that Mach-O/LLVM
+    # rejects for host codegen (`cargo test --workspace` links). Excluded
+    # from the parent workspace so --workspace commands skip them; CI
+    # checks them separately on the thumbv7em target.
+    "aviate-hal/stm32h7",
+    "aviate-boards/micoair-h743-v2",
 ]
 resolver = "2"
 
@@ -40,7 +47,7 @@ version = "0.0.0"
 license = "MIT OR Apache-2.0"
 
 [workspace.metadata]
-description = "Aviate workspace — see docs/specs/AVIATE_SPEC_v0.5.md and docs/language/AVIATE_LANGUAGE_PROFILE.md for constraints."
+description = "Aviate workspace — see docs/AVIATE_SPEC.md and docs/AVIATE_LANGUAGE_PROFILE.md for constraints."
 
 [workspace.metadata.release]
 pre-release-hook = ["./scripts/run_pre_release_checks.sh"]

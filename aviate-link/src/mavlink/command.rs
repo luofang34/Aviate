@@ -122,7 +122,11 @@ impl<T: FrameRx> MavlinkCommandLink<T> {
             mav_cmd::COMPONENT_ARM_DISARM => {
                 let arm = cmd.param1 > 0.5;
                 Some(Command {
-                    kind: if arm { CommandKind::Arm } else { CommandKind::Disarm },
+                    kind: if arm {
+                        CommandKind::Arm
+                    } else {
+                        CommandKind::Disarm
+                    },
                     params: [0.0; 7],
                     timestamp_ms: now_ms,
                     signature,

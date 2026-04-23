@@ -23,15 +23,15 @@ use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
 use aviate_core::types::{Meters, MetersPerSecond, Normalized, Seconds};
 use aviate_core::{AviateKernel, ChannelId, InitState};
 
-use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeImu, FakeMag};
 use aviate_hal_io::traits::{BaroDriver, ImuDriver, MagDriver};
+use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeImu, FakeMag};
 
-use aviate_hal_stm32h7::{Stm32h7Time, NoSleep};
+use aviate_hal_stm32h7::{NoSleep, Stm32h7Time};
 use stm32h7xx_hal::{
     self,
+    pac::{CorePeripherals, Peripherals, IWDG},
     prelude::*,
     rcc::rec::UsbClkSel,
-    pac::{CorePeripherals, Peripherals, IWDG},
 };
 
 use crate::led::LedHeartbeat;
@@ -55,16 +55,20 @@ use alloc::boxed::Box;
 
 #[cfg(all(feature = "env-flight", not(feature = "env-hitl")))]
 pub mod compat {
-    use embedded_hal::i2c::{I2c, Operation, ErrorType, ErrorKind};
     use embedded_hal::delay::DelayNs;
-    use embedded_hal_compat::eh0_2::blocking::i2c::{Read as Read02, Write as Write02, WriteRead as WriteRead02};
+    use embedded_hal::i2c::{ErrorKind, ErrorType, I2c, Operation};
+    use embedded_hal_compat::eh0_2::blocking::i2c::{
+        Read as Read02, Write as Write02, WriteRead as WriteRead02,
+    };
 
     pub struct I2cWrapper<T>(pub T);
 
     #[derive(Debug)]
     pub struct WrapperError;
     impl embedded_hal::i2c::Error for WrapperError {
-        fn kind(&self) -> ErrorKind { ErrorKind::Other }
+        fn kind(&self) -> ErrorKind {
+            ErrorKind::Other
+        }
     }
 
     impl<T: Read02 + Write02 + WriteRead02> ErrorType for I2cWrapper<T> {
@@ -72,18 +76,18 @@ pub mod compat {
     }
 
     impl<T: Read02 + Write02 + WriteRead02> I2c for I2cWrapper<T> {
-        fn transaction(&mut self, address: u8, operations: &mut [Operation]) -> Result<(), Self::Error> {
+        fn transaction(
+            &mut self,
+            address: u8,
+            operations: &mut [Operation],
+        ) -> Result<(), Self::Error> {
             match operations {
-                [Operation::Write(w)] => {
-                    self.0.write(address, w).map_err(|_| WrapperError)
-                },
+                [Operation::Write(w)] => self.0.write(address, w).map_err(|_| WrapperError),
                 [Operation::Write(w), Operation::Read(r)] => {
                     self.0.write_read(address, w, r).map_err(|_| WrapperError)
-                },
-                [Operation::Read(r)] => {
-                    self.0.read(address, r).map_err(|_| WrapperError)
-                },
-                 _ => Err(WrapperError), 
+                }
+                [Operation::Read(r)] => self.0.read(address, r).map_err(|_| WrapperError),
+                _ => Err(WrapperError),
             }
         }
     }
@@ -107,8 +111,8 @@ pub mod compat {
         }
 
         fn delay_us(&mut self, us: u32) {
-             let cycles = (us as u64 * self.sysclk as u64) / 1_000_000;
-             cortex_m::asm::delay(cycles as u32);
+            let cycles = (us as u64 * self.sysclk as u64) / 1_000_000;
+            cortex_m::asm::delay(cycles as u32);
         }
 
         fn delay_ms(&mut self, ms: u32) {
@@ -125,27 +129,42 @@ pub mod compat {
 pub struct BoxedImu(pub Box<dyn ImuDriver>);
 #[cfg(all(feature = "env-flight", not(feature = "env-hitl")))]
 impl ImuDriver for BoxedImu {
-   fn read(&mut self) -> aviate_hal_io::error::SensorResult<aviate_hal_io::traits::RawImuReading> { self.0.read() }
-   fn source_id(&self) -> u8 { self.0.source_id() }
+    fn read(&mut self) -> aviate_hal_io::error::SensorResult<aviate_hal_io::traits::RawImuReading> {
+        self.0.read()
+    }
+    fn source_id(&self) -> u8 {
+        self.0.source_id()
+    }
 }
 
 #[cfg(all(feature = "env-flight", not(feature = "env-hitl")))]
 pub struct BoxedBaro(pub Box<dyn BaroDriver>);
 #[cfg(all(feature = "env-flight", not(feature = "env-hitl")))]
 impl BaroDriver for BoxedBaro {
-    fn read(&mut self) -> aviate_hal_io::error::SensorResult<aviate_hal_io::traits::RawBaroReading> { self.0.read() }
-    fn data_ready(&mut self) -> aviate_hal_io::error::SensorResult<bool> { self.0.data_ready() }
-    fn source_id(&self) -> u8 { self.0.source_id() }
+    fn read(
+        &mut self,
+    ) -> aviate_hal_io::error::SensorResult<aviate_hal_io::traits::RawBaroReading> {
+        self.0.read()
+    }
+    fn data_ready(&mut self) -> aviate_hal_io::error::SensorResult<bool> {
+        self.0.data_ready()
+    }
+    fn source_id(&self) -> u8 {
+        self.0.source_id()
+    }
 }
 
 #[cfg(all(feature = "env-flight", not(feature = "env-hitl")))]
 pub struct BoxedMag(pub Box<dyn MagDriver>);
 #[cfg(all(feature = "env-flight", not(feature = "env-hitl")))]
 impl MagDriver for BoxedMag {
-    fn read(&mut self) -> aviate_hal_io::error::SensorResult<aviate_hal_io::traits::RawMagReading> { self.0.read() }
-    fn source_id(&self) -> u8 { self.0.source_id() }
+    fn read(&mut self) -> aviate_hal_io::error::SensorResult<aviate_hal_io::traits::RawMagReading> {
+        self.0.read()
+    }
+    fn source_id(&self) -> u8 {
+        self.0.source_id()
+    }
 }
-
 
 // ============================================================================
 // Local SensorCache
@@ -270,7 +289,7 @@ impl MicoAirBoard {
             use core::mem::MaybeUninit;
             // Align heap to 4 bytes using u32
             static mut HEAP_MEM: [MaybeUninit<u32>; 2048] = [MaybeUninit::uninit(); 2048];
-            
+
             // Safety: No other thread access at init.
             unsafe {
                 let heap_ptr = core::ptr::addr_of_mut!(HEAP_MEM);
@@ -286,14 +305,14 @@ impl MicoAirBoard {
         unsafe {
             // Disable interrupts to prevent early firing
             cortex_m::interrupt::disable();
-            
+
             // Disable MPU (if enabled by bootloader)
             cp.MPU.ctrl.write(0);
             cortex_m::asm::dsb();
             cortex_m::asm::isb();
 
             // Relocate Vector Table to App Start (0x08020000)
-            cp.SCB.vtor.write(0x0802_0000); 
+            cp.SCB.vtor.write(0x0802_0000);
             cortex_m::asm::dsb();
             cortex_m::asm::isb();
         }
@@ -307,7 +326,8 @@ impl MicoAirBoard {
         let pwr = dp.PWR.constrain();
         let pwrcfg = pwr.freeze();
         let rcc = dp.RCC.constrain();
-        let mut ccdr = rcc.sys_ck(400.MHz())
+        let mut ccdr = rcc
+            .sys_ck(400.MHz())
             .use_hse(25.MHz())
             .pll1_q_ck(100.MHz()) // SPI1/2/3 Defaults to PLL1Q. Must be enabled!
             .freeze(pwrcfg, &dp.SYSCFG);
@@ -316,13 +336,19 @@ impl MicoAirBoard {
         // USB Regulator
         let pwr = unsafe { &*stm32h7xx_hal::pac::PWR::ptr() };
         pwr.cr3.modify(|_, w| w.usb33den().set_bit());
-        for _ in 0..10000 { cortex_m::asm::nop(); }
+        for _ in 0..10000 {
+            cortex_m::asm::nop();
+        }
 
         // USB Transport Init
         let gpioa_pac = dp.GPIOA;
         // PA8 VBUS sensing (match bootloader config)
-        gpioa_pac.moder.modify(|r, w| unsafe { w.bits(r.bits() & !(0b11 << 16)) }); // Input
-        gpioa_pac.pupdr.modify(|r, w| unsafe { w.bits((r.bits() & !(0b11 << 16)) | (0b10 << 16)) }); // Pull-down
+        gpioa_pac
+            .moder
+            .modify(|r, w| unsafe { w.bits(r.bits() & !(0b11 << 16)) }); // Input
+        gpioa_pac
+            .pupdr
+            .modify(|r, w| unsafe { w.bits((r.bits() & !(0b11 << 16)) | (0b10 << 16)) }); // Pull-down
 
         let gpioa = gpioa_pac.split(ccdr.peripheral.GPIOA);
         let usb_dm = gpioa.pa11.into_alternate();
@@ -351,7 +377,8 @@ impl MicoAirBoard {
         unsafe {
             let otg = &*stm32h7xx_hal::pac::OTG2_HS_GLOBAL::ptr();
             otg.gccfg.modify(|_, w| w.vbden().clear_bit());
-            otg.gotgctl.modify(|r, w| w.bits(r.bits() | (1 << 6) | (1 << 7)));
+            otg.gotgctl
+                .modify(|r, w| w.bits(r.bits() | (1 << 6) | (1 << 7)));
         }
 
         let mut transport = BoardTransport::new();
@@ -380,10 +407,10 @@ impl MicoAirBoard {
 
         #[cfg(all(feature = "env-flight", not(feature = "env-hitl")))]
         let board_hal = {
-            use embedded_hal_bus::spi::RefCellDevice;
-            use core::cell::RefCell;
-            use crate::hw::compat::{I2cWrapper, SysDelay};
             use crate::drivers::Bmi088Imu;
+            use crate::hw::compat::{I2cWrapper, SysDelay};
+            use core::cell::RefCell;
+            use embedded_hal_bus::spi::RefCellDevice;
 
             let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
             let _gpioc = dp.GPIOC.split(ccdr.peripheral.GPIOC);
@@ -393,31 +420,31 @@ impl MicoAirBoard {
             let sck = gpiob.pb13.into_alternate();
             let miso = gpiob.pb14.into_alternate();
             let mosi = gpiob.pb15.into_alternate();
-            
-            let spi2 = dp.SPI2.spi(
-                (sck, miso, mosi),
-                stm32h7xx_hal::spi::MODE_0,
-                10.MHz(), 
-                ccdr.peripheral.SPI2,
-                &ccdr.clocks,
-            ).forward(); 
+
+            let spi2 = dp
+                .SPI2
+                .spi(
+                    (sck, miso, mosi),
+                    stm32h7xx_hal::spi::MODE_0,
+                    10.MHz(),
+                    ccdr.peripheral.SPI2,
+                    &ccdr.clocks,
+                )
+                .forward();
 
             // Leak SPI bus to static lifetime to allow RefCellDevice in BoxedImu
             let spi2_bus = Box::leak(Box::new(RefCell::new(spi2)));
 
             let mut delay = SysDelay::new(400_000_000); // 400MHz System Clock
-            
+
             // I2C2 Init for SPL06 (PB10/PB11)
             let scl = gpiob.pb10.into_alternate_open_drain();
             let sda = gpiob.pb11.into_alternate_open_drain();
-            
-            let i2c2 = dp.I2C2.i2c(
-                (scl, sda),
-                400.kHz(),
-                ccdr.peripheral.I2C2,
-                &ccdr.clocks,
-            );
-            
+
+            let i2c2 = dp
+                .I2C2
+                .i2c((scl, sda), 400.kHz(), ccdr.peripheral.I2C2, &ccdr.clocks);
+
             let i2c2 = I2cWrapper(i2c2);
 
             use embedded_hal::digital::OutputPin;
@@ -431,14 +458,17 @@ impl MicoAirBoard {
             delay.delay_ms(100);
 
             // SPI Device wrappers (RefCellDevice)
-            let accel_dev = RefCellDevice::new(spi2_bus, accel_cs, delay.clone()).expect("Failed to create accel device");
-            let gyro_dev = RefCellDevice::new(spi2_bus, gyro_cs, delay.clone()).expect("Failed to create gyro device");
-            
+            let accel_dev = RefCellDevice::new(spi2_bus, accel_cs, delay.clone())
+                .expect("Failed to create accel device");
+            let gyro_dev = RefCellDevice::new(spi2_bus, gyro_cs, delay.clone())
+                .expect("Failed to create gyro device");
+
             // Step 1: Real BMI088
-            let boxed_imu = match Bmi088Imu::new(accel_dev, gyro_dev, &mut delay, crate::Rotation::None) {
-                Ok(dev) => BoxedImu(Box::new(dev)),
-                Err(_) => BoxedImu(Box::new(FakeImu::new())),
-            };
+            let boxed_imu =
+                match Bmi088Imu::new(accel_dev, gyro_dev, &mut delay, crate::Rotation::None) {
+                    Ok(dev) => BoxedImu(Box::new(dev)),
+                    Err(_) => BoxedImu(Box::new(FakeImu::new())),
+                };
 
             // Step 2: Fake SPL06 (Baro) - embedded-hal version mismatch
             let _i2c2 = i2c2;
@@ -447,18 +477,15 @@ impl MicoAirBoard {
             // Step 3: Real QMC5883L (Mag) - on I2C1 (PB8/PB9)
             let scl1 = gpiob.pb8.into_alternate_open_drain();
             let sda1 = gpiob.pb9.into_alternate_open_drain();
-            let i2c1 = dp.I2C1.i2c(
-                (scl1, sda1),
-                400.kHz(),
-                ccdr.peripheral.I2C1,
-                &ccdr.clocks,
-            );
+            let i2c1 = dp
+                .I2C1
+                .i2c((scl1, sda1), 400.kHz(), ccdr.peripheral.I2C1, &ccdr.clocks);
             // I2C1 initialized but magnetometer disabled (embedded-hal version mismatch)
             let _i2c1 = I2cWrapper(i2c1);
 
             // Fake Mag (QMC5883L) - using fake for now
             let boxed_mag = BoxedMag(Box::new(FakeMag::new()));
-            
+
             // Note: I2C init logic removed for checking SPI only
 
             BoardHal::new(
@@ -474,7 +501,9 @@ impl MicoAirBoard {
         let kernel = create_kernel();
 
         // Safety: Enable global interrupts now that everything is initialized
-        unsafe { cortex_m::interrupt::enable(); }
+        unsafe {
+            cortex_m::interrupt::enable();
+        }
 
         Self {
             board_hal,
@@ -508,19 +537,34 @@ impl MicoAirBoard {
     pub fn into_runner(self) -> HwFlightRunner {
         match self.try_into_runner() {
             Ok(runner) => runner,
-            Err(_) => { loop { cortex_m::asm::wfi(); } }
+            Err(_) => loop {
+                cortex_m::asm::wfi();
+            },
         }
     }
 
-    pub fn board_hal_mut(&mut self) -> &mut HwBoardHal { &mut self.board_hal }
-    pub fn kernel_mut(&mut self) -> &mut HwKernel { &mut self.kernel }
-    pub fn is_armed(&self) -> bool { self.kernel.init_state == InitState::Armed }
+    pub fn board_hal_mut(&mut self) -> &mut HwBoardHal {
+        &mut self.board_hal
+    }
+    pub fn kernel_mut(&mut self) -> &mut HwKernel {
+        &mut self.kernel
+    }
+    pub fn is_armed(&self) -> bool {
+        self.kernel.init_state == InitState::Armed
+    }
 }
 
 impl BoardStep for MicoAirBoard {
     type Cmd = SystemCommand;
 
-    fn board_step(&mut self, tick_us: u64, _now_us: u64, dt_us: u32, sys_cmd: &SystemCommand, _link_ok: bool) {
+    fn board_step(
+        &mut self,
+        tick_us: u64,
+        _now_us: u64,
+        dt_us: u32,
+        sys_cmd: &SystemCommand,
+        _link_ok: bool,
+    ) {
         // COV:EXCL_START(STUB)
         let mut current_dt = (dt_us as f32) * 1e-6;
 
@@ -536,14 +580,23 @@ impl BoardStep for MicoAirBoard {
         }
 
         // GNSS removed
-        if let Some(baro) = self.board_hal.read_baro() { self.sensor_cache.baro = Some(baro); }
-        if let Some(mag) = self.board_hal.read_mag() { self.sensor_cache.mag = Some(mag); }
+        if let Some(baro) = self.board_hal.read_baro() {
+            self.sensor_cache.baro = Some(baro);
+        }
+        if let Some(mag) = self.board_hal.read_mag() {
+            self.sensor_cache.mag = Some(mag);
+        }
 
-        let time_delta = TimeDelta { dt_sec: Seconds(current_dt), tick_delta: dt_us as u64 };
+        let time_delta = TimeDelta {
+            dt_sec: Seconds(current_dt),
+            tick_delta: dt_us as u64,
+        };
 
         let cmd: Command = match sys_cmd {
             SystemCommand::Arm => {
-                if self.kernel.arm().is_ok() { self.board_hal.arm(); }
+                if self.kernel.arm().is_ok() {
+                    self.board_hal.arm();
+                }
                 default_command()
             }
             SystemCommand::Disarm => {
@@ -552,7 +605,10 @@ impl BoardStep for MicoAirBoard {
                 default_command()
             }
             SystemCommand::FlightControl(flight_cmd) => {
-                self.kernel.checks.pre_arm.update_throttle(flight_cmd.setpoint.collective_thrust.0 < 0.1);
+                self.kernel
+                    .checks
+                    .pre_arm
+                    .update_throttle(flight_cmd.setpoint.collective_thrust.0 < 0.1);
                 flight_cmd.clone()
             }
         };
@@ -560,7 +616,11 @@ impl BoardStep for MicoAirBoard {
         if !self.ekf_initialized && self.sensor_cache.imu.is_some() {
             self.kernel.ekf.init(
                 Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-                Vector3::new(MetersPerSecond(0.0), MetersPerSecond(0.0), MetersPerSecond(0.0)),
+                Vector3::new(
+                    MetersPerSecond(0.0),
+                    MetersPerSecond(0.0),
+                    MetersPerSecond(0.0),
+                ),
                 Quaternion::IDENTITY,
             );
             self.ekf_initialized = true;
@@ -568,24 +628,43 @@ impl BoardStep for MicoAirBoard {
 
         let sensors = self.sensor_cache.to_sensor_set();
         if !self.kernel.is_ready() {
-            let ts = Timestamp { ticks: tick_us, source: TimeSource::Internal };
+            let ts = Timestamp {
+                ticks: tick_us,
+                source: TimeSource::Internal,
+            };
             self.kernel.init_step(&sensors, ts);
         }
 
-        let result = self.kernel.update(ChannelId(0), time_delta, &sensors, &cmd, &aviate_core::mixer::ActuatorState::default(), None);
+        let result = self.kernel.update(
+            ChannelId(0),
+            time_delta,
+            &sensors,
+            &cmd,
+            &aviate_core::mixer::ActuatorState::default(),
+            None,
+        );
         self.board_hal.write(&result.actuator);
         self.iteration = self.iteration.wrapping_add(1);
         // COV:EXCL_STOP
     }
 
-    fn sensors_ok(&self) -> bool { self.sensor_cache.imu.is_some() }
-    fn ekf_converged(&self) -> bool { self.ekf_initialized && self.kernel.is_ready() }
+    fn sensors_ok(&self) -> bool {
+        self.sensor_cache.imu.is_some()
+    }
+    fn ekf_converged(&self) -> bool {
+        self.ekf_initialized && self.kernel.is_ready()
+    }
 }
 
 fn create_kernel() -> HwKernel {
     let controller = MultirotorController::default();
-    let mixer = QuadXMixer { timestamp_source: hw_timestamp };
-    let mode_config = ModeConfig { mode: ConfigMode::Hover, groups: &[] };
+    let mixer = QuadXMixer {
+        timestamp_source: hw_timestamp,
+    };
+    let mode_config = ModeConfig {
+        mode: ConfigMode::Hover,
+        groups: &[],
+    };
     let mut kernel = AviateKernel::new(controller, mixer, mode_config);
     kernel.checks.pre_arm.update_throttle(true);
     kernel
@@ -594,7 +673,10 @@ fn create_kernel() -> HwKernel {
 pub fn default_command() -> Command {
     Command {
         mode: ControlMode::Attitude,
-        setpoint: Setpoint { collective_thrust: Normalized(0.0), ..Default::default() },
+        setpoint: Setpoint {
+            collective_thrust: Normalized(0.0),
+            ..Default::default()
+        },
         source: CommandSource::Failsafe,
         sequence: 0,
         config_mode_request: None,
@@ -603,17 +685,30 @@ pub fn default_command() -> Command {
 }
 
 fn hw_timestamp() -> Timestamp {
-    Timestamp { ticks: 0, source: TimeSource::Internal }
+    Timestamp {
+        ticks: 0,
+        source: TimeSource::Internal,
+    }
 }
 
 impl MicoAirBoard {
     pub fn process_command(&mut self, sys_cmd: SystemCommand) {
         match sys_cmd {
             SystemCommand::FlightControl(cmd) => {
-                self.kernel.checks.pre_arm.update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
+                self.kernel
+                    .checks
+                    .pre_arm
+                    .update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
             }
-            SystemCommand::Arm => { if self.kernel.arm().is_ok() { self.board_hal.arm(); } }
-            SystemCommand::Disarm => { self.kernel.disarm(); self.board_hal.disarm(); }
+            SystemCommand::Arm => {
+                if self.kernel.arm().is_ok() {
+                    self.board_hal.arm();
+                }
+            }
+            SystemCommand::Disarm => {
+                self.kernel.disarm();
+                self.board_hal.disarm();
+            }
         }
     }
 }

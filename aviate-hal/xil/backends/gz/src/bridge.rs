@@ -228,7 +228,9 @@ mod ffi_bridge {
         fn send_to_test_client(&mut self, msg: &MavMessage) {
             let mut buf = [0u8; 300];
             // System ID = instance + 1
-            if let Some(len) = serialize_mavlink(msg, self.seq, self.config.instance + 1, 1, &mut buf) {
+            if let Some(len) =
+                serialize_mavlink(msg, self.seq, self.config.instance + 1, 1, &mut buf)
+            {
                 let addr = ("127.0.0.1", self.config.test_port());
                 let _ = self.send_socket.send_to(&buf[..len], addr);
             }

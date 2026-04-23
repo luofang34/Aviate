@@ -25,7 +25,9 @@
 //! ```
 
 use aviate_hal_io::error::{SensorError, SensorResult};
-use aviate_hal_io::traits::{BaroDriver, ImuDriver, MagDriver, RawBaroReading, RawImuReading, RawMagReading};
+use aviate_hal_io::traits::{
+    BaroDriver, ImuDriver, MagDriver, RawBaroReading, RawImuReading, RawMagReading,
+};
 
 use crate::Rotation;
 
@@ -171,7 +173,6 @@ where
 // QMC5883L Magnetometer Wrapper (disabled - embedded-hal version mismatch)
 // ============================================================================
 // TODO: Update qmc5883l to embedded-hal 1.0
-
 
 #[cfg(test)]
 mod tests {

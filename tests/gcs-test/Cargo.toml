@@ -11,17 +11,17 @@ path = "src/main.rs"
 
 [features]
 default = []
-# Enable Gazebo backend for ground truth and XIL mode (requires gz-plugin)
+# Enable Gazebo backend for ground truth and XIL mode (requires gz-plugin).
+# Note: the former `aviate-app-sitl-gazebo-x500` app tree was removed in
+# 0b63a22; consumers now drive gz via the plugin directly.
 gazebo = [
     "dep:aviate-backend-gz",
-    "dep:aviate-app-sitl-gazebo-x500",
     "aviate-backend-gz/gz-plugin",
 ]
 
 [dependencies]
 aviate-hal-xil = { path = "../../aviate-hal/xil" }
 aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", optional = true }
-aviate-app-sitl-gazebo-x500 = { path = "../../aviate-apps/sitl-gazebo-x500", optional = true }
 
 clap = { version = "4", features = ["derive"] }
 log = "0.4"

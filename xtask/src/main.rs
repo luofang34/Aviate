@@ -146,7 +146,8 @@ fn main() -> Result<()> {
                 idx += 1;
             }
 
-            let is_simulator = board.starts_with("sitl") || board.starts_with("hitl") || board.starts_with("xil");
+            let is_simulator =
+                board.starts_with("sitl") || board.starts_with("hitl") || board.starts_with("xil");
             if is_simulator {
                 run_sitl(&airframe, &board, mission_config.as_deref(), gcs, headless)?;
             } else {
@@ -179,7 +180,8 @@ fn main() -> Result<()> {
                     }
                     idx += 1;
                 }
-                let board_name = board_name.ok_or_else(|| anyhow::anyhow!("--board is required"))?;
+                let board_name =
+                    board_name.ok_or_else(|| anyhow::anyhow!("--board is required"))?;
                 run_layout_cmd(subcmd, &board_name)?;
             }
         }
@@ -294,20 +296,14 @@ fn run_python_test() -> Result<()> {
     // Always cleanup before running test to ensure clean state
     run_cleanup()?;
 
-    // 1. Build gcs-test and FC binary with gazebo feature
-    eprintln!("Building gcs-test and SITL app...");
+    // 1. Build gcs-test with the gazebo feature. The former
+    // aviate-app-sitl-gazebo-x500 tree was removed in 0b63a22; the
+    // gazebo feature now pulls in the gz backend + plugin directly.
+    eprintln!("Building gcs-test with gazebo feature...");
     let status = Command::new("cargo")
-        .args([
-            "build",
-            "-p",
-            "gcs-test",
-            "-p",
-            "aviate-app-sitl-gazebo-x500",
-            "--features",
-            "gazebo",
-        ])
+        .args(["build", "-p", "gcs-test", "--features", "gazebo"])
         .status()
-        .context("Failed to build gcs-test or sitl-gazebo-x500")?;
+        .context("Failed to build gcs-test")?;
 
     if !status.success() {
         bail!("Failed to build tests");
@@ -675,7 +671,8 @@ fn generate_and_build_app(airframe: &str, board: &str) -> Result<(String, std::p
     eprintln!("  Airframe: {}", airframe);
 
     // Determine environment based on board type (simulator boards have sitl-/hitl-/xil- prefix)
-    let is_simulator = board.starts_with("sitl-") || board.starts_with("hitl-") || board.starts_with("xil-");
+    let is_simulator =
+        board.starts_with("sitl-") || board.starts_with("hitl-") || board.starts_with("xil-");
     let env = if is_simulator { "sitl" } else { "flight" };
 
     let status = Command::new("cargo")
@@ -759,7 +756,9 @@ fn run_hardware(airframe: &str, board: &str, device_arg: Option<&str>) -> Result
 
     // Detect device state
     let vid = board_meta.vid.or(board_meta.programmer.default_vid());
-    let bootloader_pid = board_meta.pid.or(board_meta.programmer.default_bootloader_pid());
+    let bootloader_pid = board_meta
+        .pid
+        .or(board_meta.programmer.default_bootloader_pid());
     let state = device::detect_device_state(vid, bootloader_pid)?;
 
     // Create device selector
@@ -1091,11 +1090,14 @@ fn build_bootloader(board: &str, production: bool) -> Result<PathBuf> {
 
     // Determine the ELF path based on target architecture
     // STM32H7 uses thumbv7em-none-eabihf, RP2350 uses thumbv8m.main-none-eabihf
-    let elf_path = PathBuf::from("aviate-bootloader/target/thumbv7em-none-eabihf/release/aviate-bootloader");
+    let elf_path =
+        PathBuf::from("aviate-bootloader/target/thumbv7em-none-eabihf/release/aviate-bootloader");
 
     if !elf_path.exists() {
         // Try thumbv8m target for RP2350
-        let alt_path = PathBuf::from("aviate-bootloader/target/thumbv8m.main-none-eabihf/release/aviate-bootloader");
+        let alt_path = PathBuf::from(
+            "aviate-bootloader/target/thumbv8m.main-none-eabihf/release/aviate-bootloader",
+        );
         if alt_path.exists() {
             return convert_to_binary(&alt_path, "aviate-bootloader");
         }
@@ -1124,7 +1126,11 @@ fn convert_to_binary(elf_path: &Path, name: &str) -> Result<PathBuf> {
         bail!("objcopy failed for {}", elf_path.display());
     }
 
-    eprintln!("Created binary: {} ({} bytes)", bin_path.display(), std::fs::metadata(&bin_path)?.len());
+    eprintln!(
+        "Created binary: {} ({} bytes)",
+        bin_path.display(),
+        std::fs::metadata(&bin_path)?.len()
+    );
 
     Ok(bin_path)
 }
@@ -1136,20 +1142,14 @@ fn run_test(config: Option<&str>) -> Result<()> {
     // Always cleanup before running test to ensure clean state
     run_cleanup()?;
 
-    // 1. Build gcs-test and FC binary with gazebo feature
-    eprintln!("Building gcs-test and SITL app...");
+    // 1. Build gcs-test with the gazebo feature. The former
+    // aviate-app-sitl-gazebo-x500 tree was removed in 0b63a22; the
+    // gazebo feature now pulls in the gz backend + plugin directly.
+    eprintln!("Building gcs-test with gazebo feature...");
     let status = Command::new("cargo")
-        .args([
-            "build",
-            "-p",
-            "gcs-test",
-            "-p",
-            "aviate-app-sitl-gazebo-x500",
-            "--features",
-            "gazebo",
-        ])
+        .args(["build", "-p", "gcs-test", "--features", "gazebo"])
         .status()
-        .context("Failed to build gcs-test or sitl-gazebo-x500")?;
+        .context("Failed to build gcs-test")?;
 
     if !status.success() {
         bail!("Failed to build tests");
@@ -1204,8 +1204,8 @@ fn run_test(config: Option<&str>) -> Result<()> {
 /// So we dynamically add hardware apps to exclude when generating them.
 fn add_to_workspace_exclude(path: &str) -> Result<()> {
     let cargo_toml_path = Path::new("Cargo.toml");
-    let content = std::fs::read_to_string(cargo_toml_path)
-        .context("Failed to read root Cargo.toml")?;
+    let content =
+        std::fs::read_to_string(cargo_toml_path).context("Failed to read root Cargo.toml")?;
 
     // Check if already excluded
     if content.contains(&format!("\"{}\"", path)) {
@@ -1236,15 +1236,9 @@ fn add_to_workspace_exclude(path: &str) -> Result<()> {
         }
 
         // Insert before the closing bracket
-        let new_content = format!(
-            "{}    \"{}\",\n{}",
-            &content[..end],
-            path,
-            &content[end..]
-        );
+        let new_content = format!("{}    \"{}\",\n{}", &content[..end], path, &content[end..]);
 
-        std::fs::write(cargo_toml_path, new_content)
-            .context("Failed to write root Cargo.toml")?;
+        std::fs::write(cargo_toml_path, new_content).context("Failed to write root Cargo.toml")?;
 
         eprintln!("Added '{}' to workspace exclude list", path);
     }

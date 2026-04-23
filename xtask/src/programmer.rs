@@ -377,7 +377,8 @@ pub fn is_custom_dfu_present(vid: u16, pid: u16) -> Result<bool> {
 
     // Custom bootloader has serial "AVT001" or flash area starting at app address
     // It does NOT have "Internal Flash" in the name
-    Ok(stdout.contains("AVT001") || (stdout.contains(&vid_pid) && !stdout.contains("Internal Flash")))
+    Ok(stdout.contains("AVT001")
+        || (stdout.contains(&vid_pid) && !stdout.contains("Internal Flash")))
 }
 
 /// Wait for DFU device to enumerate

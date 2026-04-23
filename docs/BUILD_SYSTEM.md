@@ -180,13 +180,13 @@ Before committing changes:
 
 ```bash
 # 1. Unit tests
-cargo test --workspace --exclude aviate-app-quadcopter-stm32h7
+cargo test --workspace
 
 # 2. Coverage (100% required)
 COVERAGE_MODE=branch ./scripts/check_coverage.sh
 
 # 3. Static analysis
-cargo clippy --workspace --exclude aviate-app-quadcopter-stm32h7 -- -D warnings
+cargo clippy --workspace -- -D warnings
 cargo fmt --all -- --check
 
 # 4. SITL test

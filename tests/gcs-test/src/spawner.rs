@@ -82,9 +82,7 @@ impl GazeboSpawner {
         Ok(())
     }
 
-// ... <skip to spawn_router>
-
-
+    // ... <skip to spawn_router>
 
     /// Wait for Gazebo shared memory to be ready
     pub fn wait_for_ready(&self, timeout: Duration) -> bool {

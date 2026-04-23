@@ -333,7 +333,10 @@ impl<C> TransportHal<C> for Stm32h7Transport {
             Self::Usb(_usb) => None,
             Self::Uart(_uart) => None,
             Self::Can(_can) => None,
-            Self::UsbUart { usb: _usb, uart: _uart } => None,
+            Self::UsbUart {
+                usb: _usb,
+                uart: _uart,
+            } => None,
         }
         // COV:EXCL_STOP
     }
@@ -347,7 +350,10 @@ impl<C> TransportHal<C> for Stm32h7Transport {
             Self::Usb(_usb) => false,
             Self::Uart(_uart) => false,
             Self::Can(_can) => false,
-            Self::UsbUart { usb: _usb, uart: _uart } => false,
+            Self::UsbUart {
+                usb: _usb,
+                uart: _uart,
+            } => false,
         }
         // COV:EXCL_STOP
     }
@@ -394,7 +400,10 @@ impl<C> TransportHal<C> for Stm32h7Transport {
             Self::Can(_can) => {
                 // Poll CAN RX FIFO
             }
-            Self::UsbUart { usb: _usb, uart: _uart } => {
+            Self::UsbUart {
+                usb: _usb,
+                uart: _uart,
+            } => {
                 // Poll both
             }
         }
@@ -505,7 +514,8 @@ mod tests {
     #[test]
     fn test_try_send_returns_false() {
         let mut transport = TestTransport::uart(115200);
-        let result = <TestTransport as TransportHal<()>>::try_send_telemetry(&mut transport, &[0xFE, 0x09]);
+        let result =
+            <TestTransport as TransportHal<()>>::try_send_telemetry(&mut transport, &[0xFE, 0x09]);
         assert!(!result);
     }
 }

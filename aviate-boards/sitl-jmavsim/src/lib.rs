@@ -254,10 +254,7 @@ impl JmavSimBoard {
 
     /// Arm the flight controller
     pub fn arm(&mut self) -> Result<(), ArmError> {
-        info!(
-            "Arm command (state={:?})",
-            self.runner.kernel.init_state
-        );
+        info!("Arm command (state={:?})", self.runner.kernel.init_state);
         info!("Faults: {:?}", self.runner.kernel.faults);
 
         self.runner.kernel.arm()?;

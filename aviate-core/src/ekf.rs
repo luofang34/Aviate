@@ -29,7 +29,7 @@ pub struct EkfConfig {
     pub meas_noise_gnss_pos: Scalar,
     pub meas_noise_gnss_vel: Scalar,
     pub meas_noise_baro: Scalar,
-    /// Heading measurement noise [rad²]
+    /// Heading measurement noise \[rad²\]
     pub meas_noise_mag: Scalar,
     /// Innovation gate threshold (sigma)
     pub innovation_gate: Scalar,
@@ -39,9 +39,9 @@ pub struct EkfConfig {
     pub mag_inclination_decay_start: Scalar,
     /// Inclination vertical ratio at which fusion stops (default 0.95)
     pub mag_inclination_limit: Scalar,
-    /// Minimum valid field strength [μT] (default 20.0)
+    /// Minimum valid field strength \[μT\] (default 20.0)
     pub mag_field_min: Scalar,
-    /// Maximum valid field strength [μT] (default 70.0)
+    /// Maximum valid field strength \[μT\] (default 70.0)
     pub mag_field_max: Scalar,
     /// Mag bias random walk process noise [μT²/s] (default 1e-5)
     pub process_noise_mag_bias: Scalar,

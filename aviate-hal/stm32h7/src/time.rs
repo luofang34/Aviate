@@ -177,7 +177,9 @@ impl<S: SleepTimer> TimeHal for Stm32h7Time<S> {
             cyccnt - self.last_cyccnt
         } else {
             // Rollover: cycles from last to MAX + cycles from 0 to current
-            (u32::MAX - self.last_cyccnt).wrapping_add(cyccnt).wrapping_add(1)
+            (u32::MAX - self.last_cyccnt)
+                .wrapping_add(cyccnt)
+                .wrapping_add(1)
         };
 
         // Convert cycles to microseconds and accumulate

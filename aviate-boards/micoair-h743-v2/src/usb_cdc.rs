@@ -21,7 +21,9 @@ use aviate_core::control::{Command, ControlMode, Setpoint};
 use aviate_core::hal::SystemCommand;
 use aviate_core::math::Quaternion;
 use aviate_core::types::{FloatExt, Normalized, RadiansPerSecond};
-use aviate_hal_io::transport_hal::{SystemState, TransportHal, TransportStatus as TransportHalStatus};
+use aviate_hal_io::transport_hal::{
+    SystemState, TransportHal, TransportStatus as TransportHalStatus,
+};
 use aviate_hal_stm32h7::{Stm32h7UsbCdc, UsbMetrics};
 
 use aviate_link::mavlink::protocol::{
@@ -36,7 +38,6 @@ use stm32h7xx_hal::usb_hs::USB2;
 // =============================================================================
 
 /// Maximum bytes to process per service call (bounded WCET)
-
 
 /// MAVLink frame accumulator size
 const MAV_BUF_SIZE: usize = 300;
@@ -269,10 +270,10 @@ impl SerialTransport {
 
         // Feed RX buffer bytes to parser
         let mut rx_buf = [0u8; 64];
-        
+
         // Read available bytes from USB
         let count = self.usb.try_read(&mut rx_buf);
-        
+
         for &byte in &rx_buf[..count] {
             #[cfg(feature = "software-bootloader")]
             if self.handle_dfu_protocol(byte) {
@@ -400,7 +401,7 @@ enum DfuState {
         last_sent: u32,
         /// Tick counter when challenge started (for timeout)
         start_tick: u32,
-    }
+    },
 }
 
 #[cfg(feature = "software-bootloader")]
@@ -458,7 +459,13 @@ impl SerialTransport {
                     false
                 }
             }
-            DfuState::WaitConfirm { code, mut idx, mut buf, last_sent, start_tick } => {
+            DfuState::WaitConfirm {
+                code,
+                mut idx,
+                mut buf,
+                last_sent,
+                start_tick,
+            } => {
                 // Ignore whitespace/control chars
                 if byte == b'\r' || byte == b'\n' {
                     // If we have 4 digits, check match
@@ -494,7 +501,13 @@ impl SerialTransport {
                         }
 
                         // Update state
-                        self.dfu_state = DfuState::WaitConfirm { code, idx, buf, last_sent, start_tick };
+                        self.dfu_state = DfuState::WaitConfirm {
+                            code,
+                            idx,
+                            buf,
+                            last_sent,
+                            start_tick,
+                        };
                     } else {
                         // More than 4 digits = wrong code, reset
                         self.dfu_state = DfuState::Idle;
@@ -541,7 +554,13 @@ impl SerialTransport {
     /// Periodic update to handle retransmission and timeout
     fn update_dfu_state(&mut self) {
         match self.dfu_state {
-            DfuState::WaitConfirm { code, idx, buf, last_sent, start_tick } => {
+            DfuState::WaitConfirm {
+                code,
+                idx,
+                buf,
+                last_sent,
+                start_tick,
+            } => {
                 let now = self.tick_counter;
 
                 // Check timeout (5 seconds)
@@ -555,7 +574,11 @@ impl SerialTransport {
                 if now.wrapping_sub(last_sent) > DFU_RETRANSMIT_TICKS {
                     self.send_dfu_confirm(code);
                     self.dfu_state = DfuState::WaitConfirm {
-                        code, idx, buf, last_sent: now, start_tick
+                        code,
+                        idx,
+                        buf,
+                        last_sent: now,
+                        start_tick,
                     };
                 }
             }
@@ -598,7 +621,6 @@ impl Default for SerialTransport {
     fn default() -> Self {
         Self::new()
     }
-
 }
 
 impl TransportHal<SystemCommand> for BoardTransport {

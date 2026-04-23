@@ -2,17 +2,12 @@ use crate::types::Seconds;
 
 pub const TICK_FREQUENCY_HZ: u64 = 1_000_000;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum TimeSource {
+    #[default]
     Internal,
     Gps,
     Ptp,
-}
-
-impl Default for TimeSource {
-    fn default() -> Self {
-        Self::Internal
-    }
 }
 
 #[derive(Copy, Clone, Debug, Default)]
