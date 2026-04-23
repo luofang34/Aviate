@@ -20,3 +20,6 @@ aviate-core = { path = "../../aviate-core" }
 aviate-link = { path = "../../aviate-link" }
 aviate-hal-io = { path = "../io" }
 log = "0.4"
+
+[lints]
+workspace = true

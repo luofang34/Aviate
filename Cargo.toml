@@ -49,3 +49,14 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
+
+# Workspace-wide lint policy. Members opt in with `lints.workspace = true`
+# in their own Cargo.toml. Library crates that cannot comply (e.g. FFI
+# shims requiring unsafe) simply omit the opt-in and keep a local stance.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"

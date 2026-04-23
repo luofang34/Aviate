@@ -30,3 +30,6 @@ bmi2 = "0.1"
 [dev-dependencies]
 # For testing with mock I2C/SPI
 embedded-hal-mock = "0.11"
+
+[lints]
+workspace = true

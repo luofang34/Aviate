@@ -12,3 +12,6 @@ aviate-hal-xil = { path = "../../aviate-hal/xil" }
 aviate-backend-mavlink-hil = { path = "../../aviate-hal/xil/backends/mavlink-hil" }
 aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor" }
 aviate-runtime = { path = "../../aviate-runtime", features = ["env-sitl"] }
+
+[lints]
+workspace = true

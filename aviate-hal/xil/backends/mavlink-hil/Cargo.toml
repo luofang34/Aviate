@@ -9,3 +9,6 @@ description = "MAVLink HIL backend for legacy simulator compatibility (jMAVSim, 
 aviate-hal-xil = { path = "../.." }
 
 [dev-dependencies]
+
+[lints]
+workspace = true
