@@ -3170,3 +3170,83 @@ fn update_degrades_on_persistent_timing_violation() {
     assert_eq!(event.to, ControlLawV1::Alternate);
     assert_eq!(kernel.control_law, ControlLawV1::Alternate);
 }
+
+/// Exercise `AviateKernelTrait` surface (spec §20) to cover the trait
+/// impl's pass-through methods. The impl is pure delegation to inherent
+/// methods on `AviateKernelImpl`, but grcov counts each trait method as
+/// its own function and needs a direct hit to mark it covered.
+#[test]
+fn aviate_kernel_trait_surface_covered() {
+    use aviate_core::kernel_trait::AviateKernelTrait;
+
+    let mut kernel = make_kernel();
+    let sensors = make_valid_sensors();
+
+    // Exercise the read-only accessors first.
+    let _ = AviateKernelTrait::init_state(&kernel);
+    let _ = AviateKernelTrait::is_ready(&kernel);
+    let _ = AviateKernelTrait::config_mode(&kernel);
+    let _ = AviateKernelTrait::transition_state(&kernel);
+    let _ = AviateKernelTrait::get_config(&kernel);
+    let _ = AviateKernelTrait::get_faults(&kernel);
+    let _ = AviateKernelTrait::get_control_law(&kernel);
+    let _ = AviateKernelTrait::get_health(&kernel);
+
+    // init_step through the trait.
+    let _ = AviateKernelTrait::init_step(&mut kernel, &sensors, dummy_timestamp());
+
+    // request_config_mode and update will reject (not armed / not ready),
+    // but they still exercise the delegation bodies.
+    let _ = AviateKernelTrait::request_config_mode(&mut kernel, ConfigMode::Cruise);
+    let cmd = Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint::default(),
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 0,
+        source: CommandSource::Pilot,
+    };
+    let actuator_state = kernel.actuator_state.clone();
+    let _ = AviateKernelTrait::update(
+        &mut kernel,
+        ChannelId::PRIMARY,
+        dummy_time_delta(),
+        &sensors,
+        &cmd,
+        &actuator_state,
+        None,
+    );
+
+    // load_config: v1 (supported) then v2 (unsupported) for both branches.
+    let cfg_ok = aviate_core::kernel_types::ConfigBlock {
+        data: &[],
+        version: 1,
+        checksum: 0,
+    };
+    assert!(AviateKernelTrait::load_config(&mut kernel, &cfg_ok).is_ok());
+    let cfg_bad = aviate_core::kernel_types::ConfigBlock {
+        data: &[],
+        version: 99,
+        checksum: 0,
+    };
+    assert!(AviateKernelTrait::load_config(&mut kernel, &cfg_bad).is_err());
+
+    // Arm-path: wind through init_step enough times to satisfy pre-arm,
+    // then arm/disarm + watchdog + ground_reset via the trait.
+    kernel.ekf.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
+        Quaternion::IDENTITY,
+    );
+    for _ in 0..150 {
+        AviateKernelTrait::init_step(&mut kernel, &sensors, dummy_timestamp());
+    }
+    assert!(AviateKernelTrait::arm(&mut kernel).is_ok());
+    AviateKernelTrait::kick_watchdog(&mut kernel);
+    AviateKernelTrait::disarm(&mut kernel);
+    AviateKernelTrait::ground_reset(&mut kernel);
+}
