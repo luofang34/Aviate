@@ -15,6 +15,15 @@ env:
   COVERAGE_THRESHOLD: 100
 
 jobs:
+  file-sizes:
+    name: File Sizes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enforce 500-line (and 100-line lib.rs) caps
+        run: ./scripts/check_file_sizes.sh
+
   check:
     name: Check & Clippy
     runs-on: ubuntu-latest
