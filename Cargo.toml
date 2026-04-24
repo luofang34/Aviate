@@ -57,3 +57,15 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
+
+# Workspace-wide lint policy. Members opt in with `lints.workspace = true`
+# in their own Cargo.toml. Crates that cannot comply (FFI shims requiring
+# unsafe, tooling that uses .unwrap(), test harnesses) omit the opt-in
+# and keep a local stance.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
