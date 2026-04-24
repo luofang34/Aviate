@@ -1,0 +1,15 @@
+[schema]
+version = "0.0.1"
+
+[meta]
+document_id = "DRQ-DOC-001"
+revision = "1"
+
+[[requirements]]
+uid = "b90ac1d5-b706-4402-93f9-1ca5f5efe3f1"
+id = "derived-example"
+title = "Example Derived Requirement"
+owner = "team@example.com"
+description = "A requirement derived during design or implementation."
+rationale = "Required for implementation of HLR-001"
+safety_impact = "none"

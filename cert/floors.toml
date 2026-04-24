@@ -1,0 +1,29 @@
+# Aviate ratcheting-floors config.
+#
+# Every dimension here is a lower bound: `cargo evidence floors` fails if
+# the current measurement drops below the committed value. Lowering a
+# floor requires a `Lower-Floor: <dimension> <reason>` line on the PR
+# body / squash-commit description; friction is intentional.
+#
+# We start with the four trace-layer counts at zero because `cert/trace/`
+# is currently empty scaffolding. As SYS/HLR/LLR/Test entries land, bump
+# each floor in the same PR that adds the entries — the gate then keeps
+# those entries from silently disappearing.
+#
+# Left off on purpose today:
+#   - test_count / library_panics: the tool's measurement helpers look
+#     at the standard-layout `crates/*/src/` subtree and return 0 for
+#     our `aviate-*` layout. Enabling them would gate against a
+#     permanently-zero reading, which is worse than nothing. Revisit
+#     once the tool supports a configurable crate-root glob (or we
+#     reshape the workspace).
+
+[floors]
+trace_sys_count = 0
+trace_hlr_count = 0
+trace_llr_count = 0
+trace_test_count = 0
+
+[delta_ceilings]
+# Reserved by the tool for new-additions-in-diff checks. Parsed today,
+# enforced in a follow-up.

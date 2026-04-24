@@ -1,0 +1,15 @@
+[schema]
+version = "0.0.1"
+
+[meta]
+document_id = "SYS-DOC-001"
+revision = "1"
+
+[[requirements]]
+uid = "f577f599-40bf-4c05-9ac2-a7628b6485c6"
+id = "sys-example"
+title = "Example System Requirement"
+owner = "team@example.com"
+description = "This is an example system-level requirement."
+verification_methods = ["review"]
+traces_to = []

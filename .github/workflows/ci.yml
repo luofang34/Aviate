@@ -171,3 +171,51 @@ jobs:
         run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
+
+  evidence:
+    name: Evidence (doctor + floors)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # Full history so the tool's merge-style policy check can
+          # inspect recent main commits without "shallow clone detected"
+          # complaints.
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-evidence-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo-evidence binary
+        id: cache-cargo-evidence
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-evidence
+          key: ${{ runner.os }}-cargo-evidence-bin-0.1.1
+
+      - name: Install cargo-evidence
+        if: steps.cache-cargo-evidence.outputs.cache-hit != 'true'
+        run: cargo install cargo-evidence --version 0.1.1 --locked
+
+      # Blocking: fails only on error-severity findings (missing
+      # boundary, missing floors, invalid trace). Warnings — merge-style,
+      # floors-boundary-mismatch, CI-integration-missing — are reported
+      # but do not fail the job.
+      - name: cargo evidence doctor
+        run: cargo evidence doctor
+
+      # Blocking: fails if any committed floor dimension drops below
+      # its recorded value. Lowering a floor requires a `Lower-Floor:`
+      # justification line in the PR body / squash commit (see
+      # docs/CERT_OVERRIDES.md).
+      - name: cargo evidence floors
+        run: cargo evidence floors

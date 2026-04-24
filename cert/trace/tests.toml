@@ -1,0 +1,14 @@
+[schema]
+version = "0.0.1"
+
+[meta]
+document_id = "TST-DOC-001"
+revision = "1"
+
+[[tests]]
+uid = "0289aefe-a3fa-4b41-b7f7-cf604e0c813f"
+id = "test-example"
+title = "Example Test Case"
+owner = "team@example.com"
+traces_to = ["6d443dd1-7f5c-45a1-85ed-42eab53ab9ee"]
+description = "Verifies that the example LLR is satisfied."
