@@ -243,7 +243,16 @@ fi
 # Branches: account for LLVM artifacts
 BRANCH_EFFECTIVE_UNCOV=$((BRANCH_UNCOV - BRANCH_ARTIFACTS))
 if [[ $BRANCH_EFFECTIVE_UNCOV -lt 0 ]]; then BRANCH_EFFECTIVE_UNCOV=0; fi
-BRANCH_FINAL=$(awk "BEGIN {if($BRANCH_TOTAL>0) printf \"%.1f\", ($BRANCH_HIT+$BRANCH_ARTIFACTS)/$BRANCH_TOTAL*100; else print 100}")
+# Cap at 100.0% when artifacts account for all uncovered branches —
+# matches the treatment of Functions when FUNC_HIT >= FUNC_EFFECTIVE_TOTAL.
+# Without this cap, (hit + artifacts) / total can drift above 1.0 and the
+# string compare `!= "100.0"` below flags a genuinely-complete run as a
+# failure.
+if [[ $BRANCH_EFFECTIVE_UNCOV -eq 0 ]]; then
+    BRANCH_FINAL="100.0"
+else
+    BRANCH_FINAL=$(awk "BEGIN {if($BRANCH_TOTAL>0) printf \"%.1f\", ($BRANCH_HIT+$BRANCH_ARTIFACTS)/$BRANCH_TOTAL*100; else print 100}")
+fi
 
 # Summary
 echo ""
