@@ -26,3 +26,6 @@ log = "0.4"
 [package.metadata.aviate-board]
 chip = "xil"           # Special: simulator, no flashing
 programmer = "none"    # Simulator board, no programming
+
+[lints]
+workspace = true

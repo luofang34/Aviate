@@ -15,3 +15,6 @@ aviate-board-sitl-jmavsim = { path = "../../aviate-boards/sitl-jmavsim" }
 
 # Airframe selection
 aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor" }
+
+[lints]
+workspace = true
