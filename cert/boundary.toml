@@ -1,0 +1,50 @@
+# Aviate certification boundary.
+#
+# Declares which workspace crates sit inside the DO-178C scope and which
+# live outside it (SITL/HIL backends, board HAL shims, tooling, test
+# harnesses). `no_out_of_scope_deps = true` will reject any in-scope crate
+# that pulls in a sandbox crate — that flag is currently disabled pending
+# the tool's enforcement landing, but the boundary below is already
+# dependency-closed so flipping the flag should be a no-op audit.
+#
+# Notable omission: aviate-runtime. It currently depends on aviate-hal-xil
+# (SITL I/O transport) so it can't be placed in-scope without breaking the
+# closure rule. Promoting it is a follow-up that needs the SITL transport
+# split into a separate crate.
+
+[schema]
+version = "0.0.1"
+
+[scope]
+in_scope = [
+    "aviate-core",
+    "aviate-config",
+    "aviate-hal-io",
+    "aviate-drivers",
+    "aviate-airframe-multirotor",
+    "aviate-airframe-fixed-wing",
+    "aviate-link",
+    "aviate-security",
+]
+
+trace_roots = ["cert/trace"]
+
+explicit_forbidden = []
+
+[policy]
+# Flip to true once the tool's enforcement lands for each rule. The
+# boundary above is already drawn to satisfy all three, so these should
+# start holding without code changes.
+no_out_of_scope_deps = false
+forbid_build_rs = false
+forbid_proc_macros = false
+
+[forbidden_external]
+# External crates banned from the boundary. Populate as we harden the
+# scope (e.g. tokio in aviate-core, std-only crates, etc.).
+
+[dal]
+default_dal = "D"
+
+# [dal.crate_overrides]
+# "aviate-core" = "B"

@@ -1,0 +1,17 @@
+# Development Profile
+# Relaxed checks for local development
+
+[profile]
+name = "dev"
+description = "Development profile with relaxed checks"
+
+[checks]
+require_clean_git = false
+require_coverage = false
+allow_all_features = true
+offline_required = false
+
+[evidence]
+include_timestamps = true
+strict_hash_validation = false
+fail_on_dirty = false

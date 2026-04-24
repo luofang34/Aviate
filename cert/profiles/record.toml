@@ -1,0 +1,17 @@
+# Recording Profile
+# Captures evidence without full enforcement
+
+[profile]
+name = "record"
+description = "Recording profile for evidence capture"
+
+[checks]
+require_clean_git = true
+require_coverage = false
+allow_all_features = true
+offline_required = false
+
+[evidence]
+include_timestamps = true
+strict_hash_validation = false
+fail_on_dirty = true

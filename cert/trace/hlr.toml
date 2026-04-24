@@ -1,0 +1,18 @@
+[schema]
+version = "0.0.1"
+
+[meta]
+document_id = "HLR-DOC-001"
+revision = "1"
+
+[[requirements]]
+uid = "0e60162d-bdf5-4320-a735-e4368c4af78e"
+id = "hlr-example"
+title = "Example Requirement"
+owner = "team@example.com"
+description = "This is an example high-level requirement."
+verification_methods = [
+    "test",
+    "review",
+]
+traces_to = []
