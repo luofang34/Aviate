@@ -45,8 +45,12 @@ trait KernelTestExt {
     ) -> ActuatorCmd;
 }
 
-impl<E: aviate_core::Estimator, V: VehicleController, M: Mixer, S: aviate_core::ActuatorSanitizer>
-    KernelTestExt for AviateKernel<E, V, M, S>
+impl<
+        E: aviate_core::ekf::Estimator,
+        V: VehicleController,
+        M: Mixer,
+        S: aviate_core::mixer::ActuatorSanitizer,
+    > KernelTestExt for AviateKernel<E, V, M, S>
 {
     fn step_test(
         &mut self,

@@ -64,7 +64,13 @@ pub type DefaultAviateKernel<V, M> = AviateKernelImpl<Ekf, V, M, Sanitizer>;
 impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     AviateKernelImpl<E, V, M, S>
 {
-    pub fn new(estimator: E, controller: V, mixer: M, sanitizer: S, mode_config: ModeConfig) -> Self {
+    pub fn new(
+        estimator: E,
+        controller: V,
+        mixer: M,
+        sanitizer: S,
+        mode_config: ModeConfig,
+    ) -> Self {
         Self {
             estimator,
             controller,

@@ -23,7 +23,9 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // 1. Update checks from sensor data (always, regardless of state)
         self.checks.pre_arm.update_from_sensors(sensors);
         self.checks.pre_arm.update_from_faults(self.faults);
-        self.checks.pre_arm.update_ekf(self.estimator.is_initialized());
+        self.checks
+            .pre_arm
+            .update_ekf(self.estimator.is_initialized());
 
         // Note: update_sensor_faults() is NOT called here.
         // Faults are runtime monitoring for armed operation.
