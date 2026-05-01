@@ -16,12 +16,13 @@ static HEAP: Heap = Heap::empty();
 
 use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
+use aviate_core::ekf::Ekf;
 use aviate_core::hal::{ActuatorHal, SensorHal, SystemCommand};
 use aviate_core::math::{Quaternion, Vector3};
-use aviate_core::mixer::{ModeConfig, QuadXMixer};
+use aviate_core::mixer::{ModeConfig, QuadXMixer, Sanitizer};
 use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
 use aviate_core::types::{Meters, MetersPerSecond, Normalized, Seconds};
-use aviate_core::{AviateKernel, ChannelId, InitState};
+use aviate_core::{AviateKernel, ChannelId, DefaultAviateKernel, InitState};
 
 use aviate_hal_io::traits::{BaroDriver, ImuDriver, MagDriver};
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeImu, FakeMag};
@@ -220,7 +221,7 @@ pub type HwBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, (), HwTimeSource, Fak
 #[cfg(all(feature = "env-flight", not(feature = "env-hitl")))]
 pub type HwBoardHal = BoardHal<BoxedImu, BoxedBaro, BoxedMag, (), HwTimeSource, FakeActuator>;
 
-pub type HwKernel = AviateKernel<MultirotorController, QuadXMixer>;
+pub type HwKernel = DefaultAviateKernel<MultirotorController, QuadXMixer>;
 
 // ============================================================================
 // Generic Board Exports
@@ -614,7 +615,7 @@ impl BoardStep for MicoAirBoard {
         };
 
         if !self.ekf_initialized && self.sensor_cache.imu.is_some() {
-            self.kernel.ekf.init(
+            self.kernel.estimator.init(
                 Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
                 Vector3::new(
                     MetersPerSecond(0.0),
@@ -665,7 +666,13 @@ fn create_kernel() -> HwKernel {
         mode: ConfigMode::Hover,
         groups: &[],
     };
-    let mut kernel = AviateKernel::new(controller, mixer, mode_config);
+    let mut kernel = AviateKernel::new(
+        Ekf::default(),
+        controller,
+        mixer,
+        Sanitizer::default(),
+        mode_config,
+    );
     kernel.checks.pre_arm.update_throttle(true);
     kernel
 }

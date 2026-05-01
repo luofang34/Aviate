@@ -37,9 +37,11 @@ use aviate_link::mavlink::{MavState, MavlinkCycleFormatter};
 use aviate_config::AppConfig;
 use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::Command;
+use aviate_core::ekf::Ekf;
 use aviate_core::hal::SystemHal;
 use aviate_core::mixer::QuadXMixer;
-use aviate_core::{AviateKernel, InitState};
+use aviate_core::mixer::Sanitizer;
+use aviate_core::{AviateKernel, DefaultAviateKernel, InitState};
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::SitlIO;
 
@@ -94,7 +96,7 @@ impl aviate_hal_io::TimeHal for SitlTime {
 pub type SitlBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, SitlTime, FakeActuator>;
 
 /// SITL Kernel type
-pub type SitlKernel = AviateKernel<MultirotorController, QuadXMixer>;
+pub type SitlKernel = DefaultAviateKernel<MultirotorController, QuadXMixer>;
 
 // ============================================================================
 // UDP Telemetry Transport (SITL-only)
@@ -256,7 +258,13 @@ pub fn create_kernel() -> SitlKernel {
         groups: &[],
     };
 
-    let mut kernel = AviateKernel::new(controller, mixer, mode_config);
+    let mut kernel = AviateKernel::new(
+        Ekf::default(),
+        controller,
+        mixer,
+        Sanitizer::default(),
+        mode_config,
+    );
 
     // Initialize throttle check as satisfied (default command has low throttle)
     kernel.checks.pre_arm.update_throttle(true);

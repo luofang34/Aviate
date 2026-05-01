@@ -8,19 +8,19 @@
 use crate::checks::{KernelChecks, PreArmFlags};
 use crate::control::envelope::SimpleEnvelopeProtector;
 use crate::control::{ConfigMode, ControlLawV1, Limits, VehicleController};
-use crate::ekf::Ekf;
+use crate::ekf::{Ekf, Estimator};
 use crate::fault::{FaultFlags, FaultHandlingTable};
 use crate::kernel_types::{Config, TimingStats, DEFAULT_COMMAND_TIMEOUT_MS};
-use crate::mixer::{ActuatorState, Mixer, ModeConfig, Sanitizer};
+use crate::mixer::{ActuatorSanitizer, ActuatorState, Mixer, ModeConfig, Sanitizer};
 use crate::types::Normalized;
 
 pub use crate::kernel_types::InitState;
 
-pub struct AviateKernelImpl<V: VehicleController, M: Mixer> {
-    pub ekf: Ekf,
+pub struct AviateKernelImpl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> {
+    pub estimator: E,
     pub controller: V,
     pub mixer: M,
-    pub sanitizer: Sanitizer,
+    pub sanitizer: S,
     pub protector: SimpleEnvelopeProtector,
     pub limits: Limits,
     pub mode: ConfigMode,
@@ -51,16 +51,31 @@ pub struct AviateKernelImpl<V: VehicleController, M: Mixer> {
     pub safe_output: [Normalized; 16], // MAX_ACTUATORS = 16
 }
 
-/// Type alias for backward compatibility
-pub type AviateKernel<V, M> = AviateKernelImpl<V, M>;
+/// Type alias for the kernel struct.
+///
+/// Parameter order mirrors the constructor: `<E, V, M, S>` =
+/// estimator, vehicle controller, mixer, sanitizer.
+pub type AviateKernel<E, V, M, S> = AviateKernelImpl<E, V, M, S>;
 
-impl<V: VehicleController, M: Mixer> AviateKernelImpl<V, M> {
-    pub fn new(controller: V, mixer: M, mode_config: ModeConfig) -> Self {
+/// Default kernel: 18-state EKF + group-aware Sanitizer. Use when
+/// callers don't need to substitute estimation or sanitization.
+pub type DefaultAviateKernel<V, M> = AviateKernelImpl<Ekf, V, M, Sanitizer>;
+
+impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
+    AviateKernelImpl<E, V, M, S>
+{
+    pub fn new(
+        estimator: E,
+        controller: V,
+        mixer: M,
+        sanitizer: S,
+        mode_config: ModeConfig,
+    ) -> Self {
         Self {
-            ekf: Ekf::default(),
+            estimator,
             controller,
             mixer,
-            sanitizer: Sanitizer::default(),
+            sanitizer,
             protector: SimpleEnvelopeProtector,
             limits: Limits {
                 max_roll: crate::types::Radians(0.78), // ~45 deg
@@ -96,12 +111,14 @@ impl<V: VehicleController, M: Mixer> AviateKernelImpl<V, M> {
 
     /// Create kernel with custom pre-arm requirements
     pub fn with_pre_arm_required(
+        estimator: E,
         controller: V,
         mixer: M,
+        sanitizer: S,
         mode_config: ModeConfig,
         required: PreArmFlags,
     ) -> Self {
-        let mut kernel = Self::new(controller, mixer, mode_config);
+        let mut kernel = Self::new(estimator, controller, mixer, sanitizer, mode_config);
         kernel.checks = KernelChecks::with_pre_arm_required(required);
         kernel
     }
@@ -114,7 +131,9 @@ pub trait Watchdog {
     fn check_deadline(&self) -> bool;
 }
 
-impl<V: VehicleController, M: Mixer> Watchdog for AviateKernelImpl<V, M> {
+impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> Watchdog
+    for AviateKernelImpl<E, V, M, S>
+{
     fn kick(&mut self) {
         // Minimal implementation: just a stub for now as we don't have full timing context
         // In a real system, this would update a timestamp
@@ -143,12 +162,18 @@ mod tests {
         }
     }
 
-    fn create_kernel() -> AviateKernelImpl<MultirotorController, DummyMixer> {
+    fn create_kernel() -> AviateKernelImpl<Ekf, MultirotorController, DummyMixer, Sanitizer> {
         let mode_config = ModeConfig {
             mode: ConfigMode::Hover,
             groups: &[],
         };
-        AviateKernelImpl::new(MultirotorController::default(), DummyMixer, mode_config)
+        AviateKernelImpl::new(
+            Ekf::default(),
+            MultirotorController::default(),
+            DummyMixer,
+            Sanitizer::default(),
+            mode_config,
+        )
     }
 
     #[test]

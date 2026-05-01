@@ -5,23 +5,27 @@
 
 use crate::checks::{DegradationReason, PreArmFlags};
 use crate::control::{ConfigMode, ControlLawV1, VehicleController};
-use crate::ekf::Ekf;
+use crate::ekf::Estimator;
 use crate::fault::FaultFlags;
 use crate::kernel::{AviateKernelImpl, InitState};
 use crate::kernel_types::{
     ArmError, ChannelHealthV1, DegradationEvent, HealthReport, InitResult, TransitionError,
     CRITICAL_FAULTS,
 };
-use crate::mixer::Mixer;
+use crate::mixer::{ActuatorSanitizer, Mixer};
 use crate::sensor::SensorSet;
 use crate::time::Timestamp;
 
-impl<V: VehicleController, M: Mixer> AviateKernelImpl<V, M> {
+impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
+    AviateKernelImpl<E, V, M, S>
+{
     pub fn init_step(&mut self, sensors: &SensorSet, _time: Timestamp) -> InitResult {
         // 1. Update checks from sensor data (always, regardless of state)
         self.checks.pre_arm.update_from_sensors(sensors);
         self.checks.pre_arm.update_from_faults(self.faults);
-        self.checks.pre_arm.update_ekf(self.ekf.is_initialized());
+        self.checks
+            .pre_arm
+            .update_ekf(self.estimator.is_initialized());
 
         // Note: update_sensor_faults() is NOT called here.
         // Faults are runtime monitoring for armed operation.
@@ -285,7 +289,7 @@ impl<V: VehicleController, M: Mixer> AviateKernelImpl<V, M> {
         }
 
         // Update transition checks and verify
-        let state = self.ekf.get_estimate();
+        let state = self.estimator.get_estimate();
         self.checks.transition.update_from_state(&state);
         self.checks
             .transition
@@ -329,7 +333,8 @@ impl<V: VehicleController, M: Mixer> AviateKernelImpl<V, M> {
         self.checks.in_flight.reset();
         self.checks.transition.reset();
         self.init_state = InitState::ConfigLoading; // Restart init sequence
-        self.ekf = Ekf::default(); // Reset estimator
+        self.estimator.reset();
+
         self.control_law = ControlLawV1::Primary; // Reset law
     }
 

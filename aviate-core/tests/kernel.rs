@@ -12,9 +12,10 @@ use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::{
     Command, CommandSource, ConfigMode, ControlLawV1, ControlMode, Setpoint,
 };
+use aviate_core::ekf::Ekf;
 use aviate_core::fault::FaultFlags;
 use aviate_core::math::{Quaternion, Vector3};
-use aviate_core::mixer::{ModeConfig, QuadXMixer};
+use aviate_core::mixer::{ModeConfig, QuadXMixer, Sanitizer};
 use aviate_core::sensor::SensorSet;
 use aviate_core::sensor::{
     AirData, BaroData, GnssData, GnssFix, GnssHealth, ImuData, MagData, SensorHealth, SensorReading,
@@ -44,7 +45,13 @@ trait KernelTestExt {
     ) -> ActuatorCmd;
 }
 
-impl<V: VehicleController, M: Mixer> KernelTestExt for AviateKernel<V, M> {
+impl<
+        E: aviate_core::ekf::Estimator,
+        V: VehicleController,
+        M: Mixer,
+        S: aviate_core::mixer::ActuatorSanitizer,
+    > KernelTestExt for AviateKernel<E, V, M, S>
+{
     fn step_test(
         &mut self,
         time_delta: aviate_core::time::TimeDelta,
@@ -79,7 +86,7 @@ fn dummy_time_delta() -> aviate_core::time::TimeDelta {
     } // 100Hz update
 }
 
-fn make_kernel() -> AviateKernel<MultirotorController, QuadXMixer> {
+fn make_kernel() -> aviate_core::DefaultAviateKernel<MultirotorController, QuadXMixer> {
     let mixer = QuadXMixer {
         timestamp_source: dummy_timestamp,
     };
@@ -94,8 +101,10 @@ fn make_kernel() -> AviateKernel<MultirotorController, QuadXMixer> {
         | PreArmFlags::THROTTLE_LOW
         | PreArmFlags::CONFIG_VALID;
     let mut kernel = AviateKernel::with_pre_arm_required(
+        Ekf::default(),
         MultirotorController::default(),
         mixer,
+        Sanitizer::default(),
         mode_config,
         test_required,
     );
@@ -279,7 +288,7 @@ fn kernel_transitions_through_init_states() {
     let sensors = make_valid_sensors();
 
     // Initialize EKF first
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -307,7 +316,7 @@ fn kernel_is_ready_returns_correct_value() {
 
     assert!(!kernel.is_ready());
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -333,7 +342,7 @@ fn kernel_arm_succeeds_when_ready() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -369,7 +378,7 @@ fn kernel_arm_fails_when_already_armed() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -394,7 +403,7 @@ fn kernel_arm_fails_when_faulted() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -424,7 +433,7 @@ fn kernel_disarm_transitions_to_disarmed() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -482,7 +491,7 @@ fn kernel_outputs_control_when_armed() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -835,7 +844,7 @@ fn kernel_stays_in_sensor_init_with_failed_imu() {
     let mut kernel = make_kernel();
     let failed_sensors = make_failed_imu_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -883,7 +892,7 @@ fn kernel_arm_fails_with_missing_convergence() {
     let mut kernel = make_kernel();
     let sensors = make_imu_only_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -915,7 +924,7 @@ fn kernel_arm_fails_when_throttle_not_low() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -996,7 +1005,7 @@ fn kernel_disarm_resets_sample_counts() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1052,8 +1061,10 @@ fn kernel_requires_all_pre_arm_flags() {
     };
     let full_required = PreArmFlags::QUAD_WITH_GPS;
     let mut kernel = AviateKernel::with_pre_arm_required(
+        Ekf::default(),
         MultirotorController::default(),
         mixer,
+        Sanitizer::default(),
         mode_config,
         full_required,
     );
@@ -1062,7 +1073,7 @@ fn kernel_requires_all_pre_arm_flags() {
     // Use sensors WITHOUT GPS
     let no_gps_sensors = make_imu_only_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1101,7 +1112,7 @@ fn boundary_imu_sample_count_99_not_converged() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1139,7 +1150,7 @@ fn boundary_imu_sample_count_100_converged() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1177,7 +1188,7 @@ fn boundary_imu_sample_count_101_converged() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1207,7 +1218,7 @@ fn boundary_baro_sample_count_99_not_converged() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1236,7 +1247,7 @@ fn boundary_baro_sample_count_100_converged() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1265,7 +1276,7 @@ fn boundary_mag_sample_count_99_not_converged() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1294,7 +1305,7 @@ fn boundary_mag_sample_count_100_converged() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1422,8 +1433,10 @@ fn production_config_quad_minimum_arms_with_minimal_sensors() {
         groups: &[],
     };
     let mut kernel = AviateKernel::with_pre_arm_required(
+        Ekf::default(),
         MultirotorController::default(),
         mixer,
+        Sanitizer::default(),
         mode_config,
         test_required,
     );
@@ -1431,7 +1444,7 @@ fn production_config_quad_minimum_arms_with_minimal_sensors() {
 
     let sensors = make_valid_sensors(); // Use full sensors to avoid fault triggers
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1470,7 +1483,7 @@ fn fault_state_entered_on_critical_imu_failure_while_armed() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1513,7 +1526,7 @@ fn fault_state_prevents_arming() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1641,7 +1654,7 @@ fn fault_state_reset_clears_convergence() {
     let sensors = make_valid_sensors();
 
     // Build up sample counts first
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1676,7 +1689,7 @@ fn fault_state_full_recovery_cycle() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1766,7 +1779,7 @@ fn request_config_mode_fails_when_not_armed() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1793,7 +1806,7 @@ fn request_config_mode_fails_in_fault_state() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1823,7 +1836,7 @@ fn request_config_mode_fails_already_in_mode() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1850,7 +1863,7 @@ fn request_config_mode_fails_already_transitioning() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1900,7 +1913,7 @@ fn kernel_get_health_returns_correct_state() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2034,7 +2047,7 @@ fn init_state_estimator_converging_to_prearm() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2068,7 +2081,7 @@ fn init_state_ready_to_prearm_fallback() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2098,7 +2111,7 @@ fn init_state_disarmed_to_prearm() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2127,7 +2140,7 @@ fn init_state_fault_stays_until_reset() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2186,7 +2199,7 @@ fn step_returns_safe_when_not_armed() {
 fn step_returns_safe_on_critical_fault() {
     let mut kernel = make_kernel();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2231,7 +2244,7 @@ fn step_with_frozen_control_law() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2272,7 +2285,7 @@ fn step_performs_control_when_armed() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2312,7 +2325,7 @@ fn step_handles_degradation_trigger() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2430,7 +2443,7 @@ fn test_sensor_overrides_gnss_force_state() {
     };
 
     // Step kernel (armed)
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2538,7 +2551,7 @@ fn request_config_mode_succeeds() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2569,7 +2582,7 @@ fn request_config_mode_fails_checks() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2731,7 +2744,7 @@ fn test_ground_reset_clears_state() {
     let sensors = make_valid_sensors();
 
     // Get to Ready state with some accumulated state
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2768,7 +2781,7 @@ fn test_ground_reset_ignored_when_armed() {
     let sensors = make_valid_sensors();
 
     // Get to Armed state
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2851,7 +2864,7 @@ fn test_step_with_unhealthy_sensors() {
     };
 
     // Initialize to Armed to allow step() to proceed past the first check
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2880,7 +2893,7 @@ fn step_with_sensor_overrides_no_gnss_force() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -2917,7 +2930,7 @@ fn init_state_ready_stays_when_satisfied() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -3083,7 +3096,7 @@ fn update_degrades_on_in_flight_trigger() {
 
     // Armed but EKF never initialized — valid_flags will be empty.
     kernel.init_state = InitState::Armed;
-    assert!(!kernel.ekf.is_initialized());
+    assert!(!kernel.estimator.is_initialized());
 
     // Ensure timing-violation branch is NOT the one that fires.
     assert_eq!(kernel.timing_stats.consecutive_violations, 0);
@@ -3126,7 +3139,7 @@ fn update_degrades_on_persistent_timing_violation() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
 
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -3233,7 +3246,7 @@ fn aviate_kernel_trait_surface_covered() {
 
     // Arm-path: wind through init_step enough times to satisfy pre-arm,
     // then arm/disarm + watchdog + ground_reset via the trait.
-    kernel.ekf.init(
+    kernel.estimator.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),

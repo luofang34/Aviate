@@ -20,10 +20,57 @@ mod scalar;
 mod update;
 
 use crate::math::{Matrix, Quaternion, Vector3, QUAT_NORM_EPS};
+use crate::sensor::{BaroData, GnssData, ImuData, MagData, SensorReading};
 use crate::state::{EstimateQuality, StateEstimate, StateValidFlags};
 use crate::types::{
     Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, RadiansPerSecond, Scalar,
 };
+
+/// State estimator contract (LLR-EST-101..108).
+///
+/// The kernel consumes estimators only through this trait — concrete
+/// implementations (the 18-state error-state EKF in this module today;
+/// alternates such as UKF / IEKF / factor-graph backends in future)
+/// stay swappable without touching kernel control flow. The surface is
+/// intentionally narrow: it covers exactly what `kernel_update.rs` and
+/// `kernel_logic.rs` call. Implementation-specific knobs (covariance
+/// matrices, tuning parameters, diagnostic accessors) stay on the
+/// concrete type.
+pub trait Estimator {
+    /// Seed pos/vel/quat and clear bias states; mark initialized.
+    fn init(&mut self, pos: Vector3<Meters>, vel: Vector3<MetersPerSecond>, quat: Quaternion);
+
+    /// IMU-driven state and covariance propagation. Bails on
+    /// non-finite dt or invalid IMU samples without touching state.
+    fn predict(&mut self, imu: &ImuData, dt: Scalar);
+
+    /// Fuse a GNSS reading. Health-gated: drops Suspect/Lost or no-fix.
+    fn update_gnss(&mut self, gnss_reading: &SensorReading<GnssData>);
+
+    /// Fuse a barometric pressure reading into the altitude channel.
+    fn update_baro(&mut self, baro_reading: &SensorReading<BaroData>);
+
+    /// Fuse a magnetometer reading into the heading channel.
+    fn update_mag(&mut self, mag_reading: &SensorReading<MagData>);
+
+    /// Snapshot the current state estimate for downstream consumers.
+    fn get_estimate(&self) -> StateEstimate;
+
+    /// Whether `init()` has run successfully since construction or fault.
+    fn is_initialized(&self) -> bool;
+
+    /// Whether a numeric fault has latched (e.g. INV-27 quat normalization).
+    fn has_numeric_fault(&self) -> bool;
+
+    /// Ground reset — clear all filter state to a factory un-initialized
+    /// posture. Called from `AviateKernelImpl::ground_reset` to restart
+    /// the lifecycle without re-constructing the kernel.
+    fn reset(&mut self);
+
+    /// Test-only state injection (spec §20). Bypasses init gate.
+    #[cfg(feature = "test-hooks")]
+    fn set_state(&mut self, state: &StateEstimate);
+}
 
 // State dimension: 3 pos, 3 vel, 3 att_err, 3 gyro_bias, 3 accel_bias, 3 mag_bias = 18
 pub const STATE_DIM: usize = 18;
@@ -100,6 +147,13 @@ pub struct Ekf {
     // Covariance P (18x18)
     pub(crate) p_cov: Matrix<STATE_DIM, STATE_DIM>,
 
+    // COV:EXCL_START(phantom DA from ekf/ submodule impl blocks; rustc
+    // attributes some submodule-impl coverage back to these struct
+    // field declaration lines instead of method bodies. Same artifact
+    // class as the previous COV:EXCL markers below the methods —
+    // adding the Estimator trait shifted the phantom-DA targets onto
+    // the field declarations. No executable code on any of these
+    // lines.)
     // Configuration
     pub(crate) config: EkfConfig,
 
@@ -107,6 +161,7 @@ pub struct Ekf {
 
     /// INV-27: Quaternion normalization fault flag (latches until init())
     pub(crate) quat_fault: bool,
+    // COV:EXCL_STOP
 }
 
 impl Default for Ekf {
@@ -177,6 +232,14 @@ impl Ekf {
         // COV:EXCL_STOP
     }
 
+    /// Reset filter to factory un-initialized state, preserving the
+    /// originally-configured tuning parameters. Caller (kernel
+    /// `ground_reset`) is responsible for ensuring the vehicle is on
+    /// the ground and disarmed.
+    pub fn reset(&mut self) {
+        *self = Self::new(self.config);
+    }
+
     pub fn init(&mut self, pos: Vector3<Meters>, vel: Vector3<MetersPerSecond>, quat: Quaternion) {
         self.pos = pos;
         self.vel = vel;
@@ -245,3 +308,52 @@ impl Ekf {
         self.initialized = state.valid_flags.contains(StateValidFlags::all());
     }
 }
+
+// COV:EXCL_START(DELEGATE: every body in this impl forwards to the
+// equivalent inherent Ekf method, which carries the actual logic and is
+// directly tested by aviate-core/tests/ekf_tests.rs. Covering this block
+// would only prove that trait dispatch resolves, not that the EKF math
+// is correct.)
+impl Estimator for Ekf {
+    fn init(&mut self, pos: Vector3<Meters>, vel: Vector3<MetersPerSecond>, quat: Quaternion) {
+        Ekf::init(self, pos, vel, quat)
+    }
+
+    fn predict(&mut self, imu: &ImuData, dt: Scalar) {
+        Ekf::predict(self, imu, dt)
+    }
+
+    fn update_gnss(&mut self, gnss_reading: &SensorReading<GnssData>) {
+        Ekf::update_gnss(self, gnss_reading)
+    }
+
+    fn update_baro(&mut self, baro_reading: &SensorReading<BaroData>) {
+        Ekf::update_baro(self, baro_reading)
+    }
+
+    fn update_mag(&mut self, mag_reading: &SensorReading<MagData>) {
+        Ekf::update_mag(self, mag_reading)
+    }
+
+    fn get_estimate(&self) -> StateEstimate {
+        Ekf::get_estimate(self)
+    }
+
+    fn is_initialized(&self) -> bool {
+        Ekf::is_initialized(self)
+    }
+
+    fn has_numeric_fault(&self) -> bool {
+        Ekf::has_numeric_fault(self)
+    }
+
+    fn reset(&mut self) {
+        Ekf::reset(self)
+    }
+
+    #[cfg(feature = "test-hooks")]
+    fn set_state(&mut self, state: &StateEstimate) {
+        Ekf::set_state(self, state)
+    }
+}
+// COV:EXCL_STOP

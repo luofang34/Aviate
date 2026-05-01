@@ -5,10 +5,11 @@
 # floor requires a `Lower-Floor: <dimension> <reason>` line on the PR
 # body / squash-commit description; friction is intentional.
 #
-# We start with the four trace-layer counts at zero because `cert/trace/`
-# is currently empty scaffolding. As SYS/HLR/LLR/Test entries land, bump
-# each floor in the same PR that adds the entries — the gate then keeps
-# those entries from silently disappearing.
+# Trace floors are seeded to the count produced by the first real
+# requirement family — Estimator extraction (SYS-EST-001 / HLR-EST-001..3 /
+# LLR-EST-101..108 / TST-EST-001..010). Subsequent PRs bump each floor in
+# the same PR that adds the entries; the gate then keeps those entries
+# from silently disappearing.
 #
 # Left off on purpose today:
 #   - test_count / library_panics: the tool's measurement helpers look
@@ -18,11 +19,17 @@
 #     once the tool supports a configurable crate-root glob (or we
 #     reshape the workspace).
 
+# Measurement keys match the names emitted by
+# `evidence_core::floors::current_measurements`: `trace_sys`,
+# `trace_hlr`, `trace_llr`, `trace_test` — NO `_count` suffix. Earlier
+# revisions used `_count`-suffixed keys; those silently returned
+# current=0 (no matching measurement key) and only "passed" because the
+# committed floor was 0 too.
 [floors]
-trace_sys_count = 0
-trace_hlr_count = 0
-trace_llr_count = 0
-trace_test_count = 0
+trace_sys = 1
+trace_hlr = 3
+trace_llr = 8
+trace_test = 10
 
 [delta_ceilings]
 # Reserved by the tool for new-additions-in-diff checks. Parsed today,

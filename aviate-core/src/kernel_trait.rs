@@ -3,13 +3,14 @@
 //! without being buried under implementation detail.
 
 use crate::control::{ConfigMode, ControlLawV1, VehicleController};
+use crate::ekf::Estimator;
 use crate::fault::FaultFlags;
 use crate::kernel::{AviateKernelImpl, InitState};
 use crate::kernel_types::{
     ArmError, ChannelId, Config, ConfigBlock, ConfigError, ConfigTransitionState, CrossChannelData,
     HealthReport, InitResult, TransitionError, UpdateResult,
 };
-use crate::mixer::{ActuatorState, Mixer};
+use crate::mixer::{ActuatorSanitizer, ActuatorState, Mixer};
 use crate::sensor::SensorSet;
 use crate::time::{TimeDelta, Timestamp};
 
@@ -94,7 +95,9 @@ pub trait AviateKernelTrait {
 //   local state. Covering via `&dyn AviateKernelTrait` would only prove
 //   that `dyn` dispatch works, not that our logic does; the underlying
 //   AviateKernelImpl tests already do the latter.)
-impl<V: VehicleController, M: Mixer> AviateKernelTrait for AviateKernelImpl<V, M> {
+impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> AviateKernelTrait
+    for AviateKernelImpl<E, V, M, S>
+{
     fn init_step(&mut self, sensors: &SensorSet, time: Timestamp) -> InitResult {
         AviateKernelImpl::init_step(self, sensors, time)
     }
@@ -185,7 +188,7 @@ impl<V: VehicleController, M: Mixer> AviateKernelTrait for AviateKernelImpl<V, M
 
     #[cfg(feature = "test-hooks")]
     fn inject_state(&mut self, state: &StateEstimate) {
-        self.ekf.set_state(state);
+        self.estimator.set_state(state);
     }
 
     #[cfg(feature = "test-hooks")]
