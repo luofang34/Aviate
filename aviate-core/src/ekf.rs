@@ -147,6 +147,13 @@ pub struct Ekf {
     // Covariance P (18x18)
     pub(crate) p_cov: Matrix<STATE_DIM, STATE_DIM>,
 
+    // COV:EXCL_START(phantom DA from ekf/ submodule impl blocks; rustc
+    // attributes some submodule-impl coverage back to these struct
+    // field declaration lines instead of method bodies. Same artifact
+    // class as the previous COV:EXCL markers below the methods —
+    // adding the Estimator trait shifted the phantom-DA targets onto
+    // the field declarations. No executable code on any of these
+    // lines.)
     // Configuration
     pub(crate) config: EkfConfig,
 
@@ -154,6 +161,7 @@ pub struct Ekf {
 
     /// INV-27: Quaternion normalization fault flag (latches until init())
     pub(crate) quat_fault: bool,
+    // COV:EXCL_STOP
 }
 
 impl Default for Ekf {
