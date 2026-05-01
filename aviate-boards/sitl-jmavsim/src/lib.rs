@@ -47,7 +47,7 @@ use aviate_backend_mavlink_hil::{HilBackend, HilBackendConfig};
 use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::Command;
 use aviate_core::mixer::{ActuatorCmd, QuadXMixer};
-use aviate_core::{ArmError, AviateKernel, InitState};
+use aviate_core::{ArmError, DefaultAviateKernel, InitState};
 
 use aviate_core::hal::ActuatorHal;
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
@@ -296,12 +296,12 @@ impl JmavSimBoard {
     }
 
     /// Get a reference to the kernel
-    pub fn kernel(&self) -> &AviateKernel<MultirotorController, QuadXMixer> {
+    pub fn kernel(&self) -> &DefaultAviateKernel<MultirotorController, QuadXMixer> {
         &self.runner.kernel
     }
 
     /// Get a mutable reference to the kernel
-    pub fn kernel_mut(&mut self) -> &mut AviateKernel<MultirotorController, QuadXMixer> {
+    pub fn kernel_mut(&mut self) -> &mut DefaultAviateKernel<MultirotorController, QuadXMixer> {
         &mut self.runner.kernel
     }
 

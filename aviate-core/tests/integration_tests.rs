@@ -7,7 +7,7 @@ mod tests {
     use aviate_core::control::{Command, VehicleController};
     use aviate_core::ekf::Ekf;
     use aviate_core::math::{Quaternion, Vector3};
-    use aviate_core::mixer::{ActuatorCmd, Mixer};
+    use aviate_core::mixer::{ActuatorCmd, Mixer, Sanitizer};
     use aviate_core::sensor::{
         AirData, BaroData, GnssData, GnssFix, GnssHealth, ImuData, MagData, SensorHealth,
         SensorReading, SensorSet,
@@ -30,7 +30,9 @@ mod tests {
         ) -> ActuatorCmd;
     }
 
-    impl<V: VehicleController, M: Mixer> KernelTestExt for AviateKernel<V, M> {
+    impl<E: aviate_core::Estimator, V: VehicleController, M: Mixer, S: aviate_core::ActuatorSanitizer>
+        KernelTestExt for AviateKernel<E, V, M, S>
+    {
         fn step_test(
             &mut self,
             time_delta: TimeDelta,
@@ -307,14 +309,16 @@ mod tests {
             | PreArmFlags::CONFIG_VALID;
 
         let mut kernel = AviateKernel::with_pre_arm_required(
+            Ekf::default(),
             MultirotorController::default(),
             mixer,
+            Sanitizer::default(),
             mode_config,
             test_required,
         );
 
         // Initialize EKF
-        kernel.ekf.init(
+        kernel.estimator.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -409,14 +413,16 @@ mod tests {
             | PreArmFlags::CONFIG_VALID;
 
         let mut kernel = AviateKernel::with_pre_arm_required(
+            Ekf::default(),
             FixedWingController,
             mixer,
+            Sanitizer::default(),
             mode_config,
             test_required,
         );
 
         // Init EKF
-        kernel.ekf.init(
+        kernel.estimator.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),

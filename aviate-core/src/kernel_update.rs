@@ -5,6 +5,7 @@
 
 use crate::checks::DegradationReason;
 use crate::control::{AuthorityProfile, Command, ControlLawV1, ControlMode, VehicleController};
+use crate::ekf::Estimator;
 use crate::fault::FaultFlags;
 use crate::kernel::AviateKernelImpl;
 use crate::kernel_types::{
@@ -15,7 +16,9 @@ use crate::mixer::{ActuatorCmd, ActuatorSanitizer, ActuatorState, Mixer, Sanitiz
 use crate::sensor::SensorSet;
 use crate::time::TimeDelta;
 
-impl<V: VehicleController, M: Mixer> AviateKernelImpl<V, M> {
+impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
+    AviateKernelImpl<E, V, M, S>
+{
     /// Main control update with in-flight monitoring (Spec §20)
     ///
     /// # Arguments
@@ -82,13 +85,13 @@ impl<V: VehicleController, M: Mixer> AviateKernelImpl<V, M> {
                     law: ControlLawV1::Backup,
                     health: ChannelHealthV1::Operative,
                     faults: self.faults,
-                    confidence: self.ekf.get_estimate().quality,
+                    confidence: self.estimator.get_estimate().quality,
                     envelope_margin: EnvelopeMargin::default(),
                     sequence: command.sequence,
                     protection: Default::default(),
                     sanitize_report: SanitizeReport::default(),
                 },
-                estimate: self.ekf.get_estimate(),
+                estimate: self.estimator.get_estimate(),
                 timing: CycleTiming::default(),
                 degradation: None,
             };
@@ -117,13 +120,13 @@ impl<V: VehicleController, M: Mixer> AviateKernelImpl<V, M> {
                     law: ControlLawV1::Backup, // Force Backup reporting when not armed
                     health: ChannelHealthV1::Operative,
                     faults: self.faults,
-                    confidence: self.ekf.get_estimate().quality,
+                    confidence: self.estimator.get_estimate().quality,
                     envelope_margin: EnvelopeMargin::default(),
                     sequence: command.sequence,
                     protection: Default::default(),
                     sanitize_report: SanitizeReport::default(),
                 },
-                estimate: self.ekf.get_estimate(),
+                estimate: self.estimator.get_estimate(),
                 timing: CycleTiming::default(),
                 degradation: None,
             };
@@ -142,7 +145,7 @@ impl<V: VehicleController, M: Mixer> AviateKernelImpl<V, M> {
                     sanitized: true,
                 },
                 status: ChannelStatus::default(), // TODO: Populate with fault info
-                estimate: self.ekf.get_estimate(),
+                estimate: self.estimator.get_estimate(),
                 timing: CycleTiming::default(),
                 degradation: None,
             };
@@ -151,7 +154,7 @@ impl<V: VehicleController, M: Mixer> AviateKernelImpl<V, M> {
         // 3. EKF Update (predict and update)
         let primary_imu = &sensors.imus[0];
         if primary_imu.valid && primary_imu.health == crate::sensor::SensorHealth::Good {
-            self.ekf.predict(&primary_imu.value, time.dt_sec.0);
+            self.estimator.predict(&primary_imu.value, time.dt_sec.0);
         }
 
         // Apply sensor overrides from command
@@ -163,28 +166,28 @@ impl<V: VehicleController, M: Mixer> AviateKernelImpl<V, M> {
                     crate::sensor::GnssHealth::Suspect => crate::sensor::SensorHealth::Degraded,
                     crate::sensor::GnssHealth::Lost => crate::sensor::SensorHealth::Failed,
                 };
-                self.ekf.update_gnss(&primary_gnss_reading);
+                self.estimator.update_gnss(&primary_gnss_reading);
             }
         } else {
             // Normal sensor updates
             let primary_gnss = &sensors.gnss[0];
             if primary_gnss.valid && primary_gnss.health == crate::sensor::SensorHealth::Good {
-                self.ekf.update_gnss(primary_gnss);
+                self.estimator.update_gnss(primary_gnss);
             }
         }
 
         let primary_baro = &sensors.baros[0];
         if primary_baro.valid && primary_baro.health == crate::sensor::SensorHealth::Good {
-            self.ekf.update_baro(primary_baro);
+            self.estimator.update_baro(primary_baro);
         }
 
         let primary_mag = &sensors.mags[0];
         if primary_mag.valid && primary_mag.health == crate::sensor::SensorHealth::Good {
-            self.ekf.update_mag(primary_mag);
+            self.estimator.update_mag(primary_mag);
         }
 
         // Get updated estimate
-        let state = self.ekf.get_estimate();
+        let state = self.estimator.get_estimate();
 
         // 3. Update in-flight checks
         self.checks.in_flight.update_from_state(&state);

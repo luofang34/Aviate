@@ -35,7 +35,11 @@ pub use crate::checks::{
     DegradationReason, InFlightFlags, TransitionFailure, TransitionFlags, TransitionLimits,
 };
 
-pub use crate::kernel::{init_core, AviateKernel, AviateKernelImpl, InitState, Watchdog};
+pub use crate::ekf::Estimator;
+pub use crate::kernel::{
+    init_core, AviateKernel, AviateKernelImpl, DefaultAviateKernel, InitState, Watchdog,
+};
+pub use crate::mixer::ActuatorSanitizer;
 // AviateKernelTrait is deliberately NOT re-exported at the crate root:
 // rustc's coverage debug info attributes re-exported trait-impl items to
 // SF:lib.rs with the defining file's line numbers, producing phantom DA

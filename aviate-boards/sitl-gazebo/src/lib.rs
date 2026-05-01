@@ -40,7 +40,7 @@ use log::warn;
 
 use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::mixer::{ActuatorCmd, QuadXMixer};
-use aviate_core::AviateKernel;
+use aviate_core::DefaultAviateKernel;
 
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{SitlConfig, SitlIO};
@@ -157,12 +157,12 @@ impl GazeboSitlBoard {
     }
 
     /// Get a reference to the kernel
-    pub fn kernel(&self) -> &AviateKernel<MultirotorController, QuadXMixer> {
+    pub fn kernel(&self) -> &DefaultAviateKernel<MultirotorController, QuadXMixer> {
         &self.runner.kernel
     }
 
     /// Get a mutable reference to the kernel
-    pub fn kernel_mut(&mut self) -> &mut AviateKernel<MultirotorController, QuadXMixer> {
+    pub fn kernel_mut(&mut self) -> &mut DefaultAviateKernel<MultirotorController, QuadXMixer> {
         &mut self.runner.kernel
     }
 
