@@ -2,14 +2,22 @@
 version = "0.0.1"
 
 [meta]
-document_id = "SYS-DOC-001"
+document_id = "AVIATE-SYS-001"
 revision = "1"
 
 [[requirements]]
-uid = "f577f599-40bf-4c05-9ac2-a7628b6485c6"
-id = "sys-example"
-title = "Example System Requirement"
-owner = "team@example.com"
-description = "This is an example system-level requirement."
-verification_methods = ["review"]
+uid = "bb2e1695-a2e7-40c4-ae75-9711a8134b70"
+id = "SYS-EST-001"
+title = "State estimator is replaceable"
+owner = "aviate-core@aviate"
+description = """
+The Aviate flight kernel SHALL accept an externally-supplied state
+estimator implementation. Alternate algorithms (e.g. UKF, Invariant-EKF,
+factor-graph backends) SHALL be substitutable without modifying kernel
+control flow, the AviateKernelTrait surface (spec §20), or any
+non-estimator subsystem (controller, mixer, sanitizer, envelope
+protector). Substitution SHALL preserve the safety properties listed
+in spec §21 (Architecture Invariants).
+"""
+verification_methods = ["review", "test"]
 traces_to = []

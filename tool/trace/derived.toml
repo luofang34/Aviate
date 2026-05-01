@@ -2,14 +2,33 @@
 version = "0.0.1"
 
 [meta]
-document_id = "DRQ-DOC-001"
+document_id = "AVIATE-DRQ-001"
 revision = "1"
 
+# Derived requirements arising from estimator-trait extraction.
+# Each one would otherwise be implicit in implementation choice;
+# recording them here documents the design decisions for review.
+
 [[requirements]]
-uid = "b90ac1d5-b706-4402-93f9-1ca5f5efe3f1"
-id = "derived-example"
-title = "Example Derived Requirement"
-owner = "team@example.com"
-description = "A requirement derived during design or implementation."
-rationale = "Required for implementation of HLR-001"
-safety_impact = "none"
+uid = "33bcf660-ebb5-45e3-9548-5e30fb38a8d3"
+id = "DRQ-EST-001"
+title = "Estimator::reset() preserves construction-time tuning"
+owner = "aviate-core@aviate"
+description = """
+The kernel's ground_reset path needs to wipe filter state without
+re-constructing the kernel. We therefore put reset() on the
+Estimator trait rather than constraining `E: Default`. The reset
+implementation for Ekf preserves EkfConfig (process/measurement
+noise tunings, innovation gate, mag fusion thresholds) — these
+are deployment parameters, not state, and re-deriving them at
+ground_reset time would be a regression.
+"""
+rationale = """
+Without this DRQ, a future implementer reading reset()'s body
+might mistake `*self = Self::new(self.config)` for a bug and
+'simplify' it to `*self = Self::default()`, silently throwing
+away tuning. The HLR-EST-003 determinism property requires that
+behaviour after reset+init is identical to behaviour after fresh
+construction+init only when configurations match.
+"""
+safety_impact = "low"

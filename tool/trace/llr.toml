@@ -2,16 +2,148 @@
 version = "0.0.1"
 
 [meta]
-document_id = "LLR-DOC-001"
+document_id = "AVIATE-LLR-001"
 revision = "1"
 
 [[requirements]]
-uid = "6d443dd1-7f5c-45a1-85ed-42eab53ab9ee"
-id = "llr-example"
-title = "Example Implementation Requirement"
-owner = "team@example.com"
-traces_to = ["0e60162d-bdf5-4320-a735-e4368c4af78e"]
-modules = []
-derived = false
-description = "This is an example low-level requirement."
+uid = "6c867ca0-174d-4271-bb69-988d38164f1e"
+id = "LLR-EST-101"
+title = "Estimator::init seeds state and arms the filter"
+owner = "aviate-core@aviate"
+description = """
+Estimator::init(pos, vel, quat) SHALL set the filter's
+position-NED, velocity-NED, and attitude quaternion to the supplied
+values, zero all bias states (gyro, accel, mag), reset covariance
+to a finite default, set is_initialized() == true, and clear any
+latched numeric fault. init() SHALL NOT block on I/O, time, or
+external resources.
+"""
 verification_methods = ["test"]
+modules = ["aviate-core/src/ekf.rs"]
+derived = false
+traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9", "9262663e-c149-424f-b159-2ae3cb176ee7"]
+
+[[requirements]]
+uid = "d9fa9931-db32-4965-afb0-c7d80d31f57c"
+id = "LLR-EST-102"
+title = "Estimator::predict propagates IMU and gates invalid input"
+owner = "aviate-core@aviate"
+description = """
+predict(imu, dt) SHALL: (a) return without state mutation when
+is_initialized() == false; (b) return without state mutation when
+dt is non-finite or dt <= 0; (c) return without state mutation
+when any IMU axis (gyro or accel) fails its validity check;
+otherwise (d) integrate position/velocity/attitude by dt using the
+bias-corrected IMU sample, propagate covariance P = F·P·Fᵀ + Q,
+and re-symmetrize P.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf/predict.rs"]
+derived = false
+traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9", "9262663e-c149-424f-b159-2ae3cb176ee7"]
+
+[[requirements]]
+uid = "b8339d64-9b99-4109-a9da-8e1a547fbf49"
+id = "LLR-EST-103"
+title = "Estimator::update_gnss is health-gated and innovation-gated"
+owner = "aviate-core@aviate"
+description = """
+update_gnss SHALL be a no-op when SensorReading.health is not Good,
+when GnssData.health is Suspect or Lost, or when GnssFix is None.
+On a healthy reading, it SHALL fuse position-NED and velocity-NED
+into the EKF state via per-axis scalar updates with the configured
+measurement noise.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf/update.rs"]
+derived = false
+traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9"]
+
+[[requirements]]
+uid = "34ef483f-d807-41fd-9c73-4090ba15f2c0"
+id = "LLR-EST-104"
+title = "Estimator::update_baro fuses pressure-derived altitude"
+owner = "aviate-core@aviate"
+description = """
+update_baro SHALL be a no-op when SensorReading.health is not Good
+or when static_pressure is None. Otherwise it SHALL convert the
+pressure to altitude via the standard ISA formula and fuse the
+resulting NED-Z scalar measurement (sign-flipped, since NED Z is
+down) with the configured baro measurement noise.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf/update.rs"]
+derived = false
+traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9"]
+
+[[requirements]]
+uid = "c2195fda-4744-404f-9a3e-d5e30ed7c3cf"
+id = "LLR-EST-105"
+title = "Estimator::update_mag fuses tilt-compensated heading with inclination decay"
+owner = "aviate-core@aviate"
+description = """
+update_mag SHALL be a no-op when (a) is_initialized() == false,
+(b) SensorReading.health is not Good, (c) field magnitude lies
+outside [mag_field_min, mag_field_max], or (d) the vertical-axis
+ratio meets or exceeds mag_inclination_limit. On accept, it SHALL
+apply the EKF-estimated mag_bias correction, compute a
+tilt-compensated magnetic heading, gate the innovation to [-π, π],
+and fuse heading via the heading-specialized scalar update with
+inclination-weighted measurement noise.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf/update.rs"]
+derived = false
+traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9"]
+
+[[requirements]]
+uid = "d1992111-f912-496c-9120-7efb6523c321"
+id = "LLR-EST-106"
+title = "Estimator::get_estimate returns a coherent StateEstimate snapshot"
+owner = "aviate-core@aviate"
+description = """
+get_estimate SHALL return a StateEstimate whose attitude/angular
+velocity/position-NED/velocity-NED fields reflect the filter's
+current state, whose quality is Good iff is_initialized() == true
+and Unusable otherwise, and whose valid_flags is StateValidFlags::all()
+iff is_initialized() == true and empty otherwise. get_estimate
+SHALL be pure (no state mutation).
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf.rs"]
+derived = false
+traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9", "dd494a24-a5f8-4cea-b687-a471edbfea17"]
+
+[[requirements]]
+uid = "809792b4-cbed-4107-bbdf-df648a87956f"
+id = "LLR-EST-107"
+title = "Estimator status accessors are pure"
+owner = "aviate-core@aviate"
+description = """
+is_initialized() SHALL return the boolean tracking whether init()
+has run since construction or reset(). has_numeric_fault() SHALL
+return the latched numeric fault flag (raised by INV-27 quaternion
+sanitization). Both accessors SHALL be pure.
+"""
+verification_methods = ["test", "review"]
+modules = ["aviate-core/src/ekf.rs"]
+derived = false
+traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9", "dd494a24-a5f8-4cea-b687-a471edbfea17"]
+
+[[requirements]]
+uid = "ac99b742-63eb-448c-8cb9-b0c8f8085b6c"
+id = "LLR-EST-108"
+title = "Estimator::reset returns the filter to factory un-initialized state"
+owner = "aviate-core@aviate"
+description = """
+reset() SHALL clear all integrated state (position, velocity,
+attitude, biases), clear any latched numeric fault, restore
+covariance to the construction-time default, set is_initialized()
+back to false, and preserve the originally-supplied tuning
+configuration. reset() SHALL be safe to call from any kernel
+state and SHALL NOT panic.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf.rs"]
+derived = false
+traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9", "dd494a24-a5f8-4cea-b687-a471edbfea17"]

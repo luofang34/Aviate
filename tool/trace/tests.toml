@@ -2,13 +2,131 @@
 version = "0.0.1"
 
 [meta]
-document_id = "TST-DOC-001"
+document_id = "AVIATE-TST-001"
 revision = "1"
 
 [[tests]]
-uid = "0289aefe-a3fa-4b41-b7f7-cf604e0c813f"
-id = "test-example"
-title = "Example Test Case"
-owner = "team@example.com"
-traces_to = ["6d443dd1-7f5c-45a1-85ed-42eab53ab9ee"]
-description = "Verifies that the example LLR is satisfied."
+uid = "ae4d81e9-aa4d-4372-a2fa-1b105e5d8ea8"
+id = "TST-EST-001"
+title = "ekf_default_creates_valid_instance"
+owner = "aviate-core@aviate"
+description = """
+Verifies that Ekf::default() produces a filter with
+is_initialized() == false and finite, well-formed initial state.
+Anchor for LLR-EST-101 (init seeding precondition) and LLR-EST-107
+(initial accessor return values).
+"""
+traces_to = ["6c867ca0-174d-4271-bb69-988d38164f1e", "809792b4-cbed-4107-bbdf-df648a87956f"]
+
+[[tests]]
+uid = "f9736124-d32c-4274-b04e-772d2ecac8e8"
+id = "TST-EST-002"
+title = "ekf_predict_on_uninitialized_returns_early"
+owner = "aviate-core@aviate"
+description = """
+Calls predict() on an Ekf that has never had init() invoked and
+asserts state is unchanged. Verifies LLR-EST-102 clause (a) and
+LLR-EST-103's safety contract that propagation is gated on init.
+"""
+traces_to = ["d9fa9931-db32-4965-afb0-c7d80d31f57c"]
+
+[[tests]]
+uid = "baba7fec-d84e-4bdb-b81d-13d1934091c7"
+id = "TST-EST-003"
+title = "ekf_predict_with_zero_dt_returns_early"
+owner = "aviate-core@aviate"
+description = """
+Verifies LLR-EST-102 clause (b): predict() with dt == 0 leaves
+state unchanged. Combined with TST-EST-008 covers the dt-validity
+boundary on both sides.
+"""
+traces_to = ["d9fa9931-db32-4965-afb0-c7d80d31f57c"]
+
+[[tests]]
+uid = "5f4a0427-e67f-4826-b485-ba10177379d4"
+id = "TST-EST-004"
+title = "ekf_predict_with_nan_dt_returns_early"
+owner = "aviate-core@aviate"
+description = """
+Verifies LLR-EST-102 clause (b): non-finite dt is rejected by
+predict(). Concrete check that dt.is_finite() == false bails out
+without state mutation.
+"""
+traces_to = ["d9fa9931-db32-4965-afb0-c7d80d31f57c"]
+
+[[tests]]
+uid = "ebf3b04f-c0c5-426d-9bbe-d7492c9d3dbc"
+id = "TST-EST-005"
+title = "ekf_predict_with_nan_imu_gyro_returns_early"
+owner = "aviate-core@aviate"
+description = """
+Verifies LLR-EST-102 clause (c): NaN in any IMU gyro component
+causes predict() to exit before state mutation. Together with the
+accel-NaN test (covered by TST-EST-008) this completes the IMU
+sanity gate.
+"""
+traces_to = ["d9fa9931-db32-4965-afb0-c7d80d31f57c"]
+
+[[tests]]
+uid = "f143411d-7551-4e31-9dc6-37c395363643"
+id = "TST-EST-006"
+title = "ekf_predict_integrates_velocity_to_position"
+owner = "aviate-core@aviate"
+description = """
+Verifies LLR-EST-102 clause (d): with a healthy IMU and dt > 0,
+predict() advances position by ∫v dt + 0.5·a·dt². Demonstrates
+the kinematic-integration leg of the predict body.
+"""
+traces_to = ["d9fa9931-db32-4965-afb0-c7d80d31f57c"]
+
+[[tests]]
+uid = "f6d00ffa-381a-406e-b24a-f7cf51a91360"
+id = "TST-EST-007"
+title = "ekf_update_gnss_with_good_health"
+owner = "aviate-core@aviate"
+description = """
+Verifies LLR-EST-103: a SensorHealth::Good GNSS reading with a
+valid fix pulls position-NED and velocity-NED state toward the
+measurement.
+"""
+traces_to = ["b8339d64-9b99-4109-a9da-8e1a547fbf49"]
+
+[[tests]]
+uid = "209f70cc-3a19-4097-9c28-89257bcbf8da"
+id = "TST-EST-008"
+title = "ekf_update_gnss_rejects_degraded_sensor_health"
+owner = "aviate-core@aviate"
+description = """
+Verifies LLR-EST-103 health gate: when SensorReading.health is not
+Good, update_gnss is a no-op. Three sibling tests in ekf_tests.rs
+cover Suspect, Lost, and no-fix paths; together they discharge the
+LLR's negative cases.
+"""
+traces_to = ["b8339d64-9b99-4109-a9da-8e1a547fbf49"]
+
+[[tests]]
+uid = "89b5a74f-aa44-4c7d-819e-cc84f25edf8a"
+id = "TST-EST-009"
+title = "ekf_get_estimate_uninitialized_returns_unusable"
+owner = "aviate-core@aviate"
+description = """
+Verifies LLR-EST-106 quality contract and LLR-EST-107 accessor
+contract: before init(), get_estimate() returns
+EstimateQuality::Unusable and StateValidFlags::empty().
+"""
+traces_to = [
+    "d1992111-f912-496c-9120-7efb6523c321",
+    "809792b4-cbed-4107-bbdf-df648a87956f",
+]
+
+[[tests]]
+uid = "849316a6-0dab-4077-9a18-8c5783bcd8db"
+id = "TST-EST-010"
+title = "ekf_innovation_gating_rejects_outlier"
+owner = "aviate-core@aviate"
+description = """
+Anchors LLR-EST-103's implicit innovation-gating safeguard inside
+the scalar update kernel: a measurement beyond the configured
+innovation_gate sigma is rejected, leaving state nearly unchanged.
+"""
+traces_to = ["b8339d64-9b99-4109-a9da-8e1a547fbf49"]

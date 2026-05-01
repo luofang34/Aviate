@@ -2,17 +2,53 @@
 version = "0.0.1"
 
 [meta]
-document_id = "HLR-DOC-001"
+document_id = "AVIATE-HLR-001"
 revision = "1"
 
 [[requirements]]
-uid = "0e60162d-bdf5-4320-a735-e4368c4af78e"
-id = "hlr-example"
-title = "Example Requirement"
-owner = "team@example.com"
-description = "This is an example high-level requirement."
-verification_methods = [
-    "test",
-    "review",
-]
-traces_to = []
+uid = "c42a507f-d988-4694-b5c3-ed34763fb0f9"
+id = "HLR-EST-001"
+title = "Estimator trait surface is closed"
+owner = "aviate-core@aviate"
+description = """
+The aviate-core Estimator trait SHALL expose exactly the methods
+init, predict, update_gnss, update_baro, update_mag, get_estimate,
+is_initialized, has_numeric_fault, reset, plus the test-hooks-gated
+set_state. No additional non-test methods SHALL be added without
+filing a derived requirement (DRQ) and re-tracing affected LLRs.
+"""
+verification_methods = ["review", "test"]
+traces_to = ["bb2e1695-a2e7-40c4-ae75-9711a8134b70"]
+
+[[requirements]]
+uid = "dd494a24-a5f8-4cea-b687-a471edbfea17"
+id = "HLR-EST-002"
+title = "Estimator quality gates kernel state validity"
+owner = "aviate-core@aviate"
+description = """
+When the estimator reports EstimateQuality::Unusable through
+get_estimate(), the kernel SHALL NOT consume the estimate for
+control or actuation in the same cycle. Pre-arm checks SHALL
+treat is_initialized()==false as blocking. A latched numeric
+fault (has_numeric_fault()==true) SHALL prevent arm() from
+succeeding until reset() is called.
+"""
+verification_methods = ["test"]
+traces_to = ["bb2e1695-a2e7-40c4-ae75-9711a8134b70"]
+
+[[requirements]]
+uid = "9262663e-c149-424f-b159-2ae3cb176ee7"
+id = "HLR-EST-003"
+title = "Estimator init is deterministic and bounded-time"
+owner = "aviate-core@aviate"
+description = """
+Estimator::init SHALL complete in a bounded number of CPU cycles
+independent of input magnitudes (no iterative convergence, no
+recursion). Repeated invocation with identical (pos, vel, quat)
+inputs SHALL leave the estimator in identical observable state
+(get_estimate() and is_initialized() returning equal values).
+predict() and update_*() called before init() SHALL be no-ops
+(safety: never propagate from uninitialized state).
+"""
+verification_methods = ["test", "review"]
+traces_to = ["bb2e1695-a2e7-40c4-ae75-9711a8134b70"]

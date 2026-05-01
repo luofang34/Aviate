@@ -27,7 +27,7 @@ in_scope = [
     "aviate-security",
 ]
 
-trace_roots = ["cert/trace"]
+trace_roots = ["tool/trace"]
 
 explicit_forbidden = []
 
