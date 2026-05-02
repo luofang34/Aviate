@@ -5,7 +5,7 @@ mod tests {
     use aviate_core::control::attitude::AttitudeController;
     use aviate_core::control::rate::RateController;
     use aviate_core::control::{Command, VehicleController};
-    use aviate_core::ekf::{Ekf, EkfState, Estimator};
+    use aviate_core::ekf::{Ekf, EkfState};
     use aviate_core::math::{Quaternion, Vector3};
     use aviate_core::mixer::{ActuatorCmd, Mixer, Sanitizer};
     use aviate_core::sensor::{
