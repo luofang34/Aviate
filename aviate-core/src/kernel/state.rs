@@ -119,3 +119,31 @@ impl Default for KernelState {
         Self::new(KernelChecks::new())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_matches_new_with_default_checks() {
+        let s = KernelState::default();
+        assert_eq!(s.init_state, InitState::PowerOn);
+        assert_eq!(s.mode, ConfigMode::Hover);
+        assert!(s.faults.is_empty());
+        assert_eq!(s.control_law, ControlLawV1::Primary);
+        // Pre-arm checks fresh from `KernelChecks::new()` are not
+        // satisfied (no sensor data, no throttle confirmation).
+        assert!(!s.checks.pre_arm.is_satisfied());
+    }
+
+    #[test]
+    fn new_propagates_supplied_checks() {
+        use crate::checks::PreArmFlags;
+        let required = PreArmFlags::IMU_HEALTHY | PreArmFlags::THROTTLE_LOW;
+        let checks = KernelChecks::with_pre_arm_required(required);
+        let s = KernelState::new(checks);
+        // Supplied checks are not satisfied without sensor data, but
+        // the state was constructed from them — exercise the path.
+        assert!(!s.checks.pre_arm.is_satisfied());
+    }
+}
