@@ -172,12 +172,15 @@ where
 mod tests {
     use super::*;
     use crate::control::multirotor::MultirotorController;
-    use crate::control::Limits;
+    use crate::control::{AxisCommand, Limits};
     use crate::ekf::Ekf;
     use crate::mixer::{ModeConfig, QuadXMixer, Sanitizer};
     use crate::time::{TimeSource, Timestamp};
-    use crate::types::Radians;
+    use crate::types::{Normalized, NormalizedSigned, Radians};
 
+    /// Timestamp source consumed by `QuadXMixer` — the function is invoked
+    /// indirectly when a test exercises `kernel.mixer.mix(...)` (see
+    /// `full_chain_kernel_mixer_invokes_timestamp_source` below).
     fn fake_ts() -> Timestamp {
         Timestamp {
             ticks: 0,
@@ -191,6 +194,17 @@ mod tests {
         QuadXMixer {
             timestamp_source: fake_ts,
         }
+    }
+
+    /// Helper that supplies all four required pipeline components, used
+    /// by every "happy path" test below. Returns the builder mid-chain
+    /// so each test can append its own override before `.build()`.
+    fn full_pipeline_builder() -> TestBuilder {
+        TestBuilder::new()
+            .estimator(Ekf::default())
+            .controller(MultirotorController::default())
+            .mixer(fake_mixer())
+            .sanitizer(Sanitizer::default())
     }
 
     #[test]
@@ -231,108 +245,79 @@ mod tests {
     }
 
     #[test]
-    fn full_chain_builds_kernel_with_default_cfg() {
-        let result = TestBuilder::new()
-            .estimator(Ekf::default())
-            .controller(MultirotorController::default())
-            .mixer(fake_mixer())
-            .sanitizer(Sanitizer::default())
-            .build();
-        assert!(result.is_ok());
-        if let Ok(k) = result {
-            assert_eq!(k.cfg.command_timeout_ms, k.cfg.command_timeout_ms);
-            assert_eq!(k.init_state, InitState::PowerOn);
-        }
+    fn full_chain_builds_kernel_with_default_cfg() -> Result<(), &'static str> {
+        let kernel = full_pipeline_builder().build()?;
+        assert_eq!(kernel.init_state, InitState::PowerOn);
+        Ok(())
+    }
+
+    /// Ensures `fake_ts` is actually invoked by exercising the mixer on
+    /// the built kernel. Without this call the function pointer is
+    /// stored but never dereferenced, leaving the function body
+    /// uncovered.
+    #[test]
+    fn full_chain_kernel_mixer_invokes_timestamp_source() -> Result<(), &'static str> {
+        let kernel = full_pipeline_builder().build()?;
+        let cmd = kernel.mixer.mix(&AxisCommand {
+            roll: NormalizedSigned(0.0),
+            pitch: NormalizedSigned(0.0),
+            yaw: NormalizedSigned(0.0),
+            collective: Normalized(0.0),
+        });
+        // QuadXMixer.mix() calls (self.timestamp_source)() to populate
+        // the ActuatorCmd timestamp — confirm the indirection ran by
+        // checking the source tag.
+        assert_eq!(cmd.timestamp.source, TimeSource::Internal);
+        Ok(())
     }
 
     #[test]
-    fn mode_config_override_propagates_to_cfg() {
+    fn mode_config_override_propagates_to_cfg() -> Result<(), &'static str> {
         let custom_mc = ModeConfig {
             mode: ConfigMode::Cruise,
             groups: &[],
         };
-        let result = TestBuilder::new()
-            .estimator(Ekf::default())
-            .controller(MultirotorController::default())
-            .mixer(fake_mixer())
-            .sanitizer(Sanitizer::default())
-            .mode_config(custom_mc)
-            .build();
-        assert!(result.is_ok());
-        if let Ok(k) = result {
-            assert_eq!(k.cfg.mode_config.mode, ConfigMode::Cruise);
-        }
+        let kernel = full_pipeline_builder().mode_config(custom_mc).build()?;
+        assert_eq!(kernel.cfg.mode_config.mode, ConfigMode::Cruise);
+        Ok(())
     }
 
     #[test]
-    fn limits_override_propagates_to_cfg() {
+    fn limits_override_propagates_to_cfg() -> Result<(), &'static str> {
         let custom_limits = Limits {
             max_roll: Radians(1.0),
             ..ResolvedKernelConfig::default().limits
         };
-        let result = TestBuilder::new()
-            .estimator(Ekf::default())
-            .controller(MultirotorController::default())
-            .mixer(fake_mixer())
-            .sanitizer(Sanitizer::default())
-            .limits(custom_limits)
-            .build();
-        assert!(result.is_ok());
-        if let Ok(k) = result {
-            assert_eq!(k.cfg.limits.max_roll.0, 1.0);
-        }
+        let kernel = full_pipeline_builder().limits(custom_limits).build()?;
+        assert_eq!(kernel.cfg.limits.max_roll.0, 1.0);
+        Ok(())
     }
 
     #[test]
-    fn command_timeout_ms_override_propagates_to_cfg() {
-        let result = TestBuilder::new()
-            .estimator(Ekf::default())
-            .controller(MultirotorController::default())
-            .mixer(fake_mixer())
-            .sanitizer(Sanitizer::default())
-            .command_timeout_ms(1234)
-            .build();
-        assert!(result.is_ok());
-        if let Ok(k) = result {
-            assert_eq!(k.cfg.command_timeout_ms, 1234);
-        }
+    fn command_timeout_ms_override_propagates_to_cfg() -> Result<(), &'static str> {
+        let kernel = full_pipeline_builder().command_timeout_ms(1234).build()?;
+        assert_eq!(kernel.cfg.command_timeout_ms, 1234);
+        Ok(())
     }
 
     #[test]
-    fn config_replace_overrides_entire_cfg() {
+    fn config_replace_overrides_entire_cfg() -> Result<(), &'static str> {
         let custom = ResolvedKernelConfig {
             command_timeout_ms: 4321,
             ..ResolvedKernelConfig::default()
         };
-        let result = TestBuilder::new()
-            .estimator(Ekf::default())
-            .controller(MultirotorController::default())
-            .mixer(fake_mixer())
-            .sanitizer(Sanitizer::default())
-            .config(custom)
-            .build();
-        assert!(result.is_ok());
-        if let Ok(k) = result {
-            assert_eq!(k.cfg.command_timeout_ms, 4321);
-        }
+        let kernel = full_pipeline_builder().config(custom).build()?;
+        assert_eq!(kernel.cfg.command_timeout_ms, 4321);
+        Ok(())
     }
 
     #[test]
-    fn pre_arm_required_propagates_to_checks() {
+    fn pre_arm_required_propagates_to_checks() -> Result<(), &'static str> {
         let required = PreArmFlags::IMU_HEALTHY | PreArmFlags::THROTTLE_LOW;
-        let result = TestBuilder::new()
-            .estimator(Ekf::default())
-            .controller(MultirotorController::default())
-            .mixer(fake_mixer())
-            .sanitizer(Sanitizer::default())
-            .pre_arm_required(required)
-            .build();
-        assert!(result.is_ok());
-        if let Ok(k) = result {
-            // Verify that the configured pre-arm requirements are reflected
-            // by exercising the missing() reporter — kernel built without
-            // pre-arm-satisfied state must report a non-empty missing set.
-            assert!(!k.checks.pre_arm.is_satisfied());
-        }
+        let kernel = full_pipeline_builder().pre_arm_required(required).build()?;
+        // Kernel built without pre-arm-satisfied state must report
+        // unmet requirements.
+        assert!(!kernel.checks.pre_arm.is_satisfied());
+        Ok(())
     }
 }
