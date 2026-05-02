@@ -3,6 +3,7 @@
 //! Covers uncovered lines in control/vtol.rs:
 //! - Lines 8, 20: VtolController step method
 
+use aviate_core::control::runtime::NoControllerState;
 use aviate_core::control::vtol::VtolController;
 use aviate_core::control::{
     Command, CommandSource, ConfigMode, ControlMode, Limits, Setpoint, VehicleController,
@@ -63,7 +64,8 @@ fn vtol_controller_step_returns_collective() {
         source: CommandSource::Pilot,
     };
 
-    let axis_cmd = controller.step(&state, &cmd, ConfigMode::Cruise, &limits);
+    let mut runtime = NoControllerState;
+    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Cruise, &limits);
 
     // VtolController returns collective from setpoint
     assert_eq!(axis_cmd.collective.0, 0.7);
@@ -92,7 +94,8 @@ fn vtol_controller_step_in_transition_mode() {
     };
 
     // Test with Transition mode
-    let axis_cmd = controller.step(&state, &cmd, ConfigMode::Transition, &limits);
+    let mut runtime = NoControllerState;
+    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Transition, &limits);
 
     assert_eq!(axis_cmd.collective.0, 0.5);
 }

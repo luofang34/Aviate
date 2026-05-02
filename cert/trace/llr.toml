@@ -222,31 +222,29 @@ traces_to = ["33190e76-603e-4cd7-8eee-468bcc94fa10"]
 [[requirements]]
 uid = "ad5ab2d7-0dd4-48d0-83ae-dea20934c119"
 id = "LLR-CTL-101"
-title = "VehicleController is structurally memoryless"
+title = "VehicleController separates algorithm identity from runtime state"
 owner = "aviate-core@aviate"
 description = """
-The `VehicleController::step` trait method SHALL take `&self` (not
-`&mut self`). Implementors SHALL NOT hold safety-relevant
-persistent state across `step()` calls — every input argument
-(`state`, `command`, `mode`, `limits`) carries the cycle's
-complete observable input.
+The `VehicleController::step` trait method SHALL take BOTH:
 
-Today's implementors (`MultirotorController`, `FixedWingController`,
-`VtolController`) are structurally memoryless: they hold only
-configuration / sub-controller objects (`pos_ctrl`, `vel_ctrl`,
-gains arrays) — themselves taking `&self`. The `&self` trait
-surface enforces this by construction.
+  - `&self` — algorithm identity / tuning gains (read-only across
+    the flight loop; lives inside `KernelPipeline`).
+  - `&mut Self::RuntimeState` — persistent runtime state
+    (integrators, anti-windup, filter memories, mode latches,
+    transition-blend coefficients; lives inside
+    `KernelState.control`).
 
-When a controller adds an integrator / anti-windup / mode-switch
-memory, the trait flips to `&self + &mut ControlState`
-(analogous to the Phase-4 `Estimator::predict(&self, &mut
-EstimatorState, ...)` pattern), and `KernelState` gains a
-`control: ControlState` field. This LLR is the structural anchor
-for that future flip — any controller that needs persistent state
-fails to compile under `&self`, forcing the refactor.
+Implementors SHALL NOT hold safety-relevant persistent state on
+`Self` (the algorithm side). Any cross-frame memory the
+controller needs SHALL route through `Self::RuntimeState`, which
+is owned by `KernelState` and therefore covered by the kernel's
+single-state-owner invariant (HLR-STATE-003).
 
-This LLR is the analogue of LLR-STATE-105 (Estimator) and
-LLR-STATE-106 (ActuatorSanitizer) for the control-law layer.
+This is the analogue of LLR-STATE-105 (Estimator) and
+LLR-STATE-106 (ActuatorSanitizer) for the control-law layer:
+algorithm-identity in the pipeline, persistent state in
+`KernelState`. The split is structural — the trait surface
+mirrors the data-flow contract.
 """
 verification_methods = ["review", "test"]
 modules = [
@@ -559,3 +557,100 @@ verification_methods = ["test"]
 modules = ["aviate-core/src/kernel/pipeline.rs"]
 derived = false
 traces_to = ["ef3875e1-eb75-4ad1-968d-5e13fa536548"]
+
+[[requirements]]
+uid = "11de1ff8-495b-40ff-8428-d5f851fc5099"
+id = "LLR-CTL-102"
+title = "VehicleController step takes &mut Self::RuntimeState"
+owner = "aviate-core@aviate"
+description = """
+`VehicleController::step` SHALL have the signature
+
+  fn step(
+      &self,
+      runtime: &mut Self::RuntimeState,
+      state: &StateEstimate,
+      command: &Command,
+      mode: ConfigMode,
+      limits: &Limits,
+  ) -> AxisCommand;
+
+with `type RuntimeState: ControllerRuntimeState`. The kernel
+SHALL invoke this as
+`self.pipeline.controller.step(&mut self.state.control, ...)`,
+producing a disjoint borrow against other `KernelState` fields
+read from the call site (`self.state.mode`, `self.state.estimator`
+projections — all `Copy` or independently-borrowed sub-fields).
+
+The trait SHALL also expose
+`fn reset(&self, runtime: &mut Self::RuntimeState)` with a default
+implementation that delegates to `runtime.reset()`. The kernel
+SHALL invoke `controller.reset(&mut state.control)` from
+`ground_reset` (LLR-STATE-107).
+"""
+verification_methods = ["review", "test"]
+modules = [
+    "aviate-core/src/control.rs",
+    "aviate-core/src/kernel_update.rs",
+    "aviate-core/src/kernel_logic.rs",
+]
+derived = false
+traces_to = ["aca86b74-33ba-4bda-8b95-e2df7167a250"]
+
+[[requirements]]
+uid = "814741c8-ed9d-40c5-8646-0c01b62de7d1"
+id = "LLR-CTL-103"
+title = "ControllerRuntimeState trait + NoControllerState sentinel"
+owner = "aviate-core@aviate"
+description = """
+The `ControllerRuntimeState` trait in
+`aviate-core::control::runtime` SHALL declare:
+
+  pub trait ControllerRuntimeState: Default {
+      fn reset(&mut self);
+  }
+
+The `Default` super-trait bound is mandatory: `KernelState`
+constructs `control: R::default()` in both `KernelState::new` and
+`KernelState::default()`. The `reset` method SHALL return the
+runtime state to its post-power-on baseline without
+re-allocation.
+
+The crate SHALL provide a unit-struct sentinel
+`pub struct NoControllerState;` that implements
+`ControllerRuntimeState` (with a no-op `reset`) and `Default` (via
+`#[derive(Default)]`). `NoControllerState` SHALL be the
+`type RuntimeState` selection of every gains-only
+`VehicleController` impl in this crate
+(`MultirotorController`, `FixedWingController`,
+`VtolController`).
+"""
+verification_methods = ["review", "test"]
+modules = ["aviate-core/src/control/runtime.rs"]
+derived = false
+traces_to = ["aca86b74-33ba-4bda-8b95-e2df7167a250"]
+
+[[requirements]]
+uid = "a8fa2869-f205-40ec-9b99-342488ca75e4"
+id = "LLR-STATE-108"
+title = "KernelState owns controller runtime state via parameterization"
+owner = "aviate-core@aviate"
+description = """
+`KernelState<R: ControllerRuntimeState = NoControllerState>` SHALL
+declare a `pub control: R` field. `AviateKernelImpl<E, V, M, S>`
+SHALL wire `state: KernelState<V::RuntimeState>`, so the kernel's
+controller runtime state is owned by `KernelState` (single-owner
+invariant HLR-STATE-003) and indexed by the controller's
+associated type.
+
+The `Default` type-parameter pin to `NoControllerState` keeps
+existing call sites that say `KernelState::default()` working
+without explicit type arguments (gains-only controller path).
+Adding a stateful controller activates `KernelState<MyState>`
+through `AviateKernelImpl`'s `V::RuntimeState` projection — no
+separate KernelState constructor needed.
+"""
+verification_methods = ["review", "test"]
+modules = ["aviate-core/src/kernel/state.rs", "aviate-core/src/kernel.rs"]
+derived = false
+traces_to = ["589cfa68-0179-4683-a787-0c90a54440df"]
