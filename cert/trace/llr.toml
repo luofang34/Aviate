@@ -771,6 +771,9 @@ bytes. Phase-5 byte-level snapshot replication will land that
 separately.
 """
 verification_methods = ["test", "review"]
-modules = ["aviate-core/src/kernel/config.rs"]
+modules = [
+    "aviate-core/src/kernel/config.rs",
+    "aviate-core/src/kernel/config/canonical.rs",
+]
 derived = false
 traces_to = ["4cf7189d-23e6-470a-b71c-c90a81c59970"]
