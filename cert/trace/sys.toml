@@ -72,3 +72,27 @@ expressible.
 """
 verification_methods = ["review", "test"]
 traces_to = []
+
+[[requirements]]
+uid = "4207eadd-89b0-4a64-8310-49c336ee057c"
+id = "SYS-MOD-001"
+title = "Kernel HAL surface excludes link-layer concerns"
+owner = "aviate-core@aviate"
+description = """
+Per spec §2.2 the flight kernel's external surface is sensor input,
+actuator output, and system services (time, watchdog, reboot,
+bootloader). Command framing, command transport, and telemetry
+framing are link-layer concerns and SHALL NOT appear in the
+`aviate-core` crate. Crates that drive radio links, serial framing,
+or GCS protocols depend on `aviate-hal-io` (or higher-level link
+crates) for these surfaces; `aviate-core` itself depends only on
+sensor/actuator/system traits.
+
+This invariant bounds the kernel's certification blast radius: the
+kernel's compile-time dependency closure cannot be expanded by
+dropping a link-protocol abstraction into `aviate-core` and is the
+structural prerequisite for keeping the DAL-A boundary aligned with
+spec §2.2.
+"""
+verification_methods = ["review", "test"]
+traces_to = []

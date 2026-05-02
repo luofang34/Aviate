@@ -354,3 +354,22 @@ that the resulting kernel satisfies `LLR-CFG-103`. Every individual
 test in `tests/kernel.rs` that calls `make_kernel()` exercises this.
 """
 traces_to = ["471d6bcb-8845-4bbe-9c8a-6d69bee67794"]
+
+[[tests]]
+uid = "1b11b826-5a33-46f8-b044-8ff16e61e960"
+id = "TST-MOD-001"
+title = "comm::tests::comm_surface_lives_in_aviate_hal_io"
+owner = "aviate-core@aviate"
+description = """
+The `aviate_hal_io::comm::tests::comm_surface_lives_in_aviate_hal_io`
+unit test imports `SystemCommand`, `CommandHal`, `CommHal`, and
+`CommError` from the crate root of `aviate-hal-io` (asserting these
+re-exports exist), constructs each `SystemCommand` and `CommError`
+variant, and provides minimal in-test impls of `CommandHal` and
+`CommHal`. The test is the structural witness that LLR-MOD-101
+holds — symbol resolution at the `aviate-hal-io` boundary
+double-checks that the same symbols cannot also be resolved from
+`aviate-core::hal` (which would be a compile-time conflict had they
+been re-introduced there).
+"""
+traces_to = ["d1c33829-df40-4bb2-ac7c-6645e6dce817"]

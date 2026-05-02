@@ -10,12 +10,13 @@ use log::{info, warn};
 use super::{init_state_to_mav_state, SitlRunner};
 use crate::telemetry::TelemetrySnapshot;
 
-use aviate_core::hal::{ActuatorHal, CommandHal, SensorHal, SystemCommand, SystemHal};
+use aviate_core::hal::{ActuatorHal, SensorHal, SystemHal};
 use aviate_core::math::{Quaternion, Vector3};
 use aviate_core::mixer::ActuatorCmd;
 use aviate_core::time::TimeDelta;
 use aviate_core::types::{Meters, MetersPerSecond, Seconds};
 use aviate_core::ChannelId;
+use aviate_hal_io::{CommandHal, SystemCommand};
 use aviate_hal_xil::SimActuatorCmd;
 
 impl SitlRunner {

@@ -46,10 +46,13 @@ use std::net::UdpSocket;
 
 use log::{info, warn};
 
-use aviate_core::hal::{CommandHal, SystemCommand, SystemHal};
+use aviate_core::hal::SystemHal;
 use aviate_core::time::{TimeSource, Timestamp};
 
-use aviate_hal_io::{GnssFix, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading};
+use aviate_hal_io::{
+    CommandHal, GnssFix, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading,
+    SystemCommand,
+};
 
 use aviate_link::mavlink::protocol::{
     CommandAck, CommandLong, Heartbeat, SetAttitudeTarget, SetPositionTargetLocalNed,

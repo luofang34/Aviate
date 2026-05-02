@@ -130,6 +130,7 @@
 #![deny(clippy::expect_used)]
 
 pub mod board_hal;
+pub mod comm;
 pub mod error;
 pub mod fake;
 pub mod security;
@@ -141,6 +142,7 @@ pub mod watchdog_hal;
 
 // Main exports
 pub use board_hal::BoardHal;
+pub use comm::{CommError, CommHal, CommandHal, SystemCommand};
 pub use error::{ActuatorError, ActuatorResult, SensorError, SensorResult};
 #[cfg(feature = "xil-fault")]
 pub use fake::SensorFault;

@@ -18,7 +18,7 @@
 //! - Counter-based timing (no floating point in timing)
 
 use aviate_core::control::{Command, ControlMode, Setpoint};
-use aviate_core::hal::SystemCommand;
+use aviate_hal_io::SystemCommand;
 use aviate_core::math::Quaternion;
 use aviate_core::types::{FloatExt, Normalized, RadiansPerSecond};
 use aviate_hal_io::transport_hal::{
