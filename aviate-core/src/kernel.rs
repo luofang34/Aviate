@@ -33,12 +33,13 @@ pub struct AviateKernelImpl<E: Estimator, V: VehicleController, M: Mixer, S: Act
     pub pipeline: KernelPipeline<E, V, M, S>,
 
     /// All safety-relevant runtime state — lifecycle, mode, faults,
-    /// control law, gate checks, actuator snapshot, timing stats. See
-    /// `kernel/state.rs`. Phase 4 will additionally relocate EKF
-    /// persistent state and sanitizer fallback state into this
-    /// sub-struct, at which point "every safety-relevant persistent
-    /// state field has exactly one owner" becomes a hard rule.
-    pub state: KernelState,
+    /// control law, gate checks, actuator snapshot, timing stats,
+    /// EKF persistent state, sanitizer fallback memory, and
+    /// controller runtime state (`V::RuntimeState`). See
+    /// `kernel/state.rs`. The "every safety-relevant persistent
+    /// state field has exactly one owner" invariant covers
+    /// every field of this sub-struct.
+    pub state: KernelState<V::RuntimeState>,
 
     /// Validated, flight-period-immutable configuration (spec §19).
     /// See `kernel/config.rs`.

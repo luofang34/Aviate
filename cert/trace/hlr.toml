@@ -247,3 +247,35 @@ witness firmware-bundle agreement at channel boundary.
 """
 verification_methods = ["review", "test"]
 traces_to = ["d45a87b2-6e51-42b0-995f-a7b6a6a011b9"]
+
+[[requirements]]
+uid = "aca86b74-33ba-4bda-8b95-e2df7167a250"
+id = "HLR-CTL-002"
+title = "VehicleController exposes pluggable runtime state via associated type"
+owner = "aviate-core@aviate"
+description = """
+The `VehicleController` trait SHALL declare an associated type
+`RuntimeState: ControllerRuntimeState`. Each implementor selects
+its own runtime-state type — gains-only controllers use the
+zero-size `NoControllerState` sentinel; controllers with cross-
+frame memory (rate-loop integrators, anti-windup accumulators,
+derivative-filter histories, command slew limiters, mode latches,
+VTOL transition-blend coefficients, fixed-wing energy-loop state)
+declare a struct that implements `ControllerRuntimeState`.
+
+The runtime-state instance lives in `KernelState.control` (single-
+owner invariant HLR-STATE-003), is mutated only via the kernel-
+mediated `controller.step(&mut state.control, ...)` call, and is
+cleared by `controller.reset(&mut state.control)` on
+`ground_reset` / `disarm`. This makes controller persistent state
+amenable to the same snapshot / hash / vote / hot-spare-takeover
+machinery as `EstimatorState` and `ActuatorFallbackState`.
+
+The associated-type design is a deliberate refusal to promise
+"controllers are forever stateless": real flight controllers grow
+integrators and transition logic. Picking the trait shape today
+that accommodates that growth (without a second refactor) is the
+whole point.
+"""
+verification_methods = ["review", "test"]
+traces_to = ["d6ca85b4-62d1-48d0-b16e-3415904cc604"]

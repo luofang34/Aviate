@@ -5,6 +5,7 @@
 //! - Velocity control path (lines 57-65)
 
 use aviate_core::control::multirotor::MultirotorController;
+use aviate_core::control::runtime::NoControllerState;
 use aviate_core::control::{
     Command, CommandSource, ConfigMode, ControlMode, Limits, Setpoint, VehicleController,
 };
@@ -70,7 +71,8 @@ fn mc_controller_position_control_path() {
         source: CommandSource::Pilot,
     };
 
-    let axis_cmd = controller.step(&state, &cmd, ConfigMode::Hover, &limits);
+    let mut runtime = NoControllerState;
+    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
 
     // Controller should produce output (position error -> velocity -> attitude -> rate)
     // Exact values depend on gains, but should be non-zero when there's position error
@@ -103,7 +105,8 @@ fn mc_controller_position_control_with_offset() {
         source: CommandSource::Pilot,
     };
 
-    let axis_cmd = controller.step(&state, &cmd, ConfigMode::Hover, &limits);
+    let mut runtime = NoControllerState;
+    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
 
     // With X position error, should produce some roll/pitch command
     // to generate horizontal acceleration
@@ -140,7 +143,8 @@ fn mc_controller_velocity_control_path() {
         source: CommandSource::Pilot,
     };
 
-    let axis_cmd = controller.step(&state, &cmd, ConfigMode::Hover, &limits);
+    let mut runtime = NoControllerState;
+    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
 
     // Should produce valid output
     assert!(axis_cmd.collective.0 >= 0.0 && axis_cmd.collective.0 <= 1.0);
@@ -170,7 +174,8 @@ fn mc_controller_velocity_control_vertical() {
         source: CommandSource::Pilot,
     };
 
-    let axis_cmd = controller.step(&state, &cmd, ConfigMode::Hover, &limits);
+    let mut runtime = NoControllerState;
+    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
 
     // Climbing should increase collective
     // (depends on controller gains, but should be reasonable)
@@ -203,7 +208,8 @@ fn mc_controller_attitude_only_path() {
         source: CommandSource::Pilot,
     };
 
-    let axis_cmd = controller.step(&state, &cmd, ConfigMode::Hover, &limits);
+    let mut runtime = NoControllerState;
+    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
 
     // Collective should be passed through
     assert!(
@@ -232,7 +238,8 @@ fn mc_controller_no_setpoint_uses_defaults() {
         source: CommandSource::Pilot,
     };
 
-    let axis_cmd = controller.step(&state, &cmd, ConfigMode::Hover, &limits);
+    let mut runtime = NoControllerState;
+    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
 
     // Should use default level attitude (identity quaternion)
     // and produce minimal roll/pitch/yaw commands

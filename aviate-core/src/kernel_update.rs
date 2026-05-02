@@ -273,6 +273,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             }
         } else {
             let axis_cmd = self.pipeline.controller.step(
+                &mut self.state.control,
                 &state,
                 &constrained_cmd,
                 self.state.mode,

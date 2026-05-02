@@ -377,6 +377,12 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         self.state.timing_stats = crate::kernel_types::TimingStats::default();
         self.state.mode = crate::control::ConfigMode::Hover;
 
+        // Reset controller persistent runtime state (integrators,
+        // anti-windup, filter memories, mode latches). Routes through
+        // the controller so an impl that needs more than `runtime.reset()`
+        // can override the trait's default `fn reset`.
+        self.pipeline.controller.reset(&mut self.state.control);
+
         self.state.control_law = ControlLawV1::Primary; // Reset law
     }
 

@@ -1,6 +1,7 @@
 use crate::control::attitude::AttitudeController;
 use crate::control::position::PositionController;
 use crate::control::rate::RateController;
+use crate::control::runtime::NoControllerState;
 use crate::control::velocity::VelocityController;
 use crate::control::{AxisCommand, Command, ConfigMode, Limits, VehicleController};
 use crate::math::{Quaternion, Vector3};
@@ -25,8 +26,11 @@ impl Default for MultirotorController {
 }
 
 impl VehicleController for MultirotorController {
+    type RuntimeState = NoControllerState;
+
     fn step(
         &self,
+        _runtime: &mut NoControllerState,
         state: &StateEstimate,
         command: &Command,
         _mode: ConfigMode,

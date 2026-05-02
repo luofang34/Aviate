@@ -27,9 +27,9 @@
 # committed floor was 0 too.
 [floors]
 trace_sys = 5
-trace_hlr = 11
-trace_llr = 24
-trace_test = 27
+trace_hlr = 12
+trace_llr = 27
+trace_test = 28
 
 [delta_ceilings]
 # Reserved by the tool for new-additions-in-diff checks. Parsed today,

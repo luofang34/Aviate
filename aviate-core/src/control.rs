@@ -17,6 +17,7 @@ use crate::types::{
 pub use crate::types::Scalar;
 
 pub mod enums;
+pub mod runtime;
 pub use enums::{CommandSource, ConfigMode, ControlLawV1, ControlMode, SafetyLevelV1};
 
 #[derive(Clone, Debug)]
@@ -151,35 +152,56 @@ pub struct AxisCommand {
 
 // COV:EXCL_START(phantom DA: rustc's coverage attribution places
 // phantom DA entries on the VehicleController trait's doc comment
-// after the &mut self → &self surface flip — same artifact class as
-// the kernel_trait.rs DELEGATE block and mixer.rs Sanitizer
-// declaration. No executable code on these lines.)
+// — same artifact class as the kernel_trait.rs DELEGATE block and
+// mixer.rs Sanitizer declaration. No executable code on these lines.)
 /// Vehicle-level controller — maps a state estimate + command into
 /// an `AxisCommand` (roll/pitch/yaw/collective normalized control
 /// inputs).
 ///
-/// **Memoryless contract (LLR-CTL-101)**: implementors SHALL NOT
-/// hold safety-relevant persistent state across `step()` calls.
-/// Take `&self` (algorithm identity / tuning gains) and treat
-/// every input as the cycle's complete observable state. Any
-/// integrator / anti-windup / filter / mode-switch memory MUST
-/// route through a separate `&mut <ControlState>` borrow added
-/// alongside the algorithm — analogous to the Phase-4
-/// `Estimator::predict(&self, &mut EstimatorState, ...)` pattern.
+/// **Algorithm/state split (LLR-CTL-102)**: every implementor exposes
+/// two halves:
 ///
-/// The current trait surface enforces memorylessness structurally
-/// by taking `&self`. Adding the `&mut ControlState` second
-/// borrow is deferred until a controller actually needs persistent
-/// state — at that point the trait flips again and `KernelState`
-/// gains a `control: ControlState` field.
+/// - `&self` — algorithm identity and tuning gains (e.g. P-gain
+///   arrays, sub-controller objects). Read-only during the flight
+///   loop; mutated only at construction. Lives inside
+///   `KernelPipeline`.
+/// - `&mut Self::RuntimeState` — persistent runtime state
+///   (integrators, anti-windup, filter memories, mode latches,
+///   transition-blend state). Lives inside `KernelState.control` so
+///   the kernel's "exactly one safety-relevant-state owner" rule
+///   covers controller state too — making it amenable to the same
+///   snapshot / hash / vote / hot-spare-takeover machinery as
+///   `EstimatorState` and `ActuatorFallbackState`.
+///
+/// Today's gains-only placeholders set `type RuntimeState =
+/// NoControllerState` (a zero-size unit-struct); a controller that
+/// grows persistent state swaps in its own
+/// `ControllerRuntimeState`-implementing struct without a second
+/// trait refactor.
+///
+/// `reset` returns the runtime state to its baseline; the default
+/// implementation delegates to `runtime.reset()`. Override only if
+/// the controller needs to reset additional state beyond the
+/// runtime struct itself (rare).
 pub trait VehicleController {
+    /// Persistent runtime state owned by `KernelState.control`.
+    type RuntimeState: runtime::ControllerRuntimeState;
+
     fn step(
         &self,
+        runtime: &mut Self::RuntimeState,
         state: &StateEstimate,
-        command: &Command, // Note: This now refers to the new Command struct
+        command: &Command,
         mode: ConfigMode,
         limits: &Limits, // COV:EXCL(phantom DA from enums.rs re-export; param decl)
     ) -> AxisCommand; // COV:EXCL(phantom DA from enums.rs re-export; return type)
+
+    /// Return controller runtime state to its post-power-on baseline.
+    /// Default impl delegates to `runtime.reset()`. The kernel calls
+    /// this from `ground_reset` and on `disarm`.
+    fn reset(&self, runtime: &mut Self::RuntimeState) {
+        <Self::RuntimeState as runtime::ControllerRuntimeState>::reset(runtime);
+    }
 }
 // COV:EXCL_STOP // COV:EXCL(phantom DA from enums.rs re-export; real line has no code)
 // COV:EXCL_START(phantom DA from enums.rs re-export: these mod decls carry
