@@ -187,6 +187,52 @@ derived = false
 traces_to = ["4cf7189d-23e6-470a-b71c-c90a81c59970", "211a2f8a-493f-4c6c-bf7e-73275154dd54"]
 
 [[requirements]]
+uid = "edbab6c9-f097-45ed-8c5a-10f3e2d4fce1"
+id = "LLR-STATE-105"
+title = "Estimator trait surface separates algorithm from state"
+owner = "aviate-core@aviate"
+description = """
+The `Estimator` trait SHALL expose only mutation methods that route
+filter state through their argument list:
+`predict(&self, state: &mut EstimatorState, imu, dt)`,
+`update_gnss(&self, state: &mut EstimatorState, gnss)`,
+`update_baro(&self, state: &mut EstimatorState, baro)`,
+`update_mag(&self, state: &mut EstimatorState, mag)`.
+
+Pure-state operations (`init`, `reset`, `get_estimate`,
+`is_initialized`, `has_numeric_fault`, and the test-hooks-gated
+`set_state`) SHALL live as inherent methods on `EstimatorState`,
+not on the trait — they need no algorithm identity to evaluate.
+
+The `Ekf` implementor SHALL hold only `EkfConfig` (tuning) — no
+persistent filter state. `Ekf { config: EkfConfig }`.
+"""
+verification_methods = ["review", "test"]
+modules = ["aviate-core/src/ekf.rs", "aviate-core/src/ekf/scalar.rs"]
+derived = false
+traces_to = ["33190e76-603e-4cd7-8eee-468bcc94fa10"]
+
+[[requirements]]
+uid = "62a6ae4d-f6b4-4460-a447-5b753e432e85"
+id = "LLR-STATE-106"
+title = "ActuatorSanitizer trait surface routes fallback state through arguments"
+owner = "aviate-core@aviate"
+description = """
+The `ActuatorSanitizer::sanitize` method SHALL take `&self`
+(algorithm), `&mut ActuatorCmd` (the per-cycle command being
+sanitized), `&ModeConfig` (per-mode group config), and
+`&mut ActuatorFallbackState` (persistent per-group last-good /
+age / consecutive-fallback counters). The persistent counters
+SHALL live in `KernelState.fallback`; the sanitizer SHALL carry
+no per-cycle state of its own (`pub struct Sanitizer;` unit
+struct in Phase 4).
+"""
+verification_methods = ["review", "test"]
+modules = ["aviate-core/src/mixer.rs", "aviate-core/src/mixer/sanitizer_impl.rs"]
+derived = false
+traces_to = ["33190e76-603e-4cd7-8eee-468bcc94fa10"]
+
+[[requirements]]
 uid = "26c3a661-d7db-4a28-8b81-0d611bed720a"
 id = "LLR-STATE-101"
 title = "KernelState holds the closed lifecycle-state field set"

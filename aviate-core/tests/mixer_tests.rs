@@ -4,8 +4,9 @@
 mod tests {
     use aviate_core::control::ConfigMode;
     use aviate_core::mixer::{
-        ActuatorCmd, ActuatorGroupConfig, ActuatorSanitizer, CouplingKind, FallbackPolicy,
-        GroupKind, GroupSanitizeResult, GroupVector, ModeConfig, Sanitizer, MAX_ACTUATORS,
+        ActuatorCmd, ActuatorFallbackState, ActuatorGroupConfig, ActuatorSanitizer, CouplingKind,
+        FallbackPolicy, GroupKind, GroupSanitizeResult, GroupVector, ModeConfig, Sanitizer,
+        MAX_ACTUATORS,
     };
     use aviate_core::time::{TimeSource, Timestamp};
     use aviate_core::types::{Normalized, Scalar};
@@ -50,14 +51,15 @@ mod tests {
 
     #[test]
     fn test_sanitizer_all_valid() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mut cmd = make_cmd();
         let mode = ModeConfig {
             mode: ConfigMode::Hover,
             groups: &STRONG_GROUP,
         };
 
-        let report = sanitizer.sanitize(&mut cmd, &mode);
+        let report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
         assert!(!report.any_fallback);
         assert_eq!(report.group_results[0], GroupSanitizeResult::AllValid);
@@ -66,7 +68,8 @@ mod tests {
 
     #[test]
     fn test_sanitizer_nan_rejection_strong() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mut cmd = make_cmd();
         let mode = ModeConfig {
             mode: ConfigMode::Hover,
@@ -77,7 +80,7 @@ mod tests {
         cmd.outputs[1] = Normalized(Scalar::NAN);
 
         // First run: no last good, should fallback to safe
-        let report = sanitizer.sanitize(&mut cmd, &mode);
+        let report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
         assert!(report.any_fallback);
         assert_eq!(report.group_results[0], GroupSanitizeResult::FallbackSafe);
@@ -88,7 +91,8 @@ mod tests {
 
     #[test]
     fn test_sanitizer_last_good_fallback() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mode = ModeConfig {
             mode: ConfigMode::Hover,
             groups: &STRONG_GROUP,
@@ -97,13 +101,13 @@ mod tests {
         // 1. Valid cycle to establish last_good
         let mut cmd1 = make_cmd();
         cmd1.outputs[0] = Normalized(0.8);
-        sanitizer.sanitize(&mut cmd1, &mode);
+        sanitizer.sanitize(&mut cmd1, &mode, &mut fallback);
 
         // 2. Invalid cycle
         let mut cmd2 = make_cmd();
         cmd2.outputs[0] = Normalized(Scalar::NAN);
 
-        let report = sanitizer.sanitize(&mut cmd2, &mode);
+        let report = sanitizer.sanitize(&mut cmd2, &mode, &mut fallback);
 
         assert!(report.any_fallback);
         assert_eq!(
@@ -117,7 +121,8 @@ mod tests {
 
     #[test]
     fn test_sanitizer_weak_coupling() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mode = ModeConfig {
             mode: ConfigMode::Cruise,
             groups: &WEAK_GROUP,
@@ -127,7 +132,7 @@ mod tests {
         cmd.outputs[0] = Normalized(0.5);
         cmd.outputs[1] = Normalized(Scalar::NAN); // Bad
 
-        let _report = sanitizer.sanitize(&mut cmd, &mode);
+        let _report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
         // Weak coupling: bad channel falls back, good channel stays?
         // Current implementation: Clamped/Fallback logic for weak
@@ -220,7 +225,8 @@ mod tests {
 
     #[test]
     fn test_sanitizer_out_of_range_negative() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mut cmd = make_cmd();
         let mode = ModeConfig {
             mode: ConfigMode::Hover,
@@ -230,7 +236,7 @@ mod tests {
         // Inject out-of-range negative value
         cmd.outputs[0] = Normalized(-0.1);
 
-        let report = sanitizer.sanitize(&mut cmd, &mode);
+        let report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
         // Should trigger fallback due to out-of-range
         assert!(report.any_fallback);
@@ -240,7 +246,8 @@ mod tests {
 
     #[test]
     fn test_sanitizer_out_of_range_above_one() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mut cmd = make_cmd();
         let mode = ModeConfig {
             mode: ConfigMode::Hover,
@@ -250,7 +257,7 @@ mod tests {
         // Inject out-of-range value > 1.0
         cmd.outputs[2] = Normalized(1.5);
 
-        let report = sanitizer.sanitize(&mut cmd, &mode);
+        let report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
         // Should trigger fallback due to out-of-range
         assert!(report.any_fallback);
@@ -277,7 +284,8 @@ mod tests {
 
     #[test]
     fn test_sanitizer_critical_failure_zero_output() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mut cmd = make_cmd();
         let mode = ModeConfig {
             mode: ConfigMode::Hover,
@@ -287,7 +295,7 @@ mod tests {
         // First invalid cycle (no last_good established, no safe pattern)
         cmd.outputs[1] = Normalized(Scalar::NAN);
 
-        let report = sanitizer.sanitize(&mut cmd, &mode);
+        let report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
         // Should be critical failure - FallbackUnavailable
         assert!(report.critical_failure);
@@ -308,7 +316,8 @@ mod tests {
 
     #[test]
     fn test_sanitizer_weak_coupling_last_good_fallback() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mode = ModeConfig {
             mode: ConfigMode::Cruise,
             groups: &WEAK_GROUP,
@@ -320,7 +329,7 @@ mod tests {
         cmd1.outputs[1] = Normalized(0.8);
         cmd1.outputs[2] = Normalized(0.6);
         cmd1.outputs[3] = Normalized(0.9);
-        sanitizer.sanitize(&mut cmd1, &mode);
+        sanitizer.sanitize(&mut cmd1, &mode, &mut fallback);
 
         // 2. Second cycle with NaN - should use last_good for bad channel
         let mut cmd2 = make_cmd();
@@ -329,7 +338,7 @@ mod tests {
         cmd2.outputs[2] = Normalized(0.5); // Valid
         cmd2.outputs[3] = Normalized(0.5); // Valid
 
-        let _report = sanitizer.sanitize(&mut cmd2, &mode);
+        let _report = sanitizer.sanitize(&mut cmd2, &mode, &mut fallback);
 
         // Channel 0 should keep its value
         assert_eq!(cmd2.outputs[0].0, 0.5);
@@ -354,7 +363,8 @@ mod tests {
 
     #[test]
     fn test_sanitizer_weak_coupling_no_safe_uses_last_good() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mode = ModeConfig {
             mode: ConfigMode::Cruise,
             groups: &WEAK_GROUP_NO_SAFE,
@@ -364,14 +374,14 @@ mod tests {
         let mut cmd1 = make_cmd();
         cmd1.outputs[0] = Normalized(0.7);
         cmd1.outputs[1] = Normalized(0.8);
-        sanitizer.sanitize(&mut cmd1, &mode);
+        sanitizer.sanitize(&mut cmd1, &mode, &mut fallback);
 
         // 2. Invalid cycle
         let mut cmd2 = make_cmd();
         cmd2.outputs[0] = Normalized(0.5);
         cmd2.outputs[1] = Normalized(Scalar::NAN);
 
-        let _report = sanitizer.sanitize(&mut cmd2, &mode);
+        let _report = sanitizer.sanitize(&mut cmd2, &mode, &mut fallback);
 
         // Channel 0 stays valid
         assert_eq!(cmd2.outputs[0].0, 0.5);
@@ -381,7 +391,8 @@ mod tests {
 
     #[test]
     fn test_sanitizer_weak_coupling_no_safe_no_last_good_uses_zero() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mode = ModeConfig {
             mode: ConfigMode::Cruise,
             groups: &WEAK_GROUP_NO_SAFE,
@@ -391,7 +402,7 @@ mod tests {
         let mut cmd = make_cmd();
         cmd.outputs[1] = Normalized(Scalar::NAN);
 
-        let _report = sanitizer.sanitize(&mut cmd, &mode);
+        let _report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
         // Channel 0 stays valid
         assert_eq!(cmd.outputs[0].0, 0.5);
@@ -405,7 +416,8 @@ mod tests {
 
     #[test]
     fn test_sanitizer_infinity_positive() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mut cmd = make_cmd();
         let mode = ModeConfig {
             mode: ConfigMode::Hover,
@@ -414,7 +426,7 @@ mod tests {
 
         cmd.outputs[0] = Normalized(Scalar::INFINITY);
 
-        let report = sanitizer.sanitize(&mut cmd, &mode);
+        let report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
         assert!(report.any_fallback);
         assert_eq!(cmd.outputs[0].0, 0.1);
@@ -422,7 +434,8 @@ mod tests {
 
     #[test]
     fn test_sanitizer_infinity_negative() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mut cmd = make_cmd();
         let mode = ModeConfig {
             mode: ConfigMode::Hover,
@@ -431,7 +444,7 @@ mod tests {
 
         cmd.outputs[0] = Normalized(Scalar::NEG_INFINITY);
 
-        let report = sanitizer.sanitize(&mut cmd, &mode);
+        let report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
         assert!(report.any_fallback);
         assert_eq!(cmd.outputs[0].0, 0.1);
@@ -478,7 +491,8 @@ mod tests {
     /// should not affect the other group's output or fallback state.
     #[test]
     fn test_sanitizer_multiple_groups_independent() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mode = ModeConfig {
             mode: ConfigMode::Hover,
             groups: &TWO_GROUPS,
@@ -488,7 +502,7 @@ mod tests {
         let mut cmd1 = make_cmd();
         cmd1.outputs[0] = Normalized(0.6); // Group 0
         cmd1.outputs[4] = Normalized(0.7); // Group 1
-        let report1 = sanitizer.sanitize(&mut cmd1, &mode);
+        let report1 = sanitizer.sanitize(&mut cmd1, &mode, &mut fallback);
         assert!(!report1.any_fallback);
         assert_eq!(report1.group_results[0], GroupSanitizeResult::AllValid);
         assert_eq!(report1.group_results[1], GroupSanitizeResult::AllValid);
@@ -501,7 +515,7 @@ mod tests {
         cmd2.outputs[6] = Normalized(0.85);
         cmd2.outputs[7] = Normalized(0.75);
 
-        let report2 = sanitizer.sanitize(&mut cmd2, &mode);
+        let report2 = sanitizer.sanitize(&mut cmd2, &mode, &mut fallback);
 
         // Group 0 should fallback to last_good
         assert!(report2.any_fallback);
@@ -533,7 +547,8 @@ mod tests {
     fn test_sanitizer_fallback_age_expiration() {
         use aviate_core::mixer::MAX_FALLBACK_AGE_CYCLES;
 
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mode = ModeConfig {
             mode: ConfigMode::Hover,
             groups: &STRONG_GROUP,
@@ -545,18 +560,18 @@ mod tests {
         cmd_valid.outputs[1] = Normalized(0.75);
         cmd_valid.outputs[2] = Normalized(0.75);
         cmd_valid.outputs[3] = Normalized(0.75);
-        sanitizer.sanitize(&mut cmd_valid, &mode);
+        sanitizer.sanitize(&mut cmd_valid, &mode, &mut fallback);
 
         // Verify last_good is established
-        assert!(sanitizer.state.last_good[0].valid);
-        assert_eq!(sanitizer.state.age[0], 0);
+        assert!(fallback.last_good[0].valid);
+        assert_eq!(fallback.age[0], 0);
 
         // 2. Run MAX_FALLBACK_AGE_CYCLES invalid cycles (age goes 0 → 100)
         // Each cycle: check age < 100, use last_good if true, then increment age
         for cycle in 0..MAX_FALLBACK_AGE_CYCLES {
             let mut cmd = make_cmd();
             cmd.outputs[0] = Normalized(Scalar::NAN);
-            let report = sanitizer.sanitize(&mut cmd, &mode);
+            let report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
             assert_eq!(
                 report.group_results[0],
@@ -574,13 +589,13 @@ mod tests {
         }
 
         // Age should now be exactly MAX_FALLBACK_AGE_CYCLES
-        assert_eq!(sanitizer.state.age[0], MAX_FALLBACK_AGE_CYCLES);
+        assert_eq!(fallback.age[0], MAX_FALLBACK_AGE_CYCLES);
 
         // 3. One more invalid cycle - age is now 100, which is NOT < 100
         // So this cycle should use safe_pattern
         let mut cmd_expire = make_cmd();
         cmd_expire.outputs[0] = Normalized(Scalar::NAN);
-        let report_expire = sanitizer.sanitize(&mut cmd_expire, &mode);
+        let report_expire = sanitizer.sanitize(&mut cmd_expire, &mode, &mut fallback);
 
         assert_eq!(
             report_expire.group_results[0],
@@ -604,7 +619,8 @@ mod tests {
 
         // Stage 1: Test with safe_pattern available
         {
-            let mut sanitizer = Sanitizer::default();
+            let sanitizer = Sanitizer;
+            let mut fallback = ActuatorFallbackState::default();
             let mode = ModeConfig {
                 mode: ConfigMode::Hover,
                 groups: &STRONG_GROUP,
@@ -612,13 +628,13 @@ mod tests {
 
             // Step 1: Valid cycle
             let mut cmd1 = make_cmd();
-            let report1 = sanitizer.sanitize(&mut cmd1, &mode);
+            let report1 = sanitizer.sanitize(&mut cmd1, &mode, &mut fallback);
             assert_eq!(report1.group_results[0], GroupSanitizeResult::AllValid);
 
             // Step 2: Invalid - falls back to last_good
             let mut cmd2 = make_cmd();
             cmd2.outputs[0] = Normalized(Scalar::NAN);
-            let report2 = sanitizer.sanitize(&mut cmd2, &mode);
+            let report2 = sanitizer.sanitize(&mut cmd2, &mode, &mut fallback);
             assert_eq!(
                 report2.group_results[0],
                 GroupSanitizeResult::FallbackLastGood
@@ -629,21 +645,22 @@ mod tests {
             for _ in 0..(MAX_FALLBACK_AGE_CYCLES - 1) {
                 let mut cmd = make_cmd();
                 cmd.outputs[0] = Normalized(Scalar::NAN);
-                sanitizer.sanitize(&mut cmd, &mode);
+                sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
             }
 
             // After MAX_FALLBACK_AGE_CYCLES invalid cycles total, age = MAX_FALLBACK_AGE_CYCLES
             // Step 4: Now should use safe_pattern (age >= MAX_FALLBACK_AGE_CYCLES)
             let mut cmd3 = make_cmd();
             cmd3.outputs[0] = Normalized(Scalar::NAN);
-            let report3 = sanitizer.sanitize(&mut cmd3, &mode);
+            let report3 = sanitizer.sanitize(&mut cmd3, &mode, &mut fallback);
             assert_eq!(report3.group_results[0], GroupSanitizeResult::FallbackSafe);
             assert_eq!(cmd3.outputs[0].0, 0.1); // safe_pattern value
         }
 
         // Stage 2: Test without safe_pattern - should go to zero
         {
-            let mut sanitizer = Sanitizer::default();
+            let sanitizer = Sanitizer;
+            let mut fallback = ActuatorFallbackState::default();
             let mode = ModeConfig {
                 mode: ConfigMode::Hover,
                 groups: &STRONG_GROUP_NO_SAFE,
@@ -652,19 +669,19 @@ mod tests {
             // Step 1: Valid cycle to establish last_good
             let mut cmd1 = make_cmd();
             cmd1.outputs[0] = Normalized(0.8);
-            sanitizer.sanitize(&mut cmd1, &mode);
+            sanitizer.sanitize(&mut cmd1, &mode, &mut fallback);
 
             // Step 2: Exhaust last_good
             for _ in 0..MAX_FALLBACK_AGE_CYCLES {
                 let mut cmd = make_cmd();
                 cmd.outputs[0] = Normalized(Scalar::NAN);
-                sanitizer.sanitize(&mut cmd, &mode);
+                sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
             }
 
             // Step 3: Now should go to zero (FallbackUnavailable)
             let mut cmd2 = make_cmd();
             cmd2.outputs[0] = Normalized(Scalar::NAN);
-            let report = sanitizer.sanitize(&mut cmd2, &mode);
+            let report = sanitizer.sanitize(&mut cmd2, &mode, &mut fallback);
             assert_eq!(
                 report.group_results[0],
                 GroupSanitizeResult::FallbackUnavailable
@@ -751,7 +768,8 @@ mod tests {
 
     #[test]
     fn test_consecutive_fallback_counter_increments() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mode = ModeConfig {
             mode: ConfigMode::Hover,
             groups: &STRONG_GROUP,
@@ -761,11 +779,11 @@ mod tests {
         for i in 0..3 {
             let mut cmd = make_cmd();
             cmd.outputs[0] = Normalized(Scalar::NAN); // Force fallback
-            let report = sanitizer.sanitize(&mut cmd, &mode);
+            let report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
             assert!(report.any_fallback);
             assert_eq!(
-                sanitizer.state.consecutive_fallback[0],
+                fallback.consecutive_fallback[0],
                 (i + 1) as u16,
                 "After {} fallback cycles, counter should be {}",
                 i + 1,
@@ -776,7 +794,8 @@ mod tests {
 
     #[test]
     fn test_consecutive_fallback_resets_on_valid() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mode = ModeConfig {
             mode: ConfigMode::Hover,
             groups: &STRONG_GROUP,
@@ -786,25 +805,26 @@ mod tests {
         for _ in 0..2 {
             let mut cmd = make_cmd();
             cmd.outputs[0] = Normalized(Scalar::NAN);
-            sanitizer.sanitize(&mut cmd, &mode);
+            sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
         }
-        assert_eq!(sanitizer.state.consecutive_fallback[0], 2);
+        assert_eq!(fallback.consecutive_fallback[0], 2);
 
         // Valid frame resets counter
         let mut cmd = make_cmd();
-        let report = sanitizer.sanitize(&mut cmd, &mode);
+        let report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
         assert!(!report.any_fallback);
         assert_eq!(report.group_results[0], GroupSanitizeResult::AllValid);
         assert_eq!(
-            sanitizer.state.consecutive_fallback[0], 0,
+            fallback.consecutive_fallback[0], 0,
             "Counter should reset to 0 on valid frame"
         );
     }
 
     #[test]
     fn test_consecutive_fallback_triggers_limit_exceeded() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mode = ModeConfig {
             mode: ConfigMode::Hover,
             groups: &STRONG_GROUP,
@@ -814,25 +834,25 @@ mod tests {
         for i in 0..MAX_CONSECUTIVE_FALLBACK {
             let mut cmd = make_cmd();
             cmd.outputs[0] = Normalized(Scalar::NAN);
-            let report = sanitizer.sanitize(&mut cmd, &mode);
+            let report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
             assert!(
                 !report.consecutive_fallback_limit_exceeded,
                 "Frame {}: should NOT trigger limit_exceeded (counter={})",
                 i + 1,
-                sanitizer.state.consecutive_fallback[0]
+                fallback.consecutive_fallback[0]
             );
         }
 
         assert_eq!(
-            sanitizer.state.consecutive_fallback[0], MAX_CONSECUTIVE_FALLBACK,
+            fallback.consecutive_fallback[0], MAX_CONSECUTIVE_FALLBACK,
             "After MAX frames, counter should equal MAX"
         );
 
         // (MAX + 1)-th frame - should trigger
         let mut cmd = make_cmd();
         cmd.outputs[0] = Normalized(Scalar::NAN);
-        let report = sanitizer.sanitize(&mut cmd, &mode);
+        let report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
         assert!(
             report.consecutive_fallback_limit_exceeded,
@@ -840,7 +860,7 @@ mod tests {
             MAX_CONSECUTIVE_FALLBACK + 1
         );
         assert_eq!(
-            sanitizer.state.consecutive_fallback[0],
+            fallback.consecutive_fallback[0],
             MAX_CONSECUTIVE_FALLBACK + 1,
             "Counter should be MAX+1"
         );
@@ -848,7 +868,8 @@ mod tests {
 
     #[test]
     fn test_consecutive_fallback_clamped_does_not_increment() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mode = ModeConfig {
             mode: ConfigMode::Cruise,
             groups: &WEAK_GROUP,
@@ -860,19 +881,20 @@ mod tests {
         cmd.outputs[0] = Normalized(0.5); // Valid
         cmd.outputs[1] = Normalized(Scalar::NAN); // Invalid - triggers Clamped for weak
 
-        let report = sanitizer.sanitize(&mut cmd, &mode);
+        let report = sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
 
         // Weak coupling with some invalid channels results in Clamped
         assert_eq!(report.group_results[0], GroupSanitizeResult::Clamped);
         assert_eq!(
-            sanitizer.state.consecutive_fallback[0], 0,
+            fallback.consecutive_fallback[0], 0,
             "Clamped should reset counter (still has control authority)"
         );
     }
 
     #[test]
     fn test_consecutive_fallback_per_group_independence() {
-        let mut sanitizer = Sanitizer::default();
+        let sanitizer = Sanitizer;
+        let mut fallback = ActuatorFallbackState::default();
         let mode = ModeConfig {
             mode: ConfigMode::Hover,
             groups: &TWO_GROUPS,
@@ -886,18 +908,18 @@ mod tests {
             cmd.outputs[5] = Normalized(0.5);
             cmd.outputs[6] = Normalized(0.5);
             cmd.outputs[7] = Normalized(0.5);
-            sanitizer.sanitize(&mut cmd, &mode);
+            sanitizer.sanitize(&mut cmd, &mode, &mut fallback);
         }
 
         // Group 0 should have counter = 5
         assert_eq!(
-            sanitizer.state.consecutive_fallback[0], 5,
+            fallback.consecutive_fallback[0], 5,
             "Group 0 should have 5 consecutive fallbacks"
         );
 
         // Group 1 should have counter = 0 (always valid)
         assert_eq!(
-            sanitizer.state.consecutive_fallback[1], 0,
+            fallback.consecutive_fallback[1], 0,
             "Group 1 should have 0 consecutive fallbacks"
         );
     }

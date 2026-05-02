@@ -153,7 +153,7 @@ mod tests {
             Ekf::default(),
             MultirotorController::default(),
             DummyMixer,
-            Sanitizer::default(),
+            Sanitizer,
             mode_config,
         )
     }

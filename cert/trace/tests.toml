@@ -164,6 +164,63 @@ that the trait surface compiles and produces a valid borrow.
 traces_to = ["434a64f5-be78-46ca-bc0f-de1eaffb297d"]
 
 [[tests]]
+uid = "df421f16-968c-4fa7-a49d-8c0daa94d851"
+id = "TST-STATE-006"
+title = "ekf_tests.rs full suite (43 tests, EstimatorState pattern)"
+owner = "aviate-core@aviate"
+description = """
+The `tests/ekf_tests.rs` suite (43 tests) was rewritten in Phase 4
+to use the `(ekf: Ekf, state: EstimatorState)` pair pattern: pure
+state operations are inherent on `EstimatorState`
+(`state.init/get_estimate/is_initialized/has_numeric_fault/reset`),
+algorithm operations route through the Estimator trait
+(`ekf.predict(&mut state, imu, dt)`,
+`ekf.update_gnss(&mut state, reading)`, etc.). The suite verifies
+LLR-STATE-105 — that the trait surface flip preserves end-to-end
+filter behavior across init / predict / GNSS-fusion / baro / mag /
+innovation gating / multi-update convergence paths.
+"""
+traces_to = ["edbab6c9-f097-45ed-8c5a-10f3e2d4fce1"]
+
+[[tests]]
+uid = "4ebf52dc-fc28-49e1-b0e4-3dc4360d218b"
+id = "TST-STATE-007"
+title = "mixer_tests.rs full suite (24 tests, ActuatorFallbackState pattern)"
+owner = "aviate-core@aviate"
+description = """
+The `tests/mixer_tests.rs` suite (24 tests) was rewritten in Phase
+4 to use the `(sanitizer: Sanitizer, fallback: ActuatorFallbackState)`
+pair pattern. Tests construct an explicit `let mut fallback =
+ActuatorFallbackState::default();` and pass `&mut fallback` to each
+`sanitizer.sanitize(...)` call. The fallback-counter assertions now
+read `fallback.last_good[i] / age[i] / consecutive_fallback[i]`
+directly. Verifies LLR-STATE-106 — that the new sanitizer surface
+preserves the per-group last-good / age / consecutive-fallback
+semantics of the pre-Phase-4 in-sanitizer state.
+"""
+traces_to = ["62a6ae4d-f6b4-4460-a447-5b753e432e85"]
+
+[[tests]]
+uid = "0a64e7b5-c351-4788-bac8-01f27c820d22"
+id = "TST-STATE-008"
+title = "tests/kernel.rs full suite + integration_tests.rs (state.estimator path)"
+owner = "aviate-core@aviate"
+description = """
+The `tests/kernel.rs` (114 tests) and `tests/integration_tests.rs`
+(20 tests) suites were updated in Phase 4 to access the EKF state
+via `kernel.state.estimator.X` (pure-state ops) and the kernel's
+own `update()` method (algorithm ops). Verifies HLR-STATE-003 from
+the kernel-driven angle: end-to-end flight cycles still produce
+the same actuator commands, fault transitions, and timing stats
+they did pre-Phase-4 — the relocation is observable-behavior
+preserving across the full kernel test surface.
+"""
+traces_to = [
+    "edbab6c9-f097-45ed-8c5a-10f3e2d4fce1",
+    "62a6ae4d-f6b4-4460-a447-5b753e432e85",
+]
+
+[[tests]]
 uid = "aed53b30-6ddc-4520-a9f8-ba062744ae3c"
 id = "TST-STATE-001"
 title = "test_ground_reset_success_unit (lifecycle through state)"

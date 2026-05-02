@@ -258,13 +258,7 @@ pub fn create_kernel() -> SitlKernel {
         groups: &[],
     };
 
-    let mut kernel = AviateKernel::new(
-        Ekf::default(),
-        controller,
-        mixer,
-        Sanitizer::default(),
-        mode_config,
-    );
+    let mut kernel = AviateKernel::new(Ekf::default(), controller, mixer, Sanitizer, mode_config);
 
     // Initialize throttle check as satisfied (default command has low throttle)
     kernel.state.checks.pre_arm.update_throttle(true);

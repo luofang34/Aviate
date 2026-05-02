@@ -93,6 +93,46 @@ verification_methods = ["review", "test"]
 traces_to = ["d6ca85b4-62d1-48d0-b16e-3415904cc604"]
 
 [[requirements]]
+uid = "33190e76-603e-4cd7-8eee-468bcc94fa10"
+id = "HLR-STATE-003"
+title = "Every safety-relevant persistent state field has exactly one owner"
+owner = "aviate-core@aviate"
+description = """
+Phase 4 completes the single-owner invariant: in addition to the
+seven lifecycle/runtime fields P3 relocated, the persistent EKF
+filter state (quat / pos / vel / biases / p_cov / initialized /
+quat_fault / last_gyro_body) and persistent sanitizer fallback
+state (last_good / age / consecutive_fallback) SHALL live ONLY
+inside `KernelState` (as `KernelState.estimator: EstimatorState` and
+`KernelState.fallback: ActuatorFallbackState`). The pipeline-side
+algorithm objects (`Ekf`, `Sanitizer`) SHALL hold no persistent
+filter state of their own — they carry only configuration / tuning
+(or, for `Sanitizer` today, no fields at all).
+
+The trait surfaces SHALL enforce this structurally:
+
+  - `Estimator` trait methods that mutate filter state
+    (`predict`, `update_gnss`, `update_baro`, `update_mag`) SHALL
+    take `&self` (algorithm config) and `&mut EstimatorState`
+    (filter state). Pure-state operations (`init`, `reset`,
+    `get_estimate`, `is_initialized`, `has_numeric_fault`,
+    `set_state` test-hook) live as inherent methods on
+    `EstimatorState`.
+  - `ActuatorSanitizer::sanitize` SHALL take `&self` plus
+    `&mut ActuatorFallbackState` for the persistent fallback
+    counters; the sanitizer itself carries no fallback state.
+
+This is the structural prerequisite for spec §16 hot-spare
+takeover: a backup channel inheriting `KernelState` from the
+active channel automatically inherits both estimation and
+fallback continuity. Without single-ownership, the takeover would
+silently lose either the EKF covariance or the per-group
+fallback memory.
+"""
+verification_methods = ["review", "test"]
+traces_to = ["d6ca85b4-62d1-48d0-b16e-3415904cc604"]
+
+[[requirements]]
 uid = "bfd2157f-2852-4cb3-8ae8-b91d33de23ba"
 id = "HLR-STATE-002"
 title = "KernelState shape is stable enough to support deterministic encoding"
