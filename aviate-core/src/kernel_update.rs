@@ -85,13 +85,13 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                     law: ControlLawV1::Backup,
                     health: ChannelHealthV1::Operative,
                     faults: self.faults,
-                    confidence: self.estimator.get_estimate().quality,
+                    confidence: self.pipeline.estimator.get_estimate().quality,
                     envelope_margin: EnvelopeMargin::default(),
                     sequence: command.sequence,
                     protection: Default::default(),
                     sanitize_report: SanitizeReport::default(),
                 },
-                estimate: self.estimator.get_estimate(),
+                estimate: self.pipeline.estimator.get_estimate(),
                 timing: CycleTiming::default(),
                 degradation: None,
             };
@@ -120,13 +120,13 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                     law: ControlLawV1::Backup, // Force Backup reporting when not armed
                     health: ChannelHealthV1::Operative,
                     faults: self.faults,
-                    confidence: self.estimator.get_estimate().quality,
+                    confidence: self.pipeline.estimator.get_estimate().quality,
                     envelope_margin: EnvelopeMargin::default(),
                     sequence: command.sequence,
                     protection: Default::default(),
                     sanitize_report: SanitizeReport::default(),
                 },
-                estimate: self.estimator.get_estimate(),
+                estimate: self.pipeline.estimator.get_estimate(),
                 timing: CycleTiming::default(),
                 degradation: None,
             };
@@ -145,7 +145,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                     sanitized: true,
                 },
                 status: ChannelStatus::default(), // TODO: Populate with fault info
-                estimate: self.estimator.get_estimate(),
+                estimate: self.pipeline.estimator.get_estimate(),
                 timing: CycleTiming::default(),
                 degradation: None,
             };
@@ -154,7 +154,9 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // 3. EKF Update (predict and update)
         let primary_imu = &sensors.imus[0];
         if primary_imu.valid && primary_imu.health == crate::sensor::SensorHealth::Good {
-            self.estimator.predict(&primary_imu.value, time.dt_sec.0);
+            self.pipeline
+                .estimator
+                .predict(&primary_imu.value, time.dt_sec.0);
         }
 
         // Apply sensor overrides from command
@@ -166,28 +168,28 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                     crate::sensor::GnssHealth::Suspect => crate::sensor::SensorHealth::Degraded,
                     crate::sensor::GnssHealth::Lost => crate::sensor::SensorHealth::Failed,
                 };
-                self.estimator.update_gnss(&primary_gnss_reading);
+                self.pipeline.estimator.update_gnss(&primary_gnss_reading);
             }
         } else {
             // Normal sensor updates
             let primary_gnss = &sensors.gnss[0];
             if primary_gnss.valid && primary_gnss.health == crate::sensor::SensorHealth::Good {
-                self.estimator.update_gnss(primary_gnss);
+                self.pipeline.estimator.update_gnss(primary_gnss);
             }
         }
 
         let primary_baro = &sensors.baros[0];
         if primary_baro.valid && primary_baro.health == crate::sensor::SensorHealth::Good {
-            self.estimator.update_baro(primary_baro);
+            self.pipeline.estimator.update_baro(primary_baro);
         }
 
         let primary_mag = &sensors.mags[0];
         if primary_mag.valid && primary_mag.health == crate::sensor::SensorHealth::Good {
-            self.estimator.update_mag(primary_mag);
+            self.pipeline.estimator.update_mag(primary_mag);
         }
 
         // Get updated estimate
-        let state = self.estimator.get_estimate();
+        let state = self.pipeline.estimator.get_estimate();
 
         // 3. Update in-flight checks
         self.checks.in_flight.update_from_state(&state);
@@ -211,7 +213,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
 
         // 5. Envelope Protection
         use crate::control::envelope::EnvelopeProtector;
-        let (constrained_sp, protection_status) = self.protector.constrain(
+        let (constrained_sp, protection_status) = self.pipeline.protector.constrain(
             &command.setpoint,
             &state,
             &self.cfg.limits,
@@ -243,10 +245,13 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                 sanitized: true,
             }
         } else {
-            let axis_cmd =
-                self.controller
-                    .step(&state, &constrained_cmd, self.mode, &self.cfg.limits);
-            self.mixer.mix(&axis_cmd)
+            let axis_cmd = self.pipeline.controller.step(
+                &state,
+                &constrained_cmd,
+                self.mode,
+                &self.cfg.limits,
+            );
+            self.pipeline.mixer.mix(&axis_cmd)
         };
 
         // 7. Update actuator state
@@ -257,7 +262,8 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         let sanitize_report = if self.control_law == ControlLawV1::Backup {
             SanitizeReport::default()
         } else {
-            self.sanitizer
+            self.pipeline
+                .sanitizer
                 .sanitize(&mut actuator_cmd, &self.cfg.mode_config)
         };
 

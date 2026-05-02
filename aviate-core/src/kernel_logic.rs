@@ -25,7 +25,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         self.checks.pre_arm.update_from_faults(self.faults);
         self.checks
             .pre_arm
-            .update_ekf(self.estimator.is_initialized());
+            .update_ekf(self.pipeline.estimator.is_initialized());
 
         // Note: update_sensor_faults() is NOT called here.
         // Faults are runtime monitoring for armed operation.
@@ -289,7 +289,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         }
 
         // Update transition checks and verify
-        let state = self.estimator.get_estimate();
+        let state = self.pipeline.estimator.get_estimate();
         self.checks.transition.update_from_state(&state);
         self.checks
             .transition
@@ -333,7 +333,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         self.checks.in_flight.reset();
         self.checks.transition.reset();
         self.init_state = InitState::ConfigLoading; // Restart init sequence
-        self.estimator.reset();
+        self.pipeline.estimator.reset();
 
         self.control_law = ControlLawV1::Primary; // Reset law
     }

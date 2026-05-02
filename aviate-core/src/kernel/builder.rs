@@ -25,11 +25,11 @@
 //! type-state pattern via `Option`).
 
 use crate::checks::{KernelChecks, PreArmFlags};
-use crate::control::envelope::SimpleEnvelopeProtector;
 use crate::control::{ConfigMode, ControlLawV1, Limits, VehicleController};
 use crate::ekf::Estimator;
 use crate::fault::FaultFlags;
 use crate::kernel::config::ResolvedKernelConfig;
+use crate::kernel::pipeline::KernelPipeline;
 use crate::kernel::AviateKernelImpl;
 use crate::kernel_types::{InitState, TimingStats};
 use crate::mixer::{ActuatorSanitizer, ActuatorState, Mixer, ModeConfig};
@@ -151,11 +151,7 @@ where
         };
 
         Ok(AviateKernelImpl {
-            estimator,
-            controller,
-            mixer,
-            sanitizer,
-            protector: SimpleEnvelopeProtector,
+            pipeline: KernelPipeline::new(estimator, controller, mixer, sanitizer),
             mode: ConfigMode::Hover,
             init_state: InitState::PowerOn,
             faults: FaultFlags::empty(),
@@ -179,7 +175,7 @@ mod tests {
     use crate::types::{Normalized, NormalizedSigned, Radians};
 
     /// Timestamp source consumed by `QuadXMixer` — the function is invoked
-    /// indirectly when a test exercises `kernel.mixer.mix(...)` (see
+    /// indirectly when a test exercises `kernel.pipeline.mixer.mix(...)` (see
     /// `full_chain_kernel_mixer_invokes_timestamp_source` below).
     fn fake_ts() -> Timestamp {
         Timestamp {
@@ -258,7 +254,7 @@ mod tests {
     #[test]
     fn full_chain_kernel_mixer_invokes_timestamp_source() -> Result<(), &'static str> {
         let kernel = full_pipeline_builder().build()?;
-        let cmd = kernel.mixer.mix(&AxisCommand {
+        let cmd = kernel.pipeline.mixer.mix(&AxisCommand {
             roll: NormalizedSigned(0.0),
             pitch: NormalizedSigned(0.0),
             yaw: NormalizedSigned(0.0),

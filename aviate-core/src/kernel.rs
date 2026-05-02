@@ -14,28 +14,31 @@
 
 pub mod builder;
 pub mod config;
+pub mod pipeline;
 
 use crate::checks::{KernelChecks, PreArmFlags};
-use crate::control::envelope::SimpleEnvelopeProtector;
 use crate::control::{ConfigMode, ControlLawV1, VehicleController};
 use crate::ekf::{Ekf, Estimator};
 use crate::fault::FaultFlags;
 use crate::kernel::config::ResolvedKernelConfig;
+use crate::kernel::pipeline::KernelPipeline;
 use crate::kernel_types::TimingStats;
 use crate::mixer::{ActuatorSanitizer, ActuatorState, Mixer, ModeConfig, Sanitizer};
 
 pub use crate::kernel_types::InitState;
 
 pub struct AviateKernelImpl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> {
-    pub estimator: E,
-    pub controller: V,
-    pub mixer: M,
-    pub sanitizer: S,
-    pub protector: SimpleEnvelopeProtector,
+    /// Algorithm-identity bundle (estimator, controller, mixer,
+    /// sanitizer, protector). See `kernel/pipeline.rs`. Phase 2
+    /// consolidated five formerly-direct fields into this single
+    /// sub-struct so the kernel's substitutable algorithm surface
+    /// has one anchor.
+    pub pipeline: KernelPipeline<E, V, M, S>,
 
     /// Current configuration mode (spec §4). Runtime state — transitions
     /// during flight via `request_config_mode()`. NOT in `cfg` because
-    /// `cfg` is flight-period-immutable.
+    /// `cfg` is flight-period-immutable. Phase 3 will move this into
+    /// `KernelState`.
     pub mode: ConfigMode,
 
     // State Machine
@@ -90,11 +93,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         mode_config: ModeConfig,
     ) -> Self {
         Self {
-            estimator,
-            controller,
-            mixer,
-            sanitizer,
-            protector: SimpleEnvelopeProtector,
+            pipeline: KernelPipeline::new(estimator, controller, mixer, sanitizer),
             mode: ConfigMode::Hover,
             init_state: InitState::PowerOn,
             faults: FaultFlags::empty(),
@@ -121,11 +120,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         required: PreArmFlags,
     ) -> Self {
         Self {
-            estimator,
-            controller,
-            mixer,
-            sanitizer,
-            protector: SimpleEnvelopeProtector,
+            pipeline: KernelPipeline::new(estimator, controller, mixer, sanitizer),
             mode: ConfigMode::Hover,
             init_state: InitState::PowerOn,
             faults: FaultFlags::empty(),
@@ -205,7 +200,7 @@ mod tests {
         assert!(kernel.faults.is_empty());
 
         // Cover DummyMixer
-        kernel.mixer.mix(&crate::control::AxisCommand {
+        kernel.pipeline.mixer.mix(&crate::control::AxisCommand {
             roll: crate::types::NormalizedSigned(0.0),
             pitch: crate::types::NormalizedSigned(0.0),
             yaw: crate::types::NormalizedSigned(0.0),
