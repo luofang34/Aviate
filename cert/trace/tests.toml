@@ -373,3 +373,27 @@ double-checks that the same symbols cannot also be resolved from
 been re-introduced there).
 """
 traces_to = ["d1c33829-df40-4bb2-ac7c-6645e6dce817"]
+
+[[tests]]
+uid = "6f997ee4-d91d-40dc-896c-16cf8a179ddc"
+id = "TST-PIPE-103"
+title = "kernel::pipeline::tests::identity_hash_*"
+owner = "aviate-core@aviate"
+description = """
+The unit-test family in `aviate-core/src/kernel/pipeline.rs::tests`
+exercises `KernelPipeline::algorithm_identity_hash` along the three
+properties LLR-PIPE-103 / HLR-PIPE-002 require:
+
+1. `identity_hash_is_deterministic_within_build` — two pipelines
+   built from identical algorithm-bundle types produce equal hashes
+   (determinism property HLR-PIPE-002.a).
+2. `identity_hash_differs_across_algorithm_bundles` — swapping the
+   controller type from `MultirotorController` to
+   `FixedWingController` changes the hash (bundle-distinctness
+   property HLR-PIPE-002.b).
+3. `identity_hash_is_nonzero` — the FNV-1a fold cannot collapse the
+   non-zero offset basis to zero through normal type-name input,
+   guarding against a regression where the iteration loop is
+   accidentally short-circuited.
+"""
+traces_to = ["421bab25-b06e-4804-9beb-ea939ae5b79a"]
