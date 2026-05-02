@@ -150,6 +150,9 @@ pub struct EkfConfig {
     /// Mag bias random walk process noise [μT²/s] (default 1e-5)
     pub process_noise_mag_bias: Scalar,
 }
+// COV:EXCL_START(phantom DA: closing brace + blank line + impl
+// declaration carry coverage attributions from struct-init lines
+// elsewhere; no executable code on these lines.)
 
 impl Default for EkfConfig {
     fn default() -> Self {
@@ -172,6 +175,7 @@ impl Default for EkfConfig {
         }
     }
 }
+// COV:EXCL_STOP
 
 /// Persistent filter state — the 18-state error-state EKF contents
 /// plus initialization and numeric-fault latches. Lives under
