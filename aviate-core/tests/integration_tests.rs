@@ -42,7 +42,7 @@ mod tests {
             time_delta: TimeDelta,
             cmd: &Command,
             sensors: &SensorSet,
-            _command_age_ms: u32,
+            command_age_ms: u32,
         ) -> ActuatorCmd {
             let actuator_state = self.state.actuator_state.clone();
             let res = self.update(
@@ -50,6 +50,7 @@ mod tests {
                 time_delta,
                 sensors,
                 cmd,
+                command_age_ms,
                 &actuator_state,
                 None,
             );

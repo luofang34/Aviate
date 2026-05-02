@@ -48,13 +48,23 @@ pub trait AviateKernelTrait {
     /// Request a configuration mode transition
     fn request_config_mode(&mut self, to: ConfigMode) -> Result<(), TransitionError>;
 
-    /// Main control update (spec §20)
+    /// Main control update (spec §20).
+    ///
+    /// `command_age_ms` is the staleness of `command` measured from
+    /// the caller's timebase to the moment `update()` is invoked —
+    /// the kernel uses this to decide whether the in-flight check
+    /// `COMMAND_RECENT` flag should remain set under the configured
+    /// `command_timeout_ms` threshold (`spec §12`). Callers that
+    /// don't yet track command timestamping should pass `0` and
+    /// document the gap.
+    #[allow(clippy::too_many_arguments)]
     fn update(
         &mut self,
         channel: ChannelId,
         time: TimeDelta,
         sensors: &SensorSet,
         command: &crate::control::Command,
+        command_age_ms: u32,
         actuator_state: &ActuatorState,
         cross_channel: Option<&CrossChannelData>,
     ) -> UpdateResult;
@@ -138,6 +148,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> AviateK
         time: TimeDelta,
         sensors: &SensorSet,
         command: &crate::control::Command,
+        command_age_ms: u32,
         actuator_state: &ActuatorState,
         cross_channel: Option<&CrossChannelData>,
     ) -> UpdateResult {
@@ -147,6 +158,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> AviateK
             time,
             sensors,
             command,
+            command_age_ms,
             actuator_state,
             cross_channel,
         )
