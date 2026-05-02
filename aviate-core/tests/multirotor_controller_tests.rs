@@ -52,7 +52,7 @@ fn make_limits() -> Limits {
 
 #[test]
 fn mc_controller_position_control_path() {
-    let mut controller = MultirotorController::default();
+    let controller = MultirotorController::default();
     let state = make_state();
     let limits = make_limits();
 
@@ -84,7 +84,7 @@ fn mc_controller_position_control_path() {
 
 #[test]
 fn mc_controller_position_control_with_offset() {
-    let mut controller = MultirotorController::default();
+    let controller = MultirotorController::default();
     let mut state = make_state();
     state.position_ned = [Meters(0.0), Meters(0.0), Meters(-10.0)];
     let limits = make_limits();
@@ -118,7 +118,7 @@ fn mc_controller_position_control_with_offset() {
 
 #[test]
 fn mc_controller_velocity_control_path() {
-    let mut controller = MultirotorController::default();
+    let controller = MultirotorController::default();
     let state = make_state();
     let limits = make_limits();
 
@@ -148,7 +148,7 @@ fn mc_controller_velocity_control_path() {
 
 #[test]
 fn mc_controller_velocity_control_vertical() {
-    let mut controller = MultirotorController::default();
+    let controller = MultirotorController::default();
     let state = make_state();
     let limits = make_limits();
 
@@ -183,7 +183,7 @@ fn mc_controller_velocity_control_vertical() {
 
 #[test]
 fn mc_controller_attitude_only_path() {
-    let mut controller = MultirotorController::default();
+    let controller = MultirotorController::default();
     let state = make_state();
     let limits = make_limits();
 
@@ -215,7 +215,7 @@ fn mc_controller_attitude_only_path() {
 
 #[test]
 fn mc_controller_no_setpoint_uses_defaults() {
-    let mut controller = MultirotorController::default();
+    let controller = MultirotorController::default();
     let state = make_state();
     let limits = make_limits();
 

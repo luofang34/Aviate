@@ -149,18 +149,42 @@ pub struct AxisCommand {
     pub collective: Normalized,
 }
 
+// COV:EXCL_START(phantom DA: rustc's coverage attribution places
+// phantom DA entries on the VehicleController trait's doc comment
+// after the &mut self → &self surface flip — same artifact class as
+// the kernel_trait.rs DELEGATE block and mixer.rs Sanitizer
+// declaration. No executable code on these lines.)
+/// Vehicle-level controller — maps a state estimate + command into
+/// an `AxisCommand` (roll/pitch/yaw/collective normalized control
+/// inputs).
+///
+/// **Memoryless contract (LLR-CTL-101)**: implementors SHALL NOT
+/// hold safety-relevant persistent state across `step()` calls.
+/// Take `&self` (algorithm identity / tuning gains) and treat
+/// every input as the cycle's complete observable state. Any
+/// integrator / anti-windup / filter / mode-switch memory MUST
+/// route through a separate `&mut <ControlState>` borrow added
+/// alongside the algorithm — analogous to the Phase-4
+/// `Estimator::predict(&self, &mut EstimatorState, ...)` pattern.
+///
+/// The current trait surface enforces memorylessness structurally
+/// by taking `&self`. Adding the `&mut ControlState` second
+/// borrow is deferred until a controller actually needs persistent
+/// state — at that point the trait flips again and `KernelState`
+/// gains a `control: ControlState` field.
 pub trait VehicleController {
     fn step(
-        &mut self,
+        &self,
         state: &StateEstimate,
         command: &Command, // Note: This now refers to the new Command struct
         mode: ConfigMode,
         limits: &Limits, // COV:EXCL(phantom DA from enums.rs re-export; param decl)
     ) -> AxisCommand; // COV:EXCL(phantom DA from enums.rs re-export; return type)
-} // COV:EXCL(phantom DA from enums.rs re-export; real line has no code)
-  // COV:EXCL_START(phantom DA from enums.rs re-export: these mod decls carry
-  //   coverage attributions from enums.rs items re-exported via `pub use`.
-  //   Includes this COV:EXCL_START line and the blank line separation.)
+}
+// COV:EXCL_STOP // COV:EXCL(phantom DA from enums.rs re-export; real line has no code)
+// COV:EXCL_START(phantom DA from enums.rs re-export: these mod decls carry
+//   coverage attributions from enums.rs items re-exported via `pub use`.
+//   Includes this COV:EXCL_START line and the blank line separation.)
 pub mod attitude;
 pub mod envelope;
 pub mod position;
