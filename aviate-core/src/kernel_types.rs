@@ -6,7 +6,7 @@
 
 use crate::checks::{DegradationReason, TransitionFailure};
 use crate::control::envelope::ProtectionStatus;
-use crate::control::{ConfigMode, ControlLawV1, ControlMode, Limits};
+use crate::control::{ConfigMode, ControlLawV1, ControlMode};
 use crate::fault::FaultFlags;
 use crate::mixer::{ActuatorCmd, SanitizeReport};
 use crate::state::{EstimateQuality, StateEstimate};
@@ -71,36 +71,14 @@ pub enum ConfigError {
     ChecksumMismatch,
 }
 
-/// Runtime configuration (spec §19)
-#[derive(Clone, Debug)]
-pub struct Config {
-    pub limits: Limits,
-    pub command_timeout_ms: u32,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            limits: Limits {
-                max_roll: crate::types::Radians(0.78),
-                max_pitch: crate::types::Radians(0.78),
-                max_roll_rate: crate::types::RadiansPerSecond(3.0),
-                max_pitch_rate: crate::types::RadiansPerSecond(3.0),
-                max_yaw_rate: crate::types::RadiansPerSecond(3.0),
-                max_horizontal_speed: crate::types::MetersPerSecond(10.0),
-                max_climb_rate: crate::types::MetersPerSecond(2.0),
-                max_descent_rate: crate::types::MetersPerSecond(2.0),
-                max_altitude: crate::types::Meters(100.0),
-                min_altitude: crate::types::Meters(0.0),
-                min_airspeed: None,
-                max_airspeed: None,
-                max_load_factor: 2.0,
-                min_load_factor: 0.0,
-            },
-            command_timeout_ms: DEFAULT_COMMAND_TIMEOUT_MS,
-        }
-    }
-}
+// `Config` (a {limits, command_timeout_ms} placeholder) was removed in
+// the Phase 1 ResolvedKernelConfig consolidation. The flight-period
+// configuration surface now lives at `crate::kernel::config::ResolvedKernelConfig`,
+// which is the single source of truth for limits, mode_config,
+// fault_table, command_timeout_ms, and safe_output.
+//
+// `AviateKernelTrait::get_config()` correspondingly returns
+// `&ResolvedKernelConfig` — see `kernel_trait.rs`.
 
 // --- Init state machine ---
 

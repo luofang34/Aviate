@@ -4,15 +4,25 @@
 //!   - `kernel_logic.rs` — lifecycle (init, arm, disarm, reset, fault handling).
 //!   - `kernel_update.rs` — the per-cycle `update()` loop.
 //!   - `kernel_trait.rs`  — the `AviateKernelTrait` definition and impl.
+//!
+//! The kernel struct itself is being decomposed (see plan in
+//! `docs/AVIATE_SPEC.md` follow-ups). Phase 1 introduces the
+//! `cfg: ResolvedKernelConfig` sub-struct (this module's
+//! `kernel/config.rs`) — every field declared here that's not already
+//! a generic algorithm box (E, V, M, S) is on the migration path to
+//! either `KernelState` (Phase 3) or stays read-only inside `cfg`.
+
+pub mod builder;
+pub mod config;
 
 use crate::checks::{KernelChecks, PreArmFlags};
 use crate::control::envelope::SimpleEnvelopeProtector;
-use crate::control::{ConfigMode, ControlLawV1, Limits, VehicleController};
+use crate::control::{ConfigMode, ControlLawV1, VehicleController};
 use crate::ekf::{Ekf, Estimator};
-use crate::fault::{FaultFlags, FaultHandlingTable};
-use crate::kernel_types::{Config, TimingStats, DEFAULT_COMMAND_TIMEOUT_MS};
+use crate::fault::FaultFlags;
+use crate::kernel::config::ResolvedKernelConfig;
+use crate::kernel_types::TimingStats;
 use crate::mixer::{ActuatorSanitizer, ActuatorState, Mixer, ModeConfig, Sanitizer};
-use crate::types::Normalized;
 
 pub use crate::kernel_types::InitState;
 
@@ -22,14 +32,15 @@ pub struct AviateKernelImpl<E: Estimator, V: VehicleController, M: Mixer, S: Act
     pub mixer: M,
     pub sanitizer: S,
     pub protector: SimpleEnvelopeProtector,
-    pub limits: Limits,
+
+    /// Current configuration mode (spec §4). Runtime state — transitions
+    /// during flight via `request_config_mode()`. NOT in `cfg` because
+    /// `cfg` is flight-period-immutable.
     pub mode: ConfigMode,
-    pub mode_config: ModeConfig,
 
     // State Machine
     pub init_state: InitState,
     pub faults: FaultFlags,
-    pub fault_table: FaultHandlingTable,
     pub control_law: ControlLawV1,
 
     // Unified Check System (§17, §14, §4.5)
@@ -38,17 +49,16 @@ pub struct AviateKernelImpl<E: Estimator, V: VehicleController, M: Mixer, S: Act
     // Actuator state tracking for transition checks
     pub actuator_state: ActuatorState,
 
-    // Command timeout threshold (ms)
-    pub command_timeout_ms: u32,
-
-    // Configuration (spec §19)
-    pub config: Config,
-
     // Timing tracking (spec §18)
     pub timing_stats: TimingStats,
 
-    // Safety
-    pub safe_output: [Normalized; 16], // MAX_ACTUATORS = 16
+    /// Validated, flight-period-immutable configuration (spec §19).
+    /// See `kernel/config.rs` for the field set. Phase 1 consolidated
+    /// `limits`, `mode_config`, `fault_table`, `command_timeout_ms`,
+    /// `safe_output`, and the legacy `Config` placeholder into this
+    /// single field — there is now exactly one source of truth for
+    /// flight-period configuration.
+    pub cfg: ResolvedKernelConfig,
 }
 
 /// Type alias for the kernel struct.
@@ -64,6 +74,14 @@ pub type DefaultAviateKernel<V, M> = AviateKernelImpl<Ekf, V, M, Sanitizer>;
 impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     AviateKernelImpl<E, V, M, S>
 {
+    /// Construct a kernel with default config and default pre-arm
+    /// requirements. Direct struct-literal initialization — bypasses
+    /// the `Result`-returning builder because every required component
+    /// is supplied positionally, so the build can never fail.
+    ///
+    /// New code should prefer `AviateKernelBuilder` directly when any
+    /// non-default field (custom limits, custom command_timeout, etc.)
+    /// is needed.
     pub fn new(
         estimator: E,
         controller: V,
@@ -77,39 +95,23 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             mixer,
             sanitizer,
             protector: SimpleEnvelopeProtector,
-            limits: Limits {
-                max_roll: crate::types::Radians(0.78), // ~45 deg
-                max_pitch: crate::types::Radians(0.78),
-                max_roll_rate: crate::types::RadiansPerSecond(3.0),
-                max_pitch_rate: crate::types::RadiansPerSecond(3.0),
-                max_yaw_rate: crate::types::RadiansPerSecond(3.0),
-                max_horizontal_speed: crate::types::MetersPerSecond(10.0),
-                max_climb_rate: crate::types::MetersPerSecond(2.0),
-                max_descent_rate: crate::types::MetersPerSecond(2.0),
-                max_altitude: crate::types::Meters(100.0),
-                min_altitude: crate::types::Meters(0.0),
-                min_airspeed: None,
-                max_airspeed: None,
-                max_load_factor: 2.0,
-                min_load_factor: 0.0,
-            },
             mode: ConfigMode::Hover,
-            mode_config,
-
             init_state: InitState::PowerOn,
             faults: FaultFlags::empty(),
-            fault_table: FaultHandlingTable::DEFAULT,
             control_law: ControlLawV1::Primary,
             checks: KernelChecks::new(),
             actuator_state: ActuatorState::default(),
-            command_timeout_ms: DEFAULT_COMMAND_TIMEOUT_MS,
-            config: Config::default(),
             timing_stats: TimingStats::default(),
-            safe_output: [Normalized(0.0); 16],
+            cfg: ResolvedKernelConfig {
+                mode_config,
+                ..Default::default()
+            },
         }
     }
 
-    /// Create kernel with custom pre-arm requirements
+    /// Create a kernel with custom pre-arm requirements. Same direct
+    /// struct-literal pattern as `new()` — every required component is
+    /// supplied positionally, so this constructor cannot fail.
     pub fn with_pre_arm_required(
         estimator: E,
         controller: V,
@@ -118,9 +120,24 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         mode_config: ModeConfig,
         required: PreArmFlags,
     ) -> Self {
-        let mut kernel = Self::new(estimator, controller, mixer, sanitizer, mode_config);
-        kernel.checks = KernelChecks::with_pre_arm_required(required);
-        kernel
+        Self {
+            estimator,
+            controller,
+            mixer,
+            sanitizer,
+            protector: SimpleEnvelopeProtector,
+            mode: ConfigMode::Hover,
+            init_state: InitState::PowerOn,
+            faults: FaultFlags::empty(),
+            control_law: ControlLawV1::Primary,
+            checks: KernelChecks::with_pre_arm_required(required),
+            actuator_state: ActuatorState::default(),
+            timing_stats: TimingStats::default(),
+            cfg: ResolvedKernelConfig {
+                mode_config,
+                ..Default::default()
+            },
+        }
     }
 }
 
