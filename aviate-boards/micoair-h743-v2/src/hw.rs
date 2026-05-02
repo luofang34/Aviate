@@ -637,11 +637,17 @@ impl BoardStep for MicoAirBoard {
             self.kernel.init_step(&sensors, ts);
         }
 
+        // TODO: track real command age from RC/GCS uplink timestamps.
+        // The board doesn't yet surface command arrival times;
+        // passing 0 keeps COMMAND_RECENT permanently satisfied. Real
+        // plumbing is part of Phase 5.
+        let command_age_ms = 0u32;
         let result = self.kernel.update(
             ChannelId(0),
             time_delta,
             &sensors,
             &cmd,
+            command_age_ms,
             &aviate_core::mixer::ActuatorState::default(),
             None,
         );

@@ -181,6 +181,26 @@ lifecycle-machine cursor.
 traces_to = ["57835534-5fc0-45a2-92b9-6920328193e5"]
 
 [[tests]]
+uid = "9b022da0-7802-4f28-a233-d6342f00d40d"
+id = "TST-CMD-101"
+title = "update_command_age_gates_command_recent_flag"
+owner = "aviate-core@aviate"
+description = """
+The `tests/kernel.rs::update_command_age_gates_command_recent_flag`
+test sets `cfg.command_timeout_ms = 100` and exercises the
+`step_test` extension trait with three `command_age_ms` values:
+
+  - 50 (below timeout) → asserts `COMMAND_RECENT` SET
+  - 200 (above timeout) → asserts `COMMAND_RECENT` CLEAR
+  - 100 (== timeout, exclusive bound) → asserts `COMMAND_RECENT` CLEAR
+
+Verifies LLR-CMD-101 — that the kernel forwards `command_age_ms` to
+`update_command_status` and that the `COMMAND_RECENT < timeout_ms`
+boundary is half-open (exclusive upper bound).
+"""
+traces_to = ["3601601c-808b-453d-ae41-d6493409fd5e"]
+
+[[tests]]
 uid = "df421f16-968c-4fa7-a49d-8c0daa94d851"
 id = "TST-STATE-006"
 title = "ekf_tests.rs full suite (43 tests, EstimatorState pattern)"

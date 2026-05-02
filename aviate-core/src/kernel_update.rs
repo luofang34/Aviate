@@ -28,12 +28,17 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     /// * `command` - The command to execute
     /// * `actuator_state` - Feedback from actuators
     /// * `cross_channel` - Data from other redundant channels (optional)
+    // The 8-arg surface mirrors `AviateKernelTrait::update` and is
+    // dictated by spec §20 — adding a struct wrapper here would just
+    // shift the parameter count one level up. Allowed locally.
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         _channel: ChannelId,
         time: TimeDelta,
         sensors: &SensorSet,
         command: &Command,
+        command_age_ms: u32,
         _actuator_state: &ActuatorState,
         _cross_channel: Option<&CrossChannelData>,
     ) -> UpdateResult {
@@ -210,11 +215,15 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // 3. Update in-flight checks
         self.state.checks.in_flight.update_from_state(&state);
         self.state.checks.in_flight.update_from_sensors(sensors);
-        // Assume command age 0 for now, or derive from timestamp
+        // Spec §12: Command staleness gate. The caller supplies
+        // `command_age_ms` measured against its own timebase
+        // (typically the time elapsed since the last RC/GCS frame
+        // arrived); the in-flight check clears COMMAND_RECENT once
+        // the age meets or exceeds `cfg.command_timeout_ms`.
         self.state
             .checks
             .in_flight
-            .update_command_status(0, self.cfg.command_timeout_ms);
+            .update_command_status(command_age_ms, self.cfg.command_timeout_ms);
 
         // 4. Handle degradation
         // Timing violations are reported externally via report_timing_violation()

@@ -172,12 +172,19 @@ impl SitlRunner {
             }
         }
 
-        // 7. Step kernel
+        // 7. Step kernel.
+        // TODO: track real command age (time since last MAVLink RC frame
+        // arrived). The SITL runner doesn't yet carry uplink-frame
+        // arrival times; passing 0 keeps COMMAND_RECENT permanently
+        // satisfied. Real plumbing is part of the cross-channel /
+        // command-freshness work that lands with Phase 5.
+        let command_age_ms = 0u32;
         let result = self.kernel.update(
             ChannelId(0),
             time_delta,
             &sensors,
             &self.last_cmd,
+            command_age_ms,
             &aviate_core::mixer::ActuatorState::default(),
             None,
         );

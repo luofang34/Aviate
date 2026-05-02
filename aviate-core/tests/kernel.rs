@@ -57,7 +57,7 @@ impl<
         time_delta: aviate_core::time::TimeDelta,
         cmd: &Command,
         sensors: &SensorSet,
-        _command_age_ms: u32,
+        command_age_ms: u32,
     ) -> ActuatorCmd {
         let actuator_state = self.state.actuator_state.clone();
         let res = self.update(
@@ -65,6 +65,7 @@ impl<
             time_delta,
             sensors,
             cmd,
+            command_age_ms,
             &actuator_state,
             None,
         );
@@ -3171,6 +3172,7 @@ fn update_degrades_on_in_flight_trigger() {
         dummy_time_delta(),
         &sensors,
         &cmd,
+        0,
         &actuator_state,
         None,
     );
@@ -3181,6 +3183,88 @@ fn update_degrades_on_in_flight_trigger() {
     assert_eq!(event.reason, DegradationReason::AttitudeLost);
     // AttitudeLost maps to Backup.
     assert_eq!(event.to, ControlLawV1::Backup);
+}
+
+/// Verifies that `update()` plumbs the caller-supplied
+/// `command_age_ms` argument through to the in-flight check, so the
+/// `COMMAND_RECENT` flag actually responds to the configured
+/// `command_timeout_ms` threshold (LLR-CMD-101).
+///
+/// Pre-fix, `kernel_update.rs` hardcoded `update_command_status(0,
+/// timeout_ms)` regardless of caller input — so `command_timeout_ms`
+/// was decorative.
+#[test]
+fn update_command_age_gates_command_recent_flag() {
+    use aviate_core::checks::InFlightFlags;
+    let mut kernel = make_kernel();
+    let sensors = make_valid_sensors();
+
+    // Build a kernel with a 100ms command-timeout for the test.
+    kernel.cfg.command_timeout_ms = 100;
+
+    // Spin through init to reach Ready, then arm.
+    kernel.state.estimator.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
+        Quaternion::IDENTITY,
+    );
+    for _ in 0..150 {
+        kernel.init_step(&sensors, dummy_timestamp());
+    }
+    assert_eq!(kernel.state.init_state, InitState::Ready);
+    kernel.arm().expect("kernel should arm after init");
+
+    let cmd = Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint {
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 0,
+        source: CommandSource::Pilot,
+    };
+
+    // Fresh command (age below timeout) → COMMAND_RECENT set.
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 50);
+    assert!(
+        kernel
+            .state
+            .checks
+            .in_flight
+            .current
+            .contains(InFlightFlags::COMMAND_RECENT),
+        "COMMAND_RECENT should be set when command_age_ms < timeout_ms"
+    );
+
+    // Stale command (age >= timeout) → COMMAND_RECENT cleared.
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 200);
+    assert!(
+        !kernel
+            .state
+            .checks
+            .in_flight
+            .current
+            .contains(InFlightFlags::COMMAND_RECENT),
+        "COMMAND_RECENT should clear when command_age_ms >= timeout_ms"
+    );
+
+    // Threshold boundary: age == timeout → cleared (exclusive bound).
+    kernel.step_test(dummy_time_delta(), &cmd, &sensors, 100);
+    assert!(
+        !kernel
+            .state
+            .checks
+            .in_flight
+            .current
+            .contains(InFlightFlags::COMMAND_RECENT),
+        "COMMAND_RECENT should clear when command_age_ms == timeout_ms"
+    );
 }
 
 /// Drive the timing-violation degradation branch in `update()`.
@@ -3228,6 +3312,7 @@ fn update_degrades_on_persistent_timing_violation() {
         dummy_time_delta(),
         &sensors,
         &cmd,
+        0,
         &actuator_state,
         None,
     );
@@ -3282,6 +3367,7 @@ fn aviate_kernel_trait_surface_covered() {
         dummy_time_delta(),
         &sensors,
         &cmd,
+        0,
         &actuator_state,
         None,
     );

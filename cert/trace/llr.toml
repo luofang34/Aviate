@@ -220,6 +220,39 @@ derived = false
 traces_to = ["33190e76-603e-4cd7-8eee-468bcc94fa10"]
 
 [[requirements]]
+uid = "3601601c-808b-453d-ae41-d6493409fd5e"
+id = "LLR-CMD-101"
+title = "update() plumbs command_age_ms into the in-flight staleness gate"
+owner = "aviate-core@aviate"
+description = """
+`AviateKernelImpl::update()` and `AviateKernelTrait::update()` SHALL
+accept a caller-supplied `command_age_ms: u32` parameter measuring
+the staleness of `command` against the caller's timebase. The kernel
+SHALL forward this value into
+`KernelChecks.in_flight.update_command_status(command_age_ms,
+self.cfg.command_timeout_ms)` — the `COMMAND_RECENT` flag SHALL be
+set iff `command_age_ms < self.cfg.command_timeout_ms`.
+
+Pre-Phase-4-followup, the kernel hardcoded
+`update_command_status(0, ...)`, leaving `command_timeout_ms`
+decorative — the safety gate (spec §12) for stale RC/GCS commands
+never fired regardless of the configured threshold. This LLR
+closes that gap.
+
+Callers that don't yet track command-frame arrival timestamps
+(SITL runtime, current board HALs) pass `0` and document the
+freshness-tracking gap as a Phase-5 prerequisite.
+"""
+verification_methods = ["test"]
+modules = [
+    "aviate-core/src/kernel_update.rs",
+    "aviate-core/src/kernel_trait.rs",
+    "aviate-core/src/checks/in_flight.rs",
+]
+derived = false
+traces_to = ["dd494a24-a5f8-4cea-b687-a471edbfea17"]
+
+[[requirements]]
 uid = "edbab6c9-f097-45ed-8c5a-10f3e2d4fce1"
 id = "LLR-STATE-105"
 title = "Estimator trait surface separates algorithm from state"
