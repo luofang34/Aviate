@@ -152,7 +152,13 @@ mod tests {
 
     #[test]
     fn identity_hash_is_deterministic_within_build() {
-        let h1 = make_pipeline().algorithm_identity_hash();
+        let p = make_pipeline();
+        // Exercise the embedded timestamp_source fn pointer once so the
+        // test-fixture helper (`fake_ts`) is reached by coverage; the
+        // hash itself is a pure function of type parameters and does
+        // not depend on this call.
+        let _ = (p.mixer.timestamp_source)();
+        let h1 = p.algorithm_identity_hash();
         let h2 = make_pipeline().algorithm_identity_hash();
         assert_eq!(
             h1, h2,
