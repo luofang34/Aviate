@@ -29,6 +29,8 @@ use crate::kernel_types::DEFAULT_COMMAND_TIMEOUT_MS;
 use crate::mixer::ModeConfig;
 use crate::types::Normalized;
 
+mod canonical;
+
 /// Maximum number of actuator channels the kernel can drive.
 /// Mirrors `crate::mixer::MAX_ACTUATORS` — duplicated here as a const
 /// to avoid a circular dep on the mixer module just to size a field.
@@ -80,6 +82,50 @@ impl Default for ResolvedKernelConfig {
             command_timeout_ms: DEFAULT_COMMAND_TIMEOUT_MS,
             safe_output: [Normalized(0.0); MAX_ACTUATORS],
         }
+    }
+}
+
+impl ResolvedKernelConfig {
+    /// Deterministic 64-bit canonical hash over the entire flight-period
+    /// configuration (LLR-CFG-104).
+    ///
+    /// Companion to `KernelPipeline::algorithm_identity_hash`
+    /// (HLR-PIPE-002). Spec §16 lockstep entry verifies firmware-bundle
+    /// agreement across channels via TWO orthogonal witnesses:
+    ///
+    ///   - `algorithm_identity_hash` — same algorithm classes
+    ///     (estimator / controller / mixer / sanitizer types).
+    ///   - `canonical_hash` — same flight-envelope limits, same mode
+    ///     config, same fault table, same command-timeout threshold,
+    ///     same last-ditch safe output.
+    ///
+    /// Two channels with byte-identical firmware AND byte-identical
+    /// resolved configuration produce the same `(identity, canonical)`
+    /// pair; mismatch on either witness blocks lockstep entry. This is
+    /// the orthogonal half the user-tunable parameters need that
+    /// `algorithm_identity_hash` deliberately doesn't cover (it sees
+    /// only types).
+    ///
+    /// FNV-1a 64-bit fold over a tagged byte serialization of every
+    /// field in declaration order. Field separator `0xff` between
+    /// fields prevents concatenation aliasing across boundaries; enums
+    /// are folded by tag byte; floats by `f32::to_le_bytes` (target-
+    /// endian-independent); options by a discriminant byte plus
+    /// payload; slices by length-prefix plus per-element folding.
+    ///
+    /// Determinism boundary: the hash is exact across any two
+    /// invocations producing structurally-equal `ResolvedKernelConfig`
+    /// values. Static-slice fields (`mode_config.groups`,
+    /// `fault_table.entries`) participate by content, not by pointer
+    /// identity — two channels with separately-built but content-
+    /// equal slices hash equal.
+    ///
+    /// Not yet covered (deferred to Phase-5): a serialized form
+    /// suitable for transmission across the cross-channel link
+    /// (`encode_canonical`); this method only produces the hash, not
+    /// the bytes.
+    pub fn canonical_hash(&self) -> u64 {
+        canonical::canonical_hash(self)
     }
 }
 

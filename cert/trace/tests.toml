@@ -518,3 +518,38 @@ down LLR-STATE-109's Clone + Debug derives on `KernelState`:
      `alloc`, so no `format!`-style String assertions.
 """
 traces_to = ["d6e0121d-38ec-42bd-a872-8469100e433b"]
+
+[[tests]]
+uid = "37bbf94f-18cd-4705-ac2a-85df1674e44d"
+id = "TST-CFG-104"
+title = "kernel::config::tests::canonical_hash_*"
+owner = "aviate-core@aviate"
+description = """
+Eight unit tests in `aviate-core/src/kernel/config.rs::tests`
+exercise `ResolvedKernelConfig::canonical_hash` against the
+properties LLR-CFG-104 specifies:
+
+  1. `canonical_hash_is_deterministic` — two equal configs hash
+     equal (LLR-CFG-104.a).
+  2. `canonical_hash_distinguishes_command_timeout` — bumping the
+     `u32` field changes the hash.
+  3. `canonical_hash_distinguishes_limits` — changing a
+     `Limits.max_roll` Radian changes the hash.
+  4. `canonical_hash_distinguishes_safe_output` — mutating one
+     entry of the safe-output array changes the hash.
+  5. `canonical_hash_distinguishes_optional_airspeed_limits` —
+     `None` vs `Some(0.0)` produce different hashes (catches a
+     regression where the Option discriminant byte is dropped).
+  6. `canonical_hash_distinguishes_mode_config` — switching
+     `ConfigMode::Hover` to `ConfigMode::Cruise` changes the hash.
+  7. `canonical_hash_distinguishes_fault_table` — empty
+     `entries` slice vs default produces different hashes.
+  8. `canonical_hash_is_nonzero` — guards against an early-return
+     regression that would collapse the FNV-1a fold to 0.
+
+Together these are the structural witness for LLR-CFG-104 — every
+field of `ResolvedKernelConfig` participates, and the encoding
+rules (Option discriminant, enum tag bytes, slice length prefix,
+field separator) are individually pinned.
+"""
+traces_to = ["4bfb0a51-2c8a-4780-baec-8962197ce503"]
