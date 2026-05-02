@@ -425,3 +425,32 @@ modules = [
 ]
 derived = false
 traces_to = ["74314e31-1466-4755-83f3-505dafdaf77b"]
+
+[[requirements]]
+uid = "421bab25-b06e-4804-9beb-ea939ae5b79a"
+id = "LLR-PIPE-103"
+title = "algorithm_identity_hash uses FNV-1a over type_name of E,V,M,S"
+owner = "aviate-core@aviate"
+description = """
+`KernelPipeline::<E, V, M, S>::algorithm_identity_hash` SHALL be
+implemented as 64-bit FNV-1a (offset basis
+0xcbf29ce484222325, prime 0x00000100000001b3) folded over the
+concatenation of `core::any::type_name::<E>()`,
+`core::any::type_name::<V>()`, `core::any::type_name::<M>()`,
+`core::any::type_name::<S>()`, separated by a sentinel byte
+(0xff) so adjacent type-name boundaries cannot collide via
+concatenation aliasing. The function SHALL NOT read `self`'s
+fields and SHALL NOT consult any runtime configuration. The
+function SHALL NOT panic and SHALL be `#[inline]`-eligible
+(no allocation, no I/O, no locking).
+
+`core::any::type_name` is documented as a best-effort symbol that
+may differ across Rust compiler versions and target triples; the
+LLR therefore guarantees within-build determinism only. Channels
+participating in lockstep are required to be byte-identical
+firmware images, so within-build determinism is sufficient.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel/pipeline.rs"]
+derived = false
+traces_to = ["ef3875e1-eb75-4ad1-968d-5e13fa536548"]

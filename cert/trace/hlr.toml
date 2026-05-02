@@ -220,3 +220,30 @@ extending this composition, and (c) re-tracing affected LLRs.
 """
 verification_methods = ["review", "test"]
 traces_to = ["4207eadd-89b0-4a64-8310-49c336ee057c"]
+
+[[requirements]]
+uid = "ef3875e1-eb75-4ad1-968d-5e13fa536548"
+id = "HLR-PIPE-002"
+title = "KernelPipeline exposes deterministic algorithm-identity hash"
+owner = "aviate-core@aviate"
+description = """
+`KernelPipeline<E, V, M, S>` SHALL expose
+`algorithm_identity_hash(&self) -> u64`. The hash SHALL be a pure
+function of the four type parameters' compile-time identities (no
+contribution from runtime state or per-instance configuration). It
+SHALL satisfy: (a) determinism — invocations on independently-
+constructed pipelines with identical algorithm-bundle types yield
+the same value; (b) bundle-distinctness — swapping any one of the
+four type parameters for a structurally-different type yields a
+different value with overwhelming probability; (c) within-build
+stability — the value is constant across the lifetime of one
+firmware build's executions.
+
+The hash is the kernel's contribution to spec §16 lockstep entry:
+each channel publishes its hash and refuses peer-lockstep on
+mismatch. Algorithm-identity is the orthogonal companion to
+configuration byte-equality (HLR-CFG-001) — the two together
+witness firmware-bundle agreement at channel boundary.
+"""
+verification_methods = ["review", "test"]
+traces_to = ["d45a87b2-6e51-42b0-995f-a7b6a6a011b9"]
