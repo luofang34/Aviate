@@ -153,14 +153,20 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> AviateK
     }
 
     fn load_config(&mut self, config_block: &ConfigBlock) -> Result<(), ConfigError> {
-        // Spec §19: Stub implementation - validates checksum and version only
+        // No parser is implemented yet — see DRQ-CFG-001. Until the
+        // real validation pipeline (checksum + range checks per spec
+        // §13 / §19 / §15.2) lands, this method MUST surface a typed
+        // error rather than silently accept blocks. Pre-Phase-4-followup
+        // this returned `Ok(())` for `version <= 1`, which misled
+        // callers into believing config-loading worked when it
+        // didn't touch `self.cfg`.
         if config_block.version > 1 {
             return Err(ConfigError::UnsupportedVersion);
         }
-        // TODO: Parse actual config data from block
-        // For now, accept valid blocks but use default config
-        let _ = config_block.checksum; // Placeholder for future checksum validation
-        Ok(())
+        // version 1 is the only known schema, but no parser exists for
+        // it yet. Return InvalidFormat so callers cannot mistake a
+        // no-op for a successful load.
+        Err(ConfigError::InvalidFormat)
     }
 
     fn get_config(&self) -> &ResolvedKernelConfig {

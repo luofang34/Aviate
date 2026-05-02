@@ -3242,19 +3242,28 @@ fn aviate_kernel_trait_surface_covered() {
         None,
     );
 
-    // load_config: v1 (supported) then v2 (unsupported) for both branches.
-    let cfg_ok = aviate_core::kernel_types::ConfigBlock {
+    // load_config: v1 -> InvalidFormat (parser not implemented yet,
+    // per DRQ-CFG-001); v99 -> UnsupportedVersion. Both Err arms are
+    // exercised; no Ok arm exists until the real config parser lands
+    // post-Phase-5.
+    let cfg_known_version = aviate_core::kernel_types::ConfigBlock {
         data: &[],
         version: 1,
         checksum: 0,
     };
-    assert!(AviateKernelTrait::load_config(&mut kernel, &cfg_ok).is_ok());
-    let cfg_bad = aviate_core::kernel_types::ConfigBlock {
+    assert!(matches!(
+        AviateKernelTrait::load_config(&mut kernel, &cfg_known_version),
+        Err(aviate_core::kernel_types::ConfigError::InvalidFormat)
+    ));
+    let cfg_bad_version = aviate_core::kernel_types::ConfigBlock {
         data: &[],
         version: 99,
         checksum: 0,
     };
-    assert!(AviateKernelTrait::load_config(&mut kernel, &cfg_bad).is_err());
+    assert!(matches!(
+        AviateKernelTrait::load_config(&mut kernel, &cfg_bad_version),
+        Err(aviate_core::kernel_types::ConfigError::UnsupportedVersion)
+    ));
 
     // Arm-path: wind through init_step enough times to satisfy pre-arm,
     // then arm/disarm + watchdog + ground_reset via the trait.
