@@ -36,9 +36,29 @@
 /// zero filter histories, neutral mode latches), and a `reset`
 /// method that returns the runtime to that baseline without
 /// re-allocating. `reset` is called by the kernel on transitions
-/// that invalidate accumulated controller memory (`ground_reset`,
-/// `disarm`, control-law change to `Backup`).
-pub trait ControllerRuntimeState: Default {
+/// that invalidate accumulated controller memory: `ground_reset`,
+/// `disarm`, `check_critical_faults` (entry into Fault state),
+/// and `handle_degradation` when the new control law is `Backup`.
+///
+/// Trait bounds:
+///
+///   - `Default` — required by `KernelState::new` /
+///     `KernelState::default` for construction. Also seeds reset
+///     baselines.
+///   - `Clone` — Phase-5 prerequisite. `KernelState: Clone` is
+///     needed for cross-channel snapshot replication; that bound
+///     transitively requires every `KernelState` field — including
+///     `controller: R` — to be `Clone`.
+///   - `Debug` — `KernelState` derives `Debug` for diagnostic
+///     dumping (`tracing` events, post-mortem panics in tests).
+///
+/// A future deterministic-encoding trait (`encode_canonical`)
+/// covering all of `KernelState` will land alongside the Phase-5
+/// `KernelState::encode_canonical` work; until that lands,
+/// `Clone`/`Debug` is the minimum scaffold that lets snapshot
+/// machinery be added later without re-bounding every existing
+/// implementor.
+pub trait ControllerRuntimeState: Default + Clone + core::fmt::Debug {
     /// Return the runtime state to its post-construction baseline.
     /// Equivalent to `*self = Self::default()` for simple cases;
     /// implementors with allocated buffers may zero-fill in place.
