@@ -26,10 +26,19 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             .checks
             .pre_arm
             .update_from_faults(self.state.faults);
-        self.state
-            .checks
-            .pre_arm
-            .update_ekf(self.state.estimator.is_initialized());
+        // EKF initialization gate: read it through the trait surface
+        // (`Estimator::estimate(state).quality == Good` ⇔ initialized).
+        // Routing through the trait keeps this code generic over
+        // non-EKF estimators that don't have an `is_initialized` notion
+        // but do produce a `StateEstimate.quality`.
+        let est_initialized = matches!(
+            self.pipeline
+                .estimator
+                .estimate(&self.state.estimator)
+                .quality,
+            crate::state::EstimateQuality::Good
+        );
+        self.state.checks.pre_arm.update_ekf(est_initialized);
 
         // Note: update_sensor_faults() is NOT called here.
         // Faults are runtime monitoring for armed operation.
@@ -312,7 +321,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         }
 
         // Update transition checks and verify
-        let state = self.state.estimator.get_estimate();
+        let state = self.pipeline.estimator.estimate(&self.state.estimator);
         self.state.checks.transition.update_from_state(&state);
         self.state
             .checks
@@ -384,7 +393,9 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         self.state.checks.in_flight.reset();
         self.state.checks.transition.reset();
         self.state.init_state = InitState::ConfigLoading; // Restart init sequence
-        self.state.estimator.reset();
+                                                          // Reset estimator runtime state via the trait — works for
+                                                          // any `E: Estimator`, not just EKF.
+        self.pipeline.estimator.reset(&mut self.state.estimator);
         self.state.fallback = crate::mixer::ActuatorFallbackState::default();
         self.state.actuator_state = crate::mixer::ActuatorState::default();
         self.state.timing_stats = crate::kernel_types::TimingStats::default();

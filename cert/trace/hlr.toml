@@ -8,14 +8,38 @@ revision = "1"
 [[requirements]]
 uid = "c42a507f-d988-4694-b5c3-ed34763fb0f9"
 id = "HLR-EST-001"
-title = "Estimator trait surface is closed"
+title = "Estimator trait surface is closed and parameterized over runtime state"
 owner = "aviate-core@aviate"
 description = """
-The aviate-core Estimator trait SHALL expose exactly the methods
-init, predict, update_gnss, update_baro, update_mag, get_estimate,
-is_initialized, has_numeric_fault, reset, plus the test-hooks-gated
-set_state. No additional non-test methods SHALL be added without
-filing a derived requirement (DRQ) and re-tracing affected LLRs.
+The `aviate_core::ekf::Estimator` trait SHALL expose exactly:
+
+  - associated type `RuntimeState: EstimatorRuntimeState`
+  - `predict(&self, &mut Self::RuntimeState, &ImuData, Scalar)`
+  - `update_gnss(&self, &mut Self::RuntimeState, &SensorReading<GnssData>)`
+  - `update_baro(&self, &mut Self::RuntimeState, &SensorReading<BaroData>)`
+  - `update_mag(&self, &mut Self::RuntimeState, &SensorReading<MagData>)`
+  - `estimate(&self, &Self::RuntimeState) -> StateEstimate`
+  - `reset(&self, &mut Self::RuntimeState)` (default impl: delegates
+    to `EstimatorRuntimeState::reset`)
+  - test-hooks-gated `inject_state(&self, &mut Self::RuntimeState,
+    &StateEstimate)` (default impl: no-op)
+
+The associated `RuntimeState` type lifts the previously-hardcoded
+`EkfState` (18-state ESKF + 18×18 P) to a per-implementation choice
+— required for non-EKF estimators (MEKF for cubesat ADCS, UKF for
+fixed-wing wind augmentation, complementary filter for low-cost
+GNSS-denied platforms, particle filter, sliding-window VIO graphs).
+Today's only impl (`Ekf`) selects `RuntimeState = EkfState`.
+
+EKF-specific operations that do not generalize to non-Kalman
+backends (`init` from raw position/velocity/quaternion, set_state
+from a `StateEstimate` summary, `is_initialized`, `has_numeric_fault`)
+remain inherent methods on `EkfState`. The kernel's gating logic
+reads only `Estimator::estimate(state).quality` and `valid_flags`,
+which every implementation must produce.
+
+No additional non-test trait method SHALL be added without filing a
+derived requirement (DRQ) and re-tracing affected LLRs.
 """
 verification_methods = ["review", "test"]
 traces_to = ["bb2e1695-a2e7-40c4-ae75-9711a8134b70"]

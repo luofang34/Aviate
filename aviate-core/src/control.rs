@@ -174,7 +174,7 @@ pub struct AxisCommand {
 ///   the kernel's "exactly one safety-relevant-state owner" rule
 ///   covers controller state too — making it amenable to the same
 ///   snapshot / hash / vote / hot-spare-takeover machinery as
-///   `EstimatorState` and `ActuatorFallbackState`.
+///   `EkfState` and `ActuatorFallbackState`.
 ///
 /// Today's gains-only placeholders set `type RuntimeState =
 /// NoControllerState` (a zero-size unit-struct); a controller that

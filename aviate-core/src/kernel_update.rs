@@ -92,13 +92,17 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                     law: ControlLawV1::Backup,
                     health: ChannelHealthV1::Operative,
                     faults: self.state.faults,
-                    confidence: self.state.estimator.get_estimate().quality,
+                    confidence: self
+                        .pipeline
+                        .estimator
+                        .estimate(&self.state.estimator)
+                        .quality,
                     envelope_margin: EnvelopeMargin::default(),
                     sequence: command.sequence,
                     protection: Default::default(),
                     sanitize_report: SanitizeReport::default(),
                 },
-                estimate: self.state.estimator.get_estimate(),
+                estimate: self.pipeline.estimator.estimate(&self.state.estimator),
                 timing: CycleTiming::default(),
                 degradation: None,
             };
@@ -127,13 +131,17 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                     law: ControlLawV1::Backup, // Force Backup reporting when not armed
                     health: ChannelHealthV1::Operative,
                     faults: self.state.faults,
-                    confidence: self.state.estimator.get_estimate().quality,
+                    confidence: self
+                        .pipeline
+                        .estimator
+                        .estimate(&self.state.estimator)
+                        .quality,
                     envelope_margin: EnvelopeMargin::default(),
                     sequence: command.sequence,
                     protection: Default::default(),
                     sanitize_report: SanitizeReport::default(),
                 },
-                estimate: self.state.estimator.get_estimate(),
+                estimate: self.pipeline.estimator.estimate(&self.state.estimator),
                 timing: CycleTiming::default(),
                 degradation: None,
             };
@@ -152,7 +160,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                     sanitized: true,
                 },
                 status: ChannelStatus::default(), // TODO: Populate with fault info
-                estimate: self.state.estimator.get_estimate(),
+                estimate: self.pipeline.estimator.estimate(&self.state.estimator),
                 timing: CycleTiming::default(),
                 degradation: None,
             };
@@ -210,7 +218,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         }
 
         // Get updated estimate
-        let state = self.state.estimator.get_estimate();
+        let state = self.pipeline.estimator.estimate(&self.state.estimator);
 
         // 3. Update in-flight checks
         self.state.checks.in_flight.update_from_state(&state);

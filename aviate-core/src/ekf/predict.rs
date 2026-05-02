@@ -2,10 +2,10 @@
 //!
 //! Phase 4: this is now part of `impl Estimator for Ekf` — the
 //! algorithm reads its tuning from `&self.config` and mutates
-//! filter state through `&mut state: &mut EstimatorState`. There is
+//! filter state through `&mut state: &mut EkfState`. There is
 //! exactly one owner of the persistent filter state (KernelState).
 
-use super::{EstimatorState, IDX_AB, IDX_ATT, IDX_GB, IDX_MB, IDX_POS, IDX_VEL, STATE_DIM};
+use super::{EkfState, IDX_AB, IDX_ATT, IDX_GB, IDX_MB, IDX_POS, IDX_VEL, STATE_DIM};
 use crate::ekf::Ekf;
 use crate::math::{Matrix, Quaternion, Vector3};
 use crate::sensor::ImuData;
@@ -13,7 +13,7 @@ use crate::sensor::ImuData;
 use crate::types::{FloatExt, Meters, MetersPerSecond, Scalar, Validated};
 
 impl Ekf {
-    pub(crate) fn predict_state(&self, state: &mut EstimatorState, imu: &ImuData, dt: Scalar) {
+    pub(crate) fn predict_state(&self, state: &mut EkfState, imu: &ImuData, dt: Scalar) {
         if !state.initialized {
             return;
         }

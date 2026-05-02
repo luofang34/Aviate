@@ -1,10 +1,10 @@
 //! Sensor fusion entry points — GNSS, baro, and magnetometer.
 //!
 //! Phase 4: methods take `&self` (algorithm config) and `&mut state:
-//! &mut EstimatorState`. Persistent filter state lives only in
+//! &mut EkfState`. Persistent filter state lives only in
 //! `KernelState.estimator`.
 
-use super::{EstimatorState, IDX_POS, IDX_VEL};
+use super::{EkfState, IDX_POS, IDX_VEL};
 use crate::ekf::Ekf;
 use crate::sensor::{
     BaroData, GnssData, GnssFix, GnssHealth, MagData, SensorHealth, SensorReading,
@@ -15,7 +15,7 @@ use crate::types::FloatExt;
 impl Ekf {
     pub(crate) fn update_gnss_state(
         &self,
-        state: &mut EstimatorState,
+        state: &mut EkfState,
         gnss_reading: &SensorReading<GnssData>,
     ) {
         // 0. Health gate
@@ -53,7 +53,7 @@ impl Ekf {
 
     pub(crate) fn update_baro_state(
         &self,
-        state: &mut EstimatorState,
+        state: &mut EkfState,
         baro_reading: &SensorReading<BaroData>,
     ) {
         match baro_reading.health {
@@ -88,7 +88,7 @@ impl Ekf {
     /// - Positive yaw = clockwise from magnetic north when viewed from above
     pub(crate) fn update_mag_state(
         &self,
-        state: &mut EstimatorState,
+        state: &mut EkfState,
         mag_reading: &SensorReading<MagData>,
     ) {
         use core::f32::consts::PI;
