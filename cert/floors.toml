@@ -34,3 +34,22 @@ trace_test = 27
 [delta_ceilings]
 # Reserved by the tool for new-additions-in-diff checks. Parsed today,
 # enforced in a follow-up.
+
+# Per-crate floors. The set of `[per_crate.<name>]` keys here MUST equal
+# `scope.in_scope` in `cert/boundary.toml` (cargo-evidence's
+# `per_crate_floors_match_boundary_in_scope` invariant): adding a crate
+# to the workspace requires a per-crate floor row in the same PR;
+# removing one requires cleanup. Each table is intentionally empty —
+# enabling `test_count` / `library_panics` is deferred (the tool's
+# `crates/*/src/` walker reports 0 for our `aviate-*` layout, see the
+# top-of-file comment). The empty tables still close the bijection, so
+# `cargo evidence doctor` no longer fires
+# `DOCTOR_FLOORS_BOUNDARY_MISMATCH`.
+[per_crate.aviate-airframe-fixed-wing]
+[per_crate.aviate-airframe-multirotor]
+[per_crate.aviate-config]
+[per_crate.aviate-core]
+[per_crate.aviate-drivers]
+[per_crate.aviate-hal-io]
+[per_crate.aviate-link]
+[per_crate.aviate-security]
