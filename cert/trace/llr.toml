@@ -722,3 +722,55 @@ verification_methods = ["test", "review"]
 modules = ["aviate-core/src/kernel/state.rs"]
 derived = false
 traces_to = ["589cfa68-0179-4683-a787-0c90a54440df"]
+
+[[requirements]]
+uid = "4bfb0a51-2c8a-4780-baec-8962197ce503"
+id = "LLR-CFG-104"
+title = "ResolvedKernelConfig::canonical_hash covers every flight-period field"
+owner = "aviate-core@aviate"
+description = """
+`ResolvedKernelConfig::canonical_hash(&self) -> u64` SHALL fold a
+deterministic byte serialization of every field in declaration
+order — `limits`, `mode_config`, `fault_table`,
+`command_timeout_ms`, `safe_output` — into a 64-bit FNV-1a hash
+(same constants as LLR-PIPE-103: offset
+0xcbf29ce484222325, prime 0x00000100000001b3).
+
+Encoding rules:
+  - Floats fold via `f32::to_le_bytes` (target-endian-independent).
+  - `Option<f32>` folds discriminant byte (0/1) plus payload on Some.
+  - Enums fold via a tag byte assigned in declaration order; adding
+    a new variant SHALL extend the tag match (the exhaustiveness
+    check fails CI when this lags).
+  - Static-slice fields (`mode_config.groups`,
+    `fault_table.entries`) fold by length-prefix (8-byte u64,
+    width-stable across 32/64-bit targets) plus per-element folding;
+    pointer identity is NOT consulted, so two channels with
+    independently-built but content-equal slices hash equal.
+  - A 0xff field separator byte separates each top-level field so
+    concatenation collisions cannot alias across boundaries.
+
+The hash SHALL be:
+  (a) deterministic — two structurally-equal `ResolvedKernelConfig`
+      instances produce the same hash;
+  (b) field-distinct — changing any single field (including the
+      `Option<f32>` discriminant) changes the hash with overwhelming
+      probability;
+  (c) within-build stable — the value is constant across the
+      lifetime of one firmware build's executions.
+
+This LLR is the orthogonal companion to HLR-PIPE-002
+(algorithm_identity_hash). Spec §16 lockstep entry verifies BOTH:
+identity hash matches → channels run the same algorithm classes;
+canonical hash matches → channels run the same tuning. Mismatch on
+either witness blocks lockstep entry.
+
+Not in scope yet: a serialized form suitable for transmission
+(`encode_canonical`); this method only produces the hash, not the
+bytes. Phase-5 byte-level snapshot replication will land that
+separately.
+"""
+verification_methods = ["test", "review"]
+modules = ["aviate-core/src/kernel/config.rs"]
+derived = false
+traces_to = ["4cf7189d-23e6-470a-b71c-c90a81c59970"]
