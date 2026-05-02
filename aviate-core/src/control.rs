@@ -149,9 +149,27 @@ pub struct AxisCommand {
     pub collective: Normalized,
 }
 
+/// Vehicle-level controller — maps a state estimate + command into
+/// an `AxisCommand` (roll/pitch/yaw/collective normalized control
+/// inputs).
+///
+/// **Memoryless contract (LLR-CTL-101)**: implementors SHALL NOT
+/// hold safety-relevant persistent state across `step()` calls.
+/// Take `&self` (algorithm identity / tuning gains) and treat
+/// every input as the cycle's complete observable state. Any
+/// integrator / anti-windup / filter / mode-switch memory MUST
+/// route through a separate `&mut <ControlState>` borrow added
+/// alongside the algorithm — analogous to the Phase-4
+/// `Estimator::predict(&self, &mut EstimatorState, ...)` pattern.
+///
+/// The current trait surface enforces memorylessness structurally
+/// by taking `&self`. Adding the `&mut ControlState` second
+/// borrow is deferred until a controller actually needs persistent
+/// state — at that point the trait flips again and `KernelState`
+/// gains a `control: ControlState` field.
 pub trait VehicleController {
     fn step(
-        &mut self,
+        &self,
         state: &StateEstimate,
         command: &Command, // Note: This now refers to the new Command struct
         mode: ConfigMode,

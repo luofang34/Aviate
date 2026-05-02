@@ -220,6 +220,45 @@ derived = false
 traces_to = ["33190e76-603e-4cd7-8eee-468bcc94fa10"]
 
 [[requirements]]
+uid = "ad5ab2d7-0dd4-48d0-83ae-dea20934c119"
+id = "LLR-CTL-101"
+title = "VehicleController is structurally memoryless"
+owner = "aviate-core@aviate"
+description = """
+The `VehicleController::step` trait method SHALL take `&self` (not
+`&mut self`). Implementors SHALL NOT hold safety-relevant
+persistent state across `step()` calls — every input argument
+(`state`, `command`, `mode`, `limits`) carries the cycle's
+complete observable input.
+
+Today's implementors (`MultirotorController`, `FixedWingController`,
+`VtolController`) are structurally memoryless: they hold only
+configuration / sub-controller objects (`pos_ctrl`, `vel_ctrl`,
+gains arrays) — themselves taking `&self`. The `&self` trait
+surface enforces this by construction.
+
+When a controller adds an integrator / anti-windup / mode-switch
+memory, the trait flips to `&self + &mut ControlState`
+(analogous to the Phase-4 `Estimator::predict(&self, &mut
+EstimatorState, ...)` pattern), and `KernelState` gains a
+`control: ControlState` field. This LLR is the structural anchor
+for that future flip — any controller that needs persistent state
+fails to compile under `&self`, forcing the refactor.
+
+This LLR is the analogue of LLR-STATE-105 (Estimator) and
+LLR-STATE-106 (ActuatorSanitizer) for the control-law layer.
+"""
+verification_methods = ["review", "test"]
+modules = [
+    "aviate-core/src/control.rs",
+    "aviate-core/src/control/multirotor.rs",
+    "aviate-core/src/control/fixed_wing.rs",
+    "aviate-core/src/control/vtol.rs",
+]
+derived = false
+traces_to = ["190d1f8d-40d0-47cc-9bb7-1b5e210d0802"]
+
+[[requirements]]
 uid = "3601601c-808b-453d-ae41-d6493409fd5e"
 id = "LLR-CMD-101"
 title = "update() plumbs command_age_ms into the in-flight staleness gate"

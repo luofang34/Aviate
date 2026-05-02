@@ -6,7 +6,7 @@ pub struct FixedWingController;
 
 impl VehicleController for FixedWingController {
     fn step(
-        &mut self,
+        &self,
         _state: &StateEstimate,
         command: &Command,
         _mode: ConfigMode,

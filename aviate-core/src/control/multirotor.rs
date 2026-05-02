@@ -26,7 +26,7 @@ impl Default for MultirotorController {
 
 impl VehicleController for MultirotorController {
     fn step(
-        &mut self,
+        &self,
         state: &StateEstimate,
         command: &Command,
         _mode: ConfigMode,

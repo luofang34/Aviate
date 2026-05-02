@@ -6,7 +6,7 @@ pub struct VtolController;
 
 impl VehicleController for VtolController {
     fn step(
-        &mut self,
+        &self,
         _state: &StateEstimate,
         command: &Command,
         _mode: ConfigMode,
