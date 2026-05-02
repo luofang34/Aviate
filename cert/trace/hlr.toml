@@ -14,10 +14,10 @@ description = """
 The `aviate_core::ekf::Estimator` trait SHALL expose exactly:
 
   - associated type `RuntimeState: EstimatorRuntimeState`
-  - `predict(&self, &mut Self::RuntimeState, &ImuData, Scalar)`
-  - `update_gnss(&self, &mut Self::RuntimeState, &SensorReading<GnssData>)`
-  - `update_baro(&self, &mut Self::RuntimeState, &SensorReading<BaroData>)`
-  - `update_mag(&self, &mut Self::RuntimeState, &SensorReading<MagData>)`
+  - `observe(&self, &mut Self::RuntimeState, &SensorSet,
+    Option<&SensorOverrides>, Scalar)` — single-cycle entry point
+    that drives the estimator forward by `dt` seconds, consuming
+    whichever sensor channels the estimator chooses to use.
   - `estimate(&self, &Self::RuntimeState) -> StateEstimate`
   - `reset(&self, &mut Self::RuntimeState)` (default impl: delegates
     to `EstimatorRuntimeState::reset`)
@@ -30,6 +30,15 @@ The associated `RuntimeState` type lifts the previously-hardcoded
 fixed-wing wind augmentation, complementary filter for low-cost
 GNSS-denied platforms, particle filter, sliding-window VIO graphs).
 Today's only impl (`Ekf`) selects `RuntimeState = EkfState`.
+
+The single `observe()` method replaces the previous
+`predict / update_gnss / update_baro / update_mag` quadruple. The
+quadruple was EKF-shape (predict-per-IMU + update-per-sensor); the
+new shape lets UKF batch updates, particle-filter resampling, and
+graph-keyframe triggers fit through the same trait surface. Per-
+sensor flow (`predict_state`, `update_gnss_state`, etc.) remains
+as inherent helpers on `Ekf` for direct unit-test access — the
+kernel calls only `observe()`.
 
 EKF-specific operations that do not generalize to non-Kalman
 backends (`init` from raw position/velocity/quaternion, set_state

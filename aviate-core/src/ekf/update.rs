@@ -13,11 +13,7 @@ use crate::sensor::{
 use crate::types::FloatExt;
 
 impl Ekf {
-    pub(crate) fn update_gnss_state(
-        &self,
-        state: &mut EkfState,
-        gnss_reading: &SensorReading<GnssData>,
-    ) {
+    pub fn update_gnss_state(&self, state: &mut EkfState, gnss_reading: &SensorReading<GnssData>) {
         // 0. Health gate
         match gnss_reading.health {
             SensorHealth::Good => { /* continue */ }
@@ -51,11 +47,7 @@ impl Ekf {
         self.scalar_update(state, IDX_VEL + 2, gnss.velocity_ned[2].0, r_vel);
     }
 
-    pub(crate) fn update_baro_state(
-        &self,
-        state: &mut EkfState,
-        baro_reading: &SensorReading<BaroData>,
-    ) {
+    pub fn update_baro_state(&self, state: &mut EkfState, baro_reading: &SensorReading<BaroData>) {
         match baro_reading.health {
             SensorHealth::Good => { /* continue */ }
             _ => {
@@ -86,11 +78,7 @@ impl Ekf {
     /// - Magnetometer data is in body frame
     /// - Heading is magnetic (no declination correction)
     /// - Positive yaw = clockwise from magnetic north when viewed from above
-    pub(crate) fn update_mag_state(
-        &self,
-        state: &mut EkfState,
-        mag_reading: &SensorReading<MagData>,
-    ) {
+    pub fn update_mag_state(&self, state: &mut EkfState, mag_reading: &SensorReading<MagData>) {
         use core::f32::consts::PI;
 
         // Step 1: Health & Validity Gating

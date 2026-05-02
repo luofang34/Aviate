@@ -44,15 +44,16 @@ pub mod runtime;
 mod scalar;
 mod update;
 
+use crate::control::SensorOverrides;
 use crate::ekf::runtime::EstimatorRuntimeState;
 use crate::math::{Matrix, Quaternion, Vector3, QUAT_NORM_EPS};
-use crate::sensor::{BaroData, GnssData, ImuData, MagData, SensorReading};
+use crate::sensor::SensorSet;
 use crate::state::{EstimateQuality, StateEstimate, StateValidFlags};
 use crate::types::{
     Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, RadiansPerSecond, Scalar,
 };
 
-/// State estimator contract (LLR-EST-101..108, LLR-EST-110, LLR-STATE-105).
+/// State estimator contract (LLR-EST-110, LLR-EST-111, LLR-STATE-105).
 ///
 /// Algorithm/state split: the trait carries algorithm identity on
 /// `&self` (tuning, configuration) and per-call runtime state on
@@ -60,31 +61,50 @@ use crate::types::{
 /// estimators plug in with their own state shape; today's only impl
 /// (`Ekf`) selects `RuntimeState = EkfState`.
 ///
-/// `is_initialized()` / `has_numeric_fault()` are NOT trait
-/// methods — they are EKF-specific implementation details exposed
-/// as inherent methods on `EkfState`. The kernel only consults
-/// `estimate(state).quality` (a `StateEstimate` field), which every
-/// estimator implementation must produce. Likewise, `init()` and
-/// `set_state()` (test-hook) are inherent on `EkfState` — bootstrap
-/// from a `Vector3 / Quaternion` and inject from a `StateEstimate`
-/// summary are EKF-shaped operations that don't generalize to
-/// non-Kalman backends.
+/// **Single-cycle observation entry point.** The trait exposes one
+/// `observe()` method that consumes a complete `SensorSet` snapshot
+/// (plus optional `SensorOverrides`) and advances state by `dt`.
+/// Inside `observe()`, each estimator decides which sensor channels
+/// it uses, in what order, and how to gate them. EKF-style
+/// "predict per IMU then update per sensor" is one shape; UKF
+/// batch updates, particle-filter resampling, and graph-keyframe
+/// triggers all fit through the same trait surface. Per-sensor
+/// methods (`predict_state`, `update_gnss_state`,
+/// `update_baro_state`, `update_mag_state`) remain as **inherent
+/// helpers** on `Ekf` for direct unit-test access; the kernel
+/// calls only `observe()`.
+///
+/// EKF-specific operations that don't generalize to non-Kalman
+/// backends (`init` from raw position/velocity/quaternion,
+/// `set_state` from a StateEstimate summary, `is_initialized`,
+/// `has_numeric_fault`, `get_estimate`) are inherent methods on
+/// `EkfState`. The kernel reads only `estimate(state).quality`
+/// (which every implementation must produce), so non-EKF estimators
+/// participate without exposing those EKF-shape predicates.
 pub trait Estimator {
     /// Persistent runtime state owned by `KernelState.estimator`.
     type RuntimeState: EstimatorRuntimeState;
 
-    /// IMU-driven state and covariance propagation. Bails on
-    /// non-finite dt or invalid IMU samples without touching state.
-    fn predict(&self, state: &mut Self::RuntimeState, imu: &ImuData, dt: Scalar);
-
-    /// Fuse a GNSS reading. Health-gated: drops Suspect/Lost or no-fix.
-    fn update_gnss(&self, state: &mut Self::RuntimeState, gnss_reading: &SensorReading<GnssData>);
-
-    /// Fuse a barometric pressure reading into the altitude channel.
-    fn update_baro(&self, state: &mut Self::RuntimeState, baro_reading: &SensorReading<BaroData>);
-
-    /// Fuse a magnetometer reading into the heading channel.
-    fn update_mag(&self, state: &mut Self::RuntimeState, mag_reading: &SensorReading<MagData>);
+    /// Drive the estimator forward by one cycle, consuming the
+    /// kernel's complete `SensorSet` snapshot. Implementations
+    /// decide which channels they use (IMU-only attitude filter,
+    /// IMU+GNSS+baro+mag tightly-coupled, IMU+VIO loosely-coupled,
+    /// …), in what order, and how to gate them; the kernel does
+    /// not pre-process or pre-select.
+    ///
+    /// `overrides` carries kernel-applied test/command overrides
+    /// (e.g. forcing GNSS health for failsafe scenarios).
+    /// Pass-through estimators may ignore it.
+    ///
+    /// `dt` is the cycle period in seconds. Implementations bail on
+    /// non-finite or non-positive `dt` without touching state.
+    fn observe(
+        &self,
+        state: &mut Self::RuntimeState,
+        sensors: &SensorSet,
+        overrides: Option<&SensorOverrides>,
+        dt: Scalar,
+    );
 
     /// Project the runtime state onto the kernel-facing
     /// `StateEstimate` summary (attitude / angular_velocity /

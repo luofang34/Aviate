@@ -13,7 +13,7 @@ use crate::sensor::ImuData;
 use crate::types::{FloatExt, Meters, MetersPerSecond, Scalar, Validated};
 
 impl Ekf {
-    pub(crate) fn predict_state(&self, state: &mut EkfState, imu: &ImuData, dt: Scalar) {
+    pub fn predict_state(&self, state: &mut EkfState, imu: &ImuData, dt: Scalar) {
         if !state.initialized {
             return;
         }
