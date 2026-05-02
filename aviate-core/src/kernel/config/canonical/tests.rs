@@ -89,13 +89,15 @@ fn canonical_hash_distinguishes_all_config_modes() {
         cfg.mode_config.mode = modes[i];
         cfg.canonical_hash()
     });
+    // Drop the format-arg failure message: the cold-panic argument
+    // expression is reported as uncovered by LLVM coverage
+    // instrumentation. Default `assert_ne!` failure prints the
+    // hash values, which is enough to debug a regression — and the
+    // test fn name names the enum.
+    let _ = modes;
     for i in 0..hashes.len() {
         for j in (i + 1)..hashes.len() {
-            assert_ne!(
-                hashes[i], hashes[j],
-                "ConfigMode variants {:?} and {:?} hashed equal",
-                modes[i], modes[j]
-            );
+            assert_ne!(hashes[i], hashes[j]);
         }
     }
 }
@@ -123,13 +125,10 @@ fn feed_group_kind_covers_all_variants() {
     ];
     let hashes: [u64; 6] =
         core::array::from_fn(|i| isolated_hash(|h| feed_group_kind(h, kinds[i])));
+    let _ = kinds;
     for i in 0..hashes.len() {
         for j in (i + 1)..hashes.len() {
-            assert_ne!(
-                hashes[i], hashes[j],
-                "GroupKind variants {:?} and {:?} hashed equal",
-                kinds[i], kinds[j]
-            );
+            assert_ne!(hashes[i], hashes[j]);
         }
     }
 }
@@ -188,13 +187,10 @@ fn feed_fault_category_covers_all_variants() {
     ];
     let hashes: [u64; 24] =
         core::array::from_fn(|i| isolated_hash(|h| feed_fault_category(h, cats[i])));
+    let _ = cats;
     for i in 0..hashes.len() {
         for j in (i + 1)..hashes.len() {
-            assert_ne!(
-                hashes[i], hashes[j],
-                "FaultCategory variants {:?} and {:?} hashed equal",
-                cats[i], cats[j]
-            );
+            assert_ne!(hashes[i], hashes[j]);
         }
     }
 }
@@ -209,13 +205,10 @@ fn feed_fault_action_covers_all_variants() {
     ];
     let hashes: [u64; 4] =
         core::array::from_fn(|i| isolated_hash(|h| feed_fault_action(h, actions[i])));
+    let _ = actions;
     for i in 0..hashes.len() {
         for j in (i + 1)..hashes.len() {
-            assert_ne!(
-                hashes[i], hashes[j],
-                "FaultAction variants {:?} and {:?} hashed equal",
-                actions[i], actions[j]
-            );
+            assert_ne!(hashes[i], hashes[j]);
         }
     }
 }
@@ -230,13 +223,10 @@ fn feed_control_law_covers_all_variants() {
     ];
     let hashes: [u64; 4] =
         core::array::from_fn(|i| isolated_hash(|h| feed_control_law(h, laws[i])));
+    let _ = laws;
     for i in 0..hashes.len() {
         for j in (i + 1)..hashes.len() {
-            assert_ne!(
-                hashes[i], hashes[j],
-                "ControlLawV1 variants {:?} and {:?} hashed equal",
-                laws[i], laws[j]
-            );
+            assert_ne!(hashes[i], hashes[j]);
         }
     }
 }

@@ -135,12 +135,15 @@ pub enum AuthorityProfile {
     SoftEnvelope,
 }
 
+// COV:EXCL_START(phantom DA from enums.rs re-export; LawProfile decl
+// has no executable code under grcov instrumentation)
 #[derive(Clone, Debug)]
 pub struct LawProfile {
     pub authority: AuthorityProfile,
     pub chain: &'static [ControlLawV1],
     // capabilities...
-} // COV:EXCL(phantom DA from enums.rs re-export; real line has no code)
+}
+// COV:EXCL_STOP
 
 #[derive(Clone, Debug)]
 pub struct AxisCommand {
