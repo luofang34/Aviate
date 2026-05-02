@@ -182,9 +182,9 @@ pub trait VehicleController {
     ) -> AxisCommand; // COV:EXCL(phantom DA from enums.rs re-export; return type)
 }
 // COV:EXCL_STOP // COV:EXCL(phantom DA from enums.rs re-export; real line has no code)
-  // COV:EXCL_START(phantom DA from enums.rs re-export: these mod decls carry
-  //   coverage attributions from enums.rs items re-exported via `pub use`.
-  //   Includes this COV:EXCL_START line and the blank line separation.)
+// COV:EXCL_START(phantom DA from enums.rs re-export: these mod decls carry
+//   coverage attributions from enums.rs items re-exported via `pub use`.
+//   Includes this COV:EXCL_START line and the blank line separation.)
 pub mod attitude;
 pub mod envelope;
 pub mod position;
