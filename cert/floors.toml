@@ -29,7 +29,7 @@
 trace_sys = 5
 trace_hlr = 12
 trace_llr = 27
-trace_test = 28
+trace_test = 29
 
 [delta_ceilings]
 # Reserved by the tool for new-additions-in-diff checks. Parsed today,

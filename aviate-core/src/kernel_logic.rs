@@ -182,6 +182,10 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         self.state.init_state = InitState::Disarmed;
         self.state.control_law = ControlLawV1::Backup; // Was Frozen, now Backup
         self.state.checks.in_flight.reset();
+        // Reset controller persistent runtime state — disarm
+        // invalidates accumulated integrators / anti-windup / mode
+        // latches the same way ground_reset does (LLR-CTL-101).
+        self.pipeline.controller.reset(&mut self.state.controller);
     }
 
     /// Check if the system can be reset from fault state
@@ -263,6 +267,15 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // Only trigger if this is a degradation (worse state)
         if to.severity() > from.severity() {
             self.state.control_law = to;
+            // Reset controller persistent runtime state on transition
+            // to Backup — the Backup law's authority envelope and
+            // available actuator surface differ from the Primary law,
+            // so accumulated integrators / anti-windup / mode latches
+            // computed against the prior authority must not leak
+            // (LLR-CTL-101).
+            if to == ControlLawV1::Backup {
+                self.pipeline.controller.reset(&mut self.state.controller);
+            }
             Some(DegradationEvent {
                 from,
                 to,
@@ -381,7 +394,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // anti-windup, filter memories, mode latches). Routes through
         // the controller so an impl that needs more than `runtime.reset()`
         // can override the trait's default `fn reset`.
-        self.pipeline.controller.reset(&mut self.state.control);
+        self.pipeline.controller.reset(&mut self.state.controller);
 
         self.state.control_law = ControlLawV1::Primary; // Reset law
     }
@@ -422,6 +435,11 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         if self.state.faults.intersects(CRITICAL_FAULTS) {
             self.state.init_state = InitState::Fault;
             self.state.control_law = ControlLawV1::Backup; // Was Frozen
+                                                           // Reset controller persistent runtime state — entering
+                                                           // Backup on a critical fault means the prior law's
+                                                           // accumulated integrators / mode latches were computed
+                                                           // against state we now consider invalid (LLR-CTL-101).
+            self.pipeline.controller.reset(&mut self.state.controller);
             true
         } else {
             false

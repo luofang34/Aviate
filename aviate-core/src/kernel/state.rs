@@ -125,10 +125,15 @@ pub struct KernelState<R: ControllerRuntimeState = NoControllerState> {
     /// state). Today's gains-only controllers use the zero-size
     /// `NoControllerState`; a controller that grows persistent state
     /// swaps in its own `ControllerRuntimeState`-impl. Mutated by
-    /// `kernel_update.rs` via `controller.step(&mut state.control,
-    /// ...)`; cleared by `ground_reset` and `disarm` via
-    /// `controller.reset(&mut state.control)`.
-    pub control: R,
+    /// `kernel_update.rs` via `controller.step(&mut state.controller,
+    /// ...)`; cleared on every transition that invalidates
+    /// accumulated controller memory (`ground_reset`, `disarm`,
+    /// `check_critical_faults`, control-law downgrade to `Backup`)
+    /// via `controller.reset(&mut state.controller)`.
+    ///
+    /// Field name is `controller` (not `control`) to disambiguate
+    /// from the sibling `control_law` field.
+    pub controller: R,
 }
 // COV:EXCL_STOP
 
@@ -148,7 +153,7 @@ impl<R: ControllerRuntimeState> KernelState<R> {
             timing_stats: TimingStats::default(),
             estimator: EstimatorState::default(),
             fallback: ActuatorFallbackState::default(),
-            control: R::default(),
+            controller: R::default(),
         }
     }
 }
@@ -174,7 +179,7 @@ mod tests {
         // satisfied (no sensor data, no throttle confirmation).
         assert!(!s.checks.pre_arm.is_satisfied());
         // Default controller runtime is the zero-size sentinel.
-        assert_eq!(s.control, NoControllerState);
+        assert_eq!(s.controller, NoControllerState);
     }
 
     #[test]

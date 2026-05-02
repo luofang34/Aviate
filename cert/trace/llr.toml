@@ -222,23 +222,47 @@ traces_to = ["33190e76-603e-4cd7-8eee-468bcc94fa10"]
 [[requirements]]
 uid = "ad5ab2d7-0dd4-48d0-83ae-dea20934c119"
 id = "LLR-CTL-101"
-title = "VehicleController separates algorithm identity from runtime state"
+title = "VehicleController separates algorithm identity from runtime state and resets on prescribed transitions"
 owner = "aviate-core@aviate"
 description = """
 The `VehicleController::step` trait method SHALL take BOTH:
 
-  - `&self` — algorithm identity / tuning gains (read-only across
-    the flight loop; lives inside `KernelPipeline`).
+  - `&self` — algorithm identity (firmware-constant gains for
+    today's gains-only impls). Read-only across the flight loop;
+    lives inside `KernelPipeline`. **Tunable** parameters
+    (operator-adjustable PID gains, mode thresholds) belong in
+    `ResolvedKernelConfig`, not on the controller struct, because
+    spec §16 lockstep requires byte-equal config across channels
+    (HLR-CFG-001). Today's example controllers hold their P-only
+    gains on `Self` as a transitional placeholder; DRQ-CTL-001
+    tracks moving them into `ResolvedKernelConfig.controller_gains`.
   - `&mut Self::RuntimeState` — persistent runtime state
     (integrators, anti-windup, filter memories, mode latches,
     transition-blend coefficients; lives inside
-    `KernelState.control`).
+    `KernelState.controller`).
 
 Implementors SHALL NOT hold safety-relevant persistent state on
 `Self` (the algorithm side). Any cross-frame memory the
 controller needs SHALL route through `Self::RuntimeState`, which
 is owned by `KernelState` and therefore covered by the kernel's
 single-state-owner invariant (HLR-STATE-003).
+
+The kernel SHALL invoke
+`controller.reset(&mut state.controller)` on every transition
+that invalidates accumulated controller memory:
+
+  1. `ground_reset()` — back-to-factory init.
+  2. `disarm()` — flight period ended; preserved integrators
+     would seed the next arm with stale authority.
+  3. `check_critical_faults()` — entering `InitState::Fault`;
+     prior law's accumulators were computed against state we now
+     consider invalid.
+  4. `handle_degradation()` when the new control law is
+     `ControlLawV1::Backup` — Backup's authority envelope and
+     available actuator surface differ from Primary, so prior
+     accumulators must not leak. Transitions to `Alternate`
+     SHALL NOT reset (Alternate retains the same actuator
+     surface; resetting would worsen tracking transients).
 
 This is the analogue of LLR-STATE-105 (Estimator) and
 LLR-STATE-106 (ActuatorSanitizer) for the control-law layer:
@@ -606,20 +630,29 @@ description = """
 The `ControllerRuntimeState` trait in
 `aviate-core::control::runtime` SHALL declare:
 
-  pub trait ControllerRuntimeState: Default {
+  pub trait ControllerRuntimeState: Default + Clone + core::fmt::Debug {
       fn reset(&mut self);
   }
 
-The `Default` super-trait bound is mandatory: `KernelState`
-constructs `control: R::default()` in both `KernelState::new` and
-`KernelState::default()`. The `reset` method SHALL return the
-runtime state to its post-power-on baseline without
-re-allocation.
+Trait bounds:
+  - `Default` — `KernelState::new` / `KernelState::default()`
+    construct `controller: R::default()`; also seeds `reset`
+    baselines for impls that delegate to `*self = Self::default()`.
+  - `Clone` — Phase-5 prerequisite. Cross-channel snapshot
+    replication (HLR-STATE-003) requires `KernelState: Clone`,
+    which transitively requires every field to be `Clone`.
+    Adding the bound now avoids a future re-bounding sweep.
+  - `Debug` — `KernelState` derives `Debug` for diagnostic dumps
+    (`tracing` events, post-mortem panics in tests).
+
+The `reset` method SHALL return the runtime state to its post-
+power-on baseline without re-allocation.
 
 The crate SHALL provide a unit-struct sentinel
 `pub struct NoControllerState;` that implements
-`ControllerRuntimeState` (with a no-op `reset`) and `Default` (via
-`#[derive(Default)]`). `NoControllerState` SHALL be the
+`ControllerRuntimeState` (with a no-op `reset`) and derives
+`Default + Clone + Copy + Debug + PartialEq + Eq`.
+`NoControllerState` SHALL be the
 `type RuntimeState` selection of every gains-only
 `VehicleController` impl in this crate
 (`MultirotorController`, `FixedWingController`,
@@ -637,11 +670,16 @@ title = "KernelState owns controller runtime state via parameterization"
 owner = "aviate-core@aviate"
 description = """
 `KernelState<R: ControllerRuntimeState = NoControllerState>` SHALL
-declare a `pub control: R` field. `AviateKernelImpl<E, V, M, S>`
+declare a `pub controller: R` field. `AviateKernelImpl<E, V, M, S>`
 SHALL wire `state: KernelState<V::RuntimeState>`, so the kernel's
 controller runtime state is owned by `KernelState` (single-owner
 invariant HLR-STATE-003) and indexed by the controller's
 associated type.
+
+Field name is `controller` (not `control`) to disambiguate from
+the sibling `control_law` field — kernel code that touches both
+in the same scope is otherwise prone to mis-typing one for the
+other.
 
 The `Default` type-parameter pin to `NoControllerState` keeps
 existing call sites that say `KernelState::default()` working

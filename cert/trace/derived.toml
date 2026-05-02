@@ -103,3 +103,42 @@ deprecate the global `safe_output` once every airframe declares
 per-mode `safe_pattern` arrays for every group it instantiates.
 """
 safety_impact = "low"
+
+[[requirements]]
+uid = "ded4be21-1286-4351-a1fa-508720317660"
+id = "DRQ-CTL-001"
+title = "Tunable controller gains belong in ResolvedKernelConfig, not on the controller struct"
+owner = "aviate-core@aviate"
+description = """
+Today's example controllers (`MultirotorController`,
+`FixedWingController`, `VtolController`) hold their P-only gain
+arrays as fields on `Self` (e.g.
+`MultirotorController.pos_ctrl.gains`, `.rate_ctrl.gains`). Per
+LLR-CTL-101's algorithm/state split, only firmware-constant
+algorithm identity belongs on `Self` — operator-tunable
+parameters belong in `ResolvedKernelConfig`, where HLR-CFG-001
+guarantees byte-equal cross-channel comparison and the
+`algorithm_identity_hash` companion (HLR-PIPE-002) deliberately
+does NOT cover them.
+
+Concretely: two channels running the same compiled firmware but
+different operator-applied PID gain tuning would currently produce
+the same `algorithm_identity_hash` and pass lockstep entry while
+diverging in flight. Closing this requires moving the P-gain
+arrays out of the controller structs into a new
+`ResolvedKernelConfig.controller_gains: ControllerGains` field,
+indexed in some way the controller can read deterministically.
+"""
+rationale = """
+Deferred for now because (a) today's gains are hardcoded
+constants in `Default::default()` rather than runtime-tunable
+input — the `algorithm_identity_hash` collision risk is
+hypothetical until the airframe crates start configuring gains
+externally; (b) the move requires designing a `ControllerGains`
+shape that's both extensible (multirotor needs 4 gain arrays;
+fixed-wing energy loop will need different tunables) and
+no_std-friendly. A follow-up PR introduces
+`ResolvedKernelConfig.controller_gains` and re-points each
+controller's `step` to read gains from cfg rather than `&self`.
+"""
+safety_impact = "medium"

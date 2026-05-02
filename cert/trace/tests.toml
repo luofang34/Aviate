@@ -436,6 +436,42 @@ properties LLR-PIPE-103 / HLR-PIPE-002 require:
 traces_to = ["421bab25-b06e-4804-9beb-ea939ae5b79a"]
 
 [[tests]]
+uid = "fbf2b8c0-3cde-4bed-982b-532979bd3bb8"
+id = "TST-CTL-102"
+title = "controller_runtime_state_tests — stateful regression suite"
+owner = "aviate-core@aviate"
+description = """
+The integration test
+`aviate-core/tests/controller_runtime_state_tests.rs` defines a
+fake `TestStatefulController` whose `RuntimeState` carries a
+`u32` counter incremented on every `step()` call, and exercises
+the kernel lifecycle methods to lock down LLR-CTL-101's reset-
+hook list:
+
+  1. `step_increments_runtime_counter` — proves `step()` actually
+     writes through the `&mut Self::RuntimeState` borrow.
+  2. `ground_reset_clears_runtime_counter` — covers reset hook (1).
+  3. `disarm_clears_runtime_counter` — covers reset hook (2).
+  4. `critical_fault_clears_runtime_counter` — sets
+     `FaultFlags::ALL_IMU_FAILED`, calls `check_critical_faults`,
+     covers reset hook (3).
+  5. `degradation_to_backup_clears_runtime_counter` — exercises
+     `handle_degradation(DegradationReason::AttitudeLost)` (the
+     only reason mapping to Backup), covers reset hook (4).
+  6. `degradation_to_alternate_keeps_runtime_counter` — exercises
+     `handle_degradation(DegradationReason::PositionLost)` and
+     asserts the counter is *preserved*. This is the negative
+     witness LLR-CTL-101 demands: Alternate transitions retain
+     accumulators because the actuator surface is unchanged.
+
+Together, these six tests are the structural witness that the
+runtime-state lifecycle matches the LLR's prescribed reset hook
+list — adding a new reset point requires extending this suite,
+removing one would break the negative witness.
+"""
+traces_to = ["ad5ab2d7-0dd4-48d0-83ae-dea20934c119"]
+
+[[tests]]
 uid = "85cb803c-508a-4d78-8eb6-83e716a09663"
 id = "TST-CTL-101"
 title = "controller_tests exercise VehicleController via &mut RuntimeState"
