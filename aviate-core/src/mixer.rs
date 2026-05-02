@@ -389,6 +389,11 @@ pub trait ActuatorSanitizer {
     ) -> SanitizeReport;
 }
 
+// COV:EXCL_START(phantom DA: rustc's coverage attribution places
+// phantom DA entries on `Sanitizer`'s declaration / surrounding doc
+// + module comments after Phase 4 made it a unit struct — same
+// artifact class as the kernel_trait.rs DELEGATE block. No
+// executable code on these lines.)
 /// Group-aware actuator sanitizer (spec §10). Phase 4 stripped its
 /// internal state field — fallback memory now lives in
 /// `KernelState.fallback`. The sanitizer itself is a unit struct,
@@ -401,3 +406,4 @@ pub struct Sanitizer;
 // issue triggers on `pub use submodule::X`, not on method-carrying impl
 // blocks split across files.
 mod sanitizer_impl;
+// COV:EXCL_STOP
