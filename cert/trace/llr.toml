@@ -777,3 +777,34 @@ modules = [
 ]
 derived = false
 traces_to = ["4cf7189d-23e6-470a-b71c-c90a81c59970"]
+
+[[requirements]]
+uid = "4dd0a1f2-9e1e-4ec6-9871-a72567281069"
+id = "LLR-PIPE-104"
+title = "Mock pipeline test fixtures cover every substitutable trait surface"
+owner = "aviate-core@aviate"
+description = """
+The integration-test crate `aviate-core/tests/mock_pipeline_tests.rs`
+SHALL provide a non-default mock implementation of each of the four
+substitutable algorithm traits — `Estimator`, `VehicleController`,
+`Mixer`, `ActuatorSanitizer` — and SHALL construct an
+`AviateKernelImpl<Mock*, Mock*, Mock*, Mock*>` that drives
+`update()` through a full cycle.
+
+The `MockEstimator` SHALL count entry into its `predict` method via
+a `core::cell::Cell<u32>` (no runtime dependency on `Mutex` or
+`AtomicU32`, which are not available in the `no_std` target). At
+least one of the tests SHALL assert the counter is non-zero after
+`update()` — this is the runtime witness that the kernel performs
+trait dispatch rather than a concrete-type cast.
+
+The mocks SHALL satisfy the trait contracts minimally and
+deterministically: no I/O, no allocation, no panic. This LLR is the
+structural anchor for HLR-PIPE-003: replacing any trait's impl
+SHALL leave `kernel_update.rs` and every other internal kernel
+module unchanged, with the test file as the structural witness.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/tests/mock_pipeline_tests.rs"]
+derived = false
+traces_to = ["9f335eda-4a07-4d8c-93db-63ad0c483184"]

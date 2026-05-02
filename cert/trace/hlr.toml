@@ -279,3 +279,36 @@ whole point.
 """
 verification_methods = ["review", "test"]
 traces_to = ["d6ca85b4-62d1-48d0-b16e-3415904cc604"]
+
+[[requirements]]
+uid = "9f335eda-4a07-4d8c-93db-63ad0c483184"
+id = "HLR-PIPE-003"
+title = "Substitutable algorithm trait surfaces are exercised end-to-end"
+owner = "aviate-core@aviate"
+description = """
+The four substitutable algorithm trait surfaces (Estimator,
+VehicleController, Mixer, ActuatorSanitizer) SHALL each be
+exercised by at least one non-default implementation in the
+crate's integration-test suite, end-to-end through a full
+`AviateKernelImpl::update()` cycle. "End-to-end" means the test
+constructs the kernel with the non-default impl, drives `update()`
+to completion without panic, and observes — through trait-
+internal counters or sentinels — that the trait method bodies were
+actually entered (proving the kernel performs trait dispatch
+rather than coincidentally bypassing the substitutable path).
+
+Rationale: `KernelPipeline<E, V, M, S>` (HLR-PIPE-001) asserts the
+algorithm bundle is composable at compile time. This HLR is the
+behavioral analogue — *substitutability is also exercised at run
+time*. Without this, a future change to `kernel_update.rs` could
+inline a concrete type (e.g. `&self.pipeline.estimator` cast to
+`&Ekf`) and the trait dispatch claim would silently weaken; the
+mock-pipeline tests are the structural witness against that
+regression.
+
+Completion sign for the Phase-0 plan: replacing any one of the
+four traits' implementations does not require a touch to any
+internal kernel module.
+"""
+verification_methods = ["test"]
+traces_to = ["bb2e1695-a2e7-40c4-ae75-9711a8134b70"]
