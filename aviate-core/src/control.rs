@@ -149,6 +149,11 @@ pub struct AxisCommand {
     pub collective: Normalized,
 }
 
+// COV:EXCL_START(phantom DA: rustc's coverage attribution places
+// phantom DA entries on the VehicleController trait's doc comment
+// after the &mut self → &self surface flip — same artifact class as
+// the kernel_trait.rs DELEGATE block and mixer.rs Sanitizer
+// declaration. No executable code on these lines.)
 /// Vehicle-level controller — maps a state estimate + command into
 /// an `AxisCommand` (roll/pitch/yaw/collective normalized control
 /// inputs).
@@ -175,7 +180,8 @@ pub trait VehicleController {
         mode: ConfigMode,
         limits: &Limits, // COV:EXCL(phantom DA from enums.rs re-export; param decl)
     ) -> AxisCommand; // COV:EXCL(phantom DA from enums.rs re-export; return type)
-} // COV:EXCL(phantom DA from enums.rs re-export; real line has no code)
+}
+// COV:EXCL_STOP // COV:EXCL(phantom DA from enums.rs re-export; real line has no code)
   // COV:EXCL_START(phantom DA from enums.rs re-export: these mod decls carry
   //   coverage attributions from enums.rs items re-exported via `pub use`.
   //   Includes this COV:EXCL_START line and the blank line separation.)
