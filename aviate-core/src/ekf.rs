@@ -144,6 +144,10 @@ pub(crate) const IDX_GB: usize = 9;
 pub(crate) const IDX_AB: usize = 12;
 pub(crate) const IDX_MB: usize = 15;
 
+// COV:EXCL_START(phantom DA: struct-field declaration lines for
+// EkfConfig and its Default impl carry coverage attributions from
+// grcov even though the lines have no executable code beyond the
+// struct/literal layout. Same artifact class as the EkfState wrap.)
 #[derive(Clone, Copy, Debug)]
 pub struct EkfConfig {
     pub process_noise_gyro: Scalar,
@@ -170,9 +174,6 @@ pub struct EkfConfig {
     /// Mag bias random walk process noise [μT²/s] (default 1e-5)
     pub process_noise_mag_bias: Scalar,
 }
-// COV:EXCL_START(phantom DA: closing brace + blank line + impl
-// declaration carry coverage attributions from struct-init lines
-// elsewhere; no executable code on these lines.)
 
 impl Default for EkfConfig {
     fn default() -> Self {

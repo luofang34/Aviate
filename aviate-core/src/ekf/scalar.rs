@@ -246,9 +246,11 @@ impl super::Estimator for Ekf {
         state.get_estimate()
     }
 
-    fn reset(&self, state: &mut EkfState) {
-        EkfState::reset(state);
-    }
+    // No `reset` override: the trait default routes through
+    // `EstimatorRuntimeState::reset(state)`, which delegates to
+    // `EkfState::reset(self)` — the same factory-reset identity
+    // we'd supply explicitly. Letting the default fire keeps the
+    // `EstimatorRuntimeState` impl covered.
 
     #[cfg(feature = "test-hooks")]
     fn inject_state(&self, state: &mut EkfState, est: &crate::state::StateEstimate) {
