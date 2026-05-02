@@ -495,3 +495,26 @@ which now asserts `s.control == NoControllerState` on a
 `let s: KernelState = KernelState::default();` construction.
 """
 traces_to = ["11de1ff8-495b-40ff-8428-d5f851fc5099"]
+
+[[tests]]
+uid = "216a7a30-cfa6-4844-b68c-c1b044a83cf0"
+id = "TST-STATE-109"
+title = "kernel::state::tests::clone_* + implements_debug_trait"
+owner = "aviate-core@aviate"
+description = """
+Two unit tests in `aviate-core/src/kernel/state.rs::tests` lock
+down LLR-STATE-109's Clone + Debug derives on `KernelState`:
+
+  1. `clone_yields_independent_state` — clones a default
+     KernelState, mutates the original's `faults` field, asserts
+     the snapshot is unaffected. Catches a regression where a
+     future field type stops implementing `Clone` deeply
+     (e.g. wraps an `Rc` or shared buffer), which would silently
+     break cross-channel snapshot replication.
+  2. `implements_debug_trait` — coerces a `&KernelState` to
+     `&dyn core::fmt::Debug` (compile-time witness) and exercises
+     `core::fmt::write` against a no-op sink (run-time witness
+     for the Debug impl path). Crate is `#![no_std]` without
+     `alloc`, so no `format!`-style String assertions.
+"""
+traces_to = ["d6e0121d-38ec-42bd-a872-8469100e433b"]
