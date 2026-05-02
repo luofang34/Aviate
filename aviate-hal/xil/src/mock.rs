@@ -4,7 +4,8 @@
 
 use log::debug;
 
-use aviate_core::hal::{ActuatorHal, AviateHal, CommandHal, SensorHal, SystemCommand, SystemHal};
+use aviate_core::hal::{ActuatorHal, AviateHal, SensorHal, SystemHal};
+use aviate_hal_io::{CommandHal, SystemCommand};
 
 use aviate_core::sensor::{BaroData, GnssData, ImuData, MagData, SensorReading};
 

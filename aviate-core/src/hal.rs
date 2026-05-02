@@ -3,7 +3,6 @@
 //! Platform crates (SITL, H7, etc.) implement these traits to connect
 //! aviate-core to hardware or simulation.
 
-use crate::control::Command;
 use crate::mixer::ActuatorCmd;
 use crate::sensor::{AirspeedData, BaroData, GnssData, ImuData, MagData, SensorReading};
 use crate::time::Timestamp;
@@ -69,43 +68,11 @@ pub trait SystemHal {
     fn enter_bootloader(&mut self) -> !;
 }
 
-/// System command from GCS/RC
-#[derive(Clone, Debug)]
-pub enum SystemCommand {
-    FlightControl(Command),
-    Arm,
-    Disarm,
-    // Future: Reboot, Shutdown, etc.
-}
-
-/// Command input interface (GCS/RC)
-pub trait CommandHal {
-    /// Receive the latest command from GCS/RC
-    fn recv_command(&mut self) -> Option<SystemCommand>;
-}
-
-/// Communication interface for telemetry/commands
-pub trait CommHal {
-    /// Send telemetry data
-    fn send(&mut self, data: &[u8]) -> Result<usize, CommError>;
-
-    /// Receive command data (non-blocking)
-    fn recv(&mut self, buf: &mut [u8]) -> Result<usize, CommError>;
-
-    /// Check if data available to receive
-    fn available(&self) -> usize;
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum CommError {
-    WouldBlock,
-    BufferFull,
-    Disconnected,
-    Timeout,
-    InvalidData,
-}
-
-/// Combined HAL trait for convenience
+/// Combined HAL trait for kernel-relevant hardware surfaces.
 ///
-/// Platform can implement individual traits or this combined trait.
-pub trait AviateHal: SensorHal + ActuatorHal + SystemHal + CommandHal {}
+/// Spec §2.2: the kernel consumes sensors, drives actuators, and
+/// queries system services. Command framing and telemetry transport
+/// (`CommandHal`, `CommHal`) are link-layer concerns and live in
+/// `aviate-hal-io`; boards that need both compose them via separate
+/// trait bounds rather than a single super-trait.
+pub trait AviateHal: SensorHal + ActuatorHal + SystemHal {}

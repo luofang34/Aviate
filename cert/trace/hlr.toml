@@ -199,3 +199,24 @@ channel byte-equality property of HLR-CFG-001.
 """
 verification_methods = ["review", "test"]
 traces_to = ["ed45538e-11f2-4887-95c2-91625b4a59cb"]
+
+[[requirements]]
+uid = "74314e31-1466-4755-83f3-505dafdaf77b"
+id = "HLR-MOD-001"
+title = "AviateHal super-trait composes only kernel-relevant surfaces"
+owner = "aviate-core@aviate"
+description = """
+The `aviate_core::hal::AviateHal` super-trait SHALL compose exactly
+`SensorHal + ActuatorHal + SystemHal`. Command-framing
+(`CommandHal`, `SystemCommand`) and telemetry-transport (`CommHal`,
+`CommError`) traits SHALL NOT be members of `AviateHal` and SHALL
+NOT be defined in `aviate-core`; they live in `aviate-hal-io` (or
+higher-level link crates) and are pulled in via separate trait
+bounds by callers that need them.
+
+Adding a new trait family to `AviateHal` requires (a) confirming
+the trait is purely sensor/actuator/system, (b) filing a fresh HLR
+extending this composition, and (c) re-tracing affected LLRs.
+"""
+verification_methods = ["review", "test"]
+traces_to = ["4207eadd-89b0-4a64-8310-49c336ee057c"]

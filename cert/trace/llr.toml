@@ -396,3 +396,32 @@ verification_methods = ["test"]
 modules = ["aviate-core/src/kernel/builder.rs"]
 derived = false
 traces_to = ["4cf7189d-23e6-470a-b71c-c90a81c59970"]
+
+[[requirements]]
+uid = "d1c33829-df40-4bb2-ac7c-6645e6dce817"
+id = "LLR-MOD-101"
+title = "Command and Comm HAL traits live in aviate-hal-io"
+owner = "aviate-core@aviate"
+description = """
+The types `SystemCommand`, `CommandHal`, `CommHal`, and `CommError`
+SHALL be defined in `aviate-hal-io::comm` and re-exported at the
+crate root of `aviate-hal-io`. They SHALL NOT be defined in
+`aviate-core`. The `aviate-core::hal::AviateHal` super-trait SHALL
+declare exactly the bound `SensorHal + ActuatorHal + SystemHal` —
+no transitive dependency from `aviate-core` on link-layer crates.
+
+Boards and runtimes that require both kernel-side and link-side
+HALs (e.g. `aviate-runtime`, `aviate-hal-xil`,
+`aviate-board-micoair-h743-v2`) SHALL import command/comm traits
+from `aviate-hal-io` and the kernel HAL traits from `aviate-core`
+via separate `use` statements; no convenience re-export across the
+boundary is permitted from `aviate-core`.
+"""
+verification_methods = ["review", "test"]
+modules = [
+    "aviate-core/src/hal.rs",
+    "aviate-hal/io/src/comm.rs",
+    "aviate-hal/io/src/lib.rs",
+]
+derived = false
+traces_to = ["74314e31-1466-4755-83f3-505dafdaf77b"]
