@@ -551,7 +551,7 @@ impl MicoAirBoard {
         &mut self.kernel
     }
     pub fn is_armed(&self) -> bool {
-        self.kernel.init_state == InitState::Armed
+        self.kernel.state.init_state == InitState::Armed
     }
 }
 
@@ -607,7 +607,7 @@ impl BoardStep for MicoAirBoard {
             }
             SystemCommand::FlightControl(flight_cmd) => {
                 self.kernel
-                    .checks
+                    .state.checks
                     .pre_arm
                     .update_throttle(flight_cmd.setpoint.collective_thrust.0 < 0.1);
                 flight_cmd.clone()
@@ -673,7 +673,7 @@ fn create_kernel() -> HwKernel {
         Sanitizer::default(),
         mode_config,
     );
-    kernel.checks.pre_arm.update_throttle(true);
+    kernel.state.checks.pre_arm.update_throttle(true);
     kernel
 }
 
@@ -703,7 +703,7 @@ impl MicoAirBoard {
         match sys_cmd {
             SystemCommand::FlightControl(cmd) => {
                 self.kernel
-                    .checks
+                    .state.checks
                     .pre_arm
                     .update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
             }

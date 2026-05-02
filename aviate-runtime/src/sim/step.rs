@@ -97,19 +97,20 @@ impl SitlRunner {
             match sys_cmd {
                 SystemCommand::FlightControl(cmd) => {
                     self.kernel
+                        .state
                         .checks
                         .pre_arm
                         .update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
                     self.last_cmd = cmd;
                 }
                 SystemCommand::Arm => {
-                    info!("Arm command (state={:?})", self.kernel.init_state);
-                    info!("Faults: {:?}", self.kernel.faults);
+                    info!("Arm command (state={:?})", self.kernel.state.init_state);
+                    info!("Faults: {:?}", self.kernel.state.faults);
                     if let Err(e) = self.kernel.arm() {
-                        let pre_arm = &self.kernel.checks.pre_arm;
+                        let pre_arm = &self.kernel.state.checks.pre_arm;
                         warn!("Arming failed: {:?}", e);
                         warn!("Missing pre-arm: {:?}", pre_arm.missing());
-                        warn!("Faults: {:?}", self.kernel.faults);
+                        warn!("Faults: {:?}", self.kernel.state.faults);
                     } else {
                         info!("Armed successfully");
                         // Only arm HAL and transport if kernel arm succeeded
@@ -155,17 +156,17 @@ impl SitlRunner {
         let sensors = self.sensor_cache.to_sensor_set();
         if !self.kernel.is_ready() {
             let ts = self.transport.now();
-            let prev_state = self.kernel.init_state;
+            let prev_state = self.kernel.state.init_state;
             self.kernel.init_step(&sensors, ts);
 
             // Log state transitions and update MAVLink system status
-            if self.kernel.init_state != prev_state {
+            if self.kernel.state.init_state != prev_state {
                 info!(
                     "Init state: {:?} -> {:?}",
-                    prev_state, self.kernel.init_state
+                    prev_state, self.kernel.state.init_state
                 );
                 // Update MAVLink system_status based on init state
-                let mav_state = init_state_to_mav_state(self.kernel.init_state);
+                let mav_state = init_state_to_mav_state(self.kernel.state.init_state);
                 self.transport.set_system_status(mav_state);
             }
         }

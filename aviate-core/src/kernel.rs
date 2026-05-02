@@ -15,52 +15,33 @@
 pub mod builder;
 pub mod config;
 pub mod pipeline;
+pub mod state;
 
 use crate::checks::{KernelChecks, PreArmFlags};
-use crate::control::{ConfigMode, ControlLawV1, VehicleController};
+use crate::control::VehicleController;
 use crate::ekf::{Ekf, Estimator};
-use crate::fault::FaultFlags;
 use crate::kernel::config::ResolvedKernelConfig;
 use crate::kernel::pipeline::KernelPipeline;
-use crate::kernel_types::TimingStats;
-use crate::mixer::{ActuatorSanitizer, ActuatorState, Mixer, ModeConfig, Sanitizer};
+use crate::kernel::state::KernelState;
+use crate::mixer::{ActuatorSanitizer, Mixer, ModeConfig, Sanitizer};
 
 pub use crate::kernel_types::InitState;
 
 pub struct AviateKernelImpl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> {
     /// Algorithm-identity bundle (estimator, controller, mixer,
-    /// sanitizer, protector). See `kernel/pipeline.rs`. Phase 2
-    /// consolidated five formerly-direct fields into this single
-    /// sub-struct so the kernel's substitutable algorithm surface
-    /// has one anchor.
+    /// sanitizer, protector). See `kernel/pipeline.rs`.
     pub pipeline: KernelPipeline<E, V, M, S>,
 
-    /// Current configuration mode (spec §4). Runtime state — transitions
-    /// during flight via `request_config_mode()`. NOT in `cfg` because
-    /// `cfg` is flight-period-immutable. Phase 3 will move this into
-    /// `KernelState`.
-    pub mode: ConfigMode,
-
-    // State Machine
-    pub init_state: InitState,
-    pub faults: FaultFlags,
-    pub control_law: ControlLawV1,
-
-    // Unified Check System (§17, §14, §4.5)
-    pub checks: KernelChecks,
-
-    // Actuator state tracking for transition checks
-    pub actuator_state: ActuatorState,
-
-    // Timing tracking (spec §18)
-    pub timing_stats: TimingStats,
+    /// All safety-relevant runtime state — lifecycle, mode, faults,
+    /// control law, gate checks, actuator snapshot, timing stats. See
+    /// `kernel/state.rs`. Phase 4 will additionally relocate EKF
+    /// persistent state and sanitizer fallback state into this
+    /// sub-struct, at which point "every safety-relevant persistent
+    /// state field has exactly one owner" becomes a hard rule.
+    pub state: KernelState,
 
     /// Validated, flight-period-immutable configuration (spec §19).
-    /// See `kernel/config.rs` for the field set. Phase 1 consolidated
-    /// `limits`, `mode_config`, `fault_table`, `command_timeout_ms`,
-    /// `safe_output`, and the legacy `Config` placeholder into this
-    /// single field — there is now exactly one source of truth for
-    /// flight-period configuration.
+    /// See `kernel/config.rs`.
     pub cfg: ResolvedKernelConfig,
 }
 
@@ -94,13 +75,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     ) -> Self {
         Self {
             pipeline: KernelPipeline::new(estimator, controller, mixer, sanitizer),
-            mode: ConfigMode::Hover,
-            init_state: InitState::PowerOn,
-            faults: FaultFlags::empty(),
-            control_law: ControlLawV1::Primary,
-            checks: KernelChecks::new(),
-            actuator_state: ActuatorState::default(),
-            timing_stats: TimingStats::default(),
+            state: KernelState::new(KernelChecks::new()),
             cfg: ResolvedKernelConfig {
                 mode_config,
                 ..Default::default()
@@ -121,13 +96,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     ) -> Self {
         Self {
             pipeline: KernelPipeline::new(estimator, controller, mixer, sanitizer),
-            mode: ConfigMode::Hover,
-            init_state: InitState::PowerOn,
-            faults: FaultFlags::empty(),
-            control_law: ControlLawV1::Primary,
-            checks: KernelChecks::with_pre_arm_required(required),
-            actuator_state: ActuatorState::default(),
-            timing_stats: TimingStats::default(),
+            state: KernelState::new(KernelChecks::with_pre_arm_required(required)),
             cfg: ResolvedKernelConfig {
                 mode_config,
                 ..Default::default()
@@ -165,6 +134,7 @@ pub fn init_core() {}
 mod tests {
     use super::*;
     use crate::control::multirotor::MultirotorController;
+    use crate::control::ConfigMode;
     use crate::mixer::ActuatorCmd;
 
     struct DummyMixer;
@@ -191,13 +161,13 @@ mod tests {
     #[test]
     fn test_ground_reset_success_unit() {
         let mut kernel = create_kernel();
-        kernel.init_state = InitState::Fault;
-        kernel.faults = FaultFlags::ALL_IMU_FAILED;
+        kernel.state.init_state = InitState::Fault;
+        kernel.state.faults = crate::fault::FaultFlags::ALL_IMU_FAILED;
 
         kernel.ground_reset();
 
-        assert_eq!(kernel.init_state, InitState::ConfigLoading);
-        assert!(kernel.faults.is_empty());
+        assert_eq!(kernel.state.init_state, InitState::ConfigLoading);
+        assert!(kernel.state.faults.is_empty());
 
         // Cover DummyMixer
         kernel.pipeline.mixer.mix(&crate::control::AxisCommand {

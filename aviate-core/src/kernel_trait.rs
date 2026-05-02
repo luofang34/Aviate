@@ -104,7 +104,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> AviateK
     }
 
     fn init_state(&self) -> InitState {
-        self.init_state
+        self.state.init_state
     }
 
     fn is_ready(&self) -> bool {
@@ -120,12 +120,12 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> AviateK
     }
 
     fn config_mode(&self) -> ConfigMode {
-        self.mode
+        self.state.mode
     }
 
     fn transition_state(&self) -> ConfigTransitionState {
         // TODO: Track actual transition state for async transitions
-        ConfigTransitionState::Stable(self.mode)
+        ConfigTransitionState::Stable(self.state.mode)
     }
 
     fn request_config_mode(&mut self, to: ConfigMode) -> Result<(), TransitionError> {
@@ -172,11 +172,11 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> AviateK
     }
 
     fn get_faults(&self) -> FaultFlags {
-        self.faults
+        self.state.faults
     }
 
     fn get_control_law(&self) -> ControlLawV1 {
-        self.control_law
+        self.state.control_law
     }
 
     fn kick_watchdog(&mut self) {
@@ -194,7 +194,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> AviateK
 
     #[cfg(feature = "test-hooks")]
     fn inject_fault(&mut self, fault: FaultFlags) {
-        self.faults.insert(fault);
+        self.state.faults.insert(fault);
     }
 }
 // COV:EXCL_STOP

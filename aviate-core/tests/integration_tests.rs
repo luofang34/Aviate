@@ -44,7 +44,7 @@ mod tests {
             sensors: &SensorSet,
             _command_age_ms: u32,
         ) -> ActuatorCmd {
-            let actuator_state = self.actuator_state.clone();
+            let actuator_state = self.state.actuator_state.clone();
             let res = self.update(
                 ChannelId::PRIMARY,
                 time_delta,
@@ -356,7 +356,7 @@ mod tests {
 
         // Provide valid sensor data and set throttle low
         let valid_sensors = valid_test_sensors();
-        kernel.checks.pre_arm.update_throttle(true); // Throttle low
+        kernel.state.checks.pre_arm.update_throttle(true); // Throttle low
 
         // Cycle through init states with valid sensor data
         // Need 100+ iterations for sensor convergence
@@ -369,7 +369,7 @@ mod tests {
         assert!(
             kernel.is_ready(),
             "Kernel failed to become ready. Missing: {:?}",
-            kernel.checks.pre_arm.missing()
+            kernel.state.checks.pre_arm.missing()
         );
 
         // Arm
@@ -450,7 +450,7 @@ mod tests {
 
         // Provide valid sensor data and set throttle low
         let valid_sensors = valid_test_sensors();
-        kernel.checks.pre_arm.update_throttle(true);
+        kernel.state.checks.pre_arm.update_throttle(true);
 
         // Cycle through init states with valid sensor data
         for _ in 0..150 {
@@ -462,7 +462,7 @@ mod tests {
         assert!(
             kernel.is_ready(),
             "Kernel failed to become ready. Missing: {:?}",
-            kernel.checks.pre_arm.missing()
+            kernel.state.checks.pre_arm.missing()
         );
 
         kernel.arm().expect("Failed to arm");

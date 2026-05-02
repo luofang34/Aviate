@@ -23,6 +23,35 @@ verification_methods = ["review", "test"]
 traces_to = []
 
 [[requirements]]
+uid = "d6ca85b4-62d1-48d0-b16e-3415904cc604"
+id = "SYS-STATE-001"
+title = "Kernel runtime state has a single, observable owner"
+owner = "aviate-core@aviate"
+description = """
+The flight kernel's runtime state — lifecycle (init/arm/disarm/fault),
+current configuration mode, fault flag latch, control law authority,
+gate-check state, cached actuator snapshot, and per-cycle timing
+statistics — SHALL be held in exactly one structure (`KernelState`).
+The kernel SHALL NOT shadow any of these fields elsewhere on
+`AviateKernelImpl` or duplicate them into the pipeline or config
+sub-structs.
+
+This is the structural prerequisite for redundancy and replay (spec
+§16, §17): Phase 5's `ChannelSnapshot` projection takes a borrow of
+`KernelState` and produces the byte sequence redundant channels
+exchange. With multiple owners, the projection would be ill-defined.
+
+Phase 4 will additionally relocate EKF persistent state (quaternion,
+position, velocity, biases, covariance) and sanitizer fallback state
+(last-good vectors, age, consecutive-fallback counters) into
+`KernelState`, at which point "every safety-relevant persistent
+state field has exactly one owner" holds for the entire kernel —
+not just the lifecycle slice this requirement covers.
+"""
+verification_methods = ["review", "test"]
+traces_to = []
+
+[[requirements]]
 uid = "ed45538e-11f2-4887-95c2-91625b4a59cb"
 id = "SYS-CFG-001"
 title = "Flight-period kernel configuration is immutable"

@@ -59,7 +59,7 @@ impl<
         sensors: &SensorSet,
         _command_age_ms: u32,
     ) -> ActuatorCmd {
-        let actuator_state = self.actuator_state.clone();
+        let actuator_state = self.state.actuator_state.clone();
         let res = self.update(
             ChannelId::PRIMARY,
             time_delta,
@@ -109,7 +109,7 @@ fn make_kernel() -> aviate_core::DefaultAviateKernel<MultirotorController, QuadX
         test_required,
     );
     // Set throttle low for tests
-    kernel.checks.pre_arm.update_throttle(true);
+    kernel.state.checks.pre_arm.update_throttle(true);
     kernel
 }
 
@@ -279,7 +279,7 @@ fn arm_error_all_variants_distinct() {
 #[test]
 fn kernel_starts_in_power_on() {
     let kernel = make_kernel();
-    assert_eq!(kernel.init_state, InitState::PowerOn);
+    assert_eq!(kernel.state.init_state, InitState::PowerOn);
 }
 
 #[test]
@@ -301,12 +301,12 @@ fn kernel_transitions_through_init_states() {
     // Step through init states (need 100+ iterations for sensor convergence)
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
-        if kernel.init_state == InitState::Ready {
+        if kernel.state.init_state == InitState::Ready {
             break;
         }
     }
 
-    assert_eq!(kernel.init_state, InitState::Ready);
+    assert_eq!(kernel.state.init_state, InitState::Ready);
 }
 
 #[test]
@@ -358,7 +358,7 @@ fn kernel_arm_succeeds_when_ready() {
 
     let result = kernel.arm();
     assert!(result.is_ok());
-    assert_eq!(kernel.init_state, InitState::Armed);
+    assert_eq!(kernel.state.init_state, InitState::Armed);
 }
 
 // =============================================================================
@@ -418,7 +418,7 @@ fn kernel_arm_fails_when_faulted() {
     }
 
     // Inject a fault after reaching Ready state
-    kernel.faults = FaultFlags::IMU0_FAILED;
+    kernel.state.faults = FaultFlags::IMU0_FAILED;
 
     let result = kernel.arm();
     assert_eq!(result, Err(ArmError::Faulted));
@@ -450,7 +450,7 @@ fn kernel_disarm_transitions_to_disarmed() {
     kernel.arm().unwrap();
     kernel.disarm();
 
-    assert_eq!(kernel.init_state, InitState::Disarmed);
+    assert_eq!(kernel.state.init_state, InitState::Disarmed);
 }
 
 // =============================================================================
@@ -830,11 +830,11 @@ fn kernel_stays_in_sensor_init_with_no_sensors() {
     // Without valid IMU, kernel should be stuck in SensorInit
     assert!(
         matches!(
-            kernel.init_state,
+            kernel.state.init_state,
             InitState::SensorInit | InitState::ConfigLoading
         ),
         "Expected SensorInit or ConfigLoading with no sensors, got {:?}",
-        kernel.init_state
+        kernel.state.init_state
     );
     assert!(!kernel.is_ready());
 }
@@ -881,9 +881,9 @@ fn kernel_detects_all_imu_failed_fault() {
 
     // Should have ALL_IMU_FAILED fault
     assert!(
-        kernel.faults.contains(FaultFlags::ALL_IMU_FAILED),
+        kernel.state.faults.contains(FaultFlags::ALL_IMU_FAILED),
         "Expected ALL_IMU_FAILED fault, got {:?}",
-        kernel.faults
+        kernel.state.faults
     );
 }
 
@@ -935,7 +935,7 @@ fn kernel_arm_fails_when_throttle_not_low() {
     );
 
     // Set throttle HIGH (violates pre-arm check)
-    kernel.checks.pre_arm.update_throttle(false);
+    kernel.state.checks.pre_arm.update_throttle(false);
 
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
@@ -959,7 +959,7 @@ fn kernel_pre_arm_missing_flags_reported() {
     }
 
     // Check what's missing
-    let missing = kernel.checks.pre_arm.missing();
+    let missing = kernel.state.checks.pre_arm.missing();
 
     // Should be missing EKF_CONVERGED and IMU_CONVERGED (not enough samples)
     assert!(
@@ -987,7 +987,7 @@ fn kernel_clears_faults_when_sensors_recover() {
     // Start with failed sensors
     let failed_sensors = make_failed_imu_sensors();
     kernel.step_test(dummy_time_delta(), &cmd, &failed_sensors, 0);
-    assert!(kernel.faults.contains(FaultFlags::ALL_IMU_FAILED));
+    assert!(kernel.state.faults.contains(FaultFlags::ALL_IMU_FAILED));
 
     // Now provide good sensors
     let good_sensors = make_valid_sensors();
@@ -995,7 +995,7 @@ fn kernel_clears_faults_when_sensors_recover() {
 
     // Fault should be cleared
     assert!(
-        !kernel.faults.contains(FaultFlags::ALL_IMU_FAILED),
+        !kernel.state.faults.contains(FaultFlags::ALL_IMU_FAILED),
         "Fault should be cleared when sensors recover"
     );
 }
@@ -1022,7 +1022,7 @@ fn kernel_disarm_resets_sample_counts() {
     kernel.arm().unwrap();
 
     // Check sample counts before disarm
-    let samples_before = kernel.checks.pre_arm.samples.imu;
+    let samples_before = kernel.state.checks.pre_arm.samples.imu;
     assert!(samples_before >= 150, "Should have accumulated samples");
 
     // Disarm
@@ -1035,17 +1035,17 @@ fn kernel_disarm_resets_sample_counts() {
 
     // Sample counts should be reset (0 or 1 depending on order of operations)
     assert!(
-        kernel.checks.pre_arm.samples.imu <= 1,
+        kernel.state.checks.pre_arm.samples.imu <= 1,
         "Sample counts should reset after disarm (got {})",
-        kernel.checks.pre_arm.samples.imu
+        kernel.state.checks.pre_arm.samples.imu
     );
 
     // After another step in PreArm, we should be counting again
     kernel.init_step(&sensors, dummy_timestamp());
     assert!(
-        kernel.checks.pre_arm.samples.imu >= 1,
+        kernel.state.checks.pre_arm.samples.imu >= 1,
         "Sample counts should increment after reset (got {})",
-        kernel.checks.pre_arm.samples.imu
+        kernel.state.checks.pre_arm.samples.imu
     );
 }
 
@@ -1068,7 +1068,7 @@ fn kernel_requires_all_pre_arm_flags() {
         mode_config,
         full_required,
     );
-    kernel.checks.pre_arm.update_throttle(true);
+    kernel.state.checks.pre_arm.update_throttle(true);
 
     // Use sensors WITHOUT GPS
     let no_gps_sensors = make_imu_only_sensors();
@@ -1094,7 +1094,7 @@ fn kernel_requires_all_pre_arm_flags() {
     );
 
     // Verify GNSS is in missing flags
-    let missing = kernel.checks.pre_arm.missing();
+    let missing = kernel.state.checks.pre_arm.missing();
     assert!(
         missing.contains(PreArmFlags::GNSS_AVAILABLE),
         "GNSS_AVAILABLE should be missing, got {:?}",
@@ -1121,7 +1121,7 @@ fn boundary_imu_sample_count_99_not_converged() {
         ),
         Quaternion::IDENTITY,
     );
-    kernel.checks.pre_arm.update_throttle(true);
+    kernel.state.checks.pre_arm.update_throttle(true);
 
     // Run exactly 99 iterations
     for _ in 0..99 {
@@ -1130,12 +1130,13 @@ fn boundary_imu_sample_count_99_not_converged() {
 
     // At 99 samples, IMU should NOT be converged
     assert!(
-        !kernel.checks.pre_arm.samples.imu_converged(),
+        !kernel.state.checks.pre_arm.samples.imu_converged(),
         "IMU should NOT be converged at 99 samples (got {} samples)",
-        kernel.checks.pre_arm.samples.imu
+        kernel.state.checks.pre_arm.samples.imu
     );
     assert!(
         !kernel
+            .state
             .checks
             .pre_arm
             .current
@@ -1159,7 +1160,7 @@ fn boundary_imu_sample_count_100_converged() {
         ),
         Quaternion::IDENTITY,
     );
-    kernel.checks.pre_arm.update_throttle(true);
+    kernel.state.checks.pre_arm.update_throttle(true);
 
     // Run exactly 100 iterations
     for _ in 0..100 {
@@ -1168,12 +1169,13 @@ fn boundary_imu_sample_count_100_converged() {
 
     // At 100 samples, IMU should be converged
     assert!(
-        kernel.checks.pre_arm.samples.imu_converged(),
+        kernel.state.checks.pre_arm.samples.imu_converged(),
         "IMU should be converged at 100 samples (got {} samples)",
-        kernel.checks.pre_arm.samples.imu
+        kernel.state.checks.pre_arm.samples.imu
     );
     assert!(
         kernel
+            .state
             .checks
             .pre_arm
             .current
@@ -1197,7 +1199,7 @@ fn boundary_imu_sample_count_101_converged() {
         ),
         Quaternion::IDENTITY,
     );
-    kernel.checks.pre_arm.update_throttle(true);
+    kernel.state.checks.pre_arm.update_throttle(true);
 
     // Run exactly 101 iterations
     for _ in 0..101 {
@@ -1206,9 +1208,9 @@ fn boundary_imu_sample_count_101_converged() {
 
     // At 101 samples, IMU should definitely be converged
     assert!(
-        kernel.checks.pre_arm.samples.imu_converged(),
+        kernel.state.checks.pre_arm.samples.imu_converged(),
         "IMU should be converged at 101 samples (got {} samples)",
-        kernel.checks.pre_arm.samples.imu
+        kernel.state.checks.pre_arm.samples.imu
     );
 }
 
@@ -1235,9 +1237,9 @@ fn boundary_baro_sample_count_99_not_converged() {
 
     // At 99 samples, baro should NOT be converged
     assert!(
-        !kernel.checks.pre_arm.samples.baro_converged(),
+        !kernel.state.checks.pre_arm.samples.baro_converged(),
         "Baro should NOT be converged at 99 samples (got {} samples)",
-        kernel.checks.pre_arm.samples.baro
+        kernel.state.checks.pre_arm.samples.baro
     );
 }
 
@@ -1264,9 +1266,9 @@ fn boundary_baro_sample_count_100_converged() {
 
     // At 100 samples, baro should be converged
     assert!(
-        kernel.checks.pre_arm.samples.baro_converged(),
+        kernel.state.checks.pre_arm.samples.baro_converged(),
         "Baro should be converged at 100 samples (got {} samples)",
-        kernel.checks.pre_arm.samples.baro
+        kernel.state.checks.pre_arm.samples.baro
     );
 }
 
@@ -1293,9 +1295,9 @@ fn boundary_mag_sample_count_99_not_converged() {
 
     // At 99 samples, mag should NOT be converged
     assert!(
-        !kernel.checks.pre_arm.samples.mag_converged(),
+        !kernel.state.checks.pre_arm.samples.mag_converged(),
         "Mag should NOT be converged at 99 samples (got {} samples)",
-        kernel.checks.pre_arm.samples.mag
+        kernel.state.checks.pre_arm.samples.mag
     );
 }
 
@@ -1322,9 +1324,9 @@ fn boundary_mag_sample_count_100_converged() {
 
     // At 100 samples, mag should be converged
     assert!(
-        kernel.checks.pre_arm.samples.mag_converged(),
+        kernel.state.checks.pre_arm.samples.mag_converged(),
         "Mag should be converged at 100 samples (got {} samples)",
-        kernel.checks.pre_arm.samples.mag
+        kernel.state.checks.pre_arm.samples.mag
     );
 }
 
@@ -1440,7 +1442,7 @@ fn production_config_quad_minimum_arms_with_minimal_sensors() {
         mode_config,
         test_required,
     );
-    kernel.checks.pre_arm.update_throttle(true);
+    kernel.state.checks.pre_arm.update_throttle(true);
 
     let sensors = make_valid_sensors(); // Use full sensors to avoid fault triggers
 
@@ -1498,10 +1500,10 @@ fn fault_state_entered_on_critical_imu_failure_while_armed() {
         kernel.init_step(&sensors, dummy_timestamp());
     }
     kernel.arm().unwrap();
-    assert_eq!(kernel.init_state, InitState::Armed);
+    assert_eq!(kernel.state.init_state, InitState::Armed);
 
     // Inject critical ALL_IMU_FAILED fault
-    kernel.faults.insert(FaultFlags::ALL_IMU_FAILED);
+    kernel.state.faults.insert(FaultFlags::ALL_IMU_FAILED);
 
     // Check critical faults - should detect we need to enter fault state
     let has_critical = kernel.check_critical_faults();
@@ -1511,11 +1513,11 @@ fn fault_state_entered_on_critical_imu_failure_while_armed() {
     );
 
     // Manually transition to Fault state (in real system this happens in step())
-    kernel.init_state = InitState::Fault;
+    kernel.state.init_state = InitState::Fault;
 
-    assert_eq!(kernel.init_state, InitState::Fault);
+    assert_eq!(kernel.state.init_state, InitState::Fault);
     assert!(
-        !kernel.init_state.allows_active_control(),
+        !kernel.state.init_state.allows_active_control(),
         "Fault state should not allow control"
     );
 }
@@ -1543,8 +1545,8 @@ fn fault_state_prevents_arming() {
     assert!(kernel.is_ready());
 
     // Force to Fault state
-    kernel.init_state = InitState::Fault;
-    kernel.faults.insert(FaultFlags::ALL_IMU_FAILED);
+    kernel.state.init_state = InitState::Fault;
+    kernel.state.faults.insert(FaultFlags::ALL_IMU_FAILED);
 
     // Arm should fail - Fault state is not Ready, so NotReady is returned
     let result = kernel.arm();
@@ -1561,8 +1563,8 @@ fn fault_state_cannot_reset_with_active_faults() {
     let mut kernel = make_kernel();
 
     // Put in fault state with active fault
-    kernel.init_state = InitState::Fault;
-    kernel.faults.insert(FaultFlags::ALL_IMU_FAILED);
+    kernel.state.init_state = InitState::Fault;
+    kernel.state.faults.insert(FaultFlags::ALL_IMU_FAILED);
 
     assert!(
         !kernel.can_reset_from_fault(),
@@ -1576,19 +1578,20 @@ fn fault_state_can_reset_when_faults_cleared() {
     let mut kernel = make_kernel();
 
     // Put in fault state but clear faults
-    kernel.init_state = InitState::Fault;
-    kernel.faults = FaultFlags::empty();
+    kernel.state.init_state = InitState::Fault;
+    kernel.state.faults = FaultFlags::empty();
 
     // can_reset_from_fault requires:
     // 1. No critical faults (empty faults satisfies this)
     // 2. IMU_HEALTHY flag set
     // 3. THROTTLE_LOW flag set
     kernel
+        .state
         .checks
         .pre_arm
         .current
         .insert(PreArmFlags::IMU_HEALTHY);
-    kernel.checks.pre_arm.update_throttle(true);
+    kernel.state.checks.pre_arm.update_throttle(true);
 
     assert!(
         kernel.can_reset_from_fault(),
@@ -1602,23 +1605,24 @@ fn fault_state_reset_transitions_to_prearm() {
     let mut kernel = make_kernel();
 
     // Put in fault state
-    kernel.init_state = InitState::Fault;
-    kernel.faults = FaultFlags::empty(); // Clear faults to allow reset
+    kernel.state.init_state = InitState::Fault;
+    kernel.state.faults = FaultFlags::empty(); // Clear faults to allow reset
 
     // Set required pre-arm flags for reset
     kernel
+        .state
         .checks
         .pre_arm
         .current
         .insert(PreArmFlags::IMU_HEALTHY);
-    kernel.checks.pre_arm.update_throttle(true);
+    kernel.state.checks.pre_arm.update_throttle(true);
 
     // Reset from fault
     let result = kernel.reset_from_fault();
 
     assert!(result.is_ok(), "reset_from_fault should succeed");
     assert_eq!(
-        kernel.init_state,
+        kernel.state.init_state,
         InitState::PreArm,
         "Should transition to PreArm"
     );
@@ -1630,8 +1634,8 @@ fn fault_state_reset_fails_with_active_faults() {
     let mut kernel = make_kernel();
 
     // Put in fault state with active fault
-    kernel.init_state = InitState::Fault;
-    kernel.faults.insert(FaultFlags::BARO_FAILED);
+    kernel.state.init_state = InitState::Fault;
+    kernel.state.faults.insert(FaultFlags::BARO_FAILED);
 
     // Reset should fail
     let result = kernel.reset_from_fault();
@@ -1641,7 +1645,7 @@ fn fault_state_reset_fails_with_active_faults() {
         "reset_from_fault should fail with active faults"
     );
     assert_eq!(
-        kernel.init_state,
+        kernel.state.init_state,
         InitState::Fault,
         "Should remain in Fault state"
     );
@@ -1667,20 +1671,20 @@ fn fault_state_reset_clears_convergence() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    assert!(kernel.checks.pre_arm.samples.imu >= 150);
+    assert!(kernel.state.checks.pre_arm.samples.imu >= 150);
 
     // Enter fault state and reset
-    kernel.init_state = InitState::Fault;
-    kernel.faults = FaultFlags::empty();
+    kernel.state.init_state = InitState::Fault;
+    kernel.state.faults = FaultFlags::empty();
     kernel.reset_from_fault().unwrap();
 
     // Sample counts should be reset
     assert_eq!(
-        kernel.checks.pre_arm.samples.imu, 0,
+        kernel.state.checks.pre_arm.samples.imu, 0,
         "Sample counts should be reset after fault recovery"
     );
-    assert_eq!(kernel.checks.pre_arm.samples.baro, 0);
-    assert_eq!(kernel.checks.pre_arm.samples.mag, 0);
+    assert_eq!(kernel.state.checks.pre_arm.samples.baro, 0);
+    assert_eq!(kernel.state.checks.pre_arm.samples.mag, 0);
 }
 
 /// Test full fault recovery cycle: Ready → Armed → Fault → PreArm → Ready
@@ -1703,27 +1707,27 @@ fn fault_state_full_recovery_cycle() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    assert_eq!(kernel.init_state, InitState::Ready);
+    assert_eq!(kernel.state.init_state, InitState::Ready);
 
     // Phase 2: Arm
     kernel.arm().unwrap();
-    assert_eq!(kernel.init_state, InitState::Armed);
+    assert_eq!(kernel.state.init_state, InitState::Armed);
 
     // Phase 3: Enter Fault (simulate critical failure)
-    kernel.faults.insert(FaultFlags::ALL_IMU_FAILED);
-    kernel.init_state = InitState::Fault;
-    assert_eq!(kernel.init_state, InitState::Fault);
+    kernel.state.faults.insert(FaultFlags::ALL_IMU_FAILED);
+    kernel.state.init_state = InitState::Fault;
+    assert_eq!(kernel.state.init_state, InitState::Fault);
 
     // Phase 4: Clear fault and reset
-    kernel.faults.remove(FaultFlags::ALL_IMU_FAILED);
+    kernel.state.faults.remove(FaultFlags::ALL_IMU_FAILED);
     kernel.reset_from_fault().unwrap();
-    assert_eq!(kernel.init_state, InitState::PreArm);
+    assert_eq!(kernel.state.init_state, InitState::PreArm);
 
     // Phase 5: Re-converge to Ready
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    assert_eq!(kernel.init_state, InitState::Ready);
+    assert_eq!(kernel.state.init_state, InitState::Ready);
 
     // Phase 6: Should be able to arm again
     let result = kernel.arm();
@@ -1731,7 +1735,7 @@ fn fault_state_full_recovery_cycle() {
         result.is_ok(),
         "Should be able to re-arm after fault recovery"
     );
-    assert_eq!(kernel.init_state, InitState::Armed);
+    assert_eq!(kernel.state.init_state, InitState::Armed);
 }
 
 /// Test outputs are safe (zero) when in Fault state
@@ -1741,8 +1745,8 @@ fn fault_state_outputs_safe_values() {
     let sensors = make_valid_sensors();
 
     // Put in fault state
-    kernel.init_state = InitState::Fault;
-    kernel.faults.insert(FaultFlags::ALL_IMU_FAILED);
+    kernel.state.init_state = InitState::Fault;
+    kernel.state.faults.insert(FaultFlags::ALL_IMU_FAILED);
 
     let cmd = Command {
         mode: ControlMode::Attitude,
@@ -1793,7 +1797,7 @@ fn request_config_mode_fails_when_not_armed() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    assert_eq!(kernel.init_state, InitState::Ready);
+    assert_eq!(kernel.state.init_state, InitState::Ready);
 
     // Try to request config mode change
     let result = kernel.request_config_mode(ConfigMode::Cruise);
@@ -1823,7 +1827,7 @@ fn request_config_mode_fails_in_fault_state() {
     kernel.arm().expect("Should arm");
 
     // Inject critical fault
-    kernel.faults.insert(FaultFlags::ALL_IMU_FAILED);
+    kernel.state.faults.insert(FaultFlags::ALL_IMU_FAILED);
 
     // Try to request config mode change
     let result = kernel.request_config_mode(ConfigMode::Cruise);
@@ -1880,7 +1884,7 @@ fn request_config_mode_fails_already_transitioning() {
     kernel.arm().expect("Should arm");
 
     // Force into Transition mode
-    kernel.mode = ConfigMode::Transition;
+    kernel.state.mode = ConfigMode::Transition;
 
     // Try to request another config mode
     let result = kernel.request_config_mode(ConfigMode::Cruise);
@@ -1904,7 +1908,7 @@ fn control_law_severity_ordering() {
 #[test]
 fn kernel_starts_with_normal_control_law() {
     let kernel = make_kernel();
-    assert_eq!(kernel.control_law, ControlLawV1::Primary);
+    assert_eq!(kernel.state.control_law, ControlLawV1::Primary);
 }
 
 /// Test get_health returns correct state
@@ -1948,7 +1952,7 @@ fn kernel_check_critical_faults_detects_imu() {
     assert!(!kernel.check_critical_faults());
 
     // Add critical fault
-    kernel.faults.insert(FaultFlags::ALL_IMU_FAILED);
+    kernel.state.faults.insert(FaultFlags::ALL_IMU_FAILED);
     assert!(kernel.check_critical_faults());
 }
 
@@ -1957,7 +1961,7 @@ fn kernel_check_critical_faults_detects_imu() {
 fn kernel_check_critical_faults_detects_estimator() {
     let mut kernel = make_kernel();
 
-    kernel.faults.insert(FaultFlags::ESTIMATOR_DIVERGED);
+    kernel.state.faults.insert(FaultFlags::ESTIMATOR_DIVERGED);
     assert!(kernel.check_critical_faults());
 }
 
@@ -1966,7 +1970,7 @@ fn kernel_check_critical_faults_detects_estimator() {
 fn kernel_check_critical_faults_detects_numeric() {
     let mut kernel = make_kernel();
 
-    kernel.faults.insert(FaultFlags::NUMERIC_ERROR);
+    kernel.state.faults.insert(FaultFlags::NUMERIC_ERROR);
     assert!(kernel.check_critical_faults());
 }
 
@@ -1976,13 +1980,13 @@ fn kernel_check_critical_faults_ignores_non_critical() {
     let mut kernel = make_kernel();
 
     // Non-critical faults
-    kernel.faults.insert(FaultFlags::BARO_FAILED);
+    kernel.state.faults.insert(FaultFlags::BARO_FAILED);
     assert!(!kernel.check_critical_faults());
 
-    kernel.faults.insert(FaultFlags::MAG_FAILED);
+    kernel.state.faults.insert(FaultFlags::MAG_FAILED);
     assert!(!kernel.check_critical_faults());
 
-    kernel.faults.insert(FaultFlags::COMMAND_TIMEOUT);
+    kernel.state.faults.insert(FaultFlags::COMMAND_TIMEOUT);
     assert!(!kernel.check_critical_faults());
 }
 
@@ -1997,15 +2001,15 @@ fn init_state_power_on_to_sensor_init() {
     let sensors = make_valid_sensors();
 
     // Start in PowerOn
-    assert_eq!(kernel.init_state, InitState::PowerOn);
+    assert_eq!(kernel.state.init_state, InitState::PowerOn);
 
     // First step transitions to ConfigLoading
     kernel.init_step(&sensors, dummy_timestamp());
-    assert_eq!(kernel.init_state, InitState::ConfigLoading);
+    assert_eq!(kernel.state.init_state, InitState::ConfigLoading);
 
     // Next step transitions to SensorInit (CONFIG_VALID set)
     kernel.init_step(&sensors, dummy_timestamp());
-    assert_eq!(kernel.init_state, InitState::SensorInit);
+    assert_eq!(kernel.state.init_state, InitState::SensorInit);
 }
 
 /// Test SensorInit → EstimatorConverging transition requires IMU_HEALTHY
@@ -2017,11 +2021,11 @@ fn init_state_sensor_init_to_estimator_converging() {
     // Fast forward to SensorInit
     kernel.init_step(&sensors, dummy_timestamp()); // PowerOn → ConfigLoading
     kernel.init_step(&sensors, dummy_timestamp()); // ConfigLoading → SensorInit
-    assert_eq!(kernel.init_state, InitState::SensorInit);
+    assert_eq!(kernel.state.init_state, InitState::SensorInit);
 
     // With valid IMU sensor, should transition to EstimatorConverging
     kernel.init_step(&sensors, dummy_timestamp());
-    assert_eq!(kernel.init_state, InitState::EstimatorConverging);
+    assert_eq!(kernel.state.init_state, InitState::EstimatorConverging);
 }
 
 /// Test that SensorInit stays if no valid IMU
@@ -2034,11 +2038,11 @@ fn init_state_sensor_init_stays_without_imu() {
     let valid_sensors = make_valid_sensors();
     kernel.init_step(&valid_sensors, dummy_timestamp()); // PowerOn → ConfigLoading
     kernel.init_step(&valid_sensors, dummy_timestamp()); // ConfigLoading → SensorInit
-    assert_eq!(kernel.init_state, InitState::SensorInit);
+    assert_eq!(kernel.state.init_state, InitState::SensorInit);
 
     // With failed IMU, should stay in SensorInit
     kernel.init_step(&failed_sensors, dummy_timestamp());
-    assert_eq!(kernel.init_state, InitState::SensorInit);
+    assert_eq!(kernel.state.init_state, InitState::SensorInit);
 }
 
 /// Test EstimatorConverging → PreArm transition
@@ -2069,9 +2073,9 @@ fn init_state_estimator_converging_to_prearm() {
 
     // Should now be in PreArm or Ready
     assert!(
-        kernel.init_state == InitState::PreArm || kernel.init_state == InitState::Ready,
+        kernel.state.init_state == InitState::PreArm || kernel.state.init_state == InitState::Ready,
         "Expected PreArm or Ready, got {:?}",
-        kernel.init_state
+        kernel.state.init_state
     );
 }
 
@@ -2095,14 +2099,14 @@ fn init_state_ready_to_prearm_fallback() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    assert_eq!(kernel.init_state, InitState::Ready);
+    assert_eq!(kernel.state.init_state, InitState::Ready);
 
     // Remove throttle low condition
-    kernel.checks.pre_arm.update_throttle(false);
+    kernel.state.checks.pre_arm.update_throttle(false);
 
     // Next step should fall back to PreArm
     kernel.init_step(&sensors, dummy_timestamp());
-    assert_eq!(kernel.init_state, InitState::PreArm);
+    assert_eq!(kernel.state.init_state, InitState::PreArm);
 }
 
 /// Test Disarmed → PreArm transition with sample count reset
@@ -2127,11 +2131,11 @@ fn init_state_disarmed_to_prearm() {
     }
     kernel.arm().unwrap();
     kernel.disarm();
-    assert_eq!(kernel.init_state, InitState::Disarmed);
+    assert_eq!(kernel.state.init_state, InitState::Disarmed);
 
     // Next step should transition to PreArm and reset samples
     kernel.init_step(&sensors, dummy_timestamp());
-    assert_eq!(kernel.init_state, InitState::PreArm);
+    assert_eq!(kernel.state.init_state, InitState::PreArm);
 }
 
 /// Test Fault state stays without explicit reset
@@ -2151,17 +2155,17 @@ fn init_state_fault_stays_until_reset() {
     );
 
     // Force fault state
-    kernel.init_state = InitState::Fault;
+    kernel.state.init_state = InitState::Fault;
 
     // Init step should not change fault state
     kernel.init_step(&sensors, dummy_timestamp());
-    assert_eq!(kernel.init_state, InitState::Fault);
+    assert_eq!(kernel.state.init_state, InitState::Fault);
 
     // Multiple steps still don't change it
     for _ in 0..10 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    assert_eq!(kernel.init_state, InitState::Fault);
+    assert_eq!(kernel.state.init_state, InitState::Fault);
 }
 
 // =============================================================================
@@ -2261,7 +2265,7 @@ fn step_with_frozen_control_law() {
     kernel.arm().unwrap();
 
     // Set frozen control law
-    kernel.control_law = ControlLawV1::Backup;
+    kernel.state.control_law = ControlLawV1::Backup;
 
     let cmd = Command {
         mode: ControlMode::Attitude,
@@ -2343,6 +2347,7 @@ fn step_handles_degradation_trigger() {
 
     // Clear attitude valid to trigger degradation
     kernel
+        .state
         .checks
         .in_flight
         .current
@@ -2390,7 +2395,7 @@ fn handle_degradation_all_reasons() {
 
     for (reason, expected_law) in reasons_and_expected_laws {
         let mut kernel = make_kernel();
-        kernel.control_law = ControlLawV1::Primary;
+        kernel.state.control_law = ControlLawV1::Primary;
 
         let event = kernel.handle_degradation(reason, dummy_timestamp());
 
@@ -2401,7 +2406,7 @@ fn handle_degradation_all_reasons() {
         );
         let event = event.unwrap();
         assert_eq!(event.to, expected_law, "Wrong law for {:?}", reason);
-        assert_eq!(kernel.control_law, expected_law);
+        assert_eq!(kernel.state.control_law, expected_law);
     }
 }
 
@@ -2411,14 +2416,14 @@ fn handle_degradation_no_event_when_not_worse() {
     let mut kernel = make_kernel();
 
     // Start with Frozen (worst)
-    kernel.control_law = ControlLawV1::Backup;
+    kernel.state.control_law = ControlLawV1::Backup;
 
     // Try to "degrade" to Degraded (less severe)
     let event = kernel.handle_degradation(DegradationReason::ImuDegraded, dummy_timestamp());
 
     // Should not trigger - already worse
     assert!(event.is_none());
-    assert_eq!(kernel.control_law, ControlLawV1::Backup);
+    assert_eq!(kernel.state.control_law, ControlLawV1::Backup);
 }
 
 // =============================================================================
@@ -2496,32 +2501,32 @@ fn test_update_sensor_faults_all_sensors() {
     // 1. Fail Baro
     sensors.baros[0].health = SensorHealth::Failed;
     kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
-    assert!(kernel.faults.contains(FaultFlags::BARO_FAILED));
+    assert!(kernel.state.faults.contains(FaultFlags::BARO_FAILED));
 
     // Recover Baro
     sensors.baros[0].health = SensorHealth::Good;
     kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
-    assert!(!kernel.faults.contains(FaultFlags::BARO_FAILED));
+    assert!(!kernel.state.faults.contains(FaultFlags::BARO_FAILED));
 
     // 2. Fail Mag
     sensors.mags[0].health = SensorHealth::Failed;
     kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
-    assert!(kernel.faults.contains(FaultFlags::MAG_FAILED));
+    assert!(kernel.state.faults.contains(FaultFlags::MAG_FAILED));
 
     // Recover Mag
     sensors.mags[0].health = SensorHealth::Good;
     kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
-    assert!(!kernel.faults.contains(FaultFlags::MAG_FAILED));
+    assert!(!kernel.state.faults.contains(FaultFlags::MAG_FAILED));
 
     // 3. Fail GNSS
     sensors.gnss[0].health = SensorHealth::Failed;
     kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
-    assert!(kernel.faults.contains(FaultFlags::ALL_GNSS_LOST));
+    assert!(kernel.state.faults.contains(FaultFlags::ALL_GNSS_LOST));
 
     // Recover GNSS
     sensors.gnss[0].health = SensorHealth::Good;
     kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
-    assert!(!kernel.faults.contains(FaultFlags::ALL_GNSS_LOST));
+    assert!(!kernel.state.faults.contains(FaultFlags::ALL_GNSS_LOST));
 }
 
 #[test]
@@ -2568,12 +2573,12 @@ fn request_config_mode_succeeds() {
     kernel.arm().unwrap();
 
     // Set up transition checks
-    kernel.checks.transition.current = aviate_core::checks::TransitionFlags::all();
+    kernel.state.checks.transition.current = aviate_core::checks::TransitionFlags::all();
 
     // Request transition from Hover to Cruise
     let result = kernel.request_config_mode(ConfigMode::Cruise);
     assert!(result.is_ok());
-    assert_eq!(kernel.mode, ConfigMode::Cruise);
+    assert_eq!(kernel.state.mode, ConfigMode::Cruise);
 }
 
 /// Test request_config_mode fails when checks fail
@@ -2599,8 +2604,8 @@ fn request_config_mode_fails_checks() {
     kernel.arm().unwrap();
 
     // Set required flags but don't meet them
-    kernel.checks.transition.required = aviate_core::checks::TransitionFlags::all();
-    kernel.checks.transition.current = aviate_core::checks::TransitionFlags::empty();
+    kernel.state.checks.transition.required = aviate_core::checks::TransitionFlags::all();
+    kernel.state.checks.transition.current = aviate_core::checks::TransitionFlags::empty();
 
     let result = kernel.request_config_mode(ConfigMode::Cruise);
     // Transition should fail due to checks
@@ -2631,14 +2636,16 @@ fn can_reset_from_fault_conditions_met() {
     let sensors = make_valid_sensors();
 
     // Set up fault state with recovery conditions
-    kernel.init_state = InitState::Fault;
-    kernel.faults = FaultFlags::empty(); // No critical faults
+    kernel.state.init_state = InitState::Fault;
+    kernel.state.faults = FaultFlags::empty(); // No critical faults
     kernel
+        .state
         .checks
         .pre_arm
         .current
         .insert(PreArmFlags::IMU_HEALTHY);
     kernel
+        .state
         .checks
         .pre_arm
         .current
@@ -2664,8 +2671,8 @@ fn reset_from_fault_fails_not_in_fault() {
 fn reset_from_fault_fails_conditions_not_met() {
     let mut kernel = make_kernel();
 
-    kernel.init_state = InitState::Fault;
-    kernel.faults.insert(FaultFlags::ALL_IMU_FAILED); // Critical fault active
+    kernel.state.init_state = InitState::Fault;
+    kernel.state.faults.insert(FaultFlags::ALL_IMU_FAILED); // Critical fault active
 
     let result = kernel.reset_from_fault();
     assert_eq!(result, Err(ArmError::Faulted));
@@ -2676,14 +2683,16 @@ fn reset_from_fault_fails_conditions_not_met() {
 fn reset_from_fault_succeeds() {
     let mut kernel = make_kernel();
 
-    kernel.init_state = InitState::Fault;
-    kernel.faults = FaultFlags::empty();
+    kernel.state.init_state = InitState::Fault;
+    kernel.state.faults = FaultFlags::empty();
     kernel
+        .state
         .checks
         .pre_arm
         .current
         .insert(PreArmFlags::IMU_HEALTHY);
     kernel
+        .state
         .checks
         .pre_arm
         .current
@@ -2691,7 +2700,7 @@ fn reset_from_fault_succeeds() {
 
     let result = kernel.reset_from_fault();
     assert!(result.is_ok());
-    assert_eq!(kernel.init_state, InitState::PreArm);
+    assert_eq!(kernel.state.init_state, InitState::PreArm);
 }
 
 // =============================================================================
@@ -2703,10 +2712,10 @@ fn reset_from_fault_succeeds() {
 fn get_health_report() {
     let mut kernel = make_kernel();
 
-    kernel.init_state = InitState::Armed;
-    kernel.control_law = ControlLawV1::Alternate;
-    kernel.mode = ConfigMode::Cruise;
-    kernel.faults.insert(FaultFlags::BARO_FAILED);
+    kernel.state.init_state = InitState::Armed;
+    kernel.state.control_law = ControlLawV1::Alternate;
+    kernel.state.mode = ConfigMode::Cruise;
+    kernel.state.faults.insert(FaultFlags::BARO_FAILED);
 
     let health = kernel.get_health();
 
@@ -2756,11 +2765,12 @@ fn test_ground_reset_clears_state() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    assert_eq!(kernel.init_state, InitState::Ready);
+    assert_eq!(kernel.state.init_state, InitState::Ready);
 
     // Set some faults and check flags
-    kernel.faults.insert(FaultFlags::BARO_FAILED);
+    kernel.state.faults.insert(FaultFlags::BARO_FAILED);
     kernel
+        .state
         .checks
         .pre_arm
         .current
@@ -2770,9 +2780,9 @@ fn test_ground_reset_clears_state() {
     kernel.ground_reset();
 
     // Should revert to ConfigLoading and clear faults/checks
-    assert_eq!(kernel.init_state, InitState::ConfigLoading);
-    assert!(kernel.faults.is_empty());
-    assert!(kernel.checks.pre_arm.current.is_empty());
+    assert_eq!(kernel.state.init_state, InitState::ConfigLoading);
+    assert!(kernel.state.faults.is_empty());
+    assert!(kernel.state.checks.pre_arm.current.is_empty());
 }
 
 #[test]
@@ -2794,13 +2804,13 @@ fn test_ground_reset_ignored_when_armed() {
         kernel.init_step(&sensors, dummy_timestamp());
     }
     kernel.arm().unwrap();
-    assert_eq!(kernel.init_state, InitState::Armed);
+    assert_eq!(kernel.state.init_state, InitState::Armed);
 
     // Attempt ground reset
     kernel.ground_reset();
 
     // Should remain Armed
-    assert_eq!(kernel.init_state, InitState::Armed);
+    assert_eq!(kernel.state.init_state, InitState::Armed);
 }
 
 #[test]
@@ -2808,25 +2818,27 @@ fn test_can_reset_from_fault_fails_checks() {
     let mut kernel = make_kernel();
 
     // Enter Fault state
-    kernel.init_state = InitState::Fault;
-    kernel.faults = FaultFlags::empty(); // No active faults
+    kernel.state.init_state = InitState::Fault;
+    kernel.state.faults = FaultFlags::empty(); // No active faults
 
     // 1. Fail throttle check
     kernel
+        .state
         .checks
         .pre_arm
         .current
         .insert(PreArmFlags::IMU_HEALTHY);
-    kernel.checks.pre_arm.update_throttle(false); // Throttle HIGH
+    kernel.state.checks.pre_arm.update_throttle(false); // Throttle HIGH
     assert!(!kernel.can_reset_from_fault());
 
     // 2. Fail IMU check
     kernel
+        .state
         .checks
         .pre_arm
         .current
         .remove(PreArmFlags::IMU_HEALTHY);
-    kernel.checks.pre_arm.update_throttle(true); // Throttle LOW
+    kernel.state.checks.pre_arm.update_throttle(true); // Throttle LOW
     assert!(!kernel.can_reset_from_fault());
 }
 
@@ -2835,12 +2847,12 @@ fn test_check_critical_faults_returns_true() {
     let mut kernel = make_kernel();
 
     // Inject critical fault
-    kernel.faults.insert(FaultFlags::NUMERIC_ERROR);
+    kernel.state.faults.insert(FaultFlags::NUMERIC_ERROR);
 
     // Should return true and transition to Fault
     assert!(kernel.check_critical_faults());
-    assert_eq!(kernel.init_state, InitState::Fault);
-    assert_eq!(kernel.control_law, ControlLawV1::Backup);
+    assert_eq!(kernel.state.init_state, InitState::Fault);
+    assert_eq!(kernel.state.control_law, ControlLawV1::Backup);
 }
 
 #[test]
@@ -2874,7 +2886,7 @@ fn test_step_with_unhealthy_sensors() {
         Quaternion::IDENTITY,
     );
     // Force state to Armed directly to bypass init checks that would fail with bad sensors
-    kernel.init_state = InitState::Armed;
+    kernel.state.init_state = InitState::Armed;
 
     // Run step
     kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
@@ -2944,12 +2956,12 @@ fn init_state_ready_stays_when_satisfied() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    assert_eq!(kernel.init_state, InitState::Ready);
+    assert_eq!(kernel.state.init_state, InitState::Ready);
 
     // Another step with conditions still satisfied - should stay Ready
     kernel.init_step(&sensors, dummy_timestamp());
     assert_eq!(
-        kernel.init_state,
+        kernel.state.init_state,
         InitState::Ready,
         "Should stay Ready when pre_arm satisfied"
     );
@@ -2962,14 +2974,14 @@ fn handle_degradation_same_severity_no_event() {
     let mut kernel = make_kernel();
 
     // Start with Degraded
-    kernel.control_law = ControlLawV1::Alternate;
+    kernel.state.control_law = ControlLawV1::Alternate;
 
     // Try to "degrade" to Degraded again (same severity)
     let event = kernel.handle_degradation(DegradationReason::ImuDegraded, dummy_timestamp());
 
     // No event - same severity
     assert!(event.is_none(), "Same severity should not produce event");
-    assert_eq!(kernel.control_law, ControlLawV1::Alternate);
+    assert_eq!(kernel.state.control_law, ControlLawV1::Alternate);
 }
 
 /// Test handle_degradation from Failsafe to Degraded (lower severity) - no event
@@ -2978,14 +2990,14 @@ fn handle_degradation_lower_severity_no_event() {
     let mut kernel = make_kernel();
 
     // Start with Failsafe
-    kernel.control_law = ControlLawV1::Alternate;
+    kernel.state.control_law = ControlLawV1::Alternate;
 
     // Try to "degrade" to Degraded (lower severity)
     let event = kernel.handle_degradation(DegradationReason::ImuDegraded, dummy_timestamp());
 
     // No event - trying to go to lower severity
     assert!(event.is_none());
-    assert_eq!(kernel.control_law, ControlLawV1::Alternate);
+    assert_eq!(kernel.state.control_law, ControlLawV1::Alternate);
 }
 
 /// Test handle_degradation from Normal to Degraded (higher severity) - produces event
@@ -2994,14 +3006,14 @@ fn handle_degradation_higher_severity_produces_event() {
     let mut kernel = make_kernel();
 
     // Start with Normal
-    kernel.control_law = ControlLawV1::Primary;
+    kernel.state.control_law = ControlLawV1::Primary;
 
     // Degrade to Degraded (higher severity)
     let event = kernel.handle_degradation(DegradationReason::ImuDegraded, dummy_timestamp());
 
     // Event produced
     assert!(event.is_some());
-    assert_eq!(kernel.control_law, ControlLawV1::Alternate);
+    assert_eq!(kernel.state.control_law, ControlLawV1::Alternate);
 }
 
 /// Test ground_reset clears faults and resets init sequence
@@ -3010,18 +3022,18 @@ fn ground_reset_clears_faults_and_restarts_init() {
     let mut kernel = make_kernel();
 
     // Set some state
-    kernel.faults.insert(FaultFlags::IMU0_FAILED);
-    kernel.control_law = ControlLawV1::Alternate;
+    kernel.state.faults.insert(FaultFlags::IMU0_FAILED);
+    kernel.state.control_law = ControlLawV1::Alternate;
 
     // Ground reset should work before arming
     kernel.ground_reset();
 
     // Faults should be cleared
-    assert!(kernel.faults.is_empty());
+    assert!(kernel.state.faults.is_empty());
     // Control law reset to Primary
-    assert_eq!(kernel.control_law, ControlLawV1::Primary);
+    assert_eq!(kernel.state.control_law, ControlLawV1::Primary);
     // Init state reset
-    assert_eq!(kernel.init_state, InitState::ConfigLoading);
+    assert_eq!(kernel.state.init_state, InitState::ConfigLoading);
 }
 
 /// Test ground_reset is blocked when armed
@@ -3029,18 +3041,18 @@ fn ground_reset_clears_faults_and_restarts_init() {
 fn ground_reset_blocked_when_armed() {
     // Create a kernel and manually set it to armed state
     let mut kernel = make_kernel();
-    kernel.init_state = InitState::Armed;
+    kernel.state.init_state = InitState::Armed;
 
     // Set some state
-    kernel.faults.insert(FaultFlags::IMU0_FAILED);
+    kernel.state.faults.insert(FaultFlags::IMU0_FAILED);
 
     // Ground reset should be blocked when armed
     kernel.ground_reset();
 
     // Faults should NOT be cleared (blocked)
-    assert!(kernel.faults.contains(FaultFlags::IMU0_FAILED));
+    assert!(kernel.state.faults.contains(FaultFlags::IMU0_FAILED));
     // Should still be armed
-    assert_eq!(kernel.init_state, InitState::Armed);
+    assert_eq!(kernel.state.init_state, InitState::Armed);
 }
 
 /// Test report_timing_violation tracks consecutive violations
@@ -3050,14 +3062,14 @@ fn report_timing_violation_tracks_consecutive() {
 
     // Report violations - should increment counter
     kernel.report_timing_violation(true);
-    assert_eq!(kernel.timing_stats.consecutive_violations, 1);
+    assert_eq!(kernel.state.timing_stats.consecutive_violations, 1);
 
     kernel.report_timing_violation(true);
-    assert_eq!(kernel.timing_stats.consecutive_violations, 2);
+    assert_eq!(kernel.state.timing_stats.consecutive_violations, 2);
 
     // Report success - should reset counter
     kernel.report_timing_violation(false);
-    assert_eq!(kernel.timing_stats.consecutive_violations, 0);
+    assert_eq!(kernel.state.timing_stats.consecutive_violations, 0);
 }
 
 /// Test report_timing_violation counts total violations correctly
@@ -3071,14 +3083,14 @@ fn report_timing_violation_counts_total() {
     }
 
     // Total should be 10, consecutive should be 10
-    assert_eq!(kernel.timing_stats.deadline_violations, 10);
-    assert_eq!(kernel.timing_stats.consecutive_violations, 10);
+    assert_eq!(kernel.state.timing_stats.deadline_violations, 10);
+    assert_eq!(kernel.state.timing_stats.consecutive_violations, 10);
 
     // Reset consecutive
     kernel.report_timing_violation(false);
     // Total unchanged, consecutive reset
-    assert_eq!(kernel.timing_stats.deadline_violations, 10);
-    assert_eq!(kernel.timing_stats.consecutive_violations, 0);
+    assert_eq!(kernel.state.timing_stats.deadline_violations, 10);
+    assert_eq!(kernel.state.timing_stats.consecutive_violations, 0);
 }
 
 /// Drive the in-flight-checks degradation branch in `update()`.
@@ -3095,11 +3107,11 @@ fn update_degrades_on_in_flight_trigger() {
     let sensors = make_valid_sensors();
 
     // Armed but EKF never initialized — valid_flags will be empty.
-    kernel.init_state = InitState::Armed;
+    kernel.state.init_state = InitState::Armed;
     assert!(!kernel.pipeline.estimator.is_initialized());
 
     // Ensure timing-violation branch is NOT the one that fires.
-    assert_eq!(kernel.timing_stats.consecutive_violations, 0);
+    assert_eq!(kernel.state.timing_stats.consecutive_violations, 0);
 
     let cmd = Command {
         mode: ControlMode::Attitude,
@@ -3109,7 +3121,7 @@ fn update_degrades_on_in_flight_trigger() {
         sequence: 0,
         source: CommandSource::Pilot,
     };
-    let actuator_state = kernel.actuator_state.clone();
+    let actuator_state = kernel.state.actuator_state.clone();
     let result = kernel.update(
         ChannelId::PRIMARY,
         dummy_time_delta(),
@@ -3166,7 +3178,7 @@ fn update_degrades_on_persistent_timing_violation() {
         sequence: 0,
         source: CommandSource::Pilot,
     };
-    let actuator_state = kernel.actuator_state.clone();
+    let actuator_state = kernel.state.actuator_state.clone();
     let result = kernel.update(
         ChannelId::PRIMARY,
         dummy_time_delta(),
@@ -3181,7 +3193,7 @@ fn update_degrades_on_persistent_timing_violation() {
         .expect("threshold-crossing call should emit a degradation event");
     assert_eq!(event.reason, DegradationReason::TimingViolation);
     assert_eq!(event.to, ControlLawV1::Alternate);
-    assert_eq!(kernel.control_law, ControlLawV1::Alternate);
+    assert_eq!(kernel.state.control_law, ControlLawV1::Alternate);
 }
 
 /// Exercise `AviateKernelTrait` surface (spec §20) to cover the trait
@@ -3219,7 +3231,7 @@ fn aviate_kernel_trait_surface_covered() {
         sequence: 0,
         source: CommandSource::Pilot,
     };
-    let actuator_state = kernel.actuator_state.clone();
+    let actuator_state = kernel.state.actuator_state.clone();
     let _ = AviateKernelTrait::update(
         &mut kernel,
         ChannelId::PRIMARY,
