@@ -28,8 +28,8 @@
 [floors]
 trace_sys = 5
 trace_hlr = 11
-trace_llr = 21
-trace_test = 25
+trace_llr = 22
+trace_test = 26
 
 [delta_ceilings]
 # Reserved by the tool for new-additions-in-diff checks. Parsed today,

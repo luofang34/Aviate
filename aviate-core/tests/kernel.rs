@@ -2786,6 +2786,50 @@ fn test_ground_reset_clears_state() {
 }
 
 #[test]
+fn test_ground_reset_clears_fallback_and_actuator_state() {
+    // P4 follow-up cleanup: ground_reset MUST clear sanitizer fallback
+    // memory and the cached actuator-state snapshot. Pre-fix, both were
+    // silently inherited across reset, leaking sanitizer last-good /
+    // age / consecutive-fallback counters and the previous commanded
+    // actuator pattern into the post-reset cycle.
+    let mut kernel = make_kernel();
+
+    // Inject non-default values into every state field that
+    // ground_reset is supposed to clear.
+    kernel.state.fallback.consecutive_fallback[0] = 7;
+    kernel.state.fallback.age[1] = 42;
+    kernel.state.actuator_state.commanded[0] = Normalized(0.5);
+    kernel.state.timing_stats.last_cycle_us = 1234;
+    kernel.state.mode = ConfigMode::Cruise;
+
+    kernel.ground_reset();
+
+    // Post-reset: every cleared field must be back to default.
+    assert_eq!(
+        kernel.state.fallback.consecutive_fallback[0], 0,
+        "fallback consecutive_fallback survived ground_reset"
+    );
+    assert_eq!(
+        kernel.state.fallback.age[1], 0,
+        "fallback age survived ground_reset"
+    );
+    assert_eq!(
+        kernel.state.actuator_state.commanded[0],
+        Normalized(0.0),
+        "commanded actuator snapshot survived ground_reset"
+    );
+    assert_eq!(
+        kernel.state.timing_stats.last_cycle_us, 0,
+        "timing_stats survived ground_reset"
+    );
+    assert_eq!(
+        kernel.state.mode,
+        ConfigMode::Hover,
+        "mode not reset to Hover by ground_reset"
+    );
+}
+
+#[test]
 fn test_ground_reset_ignored_when_armed() {
     let mut kernel = make_kernel();
     let sensors = make_valid_sensors();
