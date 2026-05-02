@@ -47,7 +47,7 @@ fn make_limits() -> Limits {
 
 #[test]
 fn vtol_controller_step_returns_collective() {
-    let mut controller = VtolController;
+    let controller = VtolController;
     let state = make_state();
     let limits = make_limits();
 
@@ -75,7 +75,7 @@ fn vtol_controller_step_returns_collective() {
 
 #[test]
 fn vtol_controller_step_in_transition_mode() {
-    let mut controller = VtolController;
+    let controller = VtolController;
     let state = make_state();
     let limits = make_limits();
 
