@@ -71,7 +71,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             self.faults.insert(FaultFlags::ENUM_INVALID);
             return UpdateResult {
                 actuator: ActuatorCmd {
-                    outputs: self.safe_output,
+                    outputs: self.cfg.safe_output,
                     active_mask: 0,
                     sequence: command.sequence,
                     timestamp,
@@ -106,7 +106,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         if !self.init_state.allows_active_control() {
             return UpdateResult {
                 actuator: ActuatorCmd {
-                    outputs: self.safe_output,
+                    outputs: self.cfg.safe_output,
                     active_mask: 0,
                     sequence: command.sequence,
                     timestamp,
@@ -137,7 +137,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             // If critical fault, force Backup/Frozen behavior
             return UpdateResult {
                 actuator: ActuatorCmd {
-                    outputs: self.safe_output,
+                    outputs: self.cfg.safe_output,
                     active_mask: 0,
                     sequence: command.sequence,
                     timestamp,
@@ -195,7 +195,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // Assume command age 0 for now, or derive from timestamp
         self.checks
             .in_flight
-            .update_command_status(0, self.command_timeout_ms);
+            .update_command_status(0, self.cfg.command_timeout_ms);
 
         // 4. Handle degradation
         // Timing violations are reported externally via report_timing_violation()
@@ -214,7 +214,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         let (constrained_sp, protection_status) = self.protector.constrain(
             &command.setpoint,
             &state,
-            &self.limits,
+            &self.cfg.limits,
             AuthorityProfile::HardEnvelope,
         );
 
@@ -235,7 +235,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // For this minimal impl, if Backup, we output safe_output (effectively shutting down/idle).
         let mut actuator_cmd = if self.control_law == ControlLawV1::Backup {
             ActuatorCmd {
-                outputs: self.safe_output,
+                outputs: self.cfg.safe_output,
                 active_mask: 0b1111,
                 sequence: command.sequence,
                 timestamp,
@@ -243,9 +243,9 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                 sanitized: true,
             }
         } else {
-            let axis_cmd = self
-                .controller
-                .step(&state, &constrained_cmd, self.mode, &self.limits);
+            let axis_cmd =
+                self.controller
+                    .step(&state, &constrained_cmd, self.mode, &self.cfg.limits);
             self.mixer.mix(&axis_cmd)
         };
 
@@ -258,7 +258,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             SanitizeReport::default()
         } else {
             self.sanitizer
-                .sanitize(&mut actuator_cmd, &self.mode_config)
+                .sanitize(&mut actuator_cmd, &self.cfg.mode_config)
         };
 
         // 9. Construct Result

@@ -5,9 +5,10 @@
 use crate::control::{ConfigMode, ControlLawV1, VehicleController};
 use crate::ekf::Estimator;
 use crate::fault::FaultFlags;
+use crate::kernel::config::ResolvedKernelConfig;
 use crate::kernel::{AviateKernelImpl, InitState};
 use crate::kernel_types::{
-    ArmError, ChannelId, Config, ConfigBlock, ConfigError, ConfigTransitionState, CrossChannelData,
+    ArmError, ChannelId, ConfigBlock, ConfigError, ConfigTransitionState, CrossChannelData,
     HealthReport, InitResult, TransitionError, UpdateResult,
 };
 use crate::mixer::{ActuatorSanitizer, ActuatorState, Mixer};
@@ -62,7 +63,7 @@ pub trait AviateKernelTrait {
     fn load_config(&mut self, config: &ConfigBlock) -> Result<(), ConfigError>;
 
     /// Get current configuration (spec §20)
-    fn get_config(&self) -> &Config;
+    fn get_config(&self) -> &ResolvedKernelConfig;
 
     /// Get health report (spec §20)
     fn get_health(&self) -> HealthReport;
@@ -162,8 +163,8 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> AviateK
         Ok(())
     }
 
-    fn get_config(&self) -> &Config {
-        &self.config
+    fn get_config(&self) -> &ResolvedKernelConfig {
+        &self.cfg
     }
 
     fn get_health(&self) -> HealthReport {

@@ -26,10 +26,10 @@
 # current=0 (no matching measurement key) and only "passed" because the
 # committed floor was 0 too.
 [floors]
-trace_sys = 1
-trace_hlr = 3
-trace_llr = 8
-trace_test = 10
+trace_sys = 2
+trace_hlr = 5
+trace_llr = 11
+trace_test = 13
 
 [delta_ceilings]
 # Reserved by the tool for new-additions-in-diff checks. Parsed today,

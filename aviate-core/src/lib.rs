@@ -52,9 +52,11 @@ pub use crate::kernel::{
 // the defining file. Consumers import via `aviate_core::kernel_trait::
 // AviateKernelTrait` — no external callers use the short path today.
 pub use crate::kernel_types::{
-    ArmError, ChannelHealthV1, ChannelId, ChannelStatus, Config, ConfigBlock, ConfigError,
+    ArmError, ChannelHealthV1, ChannelId, ChannelStatus, ConfigBlock, ConfigError,
     ConfigTransitionState, CrossChannelData, CycleTiming, DegradationEvent, EnumValidationError,
     EnvelopeMargin, HealthReport, InitResult, TimingStats, TransitionError, UpdateResult,
     CONTROL_LOOP_DEADLINE_US, CONTROL_LOOP_PERIOD_US, CRITICAL_FAULTS, DEFAULT_COMMAND_TIMEOUT_MS,
     TIMING_VIOLATION_THRESHOLD,
 };
+// `Config` was deleted in the Phase 1 ResolvedKernelConfig consolidation.
+// Consumers needing the resolved config import from `aviate_core::kernel::config`.

@@ -130,3 +130,50 @@ the scalar update kernel: a measurement beyond the configured
 innovation_gate sigma is rejected, leaving state nearly unchanged.
 """
 traces_to = ["b8339d64-9b99-4109-a9da-8e1a547fbf49"]
+
+[[tests]]
+uid = "dc2d0aeb-93e2-415e-942b-7932300cf16e"
+id = "TST-CFG-001"
+title = "test_ground_reset_success_unit"
+owner = "aviate-core@aviate"
+description = """
+The `kernel.rs::tests::test_ground_reset_success_unit` test
+constructs a kernel via `AviateKernelBuilder` and exercises
+`ground_reset` end-to-end. After Phase 1 it implicitly verifies that
+`cfg: ResolvedKernelConfig` is reachable through the builder and
+that `mode_config`, `safe_output`, etc. are read via `self.cfg.<x>`
+during the cycle (otherwise this test would fail).
+"""
+traces_to = [
+    "434a64f5-be78-46ca-bc0f-de1eaffb297d",
+    "471d6bcb-8845-4bbe-9c8a-6d69bee67794",
+]
+
+[[tests]]
+uid = "9504383a-352e-4626-8f0b-6d566ccd0ff6"
+id = "TST-CFG-002"
+title = "test_aviate_kernel_trait_surface (load_config + get_config)"
+owner = "aviate-core@aviate"
+description = """
+The `tests/kernel.rs::test_aviate_kernel_trait_surface` test
+exercises every method on `AviateKernelTrait`, including
+`get_config()` and `load_config()`. After Phase 1 the return type
+of `get_config()` is `&ResolvedKernelConfig`; the test validates
+that the trait surface compiles and produces a valid borrow.
+"""
+traces_to = ["434a64f5-be78-46ca-bc0f-de1eaffb297d"]
+
+[[tests]]
+uid = "ee170b84-4a02-4b23-90d3-bb77bffa433e"
+id = "TST-CFG-003"
+title = "test_make_kernel_with_pre_arm_required"
+owner = "aviate-core@aviate"
+description = """
+The `tests/kernel.rs::make_kernel` helper constructs a kernel via
+`AviateKernel::with_pre_arm_required(...)` (a thin shim over
+`AviateKernelBuilder`). After Phase 1 it implicitly verifies that
+the builder propagates `pre_arm_required` into `KernelChecks` and
+that the resulting kernel satisfies `LLR-CFG-103`. Every individual
+test in `tests/kernel.rs` that calls `make_kernel()` exercises this.
+"""
+traces_to = ["471d6bcb-8845-4bbe-9c8a-6d69bee67794"]
