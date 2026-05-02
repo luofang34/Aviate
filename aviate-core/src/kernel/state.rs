@@ -69,6 +69,7 @@ use crate::mixer::{ActuatorFallbackState, ActuatorState};
 // coverage attribution places phantom DAs on the field declarations
 // under grcov, same artifact class documented in
 // `aviate-core/src/ekf.rs` and `aviate-core/src/kernel/config.rs`.)
+#[derive(Clone, Debug)]
 pub struct KernelState<R: ControllerRuntimeState = NoControllerState> {
     /// Init/arm/disarm/fault state machine cursor (spec §17).
     /// Mutated by `kernel_logic.rs::init_step`, `arm`, `disarm`,
@@ -191,5 +192,52 @@ mod tests {
         // Supplied checks are not satisfied without sensor data, but
         // the state was constructed from them — exercise the path.
         assert!(!s.checks.pre_arm.is_satisfied());
+    }
+
+    #[test]
+    fn clone_yields_independent_state() {
+        // Phase-5 prerequisite: KernelState is Clone (LLR-STATE-109).
+        // The clone must be a deep copy — mutating the original
+        // SHALL NOT affect the clone, otherwise the cross-channel
+        // snapshot machinery would fail silently.
+        let mut original: KernelState = KernelState::default();
+        let snapshot = original.clone();
+        assert_eq!(original.faults, snapshot.faults);
+
+        // Mutate original; snapshot must remain at the post-default
+        // value.
+        original.faults |= FaultFlags::ALL_IMU_FAILED;
+        assert!(original.faults.contains(FaultFlags::ALL_IMU_FAILED));
+        assert!(
+            !snapshot.faults.contains(FaultFlags::ALL_IMU_FAILED),
+            "cloned KernelState must not share field storage"
+        );
+    }
+
+    #[test]
+    fn implements_debug_trait() {
+        // Phase-5 prerequisite: KernelState is Debug (LLR-STATE-109).
+        // Crate is #![no_std] without `alloc`, so we cannot format
+        // into a String. Instead, verify the bound holds by
+        // coercing to a `&dyn core::fmt::Debug` — failure to compile
+        // here would mean a field type stopped implementing Debug,
+        // which is the regression we want to catch.
+        let s: KernelState = KernelState::default();
+        let _erased: &dyn core::fmt::Debug = &s;
+
+        // Also exercise the Debug impl through a sink that doesn't
+        // allocate — DummySink swallows bytes — so the formatter
+        // path actually runs and any future debug_struct field
+        // calls inside the derive are exercised.
+        let mut sink = DummySink;
+        let _ = core::fmt::write(&mut sink, format_args!("{:?}", s));
+    }
+
+    struct DummySink;
+
+    impl core::fmt::Write for DummySink {
+        fn write_str(&mut self, _: &str) -> core::fmt::Result {
+            Ok(())
+        }
     }
 }

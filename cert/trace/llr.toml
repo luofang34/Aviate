@@ -692,3 +692,33 @@ verification_methods = ["review", "test"]
 modules = ["aviate-core/src/kernel/state.rs", "aviate-core/src/kernel.rs"]
 derived = false
 traces_to = ["589cfa68-0179-4683-a787-0c90a54440df"]
+
+[[requirements]]
+uid = "d6e0121d-38ec-42bd-a872-8469100e433b"
+id = "LLR-STATE-109"
+title = "KernelState derives Clone + Debug for snapshot and diagnostics"
+owner = "aviate-core@aviate"
+description = """
+`KernelState<R>` SHALL derive `Clone` and `core::fmt::Debug`.
+Every field type — `InitState`, `ConfigMode`, `FaultFlags`,
+`ControlLawV1`, `KernelChecks`, `ActuatorState`, `TimingStats`,
+`EstimatorState`, `ActuatorFallbackState`, and the generic
+`R: ControllerRuntimeState` — already implements both traits;
+adding the derive on `KernelState` itself concretizes the bound
+upgrade in LLR-CTL-103 (`ControllerRuntimeState: Default + Clone +
+core::fmt::Debug`).
+
+`Clone` is the structural prerequisite for spec §16 cross-channel
+snapshot replication: a hot-spare channel takes ownership by
+cloning the active channel's `KernelState` at the takeover
+boundary. `Debug` is required by the kernel's `tracing`-based
+diagnostic surface and post-mortem panic messages.
+
+The derive does NOT yet imply a deterministic byte encoding —
+that's a separate `KernelState::encode_canonical` LLR landing
+alongside the Phase-5 cross-channel-byte-equality work.
+"""
+verification_methods = ["test", "review"]
+modules = ["aviate-core/src/kernel/state.rs"]
+derived = false
+traces_to = ["589cfa68-0179-4683-a787-0c90a54440df"]
