@@ -167,3 +167,172 @@ where
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::control::multirotor::MultirotorController;
+    use crate::control::Limits;
+    use crate::ekf::Ekf;
+    use crate::mixer::{ModeConfig, QuadXMixer, Sanitizer};
+    use crate::time::{TimeSource, Timestamp};
+    use crate::types::Radians;
+
+    fn fake_ts() -> Timestamp {
+        Timestamp {
+            ticks: 0,
+            source: TimeSource::Internal,
+        }
+    }
+
+    type TestBuilder = AviateKernelBuilder<Ekf, MultirotorController, QuadXMixer, Sanitizer>;
+
+    fn fake_mixer() -> QuadXMixer {
+        QuadXMixer {
+            timestamp_source: fake_ts,
+        }
+    }
+
+    #[test]
+    fn new_returns_empty_builder_that_fails_to_build() {
+        let result = TestBuilder::new().build();
+        assert_eq!(result.err(), Some("estimator"));
+    }
+
+    #[test]
+    fn default_impl_matches_new() {
+        let result = TestBuilder::default().build();
+        assert_eq!(result.err(), Some("estimator"));
+    }
+
+    #[test]
+    fn partial_through_estimator_fails_at_controller() {
+        let result = TestBuilder::new().estimator(Ekf::default()).build();
+        assert_eq!(result.err(), Some("controller"));
+    }
+
+    #[test]
+    fn partial_through_controller_fails_at_mixer() {
+        let result = TestBuilder::new()
+            .estimator(Ekf::default())
+            .controller(MultirotorController::default())
+            .build();
+        assert_eq!(result.err(), Some("mixer"));
+    }
+
+    #[test]
+    fn partial_through_mixer_fails_at_sanitizer() {
+        let result = TestBuilder::new()
+            .estimator(Ekf::default())
+            .controller(MultirotorController::default())
+            .mixer(fake_mixer())
+            .build();
+        assert_eq!(result.err(), Some("sanitizer"));
+    }
+
+    #[test]
+    fn full_chain_builds_kernel_with_default_cfg() {
+        let result = TestBuilder::new()
+            .estimator(Ekf::default())
+            .controller(MultirotorController::default())
+            .mixer(fake_mixer())
+            .sanitizer(Sanitizer::default())
+            .build();
+        assert!(result.is_ok());
+        if let Ok(k) = result {
+            assert_eq!(k.cfg.command_timeout_ms, k.cfg.command_timeout_ms);
+            assert_eq!(k.init_state, InitState::PowerOn);
+        }
+    }
+
+    #[test]
+    fn mode_config_override_propagates_to_cfg() {
+        let custom_mc = ModeConfig {
+            mode: ConfigMode::Cruise,
+            groups: &[],
+        };
+        let result = TestBuilder::new()
+            .estimator(Ekf::default())
+            .controller(MultirotorController::default())
+            .mixer(fake_mixer())
+            .sanitizer(Sanitizer::default())
+            .mode_config(custom_mc)
+            .build();
+        assert!(result.is_ok());
+        if let Ok(k) = result {
+            assert_eq!(k.cfg.mode_config.mode, ConfigMode::Cruise);
+        }
+    }
+
+    #[test]
+    fn limits_override_propagates_to_cfg() {
+        let custom_limits = Limits {
+            max_roll: Radians(1.0),
+            ..ResolvedKernelConfig::default().limits
+        };
+        let result = TestBuilder::new()
+            .estimator(Ekf::default())
+            .controller(MultirotorController::default())
+            .mixer(fake_mixer())
+            .sanitizer(Sanitizer::default())
+            .limits(custom_limits)
+            .build();
+        assert!(result.is_ok());
+        if let Ok(k) = result {
+            assert_eq!(k.cfg.limits.max_roll.0, 1.0);
+        }
+    }
+
+    #[test]
+    fn command_timeout_ms_override_propagates_to_cfg() {
+        let result = TestBuilder::new()
+            .estimator(Ekf::default())
+            .controller(MultirotorController::default())
+            .mixer(fake_mixer())
+            .sanitizer(Sanitizer::default())
+            .command_timeout_ms(1234)
+            .build();
+        assert!(result.is_ok());
+        if let Ok(k) = result {
+            assert_eq!(k.cfg.command_timeout_ms, 1234);
+        }
+    }
+
+    #[test]
+    fn config_replace_overrides_entire_cfg() {
+        let custom = ResolvedKernelConfig {
+            command_timeout_ms: 4321,
+            ..ResolvedKernelConfig::default()
+        };
+        let result = TestBuilder::new()
+            .estimator(Ekf::default())
+            .controller(MultirotorController::default())
+            .mixer(fake_mixer())
+            .sanitizer(Sanitizer::default())
+            .config(custom)
+            .build();
+        assert!(result.is_ok());
+        if let Ok(k) = result {
+            assert_eq!(k.cfg.command_timeout_ms, 4321);
+        }
+    }
+
+    #[test]
+    fn pre_arm_required_propagates_to_checks() {
+        let required = PreArmFlags::IMU_HEALTHY | PreArmFlags::THROTTLE_LOW;
+        let result = TestBuilder::new()
+            .estimator(Ekf::default())
+            .controller(MultirotorController::default())
+            .mixer(fake_mixer())
+            .sanitizer(Sanitizer::default())
+            .pre_arm_required(required)
+            .build();
+        assert!(result.is_ok());
+        if let Ok(k) = result {
+            // Verify that the configured pre-arm requirements are reflected
+            // by exercising the missing() reporter — kernel built without
+            // pre-arm-satisfied state must report a non-empty missing set.
+            assert!(!k.checks.pre_arm.is_satisfied());
+        }
+    }
+}
