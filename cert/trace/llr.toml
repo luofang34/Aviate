@@ -187,6 +187,104 @@ derived = false
 traces_to = ["4cf7189d-23e6-470a-b71c-c90a81c59970", "211a2f8a-493f-4c6c-bf7e-73275154dd54"]
 
 [[requirements]]
+uid = "26c3a661-d7db-4a28-8b81-0d611bed720a"
+id = "LLR-STATE-101"
+title = "KernelState holds the closed lifecycle-state field set"
+owner = "aviate-core@aviate"
+description = """
+The struct `KernelState` SHALL declare exactly the fields:
+init_state (InitState), mode (ConfigMode), faults (FaultFlags),
+control_law (ControlLawV1), checks (KernelChecks), actuator_state
+(ActuatorState), timing_stats (TimingStats). No additional
+runtime-state fields SHALL be introduced into `AviateKernelImpl` as
+direct fields or duplicated into `KernelPipeline` /
+`ResolvedKernelConfig` — additions go on `KernelState` (and require
+new LLR + floor bump).
+
+Phase 4 extends this list with `EstimatorState` (relocated from
+`Ekf`) and `ActuatorFallbackState` (relocated from `Sanitizer`);
+the closure rule applies to those additions in the same way.
+"""
+verification_methods = ["review", "test"]
+modules = ["aviate-core/src/kernel/state.rs"]
+derived = false
+traces_to = ["589cfa68-0179-4683-a787-0c90a54440df"]
+
+[[requirements]]
+uid = "d60b3a73-ade9-45f0-8a9a-c70a293e7a03"
+id = "LLR-STATE-102"
+title = "AviateKernelImpl exposes KernelState via state field"
+owner = "aviate-core@aviate"
+description = """
+The kernel struct SHALL hold its runtime state as a single field
+`state: KernelState`. Access sites within `kernel_logic.rs`,
+`kernel_update.rs`, `kernel_trait.rs`, `kernel/builder.rs`, and
+external consumers (boards, runtime/sim, tests) SHALL use the path
+`<kernel>.state.<field>` — no shadow direct fields on
+`AviateKernelImpl`. The trait `AviateKernelTrait::get_faults` /
+`get_control_law` / `config_mode` / `init_state` accessors SHALL
+return values read out of `self.state`.
+"""
+verification_methods = ["review", "test"]
+modules = [
+    "aviate-core/src/kernel.rs",
+    "aviate-core/src/kernel/state.rs",
+    "aviate-core/src/kernel_logic.rs",
+    "aviate-core/src/kernel_update.rs",
+    "aviate-core/src/kernel_trait.rs",
+]
+derived = false
+traces_to = ["589cfa68-0179-4683-a787-0c90a54440df"]
+
+[[requirements]]
+uid = "4e701d6e-9254-41bb-97f1-1c4b3da812ec"
+id = "LLR-STATE-103"
+title = "KernelState supports field-level borrow destructuring"
+owner = "aviate-core@aviate"
+description = """
+`KernelState` field declarations SHALL be `pub` so that callers
+needing concurrent &mut/& borrows of distinct fields can use
+struct-destructure pattern matching:
+`let KernelState { ref mut checks, ref actuator_state, .. } =
+self.state;`. The module-level documentation at the head of
+`kernel/state.rs` SHALL describe this idiom as the recommended
+pattern for functions that read-and-write multiple state fields.
+
+Rationale: Rust's borrow checker treats `&mut self.state.X` and
+`&self.state.Y` as conflicting borrows of `self.state` even when
+`X != Y`. Destructure-on-entry surfaces the field-level borrow
+pattern unambiguously and makes accidental whole-struct aliasing a
+compile error rather than a runtime issue.
+"""
+verification_methods = ["review"]
+modules = ["aviate-core/src/kernel/state.rs"]
+derived = false
+traces_to = ["589cfa68-0179-4683-a787-0c90a54440df"]
+
+[[requirements]]
+uid = "ae04c2c8-8628-49f1-b037-14bafafe2067"
+id = "LLR-STATE-104"
+title = "KernelState relocation preserves observable behavior"
+owner = "aviate-core@aviate"
+description = """
+The Phase 3 relocation of seven formerly-direct fields into
+`KernelState` SHALL be behavior-preserving: the existing test suite
+(`aviate-core/tests/{kernel, ekf_tests, integration_tests, ...}.rs`,
+~195 tests) SHALL pass without semantic changes. Test source
+edits are limited to mechanical path adjustments
+(`kernel.<field>` → `kernel.state.<field>`) and equivalent borrow
+destructuring at function tops where required by the borrow checker.
+"""
+verification_methods = ["test"]
+modules = [
+    "aviate-core/src/kernel.rs",
+    "aviate-core/tests/kernel.rs",
+    "aviate-core/tests/integration_tests.rs",
+]
+derived = false
+traces_to = ["589cfa68-0179-4683-a787-0c90a54440df"]
+
+[[requirements]]
 uid = "7ba433cd-35a2-4702-a4af-3d3adf5ce4b5"
 id = "LLR-PIPE-101"
 title = "KernelPipeline holds the closed algorithm-identity field set"

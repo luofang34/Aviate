@@ -164,6 +164,92 @@ that the trait surface compiles and produces a valid borrow.
 traces_to = ["434a64f5-be78-46ca-bc0f-de1eaffb297d"]
 
 [[tests]]
+uid = "aed53b30-6ddc-4520-a9f8-ba062744ae3c"
+id = "TST-STATE-001"
+title = "test_ground_reset_success_unit (lifecycle through state)"
+owner = "aviate-core@aviate"
+description = """
+The `kernel.rs::tests::test_ground_reset_success_unit` test sets
+`kernel.state.init_state = InitState::Fault` and
+`kernel.state.faults = FaultFlags::ALL_IMU_FAILED`, calls
+`ground_reset()`, then asserts state transitions through
+`kernel.state.init_state` and `kernel.state.faults`. After Phase 3
+this test verifies LLR-STATE-102 — that lifecycle access uses the
+`<kernel>.state.<field>` path canonically.
+"""
+traces_to = [
+    "d60b3a73-ade9-45f0-8a9a-c70a293e7a03",
+    "ae04c2c8-8628-49f1-b037-14bafafe2067",
+]
+
+[[tests]]
+uid = "95b3373d-374e-4b0f-aafc-2ea5ac640bb8"
+id = "TST-STATE-002"
+title = "tests/kernel.rs full suite (114 tests, KernelState path)"
+owner = "aviate-core@aviate"
+description = """
+The `tests/kernel.rs` integration suite (~114 tests) exercises
+every kernel surface with `kernel.state.<field>` direct accesses —
+~174 such sites after Phase 3's mechanical rename pass. The tests
+collectively verify LLR-STATE-104 — that the relocation is
+behavior-preserving across the full kernel test surface (init
+state machine, arming, faults, control law transitions, mode
+transitions, timing stats, actuator state).
+"""
+traces_to = ["ae04c2c8-8628-49f1-b037-14bafafe2067"]
+
+[[tests]]
+uid = "58b55590-3c26-4bd9-930e-3a08cc15fd4c"
+id = "TST-STATE-003"
+title = "tests/integration_tests.rs (~20 tests, KernelState path)"
+owner = "aviate-core@aviate"
+description = """
+The `tests/integration_tests.rs` suite (20 tests) covers full
+multirotor / fixed-wing flight cycles. After Phase 3 it exercises
+state access through `kernel.state.actuator_state.clone()` and
+similar paths in the test extension trait `KernelTestExt`. It
+verifies LLR-STATE-104 from the integration-flow angle (vs the
+unit-flow coverage of TST-STATE-002).
+"""
+traces_to = ["ae04c2c8-8628-49f1-b037-14bafafe2067"]
+
+[[tests]]
+uid = "86d4123f-6951-4d2a-91fe-9adeae77a1f8"
+id = "TST-STATE-004"
+title = "Builder produces kernel with KernelState::default fields"
+owner = "aviate-core@aviate"
+description = """
+The `kernel/builder.rs::tests::full_chain_builds_kernel_with_default_cfg`
+test calls `AviateKernelBuilder::build()` and asserts
+`kernel.state.init_state == InitState::PowerOn`. After Phase 3 this
+verifies that the builder routes through `KernelState::new(checks)`
+and that `KernelState::default()` field values match the Phase-2
+direct-init defaults (PowerOn, Hover, no faults, Primary law).
+"""
+traces_to = [
+    "26c3a661-d7db-4a28-8b81-0d611bed720a",
+    "d60b3a73-ade9-45f0-8a9a-c70a293e7a03",
+]
+
+[[tests]]
+uid = "61d59a58-2690-4670-86ac-91e92a8d550b"
+id = "TST-STATE-005"
+title = "Builder pre_arm_required propagates into KernelState.checks"
+owner = "aviate-core@aviate"
+description = """
+The `kernel/builder.rs::tests::pre_arm_required_propagates_to_checks`
+test verifies that `AviateKernelBuilder::pre_arm_required(...)`
+constructs `KernelChecks::with_pre_arm_required(...)` inside
+`KernelState::new(checks)` rather than into a separate slot. The
+test reads `kernel.state.checks.pre_arm.is_satisfied()`, exercising
+the canonical access path established in LLR-STATE-102.
+"""
+traces_to = [
+    "d60b3a73-ade9-45f0-8a9a-c70a293e7a03",
+    "ae04c2c8-8628-49f1-b037-14bafafe2067",
+]
+
+[[tests]]
 uid = "6bcdce55-17b4-4d55-86a7-f3e7655d0441"
 id = "TST-PIPE-001"
 title = "test_ground_reset_success_unit (pipeline.mixer.mix path)"
