@@ -200,11 +200,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-evidence
-          key: ${{ runner.os }}-cargo-evidence-bin-0.1.1
+          key: ${{ runner.os }}-cargo-evidence-bin-0.1.4
 
       - name: Install cargo-evidence
         if: steps.cache-cargo-evidence.outputs.cache-hit != 'true'
-        run: cargo install cargo-evidence --version 0.1.1 --locked
+        run: cargo install cargo-evidence --version 0.1.4 --locked
 
       # Blocking: fails only on error-severity findings (missing
       # boundary, missing floors, invalid trace). Warnings — merge-style,
