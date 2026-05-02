@@ -140,7 +140,7 @@ impl SitlRunner {
         // 5. Initialize EKF once we have sensor data
         if !self.ekf_initialized && self.sensor_cache.imu.is_some() {
             info!("Initializing EKF with sensor data");
-            self.kernel.pipeline.estimator.init(
+            self.kernel.state.estimator.init(
                 Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
                 Vector3::new(
                     MetersPerSecond(0.0),

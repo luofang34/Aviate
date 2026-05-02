@@ -48,9 +48,10 @@
 
 use crate::checks::KernelChecks;
 use crate::control::{ConfigMode, ControlLawV1};
+use crate::ekf::EstimatorState;
 use crate::fault::FaultFlags;
 use crate::kernel_types::{InitState, TimingStats};
-use crate::mixer::ActuatorState;
+use crate::mixer::{ActuatorFallbackState, ActuatorState};
 
 /// Kernel runtime state. Each field's mutation locus is documented at
 /// its declaration site.
@@ -93,6 +94,22 @@ pub struct KernelState {
     /// counters here are inputs to the persistent-violation
     /// degradation trigger in `kernel_update.rs`.
     pub timing_stats: TimingStats,
+
+    /// State estimator persistent contents (18-state vector +
+    /// 18×18 covariance + bias states + init/fault latches).
+    /// Phase 4 relocated this from `Ekf` so that there is exactly
+    /// one owner of safety-relevant filter state — the structural
+    /// precondition for redundant-channel snapshot replication
+    /// (HLR-STATE-003).
+    pub estimator: EstimatorState,
+
+    /// Sanitizer fallback memory (per-group last-good vectors,
+    /// fallback-age counters, consecutive-fallback counters).
+    /// Phase 4 relocated this from `Sanitizer.state` so the kernel
+    /// has a single owner of safety-relevant fallback state —
+    /// hot-spare takeover requires the backup channel to inherit
+    /// these counters.
+    pub fallback: ActuatorFallbackState,
 }
 // COV:EXCL_STOP
 
@@ -100,7 +117,7 @@ impl KernelState {
     /// Construct a fresh kernel state with the given `KernelChecks`.
     /// All other fields take their `Default` values: `PowerOn` init
     /// state, `Hover` mode, no faults, `Primary` control law, default
-    /// actuator and timing state.
+    /// actuator/timing/estimator/fallback state.
     pub fn new(checks: KernelChecks) -> Self {
         Self {
             init_state: InitState::PowerOn,
@@ -110,6 +127,8 @@ impl KernelState {
             checks,
             actuator_state: ActuatorState::default(),
             timing_stats: TimingStats::default(),
+            estimator: EstimatorState::default(),
+            fallback: ActuatorFallbackState::default(),
         }
     }
 }

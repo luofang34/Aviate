@@ -1,12 +1,13 @@
 //! Scalar EKF update kernel and heading specialization.
 //!
-//! `update_scalar` is the workhorse used by `update_gnss` and
-//! `update_baro`; `update_heading` is a yaw-specific variant used by
-//! `update_mag` after it has resolved the heading innovation. Both live
-//! here to keep the `impl Ekf` block under the 500-line cap per file.
-//! No re-exports — impl block split only.
+//! `scalar_update` is the workhorse used by `update_gnss` and
+//! `update_baro`; `heading_update` is a yaw-specific variant used by
+//! `update_mag` after it has resolved the heading innovation. Both
+//! live here to keep the `impl Ekf` block under the 500-line cap per
+//! file. Phase 4: methods take `&self` (algorithm tuning) and `&mut
+//! state: &mut EstimatorState` (filter state).
 
-use super::{Ekf, IDX_AB, IDX_ATT, IDX_GB, IDX_MB, IDX_POS, IDX_VEL, STATE_DIM};
+use super::{Ekf, EstimatorState, IDX_AB, IDX_ATT, IDX_GB, IDX_MB, IDX_POS, IDX_VEL, STATE_DIM};
 use crate::math::{Quaternion, Vector3};
 use crate::types::{
     Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, RadiansPerSecond, Scalar,
@@ -16,13 +17,16 @@ impl Ekf {
     /// Internal: Update yaw/heading using scalar observation.
     ///
     /// H = [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, ..., 0] (observes z-component of attitude error)
-    pub(crate) fn update_heading(&mut self, innov: Scalar, r_noise: Scalar) {
-        // For heading, we observe the z-component of attitude error (yaw)
-        // H is a row vector with 1 at IDX_ATT+2 (yaw error state)
+    pub(crate) fn heading_update(
+        &self,
+        state: &mut EstimatorState,
+        innov: Scalar,
+        r_noise: Scalar,
+    ) {
         let state_idx = IDX_ATT + 2; // Yaw error state
 
-        // Innovation variance: S = H * P * H' + R = P[yaw][yaw] + R
-        let s = self.p_cov.get(state_idx, state_idx) + r_noise;
+        // Innovation variance
+        let s = state.p_cov.get(state_idx, state_idx) + r_noise;
         if s < 1e-9 {
             return; // COV:EXCL(DEFENSIVE: prevent division by zero)
         }
@@ -33,88 +37,93 @@ impl Ekf {
             return; // Reject measurement
         }
 
-        // Kalman gain: K = P * H' / S
-        // Since H is sparse (only 1 at state_idx), K[i] = P[i][state_idx] / S
+        // Kalman gain
         let k_gain_factor = 1.0 / s;
         let mut k_vector = [0.0; STATE_DIM];
         for (i, val) in k_vector.iter_mut().enumerate().take(STATE_DIM) {
-            *val = self.p_cov.get(i, state_idx) * k_gain_factor;
+            *val = state.p_cov.get(i, state_idx) * k_gain_factor;
         }
 
         // Update position states
-        self.pos.x = Meters(self.pos.x.0 + k_vector[IDX_POS] * innov);
-        self.pos.y = Meters(self.pos.y.0 + k_vector[IDX_POS + 1] * innov);
-        self.pos.z = Meters(self.pos.z.0 + k_vector[IDX_POS + 2] * innov);
+        state.pos.x = Meters(state.pos.x.0 + k_vector[IDX_POS] * innov);
+        state.pos.y = Meters(state.pos.y.0 + k_vector[IDX_POS + 1] * innov);
+        state.pos.z = Meters(state.pos.z.0 + k_vector[IDX_POS + 2] * innov);
 
         // Update velocity states
-        self.vel.x = MetersPerSecond(self.vel.x.0 + k_vector[IDX_VEL] * innov);
-        self.vel.y = MetersPerSecond(self.vel.y.0 + k_vector[IDX_VEL + 1] * innov);
-        self.vel.z = MetersPerSecond(self.vel.z.0 + k_vector[IDX_VEL + 2] * innov);
+        state.vel.x = MetersPerSecond(state.vel.x.0 + k_vector[IDX_VEL] * innov);
+        state.vel.y = MetersPerSecond(state.vel.y.0 + k_vector[IDX_VEL + 1] * innov);
+        state.vel.z = MetersPerSecond(state.vel.z.0 + k_vector[IDX_VEL + 2] * innov);
 
-        // Update attitude (apply small angle rotation to quaternion)
+        // Update attitude
         let d_ang = Vector3::new(
             k_vector[IDX_ATT] * innov,
             k_vector[IDX_ATT + 1] * innov,
             k_vector[IDX_ATT + 2] * innov,
         );
-        let dq_small = self.sanitize_quat(Quaternion::new(
+        let dq_small = state.sanitize_quat(Quaternion::new(
             1.0,
             d_ang.x * 0.5,
             d_ang.y * 0.5,
             d_ang.z * 0.5,
         ));
-        self.quat = self.sanitize_quat(self.quat.mul(&dq_small));
+        let new_quat = state.quat.mul(&dq_small);
+        state.quat = state.sanitize_quat(new_quat);
 
         // Update gyro bias
-        self.gyro_bias.x = RadiansPerSecond(self.gyro_bias.x.0 + k_vector[IDX_GB] * innov);
-        self.gyro_bias.y = RadiansPerSecond(self.gyro_bias.y.0 + k_vector[IDX_GB + 1] * innov);
-        self.gyro_bias.z = RadiansPerSecond(self.gyro_bias.z.0 + k_vector[IDX_GB + 2] * innov);
+        state.gyro_bias.x = RadiansPerSecond(state.gyro_bias.x.0 + k_vector[IDX_GB] * innov);
+        state.gyro_bias.y = RadiansPerSecond(state.gyro_bias.y.0 + k_vector[IDX_GB + 1] * innov);
+        state.gyro_bias.z = RadiansPerSecond(state.gyro_bias.z.0 + k_vector[IDX_GB + 2] * innov);
 
         // Update accel bias
-        self.accel_bias.x = MetersPerSecondSquared(self.accel_bias.x.0 + k_vector[IDX_AB] * innov);
-        self.accel_bias.y =
-            MetersPerSecondSquared(self.accel_bias.y.0 + k_vector[IDX_AB + 1] * innov);
-        self.accel_bias.z =
-            MetersPerSecondSquared(self.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
+        state.accel_bias.x =
+            MetersPerSecondSquared(state.accel_bias.x.0 + k_vector[IDX_AB] * innov);
+        state.accel_bias.y =
+            MetersPerSecondSquared(state.accel_bias.y.0 + k_vector[IDX_AB + 1] * innov);
+        state.accel_bias.z =
+            MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
 
         // Update mag bias
-        self.mag_bias.x = Microtesla(self.mag_bias.x.0 + k_vector[IDX_MB] * innov);
-        self.mag_bias.y = Microtesla(self.mag_bias.y.0 + k_vector[IDX_MB + 1] * innov);
-        self.mag_bias.z = Microtesla(self.mag_bias.z.0 + k_vector[IDX_MB + 2] * innov);
+        state.mag_bias.x = Microtesla(state.mag_bias.x.0 + k_vector[IDX_MB] * innov);
+        state.mag_bias.y = Microtesla(state.mag_bias.y.0 + k_vector[IDX_MB + 1] * innov);
+        state.mag_bias.z = Microtesla(state.mag_bias.z.0 + k_vector[IDX_MB + 2] * innov);
 
         // Update covariance: P = (I - K*H) * P
-        // H*P is row state_idx of P
         let mut p_row_h = [0.0; STATE_DIM];
         for (c, val) in p_row_h.iter_mut().enumerate().take(STATE_DIM) {
-            *val = self.p_cov.get(state_idx, c);
+            *val = state.p_cov.get(state_idx, c);
         }
 
         for (r, &k_val) in k_vector.iter().enumerate().take(STATE_DIM) {
             for (c, &p_val) in p_row_h.iter().enumerate().take(STATE_DIM) {
-                let val = self.p_cov.get(r, c) - k_val * p_val;
-                self.p_cov.set(r, c, val);
+                let val = state.p_cov.get(r, c) - k_val * p_val;
+                state.p_cov.set(r, c, val);
             }
         }
 
-        self.p_cov.make_symmetric();
+        state.p_cov.make_symmetric();
     }
 
-    #[doc(hidden)]
-    pub fn update_scalar(&mut self, state_idx: usize, meas: Scalar, r_noise: Scalar) {
+    pub(crate) fn scalar_update(
+        &self,
+        state: &mut EstimatorState,
+        state_idx: usize,
+        meas: Scalar,
+        r_noise: Scalar,
+    ) {
         // Standard EKF scalar update: H = [0, ..., 1, ... 0] at state_idx
         let pred = match state_idx {
-            0 => self.pos.x.0,
-            1 => self.pos.y.0,
-            2 => self.pos.z.0,
-            3 => self.vel.x.0,
-            4 => self.vel.y.0,
-            5 => self.vel.z.0,
+            0 => state.pos.x.0,
+            1 => state.pos.y.0,
+            2 => state.pos.z.0,
+            3 => state.vel.x.0,
+            4 => state.vel.y.0,
+            5 => state.vel.z.0,
             _ => return, // COV:EXCL(DEFENSIVE: invalid state_idx guard)
         };
         let innov = meas - pred;
 
         // Innovation Gating
-        let s = self.p_cov.get(state_idx, state_idx) + r_noise;
+        let s = state.p_cov.get(state_idx, state_idx) + r_noise;
         if s < 1e-9 {
             return; // COV:EXCL(DEFENSIVE: prevent division by zero)
         }
@@ -124,36 +133,31 @@ impl Ekf {
             return; // Reject measurement
         }
 
-        // 2. Kalman Gain K = PH' / S
-        // PH' is the column of P at state_idx
+        // Kalman Gain
         let k_gain_factor = 1.0 / s;
-        // We can compute K and update state & P directly to avoid allocating K vector explicitly
-
-        // Update State: x = x + K * innov
-        // K[i] = P[i][state_idx] / S
         let mut k_vector = [0.0; STATE_DIM];
         for (i, val) in k_vector.iter_mut().enumerate().take(STATE_DIM) {
-            *val = self.p_cov.get(i, state_idx) * k_gain_factor;
+            *val = state.p_cov.get(i, state_idx) * k_gain_factor;
         }
 
-        self.pos.x = Meters(self.pos.x.0 + k_vector[IDX_POS] * innov);
-        self.pos.y = Meters(self.pos.y.0 + k_vector[IDX_POS + 1] * innov);
-        self.pos.z = Meters(self.pos.z.0 + k_vector[IDX_POS + 2] * innov);
+        state.pos.x = Meters(state.pos.x.0 + k_vector[IDX_POS] * innov);
+        state.pos.y = Meters(state.pos.y.0 + k_vector[IDX_POS + 1] * innov);
+        state.pos.z = Meters(state.pos.z.0 + k_vector[IDX_POS + 2] * innov);
 
-        self.vel.x = MetersPerSecond(self.vel.x.0 + k_vector[IDX_VEL] * innov);
-        self.vel.y = MetersPerSecond(self.vel.y.0 + k_vector[IDX_VEL + 1] * innov);
-        self.vel.z = MetersPerSecond(self.vel.z.0 + k_vector[IDX_VEL + 2] * innov);
+        state.vel.x = MetersPerSecond(state.vel.x.0 + k_vector[IDX_VEL] * innov);
+        state.vel.y = MetersPerSecond(state.vel.y.0 + k_vector[IDX_VEL + 1] * innov);
+        state.vel.z = MetersPerSecond(state.vel.z.0 + k_vector[IDX_VEL + 2] * innov);
 
-        // Update other states (biases, etc.)
-        self.gyro_bias.x = RadiansPerSecond(self.gyro_bias.x.0 + k_vector[IDX_GB] * innov);
-        self.gyro_bias.y = RadiansPerSecond(self.gyro_bias.y.0 + k_vector[IDX_GB + 1] * innov);
-        self.gyro_bias.z = RadiansPerSecond(self.gyro_bias.z.0 + k_vector[IDX_GB + 2] * innov);
+        state.gyro_bias.x = RadiansPerSecond(state.gyro_bias.x.0 + k_vector[IDX_GB] * innov);
+        state.gyro_bias.y = RadiansPerSecond(state.gyro_bias.y.0 + k_vector[IDX_GB + 1] * innov);
+        state.gyro_bias.z = RadiansPerSecond(state.gyro_bias.z.0 + k_vector[IDX_GB + 2] * innov);
 
-        self.accel_bias.x = MetersPerSecondSquared(self.accel_bias.x.0 + k_vector[IDX_AB] * innov);
-        self.accel_bias.y =
-            MetersPerSecondSquared(self.accel_bias.y.0 + k_vector[IDX_AB + 1] * innov);
-        self.accel_bias.z =
-            MetersPerSecondSquared(self.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
+        state.accel_bias.x =
+            MetersPerSecondSquared(state.accel_bias.x.0 + k_vector[IDX_AB] * innov);
+        state.accel_bias.y =
+            MetersPerSecondSquared(state.accel_bias.y.0 + k_vector[IDX_AB + 1] * innov);
+        state.accel_bias.z =
+            MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
 
         // Attitude update (linearized error)
         let d_ang = Vector3::new(
@@ -161,38 +165,67 @@ impl Ekf {
             k_vector[IDX_ATT + 1] * innov,
             k_vector[IDX_ATT + 2] * innov,
         );
-        // Apply small angle rotation to quaternion
-        // Better: use small angle approx dq = [1, dx/2, dy/2, dz/2]
-        let dq_small = self.sanitize_quat(Quaternion::new(
+        let dq_small = state.sanitize_quat(Quaternion::new(
             1.0,
             d_ang.x * 0.5,
             d_ang.y * 0.5,
             d_ang.z * 0.5,
         ));
-        self.quat = self.sanitize_quat(self.quat.mul(&dq_small));
+        let new_quat = state.quat.mul(&dq_small);
+        state.quat = state.sanitize_quat(new_quat);
 
-        // 4. Update P = (I - KH) * P
-        // P_new = P - K * H * P
-        // H*P is row state_idx of P.
-        // (K * (H*P))[r][c] = K[r] * P[state_idx][c]
-
-        // Create new P to avoid in-place corruption during calc?
-        // P[r][c] -= K[r] * P[state_idx][c]
-        // This can be done in place safely if we iterate carefully?
-        // Yes, P[state_idx][c] is constant for the row 'r' loop if we extract row first.
-
+        // Update P = (I - KH) * P
         let mut p_row_h = [0.0; STATE_DIM];
         for (c, val) in p_row_h.iter_mut().enumerate().take(STATE_DIM) {
-            *val = self.p_cov.get(state_idx, c);
+            *val = state.p_cov.get(state_idx, c);
         }
 
         for (r, &k_val) in k_vector.iter().enumerate().take(STATE_DIM) {
             for (c, &p_val) in p_row_h.iter().enumerate().take(STATE_DIM) {
-                let val = self.p_cov.get(r, c) - k_val * p_val;
-                self.p_cov.set(r, c, val);
+                let val = state.p_cov.get(r, c) - k_val * p_val;
+                state.p_cov.set(r, c, val);
             }
         }
 
-        self.p_cov.make_symmetric();
+        state.p_cov.make_symmetric();
     }
 }
+
+/// Implement the public `Estimator` trait by delegating each method
+/// to the per-submodule helper. The trait surface takes `&mut state`
+/// — the helpers carry the math against the same `&mut state`.
+// COV:EXCL_START(DELEGATE: every body in this impl forwards to the
+// equivalent inherent Ekf helper that carries the math; the delegate
+// has no executable logic of its own and is exercised through the
+// kernel update path. The math is tested directly via ekf_tests.rs
+// against the inherent helpers.)
+impl super::Estimator for Ekf {
+    fn predict(&self, state: &mut EstimatorState, imu: &crate::sensor::ImuData, dt: Scalar) {
+        Ekf::predict_state(self, state, imu, dt)
+    }
+
+    fn update_gnss(
+        &self,
+        state: &mut EstimatorState,
+        gnss_reading: &crate::sensor::SensorReading<crate::sensor::GnssData>,
+    ) {
+        Ekf::update_gnss_state(self, state, gnss_reading)
+    }
+
+    fn update_baro(
+        &self,
+        state: &mut EstimatorState,
+        baro_reading: &crate::sensor::SensorReading<crate::sensor::BaroData>,
+    ) {
+        Ekf::update_baro_state(self, state, baro_reading)
+    }
+
+    fn update_mag(
+        &self,
+        state: &mut EstimatorState,
+        mag_reading: &crate::sensor::SensorReading<crate::sensor::MagData>,
+    ) {
+        Ekf::update_mag_state(self, state, mag_reading)
+    }
+}
+// COV:EXCL_STOP

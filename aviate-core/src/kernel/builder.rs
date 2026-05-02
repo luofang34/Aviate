@@ -14,7 +14,7 @@
 //!     .estimator(Ekf::default())
 //!     .controller(MultirotorController::default())
 //!     .mixer(QuadXMixer { timestamp_source: hw_clock })
-//!     .sanitizer(Sanitizer::default())
+//!     .sanitizer(Sanitizer)
 //!     .mode_config(my_mode_config)
 //!     .pre_arm_required(PreArmFlags::QUAD_WITH_GPS)
 //!     .build();
@@ -194,7 +194,7 @@ mod tests {
             .estimator(Ekf::default())
             .controller(MultirotorController::default())
             .mixer(fake_mixer())
-            .sanitizer(Sanitizer::default())
+            .sanitizer(Sanitizer)
     }
 
     #[test]

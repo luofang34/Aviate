@@ -372,14 +372,29 @@ pub const MAX_FALLBACK_AGE_CYCLES: u16 = 100;
 /// Degradation triggers on frame (MAX_CONSECUTIVE_FALLBACK + 1).
 pub const MAX_CONSECUTIVE_FALLBACK: u16 = 10;
 
+/// Sanitizer trait — algorithm identity + per-cycle decision logic.
+///
+/// Phase 4: takes `&self` (algorithm config / unit) plus
+/// `&mut fallback: &mut ActuatorFallbackState` for the
+/// last-good / age / consecutive-fallback counters that persist
+/// across cycles. The fallback state lives only in
+/// `KernelState.fallback` — the sanitizer carries no per-cycle
+/// state of its own.
 pub trait ActuatorSanitizer {
-    fn sanitize(&mut self, cmd: &mut ActuatorCmd, mode: &ModeConfig) -> SanitizeReport;
+    fn sanitize(
+        &self,
+        cmd: &mut ActuatorCmd,
+        mode: &ModeConfig,
+        fallback: &mut ActuatorFallbackState,
+    ) -> SanitizeReport;
 }
 
+/// Group-aware actuator sanitizer (spec §10). Phase 4 stripped its
+/// internal state field — fallback memory now lives in
+/// `KernelState.fallback`. The sanitizer itself is a unit struct,
+/// preserved as a name for the trait impl + future tuning fields.
 #[derive(Default)]
-pub struct Sanitizer {
-    pub state: ActuatorFallbackState,
-}
+pub struct Sanitizer;
 
 // Impl block lives in mixer/sanitizer_impl.rs to keep this file under the
 // 500-line per-.rs cap. No re-export here — rustc's coverage phantom-DA

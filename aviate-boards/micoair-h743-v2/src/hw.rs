@@ -615,7 +615,7 @@ impl BoardStep for MicoAirBoard {
         };
 
         if !self.ekf_initialized && self.sensor_cache.imu.is_some() {
-            self.kernel.pipeline.estimator.init(
+            self.kernel.state.estimator.init(
                 Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
                 Vector3::new(
                     MetersPerSecond(0.0),
@@ -670,7 +670,7 @@ fn create_kernel() -> HwKernel {
         Ekf::default(),
         controller,
         mixer,
-        Sanitizer::default(),
+        Sanitizer,
         mode_config,
     );
     kernel.state.checks.pre_arm.update_throttle(true);

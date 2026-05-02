@@ -4,7 +4,7 @@
 //! - update_gnss with valid GNSS data
 //! - GNSS health gating
 
-use aviate_core::ekf::{Ekf, EkfConfig};
+use aviate_core::ekf::{Ekf, EkfConfig, Estimator, EstimatorState};
 use aviate_core::math::{Quaternion, Vector3};
 use aviate_core::sensor::{GnssData, GnssFix, GnssHealth, SensorHealth, SensorReading};
 use aviate_core::time::{TimeSource, Timestamp};
@@ -45,10 +45,11 @@ fn make_gnss_reading(
 #[test]
 fn ekf_update_gnss_with_good_health() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize EKF with known state
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -71,19 +72,20 @@ fn ekf_update_gnss_with_good_health() {
     );
 
     // Should update state
-    ekf.update_gnss(&gnss);
+    ekf.update_gnss(&mut state, &gnss);
 
     // After update, state should be influenced by GNSS measurement
     // We verify it's initialized and accepted the update
-    assert!(ekf.is_initialized());
+    assert!(state.is_initialized());
 }
 
 #[test]
 fn ekf_update_gnss_rejects_degraded_sensor_health() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -105,18 +107,19 @@ fn ekf_update_gnss_rejects_degraded_sensor_health() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&gnss);
+    ekf.update_gnss(&mut state, &gnss);
 
     // EKF should still be initialized (update was rejected, not failed)
-    assert!(ekf.is_initialized());
+    assert!(state.is_initialized());
 }
 
 #[test]
 fn ekf_update_gnss_rejects_suspect_gnss_health() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -138,18 +141,19 @@ fn ekf_update_gnss_rejects_suspect_gnss_health() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&gnss);
+    ekf.update_gnss(&mut state, &gnss);
 
     // Update should be rejected due to suspect GNSS health
-    assert!(ekf.is_initialized());
+    assert!(state.is_initialized());
 }
 
 #[test]
 fn ekf_update_gnss_rejects_no_fix() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -171,18 +175,19 @@ fn ekf_update_gnss_rejects_no_fix() {
         GnssFix::None, // No fix - should reject
     );
 
-    ekf.update_gnss(&gnss);
+    ekf.update_gnss(&mut state, &gnss);
 
     // Update should be rejected due to no fix
-    assert!(ekf.is_initialized());
+    assert!(state.is_initialized());
 }
 
 #[test]
 fn ekf_update_gnss_rejects_lost_gnss_health() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -204,16 +209,17 @@ fn ekf_update_gnss_rejects_lost_gnss_health() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&gnss);
+    ekf.update_gnss(&mut state, &gnss);
 
     // Update should be rejected due to lost GNSS
-    assert!(ekf.is_initialized());
+    assert!(state.is_initialized());
 }
 
 #[test]
 fn ekf_default_creates_valid_instance() {
-    let ekf = Ekf::default();
-    assert!(!ekf.is_initialized());
+    let _ekf = Ekf::default();
+    let state = EstimatorState::default();
+    assert!(!state.is_initialized());
 }
 
 // =============================================================================
@@ -226,10 +232,11 @@ fn ekf_predict_on_uninitialized_returns_early() {
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // EKF is NOT initialized
-    assert!(!ekf.is_initialized());
+    assert!(!state.is_initialized());
 
     // Create valid IMU data
     let imu = ImuData {
@@ -246,10 +253,10 @@ fn ekf_predict_on_uninitialized_returns_early() {
     };
 
     // Call predict on uninitialized EKF - should return early without panic
-    ekf.predict(&imu, 0.001);
+    ekf.predict(&mut state, &imu, 0.001);
 
     // Should still be uninitialized
-    assert!(!ekf.is_initialized());
+    assert!(!state.is_initialized());
 }
 
 #[test]
@@ -258,10 +265,11 @@ fn ekf_predict_with_zero_dt_returns_early() {
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize EKF
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -285,10 +293,10 @@ fn ekf_predict_with_zero_dt_returns_early() {
     };
 
     // Call predict with dt = 0 - should return early
-    ekf.predict(&imu, 0.0);
+    ekf.predict(&mut state, &imu, 0.0);
 
     // Should still be initialized (didn't crash)
-    assert!(ekf.is_initialized());
+    assert!(state.is_initialized());
 }
 
 #[test]
@@ -297,10 +305,11 @@ fn ekf_predict_with_negative_dt_returns_early() {
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize EKF
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -324,10 +333,10 @@ fn ekf_predict_with_negative_dt_returns_early() {
     };
 
     // Call predict with negative dt - should return early
-    ekf.predict(&imu, -0.001);
+    ekf.predict(&mut state, &imu, -0.001);
 
     // Should still be initialized (didn't crash)
-    assert!(ekf.is_initialized());
+    assert!(state.is_initialized());
 }
 
 #[test]
@@ -336,10 +345,11 @@ fn ekf_predict_with_nan_dt_returns_early() {
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize EKF
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -363,23 +373,24 @@ fn ekf_predict_with_nan_dt_returns_early() {
     };
 
     // Call predict with NaN dt - should return early
-    ekf.predict(&imu, f32::NAN);
+    ekf.predict(&mut state, &imu, f32::NAN);
 
     // Should still be initialized (didn't crash)
-    assert!(ekf.is_initialized());
+    assert!(state.is_initialized());
 }
 
 #[test]
 fn ekf_get_estimate_uninitialized_returns_unusable() {
     use aviate_core::state::{EstimateQuality, StateValidFlags};
 
-    let ekf = Ekf::default();
+    let _ekf = Ekf::default();
+    let state = EstimatorState::default();
 
     // EKF is NOT initialized
-    assert!(!ekf.is_initialized());
+    assert!(!state.is_initialized());
 
     // Get estimate from uninitialized EKF
-    let estimate = ekf.get_estimate();
+    let estimate = state.get_estimate();
 
     // Should return Unusable quality and empty flags
     assert_eq!(estimate.quality, EstimateQuality::Unusable);
@@ -410,10 +421,11 @@ fn ekf_get_estimate_uninitialized_returns_unusable() {
 #[test]
 fn ekf_gnss_update_moves_state_toward_measurement() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize at origin
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -423,7 +435,7 @@ fn ekf_gnss_update_moves_state_toward_measurement() {
         Quaternion::IDENTITY,
     );
 
-    let state_before = ekf.get_estimate();
+    let state_before = state.get_estimate();
     assert_eq!(state_before.position_ned[0].0, 0.0);
 
     // GNSS offset of 1m chosen to be within innovation gate (< 3.87m)
@@ -440,9 +452,9 @@ fn ekf_gnss_update_moves_state_toward_measurement() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&gnss);
+    ekf.update_gnss(&mut state, &gnss);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
 
     // With K = P/(P+R) = 0.1/0.6 ≈ 0.167
     // Expected: x_new = 0 + 0.167 * 1.0 ≈ 0.167
@@ -469,10 +481,11 @@ fn ekf_predict_integrates_angular_velocity() {
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize level
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -497,10 +510,10 @@ fn ekf_predict_integrates_angular_velocity() {
     };
 
     for _ in 0..100 {
-        ekf.predict(&imu, 0.01);
+        ekf.predict(&mut state, &imu, 0.01);
     }
 
-    let estimate = ekf.get_estimate();
+    let estimate = state.get_estimate();
 
     // Extract yaw from quaternion (simplified for small angles)
     // For small rotations around Z: yaw ≈ 2 * qz / qw
@@ -521,10 +534,11 @@ fn ekf_predict_integrates_velocity_to_position() {
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize with velocity in +X direction
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(1.0), // 1 m/s in X
@@ -550,10 +564,10 @@ fn ekf_predict_integrates_velocity_to_position() {
 
     // Run for 1 second
     for _ in 0..100 {
-        ekf.predict(&imu, 0.01);
+        ekf.predict(&mut state, &imu, 0.01);
     }
 
-    let estimate = ekf.get_estimate();
+    let estimate = state.get_estimate();
 
     // Position should have increased by approximately 1 meter in X
     assert!(
@@ -574,10 +588,11 @@ fn ekf_innovation_gating_rejects_outlier() {
 
     // Use config with reasonable innovation gate
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize at origin
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -601,10 +616,10 @@ fn ekf_innovation_gating_rejects_outlier() {
         ],
     };
     for _ in 0..10 {
-        ekf.predict(&imu, 0.01);
+        ekf.predict(&mut state, &imu, 0.01);
     }
 
-    let state_before = ekf.get_estimate();
+    let state_before = state.get_estimate();
 
     // GNSS with huge outlier - 1000m away (should be rejected by innovation gating)
     let outlier_gnss = make_gnss_reading(
@@ -619,9 +634,9 @@ fn ekf_innovation_gating_rejects_outlier() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&outlier_gnss);
+    ekf.update_gnss(&mut state, &outlier_gnss);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
 
     // State should NOT have jumped to 1000m (innovation gating should reject)
     // chi² = 1000² / 0.6 = 1,666,667 >> 25 (gate²) → rejected
@@ -636,9 +651,10 @@ fn ekf_innovation_gating_rejects_outlier() {
 #[test]
 fn ekf_innovation_gate_boundary_accepts_below_threshold() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -662,9 +678,9 @@ fn ekf_innovation_gate_boundary_accepts_below_threshold() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&gnss);
+    ekf.update_gnss(&mut state, &gnss);
 
-    let estimate = ekf.get_estimate();
+    let estimate = state.get_estimate();
 
     // Should accept and move state: K ≈ 0.167, x_new ≈ 0.5
     assert!(
@@ -677,9 +693,10 @@ fn ekf_innovation_gate_boundary_accepts_below_threshold() {
 #[test]
 fn ekf_innovation_gate_boundary_rejects_above_threshold() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -703,9 +720,9 @@ fn ekf_innovation_gate_boundary_rejects_above_threshold() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&gnss);
+    ekf.update_gnss(&mut state, &gnss);
 
-    let estimate = ekf.get_estimate();
+    let estimate = state.get_estimate();
 
     // Should reject - state should remain near zero
     assert!(
@@ -718,9 +735,10 @@ fn ekf_innovation_gate_boundary_rejects_above_threshold() {
 #[test]
 fn ekf_multiple_gnss_updates_converge() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -748,10 +766,10 @@ fn ekf_multiple_gnss_updates_converge() {
     //   P_{n+1} = (1 - K_n) * P_n
     // Convergence is limited by measurement noise R dominating as P shrinks
     for _ in 0..20 {
-        ekf.update_gnss(&gnss);
+        ekf.update_gnss(&mut state, &gnss);
     }
 
-    let estimate = ekf.get_estimate();
+    let estimate = state.get_estimate();
 
     // After 20 updates, converges to ~0.80m (empirically verified)
     // Convergence is slower due to measurement noise R=0.5 limiting gain as P decreases
@@ -776,9 +794,10 @@ fn ekf_predict_with_nan_imu_gyro_returns_early() {
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -788,7 +807,7 @@ fn ekf_predict_with_nan_imu_gyro_returns_early() {
         Quaternion::IDENTITY,
     );
 
-    let state_before = ekf.get_estimate();
+    let state_before = state.get_estimate();
 
     // IMU with NaN gyro - should be detected and skipped
     let imu = ImuData {
@@ -804,16 +823,16 @@ fn ekf_predict_with_nan_imu_gyro_returns_early() {
         ],
     };
 
-    ekf.predict(&imu, 0.01);
+    ekf.predict(&mut state, &imu, 0.01);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
 
     // State should not change when IMU data is invalid
     assert_eq!(
         state_before.position_ned[0].0, state_after.position_ned[0].0,
         "Position should not change with NaN gyro"
     );
-    assert!(ekf.is_initialized());
+    assert!(state.is_initialized());
 }
 
 #[test]
@@ -822,9 +841,10 @@ fn ekf_predict_with_inf_imu_accel_returns_early() {
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -834,7 +854,7 @@ fn ekf_predict_with_inf_imu_accel_returns_early() {
         Quaternion::IDENTITY,
     );
 
-    let state_before = ekf.get_estimate();
+    let state_before = state.get_estimate();
 
     // IMU with Inf accel - should be detected and skipped
     let imu = ImuData {
@@ -850,16 +870,16 @@ fn ekf_predict_with_inf_imu_accel_returns_early() {
         ],
     };
 
-    ekf.predict(&imu, 0.01);
+    ekf.predict(&mut state, &imu, 0.01);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
 
     // State should not change when IMU data is invalid
     assert_eq!(
         state_before.position_ned[0].0, state_after.position_ned[0].0,
         "Position should not change with Inf accel"
     );
-    assert!(ekf.is_initialized());
+    assert!(state.is_initialized());
 }
 
 #[test]
@@ -868,9 +888,10 @@ fn ekf_predict_with_extreme_gyro_rate_handles_gracefully() {
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -896,9 +917,9 @@ fn ekf_predict_with_extreme_gyro_rate_handles_gracefully() {
     };
 
     // Should not panic even with extreme values
-    ekf.predict(&imu, 0.01);
+    ekf.predict(&mut state, &imu, 0.01);
 
-    let estimate = ekf.get_estimate();
+    let estimate = state.get_estimate();
 
     // Quaternion should still be normalized after extreme rotation
     let q = estimate.attitude;
@@ -920,10 +941,11 @@ fn ekf_baro_update_modifies_altitude() {
     use aviate_core::types::Pascals;
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize at z = 0 (sea level in NED)
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -933,7 +955,7 @@ fn ekf_baro_update_modifies_altitude() {
         Quaternion::IDENTITY,
     );
 
-    let state_before = ekf.get_estimate();
+    let state_before = state.get_estimate();
     assert_eq!(state_before.position_ned[2].0, 0.0);
 
     // Baro reading at ~5m altitude (within innovation gate)
@@ -962,9 +984,9 @@ fn ekf_baro_update_modifies_altitude() {
         source_id: 0,
     };
 
-    ekf.update_baro(&baro_reading);
+    ekf.update_baro(&mut state, &baro_reading);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
 
     // Z position should have moved toward the baro measurement (negative = up in NED)
     assert!(
@@ -990,9 +1012,10 @@ fn ekf_baro_rejects_degraded_sensor_health() {
     use aviate_core::types::Pascals;
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1002,7 +1025,7 @@ fn ekf_baro_rejects_degraded_sensor_health() {
         Quaternion::IDENTITY,
     );
 
-    let state_before = ekf.get_estimate();
+    let state_before = state.get_estimate();
 
     let baro_reading = SensorReading {
         value: BaroData {
@@ -1022,9 +1045,9 @@ fn ekf_baro_rejects_degraded_sensor_health() {
         source_id: 0,
     };
 
-    ekf.update_baro(&baro_reading);
+    ekf.update_baro(&mut state, &baro_reading);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
 
     // State should not change with degraded sensor health
     assert_eq!(
@@ -1038,9 +1061,10 @@ fn ekf_baro_with_no_pressure_does_nothing() {
     use aviate_core::sensor::{AirData, BaroData};
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1050,7 +1074,7 @@ fn ekf_baro_with_no_pressure_does_nothing() {
         Quaternion::IDENTITY,
     );
 
-    let state_before = ekf.get_estimate();
+    let state_before = state.get_estimate();
 
     let baro_reading = SensorReading {
         value: BaroData {
@@ -1070,9 +1094,9 @@ fn ekf_baro_with_no_pressure_does_nothing() {
         source_id: 0,
     };
 
-    ekf.update_baro(&baro_reading);
+    ekf.update_baro(&mut state, &baro_reading);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
 
     // State should not change when no pressure data
     assert_eq!(
@@ -1091,9 +1115,10 @@ fn ekf_state_uncertainty_grows_during_predict_only() {
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1131,15 +1156,15 @@ fn ekf_state_uncertainty_grows_during_predict_only() {
     );
 
     // Before any predict, 3m should be within gate (chi² = 9/0.6 = 15 < 25)
-    ekf.update_gnss(&gnss_3m);
-    let pos_after_first_update = ekf.get_estimate().position_ned[0].0;
+    ekf.update_gnss(&mut state, &gnss_3m);
+    let pos_after_first_update = state.get_estimate().position_ned[0].0;
     assert!(
         pos_after_first_update > 0.4,
         "3m measurement should be accepted initially"
     );
 
     // Re-init to test P growth
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1152,7 +1177,7 @@ fn ekf_state_uncertainty_grows_during_predict_only() {
     // Run many predict steps without update - P should grow
     // This means larger innovations will be accepted (gate widens with P)
     for _ in 0..100 {
-        ekf.predict(&imu, 0.01);
+        ekf.predict(&mut state, &imu, 0.01);
     }
 
     // Now try GNSS at 5m which was previously rejected
@@ -1169,8 +1194,8 @@ fn ekf_state_uncertainty_grows_during_predict_only() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&gnss_5m);
-    let pos_after_large_p = ekf.get_estimate().position_ned[0].0;
+    ekf.update_gnss(&mut state, &gnss_5m);
+    let pos_after_large_p = state.get_estimate().position_ned[0].0;
 
     // With grown P, the 5m measurement should now be accepted
     // (P grows during predict, making S = P + R larger, reducing chi²)
@@ -1184,9 +1209,10 @@ fn ekf_state_uncertainty_grows_during_predict_only() {
 #[test]
 fn ekf_kalman_gain_decreases_with_repeated_updates() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1209,14 +1235,14 @@ fn ekf_kalman_gain_decreases_with_repeated_updates() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&gnss);
-    let pos_after_first = ekf.get_estimate().position_ned[0].0;
+    ekf.update_gnss(&mut state, &gnss);
+    let pos_after_first = state.get_estimate().position_ned[0].0;
     // K1 = P0 / (P0 + R) = 0.1 / 0.6 ≈ 0.167
     // First update: x = 0 + 0.167 * 1.0 ≈ 0.167
     let first_movement = pos_after_first; // ~0.167
 
     // Now re-init with offset and do another update sequence to observe K shrink
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1228,14 +1254,14 @@ fn ekf_kalman_gain_decreases_with_repeated_updates() {
 
     // Do 10 updates to shrink P
     for _ in 0..10 {
-        ekf.update_gnss(&gnss);
+        ekf.update_gnss(&mut state, &gnss);
     }
-    let pos_after_ten = ekf.get_estimate().position_ned[0].0;
+    let pos_after_ten = state.get_estimate().position_ned[0].0;
 
     // Do one more update and measure the movement
     let pos_before_11th = pos_after_ten;
-    ekf.update_gnss(&gnss);
-    let pos_after_11th = ekf.get_estimate().position_ned[0].0;
+    ekf.update_gnss(&mut state, &gnss);
+    let pos_after_11th = state.get_estimate().position_ned[0].0;
 
     let eleventh_movement = pos_after_11th - pos_before_11th;
 
@@ -1260,9 +1286,10 @@ fn ekf_quaternion_normalization_preserved_after_long_run() {
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1287,10 +1314,10 @@ fn ekf_quaternion_normalization_preserved_after_long_run() {
                 MetersPerSecondSquared(-9.81),
             ],
         };
-        ekf.predict(&imu, 0.01);
+        ekf.predict(&mut state, &imu, 0.01);
     }
 
-    let estimate = ekf.get_estimate();
+    let estimate = state.get_estimate();
     let q = estimate.attitude;
     let norm = (q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z).sqrt();
 
@@ -1308,10 +1335,11 @@ fn ekf_quaternion_normalization_preserved_after_long_run() {
 #[test]
 fn ekf_gnss_velocity_update_correctness() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize with zero velocity
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1321,7 +1349,7 @@ fn ekf_gnss_velocity_update_correctness() {
         Quaternion::IDENTITY,
     );
 
-    let state_before = ekf.get_estimate();
+    let state_before = state.get_estimate();
     assert_eq!(state_before.velocity_ned[0].0, 0.0);
 
     // GNSS with velocity measurement
@@ -1340,9 +1368,9 @@ fn ekf_gnss_velocity_update_correctness() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&gnss);
+    ekf.update_gnss(&mut state, &gnss);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
 
     // With K = 0.5 for velocity, expect ~0.5 m/s
     let expected_vx = 0.5;
@@ -1366,10 +1394,11 @@ fn ekf_gnss_velocity_update_correctness() {
 #[test]
 fn ekf_gnss_velocity_fusion_independent_of_position() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize at non-zero position
-    ekf.init(
+    state.init(
         Vector3::new(Meters(100.0), Meters(200.0), Meters(-50.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1394,9 +1423,9 @@ fn ekf_gnss_velocity_fusion_independent_of_position() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&gnss);
+    ekf.update_gnss(&mut state, &gnss);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
 
     // Position should not change (zero innovation)
     assert!(
@@ -1446,10 +1475,11 @@ fn make_mag_reading(
 #[test]
 fn ekf_mag_update_moves_yaw_toward_measurement() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize with identity quaternion (yaw = 0, pointing North)
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1459,7 +1489,7 @@ fn ekf_mag_update_moves_yaw_toward_measurement() {
         Quaternion::IDENTITY,
     );
 
-    let state_before = ekf.get_estimate();
+    let state_before = state.get_estimate();
     let (_, _, yaw_before) = state_before.attitude.to_euler();
     assert!(yaw_before.abs() < 0.01, "Initial yaw should be ~0");
 
@@ -1482,9 +1512,9 @@ fn ekf_mag_update_moves_yaw_toward_measurement() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag(&mag);
+    ekf.update_mag(&mut state, &mag);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
     let (_, _, yaw_after) = state_after.attitude.to_euler();
 
     // Yaw should move toward the mag heading
@@ -1504,9 +1534,10 @@ fn ekf_mag_update_moves_yaw_toward_measurement() {
 #[test]
 fn ekf_mag_rejects_degraded_sensor_health() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1516,7 +1547,7 @@ fn ekf_mag_rejects_degraded_sensor_health() {
         Quaternion::IDENTITY,
     );
 
-    let state_before = ekf.get_estimate();
+    let state_before = state.get_estimate();
 
     // Valid mag field but degraded sensor health
     let mag = make_mag_reading(
@@ -1524,9 +1555,9 @@ fn ekf_mag_rejects_degraded_sensor_health() {
         SensorHealth::Degraded,
     );
 
-    ekf.update_mag(&mag);
+    ekf.update_mag(&mut state, &mag);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
 
     // Attitude should not change
     assert_eq!(
@@ -1538,9 +1569,10 @@ fn ekf_mag_rejects_degraded_sensor_health() {
 #[test]
 fn ekf_mag_rejects_weak_field() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1550,7 +1582,7 @@ fn ekf_mag_rejects_weak_field() {
         Quaternion::IDENTITY,
     );
 
-    let state_before = ekf.get_estimate();
+    let state_before = state.get_estimate();
 
     // Weak field < 20 μT (interference or shielding)
     // norm = sqrt(5² + 5² + 5²) ≈ 8.66 μT < 20 μT
@@ -1559,9 +1591,9 @@ fn ekf_mag_rejects_weak_field() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag(&mag);
+    ekf.update_mag(&mut state, &mag);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
 
     // Attitude should not change (field rejected)
     assert_eq!(
@@ -1573,9 +1605,10 @@ fn ekf_mag_rejects_weak_field() {
 #[test]
 fn ekf_mag_rejects_strong_field() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1585,7 +1618,7 @@ fn ekf_mag_rejects_strong_field() {
         Quaternion::IDENTITY,
     );
 
-    let state_before = ekf.get_estimate();
+    let state_before = state.get_estimate();
 
     // Strong field > 70 μT (near ferrous material)
     // norm = sqrt(60² + 60² + 60²) ≈ 104 μT > 70 μT
@@ -1594,9 +1627,9 @@ fn ekf_mag_rejects_strong_field() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag(&mag);
+    ekf.update_mag(&mut state, &mag);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
 
     // Attitude should not change (field rejected)
     assert_eq!(
@@ -1612,8 +1645,9 @@ fn ekf_mag_weight_decays_with_inclination() {
 
     // First: low inclination (vertical_ratio < 0.8)
     let config = EkfConfig::default();
-    let mut ekf_low = Ekf::new(config);
-    ekf_low.init(
+    let ekf_low = Ekf::new(config);
+    let mut state_low = EstimatorState::default();
+    state_low.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1630,12 +1664,13 @@ fn ekf_mag_weight_decays_with_inclination() {
         [Microtesla(40.0), Microtesla(15.0), Microtesla(10.0)],
         SensorHealth::Good,
     );
-    ekf_low.update_mag(&mag_low_incl);
-    let (_, _, yaw_low) = ekf_low.get_estimate().attitude.to_euler();
+    ekf_low.update_mag(&mut state_low, &mag_low_incl);
+    let (_, _, yaw_low) = state_low.get_estimate().attitude.to_euler();
 
     // Second: high inclination (vertical_ratio in decay range 0.8-0.95)
-    let mut ekf_high = Ekf::new(config);
-    ekf_high.init(
+    let ekf_high = Ekf::new(config);
+    let mut state_high = EstimatorState::default();
+    state_high.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1653,8 +1688,8 @@ fn ekf_mag_weight_decays_with_inclination() {
         [Microtesla(10.0), Microtesla(15.0), Microtesla(40.0)],
         SensorHealth::Good,
     );
-    ekf_high.update_mag(&mag_high_incl);
-    let (_, _, yaw_high) = ekf_high.get_estimate().attitude.to_euler();
+    ekf_high.update_mag(&mut state_high, &mag_high_incl);
+    let (_, _, yaw_high) = state_high.get_estimate().attitude.to_euler();
 
     // High inclination should result in smaller yaw change due to weight decay
     // (r_effective increases with lower weight, reducing Kalman gain)
@@ -1669,9 +1704,10 @@ fn ekf_mag_weight_decays_with_inclination() {
 #[test]
 fn ekf_mag_stops_fusion_at_high_inclination() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1681,7 +1717,7 @@ fn ekf_mag_stops_fusion_at_high_inclination() {
         Quaternion::IDENTITY,
     );
 
-    let state_before = ekf.get_estimate();
+    let state_before = state.get_estimate();
 
     // Very high inclination: nearly vertical field (polar region)
     // norm = sqrt(5² + 5² + 45²) ≈ 45.5 μT
@@ -1691,9 +1727,9 @@ fn ekf_mag_stops_fusion_at_high_inclination() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag(&mag);
+    ekf.update_mag(&mut state, &mag);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
 
     // Attitude should not change (high inclination rejects fusion)
     assert_eq!(
@@ -1708,10 +1744,11 @@ fn ekf_mag_innovation_gating_rejects_outlier() {
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
 
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize pointing North (yaw = 0)
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1735,10 +1772,10 @@ fn ekf_mag_innovation_gating_rejects_outlier() {
         ],
     };
     for _ in 0..10 {
-        ekf.predict(&imu, 0.01);
+        ekf.predict(&mut state, &imu, 0.01);
     }
 
-    let state_before = ekf.get_estimate();
+    let state_before = state.get_estimate();
 
     // Mag reading indicating ~180° heading (pointing South)
     // This is a huge innovation (~π rad) that should be rejected
@@ -1749,9 +1786,9 @@ fn ekf_mag_innovation_gating_rejects_outlier() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag(&mag);
+    ekf.update_mag(&mut state, &mag);
 
-    let state_after = ekf.get_estimate();
+    let state_after = state.get_estimate();
     let (_, _, yaw_before) = state_before.attitude.to_euler();
     let (_, _, yaw_after) = state_after.attitude.to_euler();
 
@@ -1767,10 +1804,11 @@ fn ekf_mag_innovation_gating_rejects_outlier() {
 #[test]
 fn ekf_mag_uninitialized_returns_early() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // EKF is NOT initialized
-    assert!(!ekf.is_initialized());
+    assert!(!state.is_initialized());
 
     let mag = make_mag_reading(
         [Microtesla(40.0), Microtesla(15.0), Microtesla(10.0)],
@@ -1778,19 +1816,20 @@ fn ekf_mag_uninitialized_returns_early() {
     );
 
     // Should return early without panic
-    ekf.update_mag(&mag);
+    ekf.update_mag(&mut state, &mag);
 
     // Should still be uninitialized
-    assert!(!ekf.is_initialized());
+    assert!(!state.is_initialized());
 }
 
 #[test]
 fn ekf_mag_innovation_wrapping_above_pi() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize with identity quaternion (yaw = 0)
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1818,22 +1857,23 @@ fn ekf_mag_innovation_wrapping_above_pi() {
     // This will trigger innovation wrapping: innov = 3.49 - 0 = 3.49 > π
     // Wrapped: innov = 3.49 - 2π ≈ -2.79
     // Then innovation gating may reject, but wrapping is exercised
-    ekf.update_mag(&mag);
+    ekf.update_mag(&mut state, &mag);
 
     // Verify EKF is still operational
-    assert!(ekf.is_initialized());
+    assert!(state.is_initialized());
 }
 
 #[test]
 fn ekf_mag_innovation_wrapping_below_minus_pi() {
     let config = EkfConfig::default();
-    let mut ekf = Ekf::new(config);
+    let ekf = Ekf::new(config);
+    let mut state = EstimatorState::default();
 
     // Initialize with yaw pointing roughly South (~π rad)
     // Using quaternion for 180° yaw: q = [cos(π/2), 0, 0, sin(π/2)] = [0, 0, 0, 1]
     let quat_south = Quaternion::new(0.0, 0.0, 0.0, 1.0);
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1857,9 +1897,9 @@ fn ekf_mag_innovation_wrapping_below_minus_pi() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag(&mag);
+    ekf.update_mag(&mut state, &mag);
 
-    assert!(ekf.is_initialized());
+    assert!(state.is_initialized());
 }
 
 // =============================================================================
@@ -1868,19 +1908,22 @@ fn ekf_mag_innovation_wrapping_below_minus_pi() {
 
 #[test]
 fn ekf_has_numeric_fault_false_initially() {
-    let ekf = Ekf::new(EkfConfig::default());
+    let _ekf = Ekf::new(EkfConfig::default());
+
+    let state = EstimatorState::default();
     assert!(
-        !ekf.has_numeric_fault(),
+        !state.has_numeric_fault(),
         "quat_fault should be false initially"
     );
 }
 
 #[test]
 fn ekf_init_clears_quat_fault() {
-    let mut ekf = Ekf::new(EkfConfig::default());
+    let _ekf = Ekf::new(EkfConfig::default());
+    let mut state = EstimatorState::default();
 
     // First init
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1892,7 +1935,7 @@ fn ekf_init_clears_quat_fault() {
 
     // After init, fault should be false
     assert!(
-        !ekf.has_numeric_fault(),
+        !state.has_numeric_fault(),
         "quat_fault should be false after init()"
     );
 }
@@ -1902,9 +1945,10 @@ fn ekf_normal_operation_no_fault() {
     use aviate_core::sensor::ImuData;
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
 
-    let mut ekf = Ekf::new(EkfConfig::default());
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = EstimatorState::default();
 
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1930,11 +1974,11 @@ fn ekf_normal_operation_no_fault() {
 
     // Multiple predict cycles should not trigger fault
     for _ in 0..100 {
-        ekf.predict(&imu, 0.01);
+        ekf.predict(&mut state, &imu, 0.01);
     }
 
     assert!(
-        !ekf.has_numeric_fault(),
+        !state.has_numeric_fault(),
         "Normal operation should not trigger quat_fault"
     );
 }
@@ -1944,10 +1988,11 @@ fn ekf_reinit_clears_fault_state() {
     use aviate_core::sensor::ImuData;
     use aviate_core::types::{MetersPerSecondSquared, RadiansPerSecond};
 
-    let mut ekf = Ekf::new(EkfConfig::default());
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = EstimatorState::default();
 
     // First init
-    ekf.init(
+    state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
         Vector3::new(
             MetersPerSecond(0.0),
@@ -1972,11 +2017,11 @@ fn ekf_reinit_clears_fault_state() {
     };
 
     for _ in 0..50 {
-        ekf.predict(&imu, 0.01);
+        ekf.predict(&mut state, &imu, 0.01);
     }
 
     // Re-initialize - this should clear any potential fault state
-    ekf.init(
+    state.init(
         Vector3::new(Meters(100.0), Meters(50.0), Meters(-10.0)),
         Vector3::new(
             MetersPerSecond(5.0),
@@ -1986,5 +2031,8 @@ fn ekf_reinit_clears_fault_state() {
         Quaternion::from_axis_angle(Vector3::new(0.0, 0.0, 1.0), 0.5),
     );
 
-    assert!(!ekf.has_numeric_fault(), "Re-init should clear quat_fault");
+    assert!(
+        !state.has_numeric_fault(),
+        "Re-init should clear quat_fault"
+    );
 }

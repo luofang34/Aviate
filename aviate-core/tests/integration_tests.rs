@@ -5,7 +5,7 @@ mod tests {
     use aviate_core::control::attitude::AttitudeController;
     use aviate_core::control::rate::RateController;
     use aviate_core::control::{Command, VehicleController};
-    use aviate_core::ekf::Ekf;
+    use aviate_core::ekf::{Ekf, Estimator, EstimatorState};
     use aviate_core::math::{Quaternion, Vector3};
     use aviate_core::mixer::{ActuatorCmd, Mixer, Sanitizer};
     use aviate_core::sensor::{
@@ -66,10 +66,11 @@ mod tests {
 
     #[test]
     fn test_ekf_init_predict() {
-        let mut ekf = Ekf::default();
-        assert!(!ekf.is_initialized());
+        let ekf = Ekf::default();
+        let mut state = EstimatorState::default();
+        assert!(!state.is_initialized());
 
-        ekf.init(
+        state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -78,23 +79,24 @@ mod tests {
             ),
             Quaternion::IDENTITY,
         );
-        assert!(ekf.is_initialized());
+        assert!(state.is_initialized());
 
         let imu_zero = ImuData {
             accel: [MetersPerSecondSquared(0.0); 3],
             gyro: [RadiansPerSecond(0.0); 3],
         };
 
-        ekf.predict(&imu_zero, 0.01);
+        ekf.predict(&mut state, &imu_zero, 0.01);
 
-        let est = ekf.get_estimate();
+        let est = state.get_estimate();
         assert!(est.position_ned[0].0.abs() < 1e-5);
     }
 
     #[test]
     fn test_ekf_accel_integration() {
-        let mut ekf = Ekf::default();
-        ekf.init(
+        let ekf = Ekf::default();
+        let mut state = EstimatorState::default();
+        state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -115,10 +117,10 @@ mod tests {
 
         let dt = 0.1;
         for _ in 0..10 {
-            ekf.predict(&imu_accel, dt);
+            ekf.predict(&mut state, &imu_accel, dt);
         }
 
-        let est = ekf.get_estimate();
+        let est = state.get_estimate();
 
         let vel_x = est.velocity_ned[0].0;
         assert!(
@@ -137,8 +139,9 @@ mod tests {
 
     #[test]
     fn test_ekf_gnss_update() {
-        let mut ekf = Ekf::default();
-        ekf.init(
+        let ekf = Ekf::default();
+        let mut state = EstimatorState::default();
+        state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -156,7 +159,7 @@ mod tests {
             ],
             gyro: [RadiansPerSecond(0.0); 3],
         };
-        ekf.predict(&imu_stationary, 1.0);
+        ekf.predict(&mut state, &imu_stationary, 1.0);
 
         let gnss = GnssData {
             position_ned: [Meters(1.0), Meters(0.0), Meters(0.0)],
@@ -176,9 +179,9 @@ mod tests {
             health: SensorHealth::Good,
         };
 
-        ekf.update_gnss(&gnss_reading);
+        ekf.update_gnss(&mut state, &gnss_reading);
 
-        let est = ekf.get_estimate();
+        let est = state.get_estimate();
         assert!(
             est.position_ned[0].0 > 0.1,
             "Position should move towards measurement"
@@ -316,13 +319,13 @@ mod tests {
             Ekf::default(),
             MultirotorController::default(),
             mixer,
-            Sanitizer::default(),
+            Sanitizer,
             mode_config,
             test_required,
         );
 
         // Initialize EKF
-        kernel.pipeline.estimator.init(
+        kernel.state.estimator.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -420,13 +423,13 @@ mod tests {
             Ekf::default(),
             FixedWingController,
             mixer,
-            Sanitizer::default(),
+            Sanitizer,
             mode_config,
             test_required,
         );
 
         // Init EKF
-        kernel.pipeline.estimator.init(
+        kernel.state.estimator.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -478,8 +481,9 @@ mod tests {
 
     #[test]
     fn test_attitude_integration() {
-        let mut ekf = Ekf::default();
-        ekf.init(
+        let ekf = Ekf::default();
+        let mut state = EstimatorState::default();
+        state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -500,17 +504,18 @@ mod tests {
 
         let dt = 0.1;
         for _ in 0..10 {
-            ekf.predict(&imu_rot, dt);
+            ekf.predict(&mut state, &imu_rot, dt);
         }
 
-        let est = ekf.get_estimate();
+        let est = state.get_estimate();
         assert!(est.attitude.z > 0.4, "Should have rotated around Z axis");
     }
 
     #[test]
     fn test_gnss_health_rejection() {
-        let mut ekf = Ekf::default();
-        ekf.init(
+        let ekf = Ekf::default();
+        let mut state = EstimatorState::default();
+        state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -538,16 +543,17 @@ mod tests {
             health: SensorHealth::Good,
         };
 
-        ekf.update_gnss(&gnss_reading);
+        ekf.update_gnss(&mut state, &gnss_reading);
 
-        let est = ekf.get_estimate();
+        let est = state.get_estimate();
         assert_eq!(est.position_ned[0].0, 0.0, "Suspect GNSS should be ignored");
     }
 
     #[test]
     fn test_innovation_gating() {
-        let mut ekf = Ekf::default();
-        ekf.init(
+        let ekf = Ekf::default();
+        let mut state = EstimatorState::default();
+        state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -575,16 +581,17 @@ mod tests {
             health: SensorHealth::Good,
         };
 
-        ekf.update_gnss(&gnss_reading);
+        ekf.update_gnss(&mut state, &gnss_reading);
 
-        let est = ekf.get_estimate();
+        let est = state.get_estimate();
         assert_eq!(est.position_ned[0].0, 0.0, "Outlier GNSS should be gated");
     }
 
     #[test]
     fn test_sensor_health_rejection() {
-        let mut ekf = Ekf::default();
-        ekf.init(
+        let ekf = Ekf::default();
+        let mut state = EstimatorState::default();
+        state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -615,8 +622,8 @@ mod tests {
             health: SensorHealth::Failed,
         };
 
-        ekf.update_baro(&baro_reading);
-        let est = ekf.get_estimate();
+        ekf.update_baro(&mut state, &baro_reading);
+        let est = state.get_estimate();
         assert_eq!(
             est.position_ned[2].0, 0.0,
             "Failed sensor should be ignored"
@@ -625,8 +632,9 @@ mod tests {
 
     #[test]
     fn test_gnss_fix_none_rejection() {
-        let mut ekf = Ekf::default();
-        ekf.init(
+        let ekf = Ekf::default();
+        let mut state = EstimatorState::default();
+        state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -654,8 +662,8 @@ mod tests {
             health: SensorHealth::Good,
         };
 
-        ekf.update_gnss(&gnss_reading);
-        let est = ekf.get_estimate();
+        ekf.update_gnss(&mut state, &gnss_reading);
+        let est = state.get_estimate();
         assert_eq!(
             est.position_ned[0].0, 0.0,
             "GnssFix::None should be ignored"
@@ -664,8 +672,9 @@ mod tests {
 
     #[test]
     fn test_nan_input_handling() {
-        let mut ekf = Ekf::default();
-        ekf.init(
+        let ekf = Ekf::default();
+        let mut state = EstimatorState::default();
+        state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -680,8 +689,8 @@ mod tests {
             gyro: [RadiansPerSecond(0.0); 3],
         };
 
-        ekf.predict(&imu_nan, 0.01);
-        let est = ekf.get_estimate();
+        ekf.predict(&mut state, &imu_nan, 0.01);
+        let est = state.get_estimate();
         assert!(
             !est.position_ned[0].0.is_nan(),
             "State should not be NaN after bad input"
@@ -690,8 +699,9 @@ mod tests {
 
     #[test]
     fn test_baro_update() {
-        let mut ekf = Ekf::default();
-        ekf.init(
+        let ekf = Ekf::default();
+        let mut state = EstimatorState::default();
+        state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -732,11 +742,11 @@ mod tests {
         };
 
         for _ in 0..50 {
-            ekf.predict(&imu_stationary, 0.1);
-            ekf.update_baro(&baro_reading);
+            ekf.predict(&mut state, &imu_stationary, 0.1);
+            ekf.update_baro(&mut state, &baro_reading);
         }
 
-        let est = ekf.get_estimate();
+        let est = state.get_estimate();
         assert!(
             est.position_ned[2].0 < -0.5,
             "Baro update should move Z position (NED)"
@@ -745,8 +755,9 @@ mod tests {
 
     #[test]
     fn test_mag_update() {
-        let mut ekf = Ekf::default();
-        ekf.init(
+        let ekf = Ekf::default();
+        let mut state = EstimatorState::default();
+        state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -769,13 +780,14 @@ mod tests {
             health: SensorHealth::Good,
         };
 
-        ekf.update_mag(&mag_reading);
+        ekf.update_mag(&mut state, &mag_reading);
     }
 
     #[test]
     fn test_long_run_stability() {
-        let mut ekf = Ekf::default();
-        ekf.init(
+        let ekf = Ekf::default();
+        let mut state = EstimatorState::default();
+        state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -795,10 +807,10 @@ mod tests {
         };
 
         for _ in 0..1000 {
-            ekf.predict(&imu, 0.01);
+            ekf.predict(&mut state, &imu, 0.01);
         }
 
-        let est = ekf.get_estimate();
+        let est = state.get_estimate();
         assert!(!est.position_ned[0].0.is_nan());
         assert!(est.position_ned[0].0.abs() < 1.0);
     }
