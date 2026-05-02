@@ -187,6 +187,52 @@ derived = false
 traces_to = ["4cf7189d-23e6-470a-b71c-c90a81c59970", "211a2f8a-493f-4c6c-bf7e-73275154dd54"]
 
 [[requirements]]
+uid = "7ba433cd-35a2-4702-a4af-3d3adf5ce4b5"
+id = "LLR-PIPE-101"
+title = "KernelPipeline holds the closed algorithm-identity field set"
+owner = "aviate-core@aviate"
+description = """
+The struct `KernelPipeline<E, V, M, S>` SHALL declare exactly the
+fields: estimator (E), controller (V), mixer (M), sanitizer (S),
+protector (SimpleEnvelopeProtector). No additional algorithm class
+SHALL be added to `AviateKernelImpl` as a direct field — additions
+go on `KernelPipeline` and require a new LLR + floor bump.
+
+The four generic parameters (`E: Estimator`, `V: VehicleController`,
+`M: Mixer`, `S: ActuatorSanitizer`) match the kernel's own bounds,
+so substituting a parameter at the kernel boundary substitutes it
+inside the pipeline transparently.
+"""
+verification_methods = ["review", "test"]
+modules = ["aviate-core/src/kernel/pipeline.rs"]
+derived = false
+traces_to = ["190d1f8d-40d0-47cc-9bb7-1b5e210d0802"]
+
+[[requirements]]
+uid = "7bf0feea-fd1f-48ae-aa1f-50c59f35621a"
+id = "LLR-PIPE-102"
+title = "AviateKernelImpl exposes KernelPipeline via pipeline field"
+owner = "aviate-core@aviate"
+description = """
+The kernel struct SHALL hold its algorithm-identity bundle as a
+single field `pipeline: KernelPipeline<E, V, M, S>`. Access sites
+within `kernel_logic.rs`, `kernel_update.rs`, `kernel_trait.rs`, and
+external consumers SHALL use the path `<kernel>.pipeline.<algorithm>`
+— no shadow direct fields. The pipeline's `new()` constructor takes
+exactly the four caller-supplied algorithm boxes; the
+`SimpleEnvelopeProtector` is a zero-size singleton populated
+internally.
+"""
+verification_methods = ["review", "test"]
+modules = [
+    "aviate-core/src/kernel.rs",
+    "aviate-core/src/kernel/pipeline.rs",
+    "aviate-core/src/kernel/builder.rs",
+]
+derived = false
+traces_to = ["190d1f8d-40d0-47cc-9bb7-1b5e210d0802"]
+
+[[requirements]]
 uid = "471d6bcb-8845-4bbe-9c8a-6d69bee67794"
 id = "LLR-CFG-103"
 title = "AviateKernelBuilder produces a fully-initialized AviateKernelImpl"
