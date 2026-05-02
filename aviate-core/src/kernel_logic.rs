@@ -332,7 +332,33 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         }
     }
 
-    /// Perform a ground reset, clearing transient states
+    /// Perform a ground reset, clearing transient states.
+    ///
+    /// Clears every field of `KernelState` that holds runtime/safety
+    /// state — except cfg-derived defaults that should remain stable
+    /// (mode_config etc. live in `cfg`, not `state`). This is the
+    /// kernel's "back to factory un-init posture" entry point;
+    /// post-conditions:
+    ///
+    /// - `init_state == InitState::ConfigLoading` (re-enter init)
+    /// - `faults` empty
+    /// - `control_law == Primary`
+    /// - `mode == ConfigMode::Hover`
+    /// - `checks` (pre_arm/in_flight/transition) all reset
+    /// - `estimator` un-initialized (covariance back to factory `I*0.1`,
+    ///   biases zero, quat IDENTITY, init/fault latches cleared)
+    /// - `fallback` cleared (no inherited per-group last-good /
+    ///   age / consecutive-fallback counters from before reset)
+    /// - `actuator_state` cleared (no inherited commanded-actuator
+    ///   snapshot)
+    /// - `timing_stats` cleared (fresh per-cycle accumulators)
+    ///
+    /// Pre-Phase-4-followup, the fallback and actuator_state fields
+    /// were silently inherited across resets — a hot-spare takeover
+    /// or post-fault re-init would leak the sanitizer's last-good
+    /// memory and the previous commanded-actuator snapshot,
+    /// violating the spec §17 "init-from-clean-state" contract.
+    /// LLR-STATE-107 documents the closure rule.
     #[inline(never)]
     pub fn ground_reset(&mut self) {
         // Only allowed if not armed
@@ -346,6 +372,10 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         self.state.checks.transition.reset();
         self.state.init_state = InitState::ConfigLoading; // Restart init sequence
         self.state.estimator.reset();
+        self.state.fallback = crate::mixer::ActuatorFallbackState::default();
+        self.state.actuator_state = crate::mixer::ActuatorState::default();
+        self.state.timing_stats = crate::kernel_types::TimingStats::default();
+        self.state.mode = crate::control::ConfigMode::Hover;
 
         self.state.control_law = ControlLawV1::Primary; // Reset law
     }

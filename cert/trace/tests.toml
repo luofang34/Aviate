@@ -164,6 +164,23 @@ that the trait surface compiles and produces a valid borrow.
 traces_to = ["434a64f5-be78-46ca-bc0f-de1eaffb297d"]
 
 [[tests]]
+uid = "ecb25a28-1580-43e8-be51-d873f6f6151b"
+id = "TST-STATE-009"
+title = "test_ground_reset_clears_fallback_and_actuator_state"
+owner = "aviate-core@aviate"
+description = """
+The `tests/kernel.rs::test_ground_reset_clears_fallback_and_actuator_state`
+test injects non-default values into every state field that
+`ground_reset()` is supposed to clear (fallback counters, commanded
+actuator snapshot, timing stats, mode), invokes `ground_reset()`,
+and asserts every field is back to its default value. Verifies
+LLR-STATE-107 — that ground reset is observable-state-clearing
+across the full `KernelState` runtime field set, not just the
+lifecycle-machine cursor.
+"""
+traces_to = ["57835534-5fc0-45a2-92b9-6920328193e5"]
+
+[[tests]]
 uid = "df421f16-968c-4fa7-a49d-8c0daa94d851"
 id = "TST-STATE-006"
 title = "ekf_tests.rs full suite (43 tests, EstimatorState pattern)"
