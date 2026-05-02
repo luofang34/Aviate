@@ -16,7 +16,8 @@ use aviate_core::control::{
     AxisCommand, Command, CommandSource, ConfigMode, ControlMode, Limits, Setpoint,
     VehicleController,
 };
-use aviate_core::ekf::{Estimator, EstimatorState};
+use aviate_core::ekf::runtime::EstimatorRuntimeState;
+use aviate_core::ekf::Estimator;
 use aviate_core::kernel::config::ResolvedKernelConfig;
 use aviate_core::kernel::pipeline::KernelPipeline;
 use aviate_core::kernel::state::KernelState;
@@ -36,25 +37,65 @@ use aviate_core::ChannelId;
 
 // ----- Mock Estimator -----
 //
-// Pure no-op: never mutates `EstimatorState`. The kernel still gets a
-// well-formed `StateEstimate` from `state.estimator.get_estimate()`
-// (Unusable quality because `is_initialized() == false`), so the
-// downstream cycle exercises the safe-output path. That's fine — the
-// purpose is to prove the trait dispatch works.
+// Selects its own `RuntimeState` distinct from `EkfState` to prove
+// the kernel does not assume the EKF's 18-state-+-18×18-covariance
+// shape. `MockEstimatorRuntime` is a 6-byte struct with no
+// covariance — totally incompatible with EkfState. If the kernel
+// were to inadvertently downcast to `&EkfState` somewhere, this
+// fails to compile.
 
-#[derive(Default)]
-struct MockEstimator {
-    predict_calls: core::cell::Cell<u32>,
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct MockEstimatorRuntime {
+    predict_calls: u32,
+    initialized: bool,
 }
 
-impl Estimator for MockEstimator {
-    fn predict(&self, _state: &mut EstimatorState, _imu: &ImuData, _dt: Scalar) {
-        self.predict_calls
-            .set(self.predict_calls.get().wrapping_add(1));
+impl EstimatorRuntimeState for MockEstimatorRuntime {
+    fn reset(&mut self) {
+        *self = Self::default();
     }
-    fn update_gnss(&self, _: &mut EstimatorState, _: &SensorReading<GnssData>) {}
-    fn update_baro(&self, _: &mut EstimatorState, _: &SensorReading<BaroData>) {}
-    fn update_mag(&self, _: &mut EstimatorState, _: &SensorReading<MagData>) {}
+}
+
+#[derive(Default)]
+struct MockEstimator;
+
+impl Estimator for MockEstimator {
+    type RuntimeState = MockEstimatorRuntime;
+
+    fn predict(&self, state: &mut MockEstimatorRuntime, _imu: &ImuData, _dt: Scalar) {
+        state.predict_calls = state.predict_calls.wrapping_add(1);
+        state.initialized = true;
+    }
+    fn update_gnss(&self, _: &mut MockEstimatorRuntime, _: &SensorReading<GnssData>) {}
+    fn update_baro(&self, _: &mut MockEstimatorRuntime, _: &SensorReading<BaroData>) {}
+    fn update_mag(&self, _: &mut MockEstimatorRuntime, _: &SensorReading<MagData>) {}
+
+    fn estimate(&self, state: &MockEstimatorRuntime) -> aviate_core::state::StateEstimate {
+        // Project the mock's tiny runtime onto the kernel-facing
+        // `StateEstimate` summary. Quality is `Good` once the mock
+        // has seen at least one predict() call — that's all the
+        // kernel needs to know to gate its in-flight checks.
+        use aviate_core::state::{EstimateQuality, StateEstimate, StateValidFlags};
+        if state.initialized {
+            StateEstimate {
+                attitude: aviate_core::math::Quaternion::IDENTITY,
+                angular_velocity: [aviate_core::types::RadiansPerSecond(0.0); 3],
+                position_ned: [aviate_core::types::Meters(0.0); 3],
+                velocity_ned: [aviate_core::types::MetersPerSecond(0.0); 3],
+                quality: EstimateQuality::Good,
+                valid_flags: StateValidFlags::all(),
+            }
+        } else {
+            StateEstimate {
+                attitude: aviate_core::math::Quaternion::IDENTITY,
+                angular_velocity: [aviate_core::types::RadiansPerSecond(0.0); 3],
+                position_ned: [aviate_core::types::Meters(0.0); 3],
+                velocity_ned: [aviate_core::types::MetersPerSecond(0.0); 3],
+                quality: EstimateQuality::Unusable,
+                valid_flags: StateValidFlags::empty(),
+            }
+        }
+    }
 }
 
 // ----- Mock Controller -----
@@ -222,7 +263,7 @@ fn mock_estimator_predict_is_actually_invoked() {
     let cmd = make_command();
     let actuator_state = ActuatorState::default();
 
-    assert_eq!(kernel.pipeline.estimator.predict_calls.get(), 0);
+    assert_eq!(kernel.state.estimator.predict_calls, 0);
 
     let _ = kernel.update(
         ChannelId(0),
@@ -237,7 +278,7 @@ fn mock_estimator_predict_is_actually_invoked() {
         None,
     );
 
-    let n = kernel.pipeline.estimator.predict_calls.get();
+    let n = kernel.state.estimator.predict_calls;
     assert!(
         n >= 1,
         "MockEstimator::predict should have been called at least once during update(); was {}",

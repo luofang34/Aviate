@@ -1,37 +1,50 @@
 //! Error-state EKF: state container + algorithm-identity object.
 //!
-//! Phase 4 split this module into two roles:
+//! This module hosts the default state estimator (`Ekf` +
+//! `EkfState`). The `Estimator` trait surface is generic over an
+//! associated `RuntimeState` so non-EKF estimators (MEKF, UKF,
+//! complementary filter, particle filter, VIO graph backends) can
+//! plug in with their own state shape — a 6-state attitude-only
+//! cubesat ADCS filter, an N-particle cloud, or a sliding-window
+//! graph all need different on-disk shapes than the 18-state ESKF
+//! the EKF uses today.
 //!
-//!   - `EstimatorState` — the persistent 18-state filter contents
-//!     (position, velocity, attitude, biases, covariance, init/fault
-//!     latches). Lives under `KernelState.estimator` so the kernel
-//!     has a single owner for safety-relevant state. Defines the
-//!     pure-state operations (init, reset, get_estimate,
-//!     is_initialized, has_numeric_fault, test-hook set_state) as
-//!     inherent methods.
+//! Roles:
+//!
+//!   - `EkfState` — the persistent 18-state filter contents
+//!     (position, velocity, attitude, biases, 18×18 covariance,
+//!     init/fault latches). Implements `EstimatorRuntimeState`.
+//!     Lives under `KernelState.estimator` (single safety-relevant-
+//!     state owner). Pure-state operations (`init`, `reset`,
+//!     `get_estimate`, `is_initialized`, `has_numeric_fault`,
+//!     test-hook `set_state`) are inherent methods on `EkfState`
+//!     — they're EKF-specific implementation details that don't
+//!     belong on the generic trait surface.
 //!
 //!   - `Ekf` — the algorithm-identity object carrying tuning
-//!     parameters (`EkfConfig`). The `Estimator` trait's mutation
-//!     methods (predict, update_gnss, update_baro, update_mag) take
-//!     `&self` for config plus `&mut EstimatorState` to write
-//!     filter state. This is the "every safety-relevant persistent
-//!     state field has exactly one owner" hard rule established by
-//!     SYS-STATE-001 / HLR-STATE-003.
+//!     parameters (`EkfConfig`). Implements `Estimator` with
+//!     `type RuntimeState = EkfState`. Trait methods (`predict`,
+//!     `update_gnss`, `update_baro`, `update_mag`, `estimate`,
+//!     `reset`) take `&self` for config plus
+//!     `&mut Self::RuntimeState` to write filter state.
 //!
 //! Submodules carry the math:
 //!   - `ekf/predict.rs` — IMU-driven state and covariance prediction.
 //!   - `ekf/update.rs`  — GNSS / baro / mag fusion entry points.
 //!   - `ekf/scalar.rs`  — scalar Kalman update kernel + heading
 //!     specialization, shared by the fusion entry points.
+//!   - `ekf/runtime.rs` — `EstimatorRuntimeState` trait surface.
 //!
 //! Submodules carry no re-exports to sidestep rustc's coverage
 //! phantom-DA issue (see `aviate-core/src/lib.rs` for context); every
 //! `aviate_core::ekf::Ekf::X` still resolves from the parent module.
 
 mod predict;
+pub mod runtime;
 mod scalar;
 mod update;
 
+use crate::ekf::runtime::EstimatorRuntimeState;
 use crate::math::{Matrix, Quaternion, Vector3, QUAT_NORM_EPS};
 use crate::sensor::{BaroData, GnssData, ImuData, MagData, SensorReading};
 use crate::state::{EstimateQuality, StateEstimate, StateValidFlags};
@@ -39,30 +52,65 @@ use crate::types::{
     Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, RadiansPerSecond, Scalar,
 };
 
-/// State estimator contract (LLR-EST-101..108, LLR-STATE-105).
+/// State estimator contract (LLR-EST-101..108, LLR-EST-110, LLR-STATE-105).
 ///
-/// Phase 4: the trait surface is split into algorithm operations
-/// (this trait — predict/update_*; take `&self` + `&mut EstimatorState`)
-/// and pure-state operations (inherent methods on `EstimatorState`
-/// — init/reset/get_estimate/etc.). The implementor (`Ekf`) carries
-/// only configuration / tuning; persistent filter state lives in
-/// `EstimatorState`. This makes "every safety-relevant persistent
-/// state field has exactly one owner (`KernelState`)" structurally
-/// enforced — the hard rule for redundant-channel snapshot
-/// replication, voting, and hot-spare takeover.
+/// Algorithm/state split: the trait carries algorithm identity on
+/// `&self` (tuning, configuration) and per-call runtime state on
+/// `&mut Self::RuntimeState`. The associated type lets non-EKF
+/// estimators plug in with their own state shape; today's only impl
+/// (`Ekf`) selects `RuntimeState = EkfState`.
+///
+/// `is_initialized()` / `has_numeric_fault()` are NOT trait
+/// methods — they are EKF-specific implementation details exposed
+/// as inherent methods on `EkfState`. The kernel only consults
+/// `estimate(state).quality` (a `StateEstimate` field), which every
+/// estimator implementation must produce. Likewise, `init()` and
+/// `set_state()` (test-hook) are inherent on `EkfState` — bootstrap
+/// from a `Vector3 / Quaternion` and inject from a `StateEstimate`
+/// summary are EKF-shaped operations that don't generalize to
+/// non-Kalman backends.
 pub trait Estimator {
+    /// Persistent runtime state owned by `KernelState.estimator`.
+    type RuntimeState: EstimatorRuntimeState;
+
     /// IMU-driven state and covariance propagation. Bails on
     /// non-finite dt or invalid IMU samples without touching state.
-    fn predict(&self, state: &mut EstimatorState, imu: &ImuData, dt: Scalar);
+    fn predict(&self, state: &mut Self::RuntimeState, imu: &ImuData, dt: Scalar);
 
     /// Fuse a GNSS reading. Health-gated: drops Suspect/Lost or no-fix.
-    fn update_gnss(&self, state: &mut EstimatorState, gnss_reading: &SensorReading<GnssData>);
+    fn update_gnss(&self, state: &mut Self::RuntimeState, gnss_reading: &SensorReading<GnssData>);
 
     /// Fuse a barometric pressure reading into the altitude channel.
-    fn update_baro(&self, state: &mut EstimatorState, baro_reading: &SensorReading<BaroData>);
+    fn update_baro(&self, state: &mut Self::RuntimeState, baro_reading: &SensorReading<BaroData>);
 
     /// Fuse a magnetometer reading into the heading channel.
-    fn update_mag(&self, state: &mut EstimatorState, mag_reading: &SensorReading<MagData>);
+    fn update_mag(&self, state: &mut Self::RuntimeState, mag_reading: &SensorReading<MagData>);
+
+    /// Project the runtime state onto the kernel-facing
+    /// `StateEstimate` summary (attitude / angular_velocity /
+    /// position_NED / velocity_NED / quality / valid_flags).
+    /// Pure: no state mutation.
+    fn estimate(&self, state: &Self::RuntimeState) -> StateEstimate;
+
+    /// Return the runtime state to its post-power-on baseline.
+    /// Default impl delegates to `runtime.reset()`. Override only if
+    /// the algorithm needs to reset additional state outside the
+    /// runtime struct.
+    fn reset(&self, state: &mut Self::RuntimeState) {
+        <Self::RuntimeState as EstimatorRuntimeState>::reset(state);
+    }
+
+    /// Optional test-only state injection from a `StateEstimate`
+    /// summary. Default impl is a no-op — non-Kalman estimators
+    /// (complementary filter, particle filter, graph backends) cannot
+    /// generally reconstruct internal state from the kernel-facing
+    /// `StateEstimate` projection, so they ignore the call. EKF-shape
+    /// estimators (`Ekf`, future MEKF) override to forward the
+    /// injection into their concrete state.
+    #[cfg(feature = "test-hooks")]
+    fn inject_state(&self, state: &mut Self::RuntimeState, est: &StateEstimate) {
+        let _ = (state, est);
+    }
 }
 
 // State dimension: 3 pos, 3 vel, 3 att_err, 3 gyro_bias, 3 accel_bias, 3 mag_bias = 18
@@ -102,6 +150,9 @@ pub struct EkfConfig {
     /// Mag bias random walk process noise [μT²/s] (default 1e-5)
     pub process_noise_mag_bias: Scalar,
 }
+// COV:EXCL_START(phantom DA: closing brace + blank line + impl
+// declaration carry coverage attributions from struct-init lines
+// elsewhere; no executable code on these lines.)
 
 impl Default for EkfConfig {
     fn default() -> Self {
@@ -124,6 +175,7 @@ impl Default for EkfConfig {
         }
     }
 }
+// COV:EXCL_STOP
 
 /// Persistent filter state — the 18-state error-state EKF contents
 /// plus initialization and numeric-fault latches. Lives under
@@ -138,7 +190,7 @@ impl Default for EkfConfig {
 // under grcov — same artifact class documented at the head of
 // `aviate-core/src/kernel/config.rs` and `aviate-core/src/kernel/state.rs`.)
 #[derive(Clone, Debug)]
-pub struct EstimatorState {
+pub struct EkfState {
     /// Body→Earth (NED) attitude quaternion.
     pub quat: Quaternion,
     /// Position in NED frame.
@@ -166,7 +218,7 @@ pub struct EstimatorState {
 }
 // COV:EXCL_STOP
 
-impl EstimatorState {
+impl EkfState {
     /// Construct a fresh state with the same initial-uncertainty
     /// covariance the EKF used pre-Phase-4 (`I * 0.1`). All other
     /// fields are zero / identity.
@@ -309,14 +361,22 @@ impl EstimatorState {
     }
 }
 
-impl Default for EstimatorState {
+impl EstimatorRuntimeState for EkfState {
+    fn reset(&mut self) {
+        // Delegate to the inherent ground-reset path, which restores
+        // the filter to its factory un-initialized posture.
+        EkfState::reset(self);
+    }
+}
+
+impl Default for EkfState {
     fn default() -> Self {
         Self::new()
     }
 }
 
 /// EKF algorithm identity — carries tuning configuration only.
-/// Persistent filter state lives in `EstimatorState`, which
+/// Persistent filter state lives in `EkfState`, which
 /// `predict` / `update_*` mutate via `&mut state` arguments.
 #[derive(Clone, Copy, Debug)]
 pub struct Ekf {

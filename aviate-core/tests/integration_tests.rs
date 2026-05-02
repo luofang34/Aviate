@@ -5,7 +5,7 @@ mod tests {
     use aviate_core::control::attitude::AttitudeController;
     use aviate_core::control::rate::RateController;
     use aviate_core::control::{Command, VehicleController};
-    use aviate_core::ekf::{Ekf, Estimator, EstimatorState};
+    use aviate_core::ekf::{Ekf, EkfState, Estimator};
     use aviate_core::math::{Quaternion, Vector3};
     use aviate_core::mixer::{ActuatorCmd, Mixer, Sanitizer};
     use aviate_core::sensor::{
@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn test_ekf_init_predict() {
         let ekf = Ekf::default();
-        let mut state = EstimatorState::default();
+        let mut state = EkfState::default();
         assert!(!state.is_initialized());
 
         state.init(
@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn test_ekf_accel_integration() {
         let ekf = Ekf::default();
-        let mut state = EstimatorState::default();
+        let mut state = EkfState::default();
         state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn test_ekf_gnss_update() {
         let ekf = Ekf::default();
-        let mut state = EstimatorState::default();
+        let mut state = EkfState::default();
         state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn test_attitude_integration() {
         let ekf = Ekf::default();
-        let mut state = EstimatorState::default();
+        let mut state = EkfState::default();
         state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn test_gnss_health_rejection() {
         let ekf = Ekf::default();
-        let mut state = EstimatorState::default();
+        let mut state = EkfState::default();
         state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
@@ -553,7 +553,7 @@ mod tests {
     #[test]
     fn test_innovation_gating() {
         let ekf = Ekf::default();
-        let mut state = EstimatorState::default();
+        let mut state = EkfState::default();
         state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn test_sensor_health_rejection() {
         let ekf = Ekf::default();
-        let mut state = EstimatorState::default();
+        let mut state = EkfState::default();
         state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
@@ -634,7 +634,7 @@ mod tests {
     #[test]
     fn test_gnss_fix_none_rejection() {
         let ekf = Ekf::default();
-        let mut state = EstimatorState::default();
+        let mut state = EkfState::default();
         state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
@@ -674,7 +674,7 @@ mod tests {
     #[test]
     fn test_nan_input_handling() {
         let ekf = Ekf::default();
-        let mut state = EstimatorState::default();
+        let mut state = EkfState::default();
         state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
@@ -701,7 +701,7 @@ mod tests {
     #[test]
     fn test_baro_update() {
         let ekf = Ekf::default();
-        let mut state = EstimatorState::default();
+        let mut state = EkfState::default();
         state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
@@ -757,7 +757,7 @@ mod tests {
     #[test]
     fn test_mag_update() {
         let ekf = Ekf::default();
-        let mut state = EstimatorState::default();
+        let mut state = EkfState::default();
         state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
@@ -787,7 +787,7 @@ mod tests {
     #[test]
     fn test_long_run_stability() {
         let ekf = Ekf::default();
-        let mut state = EstimatorState::default();
+        let mut state = EkfState::default();
         state.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(

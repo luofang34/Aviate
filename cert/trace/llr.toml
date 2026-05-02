@@ -791,10 +791,16 @@ substitutable algorithm traits — `Estimator`, `VehicleController`,
 `AviateKernelImpl<Mock*, Mock*, Mock*, Mock*>` that drives
 `update()` through a full cycle.
 
-The `MockEstimator` SHALL count entry into its `predict` method via
-a `core::cell::Cell<u32>` (no runtime dependency on `Mutex` or
-`AtomicU32`, which are not available in the `no_std` target). At
-least one of the tests SHALL assert the counter is non-zero after
+The `MockEstimator` SHALL declare its own `RuntimeState` distinct
+from `EkfState` — proving that `KernelState<E::RuntimeState, …>`
+parameterization actually accommodates a non-EKF state shape (any
+inadvertent downcast to `&EkfState` in kernel internals would fail
+to compile). The mock's runtime is a `(u32, bool)` struct with no
+covariance matrix; if the kernel were assuming the 18-state ESKF
+shape this test would break.
+
+At least one of the tests SHALL assert the mock's predict counter
+(stored on the runtime, not on the algorithm) is non-zero after
 `update()` — this is the runtime witness that the kernel performs
 trait dispatch rather than a concrete-type cast.
 
@@ -808,3 +814,53 @@ verification_methods = ["test"]
 modules = ["aviate-core/tests/mock_pipeline_tests.rs"]
 derived = false
 traces_to = ["9f335eda-4a07-4d8c-93db-63ad0c483184"]
+
+[[requirements]]
+uid = "b78df2ff-fad3-46f2-8320-3b36e3f36532"
+id = "LLR-EST-110"
+title = "Estimator trait carries associated RuntimeState type and projection methods"
+owner = "aviate-core@aviate"
+description = """
+`aviate_core::ekf::Estimator` SHALL declare:
+
+    type RuntimeState: EstimatorRuntimeState;
+
+with `EstimatorRuntimeState: Default + Clone + core::fmt::Debug` (in
+`aviate-core/src/ekf/runtime.rs`). The associated type pins the
+algorithm's persistent state shape to the implementor — `Ekf`
+selects `EkfState`; future MEKF / UKF / complementary-filter /
+particle / VIO impls each declare their own type. `KernelState`
+plumbs this via `KernelState<E::RuntimeState, V::RuntimeState>`,
+keeping the single-state-owner invariant (HLR-STATE-003) over the
+estimator's runtime state regardless of its concrete shape.
+
+The trait SHALL expose two state-projection helpers:
+
+  - `estimate(&self, &Self::RuntimeState) -> StateEstimate` — pure
+    projection onto the kernel-facing summary (attitude, ang.
+    velocity, position-NED, velocity-NED, quality, valid_flags).
+    The kernel uses ONLY this view of the estimator's output.
+  - `reset(&self, &mut Self::RuntimeState)` with a default impl
+    that calls `EstimatorRuntimeState::reset(state)`.
+
+Test-hook injection: `inject_state` SHALL be feature-gated
+(`#[cfg(feature = "test-hooks")]`) with a default no-op impl —
+non-Kalman estimators that cannot reconstruct internal state from a
+`StateEstimate` summary simply ignore the call. EKF-shape
+estimators (`Ekf`, future MEKF) override.
+
+Non-trait inherent methods on `EkfState` (`init`, `set_state`,
+`is_initialized`, `has_numeric_fault`, `get_estimate`, `reset`)
+remain — they are EKF-specific implementation details, not part of
+the closed trait surface. Test code that constructs an `Ekf` may
+still call them directly; kernel code SHALL go through the trait.
+"""
+verification_methods = ["test", "review"]
+modules = [
+    "aviate-core/src/ekf.rs",
+    "aviate-core/src/ekf/runtime.rs",
+    "aviate-core/src/ekf/scalar.rs",
+    "aviate-core/src/kernel/state.rs",
+]
+derived = false
+traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9"]

@@ -39,7 +39,7 @@ pub struct AviateKernelImpl<E: Estimator, V: VehicleController, M: Mixer, S: Act
     /// `kernel/state.rs`. The "every safety-relevant persistent
     /// state field has exactly one owner" invariant covers
     /// every field of this sub-struct.
-    pub state: KernelState<V::RuntimeState>,
+    pub state: KernelState<E::RuntimeState, V::RuntimeState>,
 
     /// Validated, flight-period-immutable configuration (spec §19).
     /// See `kernel/config.rs`.

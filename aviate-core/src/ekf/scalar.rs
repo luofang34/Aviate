@@ -5,9 +5,9 @@
 //! `update_mag` after it has resolved the heading innovation. Both
 //! live here to keep the `impl Ekf` block under the 500-line cap per
 //! file. Phase 4: methods take `&self` (algorithm tuning) and `&mut
-//! state: &mut EstimatorState` (filter state).
+//! state: &mut EkfState` (filter state).
 
-use super::{Ekf, EstimatorState, IDX_AB, IDX_ATT, IDX_GB, IDX_MB, IDX_POS, IDX_VEL, STATE_DIM};
+use super::{Ekf, EkfState, IDX_AB, IDX_ATT, IDX_GB, IDX_MB, IDX_POS, IDX_VEL, STATE_DIM};
 use crate::math::{Quaternion, Vector3};
 use crate::types::{
     Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, RadiansPerSecond, Scalar,
@@ -17,12 +17,7 @@ impl Ekf {
     /// Internal: Update yaw/heading using scalar observation.
     ///
     /// H = [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, ..., 0] (observes z-component of attitude error)
-    pub(crate) fn heading_update(
-        &self,
-        state: &mut EstimatorState,
-        innov: Scalar,
-        r_noise: Scalar,
-    ) {
+    pub(crate) fn heading_update(&self, state: &mut EkfState, innov: Scalar, r_noise: Scalar) {
         let state_idx = IDX_ATT + 2; // Yaw error state
 
         // Innovation variance
@@ -105,7 +100,7 @@ impl Ekf {
 
     pub(crate) fn scalar_update(
         &self,
-        state: &mut EstimatorState,
+        state: &mut EkfState,
         state_idx: usize,
         meas: Scalar,
         r_noise: Scalar,
@@ -200,13 +195,15 @@ impl Ekf {
 // kernel update path. The math is tested directly via ekf_tests.rs
 // against the inherent helpers.)
 impl super::Estimator for Ekf {
-    fn predict(&self, state: &mut EstimatorState, imu: &crate::sensor::ImuData, dt: Scalar) {
+    type RuntimeState = EkfState;
+
+    fn predict(&self, state: &mut EkfState, imu: &crate::sensor::ImuData, dt: Scalar) {
         Ekf::predict_state(self, state, imu, dt)
     }
 
     fn update_gnss(
         &self,
-        state: &mut EstimatorState,
+        state: &mut EkfState,
         gnss_reading: &crate::sensor::SensorReading<crate::sensor::GnssData>,
     ) {
         Ekf::update_gnss_state(self, state, gnss_reading)
@@ -214,7 +211,7 @@ impl super::Estimator for Ekf {
 
     fn update_baro(
         &self,
-        state: &mut EstimatorState,
+        state: &mut EkfState,
         baro_reading: &crate::sensor::SensorReading<crate::sensor::BaroData>,
     ) {
         Ekf::update_baro_state(self, state, baro_reading)
@@ -222,10 +219,23 @@ impl super::Estimator for Ekf {
 
     fn update_mag(
         &self,
-        state: &mut EstimatorState,
+        state: &mut EkfState,
         mag_reading: &crate::sensor::SensorReading<crate::sensor::MagData>,
     ) {
         Ekf::update_mag_state(self, state, mag_reading)
+    }
+
+    fn estimate(&self, state: &EkfState) -> crate::state::StateEstimate {
+        state.get_estimate()
+    }
+
+    fn reset(&self, state: &mut EkfState) {
+        EkfState::reset(state);
+    }
+
+    #[cfg(feature = "test-hooks")]
+    fn inject_state(&self, state: &mut EkfState, est: &crate::state::StateEstimate) {
+        state.set_state(est);
     }
 }
 // COV:EXCL_STOP
