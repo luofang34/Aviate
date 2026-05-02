@@ -147,3 +147,62 @@ verification_methods = ["test"]
 modules = ["aviate-core/src/ekf.rs"]
 derived = false
 traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9", "dd494a24-a5f8-4cea-b687-a471edbfea17"]
+
+[[requirements]]
+uid = "c625f97f-5a50-496e-b3ff-522954e21977"
+id = "LLR-CFG-101"
+title = "ResolvedKernelConfig holds the closed flight-period field set"
+owner = "aviate-core@aviate"
+description = """
+The struct `ResolvedKernelConfig` SHALL declare exactly the fields:
+limits (Limits), mode_config (ModeConfig), fault_table
+(FaultHandlingTable), command_timeout_ms (u32), safe_output
+([Normalized; MAX_ACTUATORS]). No additional flight-period
+configuration shall be introduced into `AviateKernelImpl` as a
+direct field — additions go on `ResolvedKernelConfig` (and require
+a new LLR + floor bump).
+"""
+verification_methods = ["review", "test"]
+modules = ["aviate-core/src/kernel/config.rs"]
+derived = false
+traces_to = ["4cf7189d-23e6-470a-b71c-c90a81c59970"]
+
+[[requirements]]
+uid = "434a64f5-be78-46ca-bc0f-de1eaffb297d"
+id = "LLR-CFG-102"
+title = "AviateKernelImpl exposes ResolvedKernelConfig via cfg field and get_config"
+owner = "aviate-core@aviate"
+description = """
+The kernel struct SHALL hold the resolved configuration as a single
+field `cfg: ResolvedKernelConfig`. Read sites for `limits`,
+`mode_config`, `fault_table`, `command_timeout_ms`, and `safe_output`
+within `kernel_update.rs` and `kernel_logic.rs` SHALL use the path
+`self.cfg.<field>` — no shadow direct fields. The
+`AviateKernelTrait::get_config()` method SHALL return
+`&self.cfg` (no copy).
+"""
+verification_methods = ["review", "test"]
+modules = ["aviate-core/src/kernel.rs", "aviate-core/src/kernel_update.rs", "aviate-core/src/kernel_trait.rs"]
+derived = false
+traces_to = ["4cf7189d-23e6-470a-b71c-c90a81c59970", "211a2f8a-493f-4c6c-bf7e-73275154dd54"]
+
+[[requirements]]
+uid = "471d6bcb-8845-4bbe-9c8a-6d69bee67794"
+id = "LLR-CFG-103"
+title = "AviateKernelBuilder produces a fully-initialized AviateKernelImpl"
+owner = "aviate-core@aviate"
+description = """
+`AviateKernelBuilder<E, V, M, S>::build()` SHALL produce a
+fully-initialized `AviateKernelImpl<E, V, M, S>` with: (a) the
+caller-supplied estimator, controller, mixer, sanitizer; (b)
+`cfg: ResolvedKernelConfig` populated from defaults overridden by
+any builder methods called; (c) `KernelChecks` constructed via
+`KernelChecks::with_pre_arm_required` if `pre_arm_required` was set,
+else via `KernelChecks::new()`. The `try_build` variant SHALL return
+a typed error naming the first missing required component instead of
+panicking.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel/builder.rs"]
+derived = false
+traces_to = ["4cf7189d-23e6-470a-b71c-c90a81c59970"]

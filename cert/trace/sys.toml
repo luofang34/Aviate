@@ -21,3 +21,25 @@ in spec §21 (Architecture Invariants).
 """
 verification_methods = ["review", "test"]
 traces_to = []
+
+[[requirements]]
+uid = "ed45538e-11f2-4887-95c2-91625b4a59cb"
+id = "SYS-CFG-001"
+title = "Flight-period kernel configuration is immutable"
+owner = "aviate-core@aviate"
+description = """
+The set of kernel parameters that govern flight envelope, fault
+handling, command-staleness threshold, per-mode actuator group
+configuration, and last-ditch safe output (spec §13, §15.2, §12, §4,
+§9, §10.5) SHALL be validated and resolved exactly once during kernel
+construction and SHALL NOT be mutated during the flight loop. Lockstep
+or backup channels comparing equality of these parameters at startup
+SHALL deterministically detect firmware/tuning drift between channels.
+
+This requirement is the structural precondition for spec §16
+(redundancy) — without a single immutable configuration source per
+channel, byte-for-byte equality across redundant channels is not
+expressible.
+"""
+verification_methods = ["review", "test"]
+traces_to = []

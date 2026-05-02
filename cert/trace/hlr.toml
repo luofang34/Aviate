@@ -52,3 +52,42 @@ predict() and update_*() called before init() SHALL be no-ops
 """
 verification_methods = ["test", "review"]
 traces_to = ["bb2e1695-a2e7-40c4-ae75-9711a8134b70"]
+
+[[requirements]]
+uid = "4cf7189d-23e6-470a-b71c-c90a81c59970"
+id = "HLR-CFG-001"
+title = "Resolved kernel configuration is the single source of flight-period truth"
+owner = "aviate-core@aviate"
+description = """
+The kernel SHALL hold flight-period configuration (limits,
+mode_config, fault_table, command_timeout_ms, safe_output) in
+exactly one structure (`ResolvedKernelConfig`). The kernel SHALL NOT
+duplicate any of these values into an additional storage location
+during construction or during the flight loop.
+
+The `AviateKernelTrait::get_config()` method SHALL return a borrow of
+this single structure; no copies, no shadow caches.
+"""
+verification_methods = ["review", "test"]
+traces_to = ["ed45538e-11f2-4887-95c2-91625b4a59cb"]
+
+[[requirements]]
+uid = "211a2f8a-493f-4c6c-bf7e-73275154dd54"
+id = "HLR-CFG-002"
+title = "Configuration is validated once and read-only thereafter"
+owner = "aviate-core@aviate"
+description = """
+The flight kernel SHALL accept resolved configuration only via the
+`AviateKernelBuilder` at construction time, OR via `load_config()`
+in pre-arm/disarmed states (validation gate; spec §19). Once the
+kernel transitions to InitState::Armed, configuration mutation SHALL
+be rejected at compile time (no public mutators on
+`ResolvedKernelConfig` reachable from the trait surface) AND at run
+time (any future internal mutator SHALL gate on `init_state`).
+
+This invariant supports both spec §19 (config integrity) and spec
+§16 (redundancy) — runtime mutation would invalidate the cross-
+channel byte-equality property of HLR-CFG-001.
+"""
+verification_methods = ["review", "test"]
+traces_to = ["ed45538e-11f2-4887-95c2-91625b4a59cb"]

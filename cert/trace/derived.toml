@@ -32,3 +32,56 @@ behaviour after reset+init is identical to behaviour after fresh
 construction+init only when configurations match.
 """
 safety_impact = "low"
+
+[[requirements]]
+uid = "0d086076-b799-4715-981f-4bb42e0d9b1e"
+id = "DRQ-CFG-001"
+title = "load_config() is a stub pending the full validation pipeline"
+owner = "aviate-core@aviate"
+description = """
+The Phase 1 ResolvedKernelConfig consolidation introduces
+"validated, flight-period-immutable configuration" as a structural
+property but does NOT yet implement the validation parser. Today,
+`AviateKernelTrait::load_config()` only checks `config_block.version
+<= 1` and ignores the payload (`kernel_trait.rs::load_config`). The
+real validation — checksum verification, range checks per spec §13
+limits, mode_config integrity, fault_table consistency — is
+deferred to a post-Phase-5 PR.
+"""
+rationale = """
+Calling out the gap explicitly so a downstream auditor knows the
+config-immutability claim (HLR-CFG-002) is structurally true today
+but the *content* of the immutable config is still entirely
+default-derived. The risk is low because the builder is the only
+practical config entry point in flight builds and rejects
+ill-formed config at Rust's type level. The risk goes up when a
+real serial/binary loader lands.
+"""
+safety_impact = "medium"
+
+[[requirements]]
+uid = "8dce106d-66a1-4746-838d-f14ffa5519c7"
+id = "DRQ-MIX-001"
+title = "safe_output is currently a global fallback; per-mode safe_pattern is preferred"
+owner = "aviate-core@aviate"
+description = """
+`ResolvedKernelConfig.safe_output` is a single
+`[Normalized; MAX_ACTUATORS]` array used as a last-ditch fallback
+when the kernel forces safe output (Backup law, ENUM_INVALID, etc.).
+Spec §10.5 + §9.2 are clearer: each `ActuatorGroupConfig` SHOULD
+own its own `safe_pattern`, because a Hover safe output is not a
+Cruise safe output (different actuator coupling). The per-group
+`safe_pattern` ALREADY exists on `ActuatorGroupConfig` and IS used
+by the sanitizer's per-group fallback path. The single global
+`safe_output` is the secondary fallback when no per-group pattern
+exists.
+"""
+rationale = """
+Phase 1 keeps the global `safe_output` to avoid forcing every
+airframe crate (multirotor, fixed-wing, future morphing) to refactor
+their `ModeConfig` constructors in the same PR that introduces
+`ResolvedKernelConfig`. A follow-up PR (post-Phase-5) will
+deprecate the global `safe_output` once every airframe declares
+per-mode `safe_pattern` arrays for every group it instantiates.
+"""
+safety_impact = "low"
