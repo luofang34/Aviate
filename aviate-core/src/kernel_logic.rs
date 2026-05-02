@@ -21,9 +21,13 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
 {
     pub fn init_step(&mut self, sensors: &SensorSet, _time: Timestamp) -> InitResult {
         // 1. Update checks from sensor data (always, regardless of state)
-        self.checks.pre_arm.update_from_sensors(sensors);
-        self.checks.pre_arm.update_from_faults(self.faults);
-        self.checks
+        self.state.checks.pre_arm.update_from_sensors(sensors);
+        self.state
+            .checks
+            .pre_arm
+            .update_from_faults(self.state.faults);
+        self.state
+            .checks
             .pre_arm
             .update_ekf(self.pipeline.estimator.is_initialized());
 
@@ -32,63 +36,67 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // Pre-arm checks are handled by the pre_arm flags (IMU_HEALTHY, etc.).
 
         // 3. State machine transitions
-        match self.init_state {
+        match self.state.init_state {
             InitState::PowerOn => {
-                self.init_state = InitState::ConfigLoading;
+                self.state.init_state = InitState::ConfigLoading;
             }
             InitState::ConfigLoading => {
                 // Config loaded (placeholder - would check actual config validity)
-                self.checks
+                self.state
+                    .checks
                     .pre_arm
                     .current
                     .insert(PreArmFlags::CONFIG_VALID);
-                self.init_state = InitState::SensorInit;
+                self.state.init_state = InitState::SensorInit;
             }
             InitState::SensorInit => {
                 // Wait for at least one valid sensor reading
                 let has_sensors = self
+                    .state
                     .checks
                     .pre_arm
                     .current
                     .contains(PreArmFlags::IMU_HEALTHY);
                 if has_sensors {
-                    self.init_state = InitState::EstimatorConverging;
+                    self.state.init_state = InitState::EstimatorConverging;
                 }
             }
             InitState::EstimatorConverging => {
                 // Wait for sensor convergence and EKF initialization
                 let converged = self
+                    .state
                     .checks
                     .pre_arm
                     .current
                     .contains(PreArmFlags::IMU_CONVERGED)
                     && self
+                        .state
                         .checks
                         .pre_arm
                         .current
                         .contains(PreArmFlags::EKF_CONVERGED);
                 if converged {
-                    self.init_state = InitState::PreArm;
+                    self.state.init_state = InitState::PreArm;
                 }
             }
             InitState::PreArm => {
                 // Check all pre-arm requirements
-                if self.checks.pre_arm.is_satisfied() {
-                    self.init_state = InitState::Ready;
+                if self.state.checks.pre_arm.is_satisfied() {
+                    self.state.init_state = InitState::Ready;
                 }
             }
             InitState::Ready => {
                 // Monitor for fault conditions
-                if !self.checks.pre_arm.is_satisfied() {
-                    self.init_state = InitState::PreArm;
+                if !self.state.checks.pre_arm.is_satisfied() {
+                    self.state.init_state = InitState::PreArm;
                 }
             }
             InitState::Armed => {} // COV:EXCL(EMPTY: monitoring only, disarm via disarm())
             InitState::Disarmed => {
                 // Transition back to PreArm for potential re-arm
                 // Reset sample counts for fresh convergence check
-                self.checks.pre_arm.samples.reset();
-                self.init_state = InitState::PreArm;
+                self.state.checks.pre_arm.samples.reset();
+                self.state.init_state = InitState::PreArm;
             }
             InitState::Fault => {
                 // Require explicit reset to exit fault state
@@ -96,9 +104,9 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         }
 
         InitResult {
-            state: self.init_state,
-            faults: self.faults,
-            ready: self.init_state == InitState::Ready,
+            state: self.state.init_state,
+            faults: self.state.faults,
+            ready: self.state.init_state == InitState::Ready,
         }
     }
 
@@ -112,9 +120,9 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             .iter()
             .any(|s| s.valid && s.health == SensorHealth::Good);
         if !imu_ok {
-            self.faults.insert(FaultFlags::ALL_IMU_FAILED);
+            self.state.faults.insert(FaultFlags::ALL_IMU_FAILED);
         } else {
-            self.faults.remove(FaultFlags::ALL_IMU_FAILED);
+            self.state.faults.remove(FaultFlags::ALL_IMU_FAILED);
         }
 
         // Baro faults
@@ -123,9 +131,9 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             .iter()
             .any(|s| s.valid && s.health == SensorHealth::Good);
         if !baro_ok {
-            self.faults.insert(FaultFlags::BARO_FAILED);
+            self.state.faults.insert(FaultFlags::BARO_FAILED);
         } else {
-            self.faults.remove(FaultFlags::BARO_FAILED);
+            self.state.faults.remove(FaultFlags::BARO_FAILED);
         }
 
         // Mag faults
@@ -134,9 +142,9 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             .iter()
             .any(|s| s.valid && s.health == SensorHealth::Good);
         if !mag_ok {
-            self.faults.insert(FaultFlags::MAG_FAILED);
+            self.state.faults.insert(FaultFlags::MAG_FAILED);
         } else {
-            self.faults.remove(FaultFlags::MAG_FAILED);
+            self.state.faults.remove(FaultFlags::MAG_FAILED);
         }
 
         // GNSS faults
@@ -145,35 +153,35 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             .iter()
             .any(|s| s.valid && s.health == SensorHealth::Good);
         if !gnss_ok {
-            self.faults.insert(FaultFlags::ALL_GNSS_LOST);
+            self.state.faults.insert(FaultFlags::ALL_GNSS_LOST);
         } else {
-            self.faults.remove(FaultFlags::ALL_GNSS_LOST);
+            self.state.faults.remove(FaultFlags::ALL_GNSS_LOST);
         }
     }
 
     pub fn is_ready(&self) -> bool {
-        self.init_state == InitState::Ready
+        self.state.init_state == InitState::Ready
     }
 
     pub fn arm(&mut self) -> Result<(), ArmError> {
-        if self.init_state == InitState::Armed {
+        if self.state.init_state == InitState::Armed {
             return Err(ArmError::AlreadyArmed);
         }
-        if self.init_state != InitState::Ready {
+        if self.state.init_state != InitState::Ready {
             return Err(ArmError::NotReady);
         }
-        if !self.faults.is_empty() {
+        if !self.state.faults.is_empty() {
             return Err(ArmError::Faulted);
         }
 
-        self.init_state = InitState::Armed;
+        self.state.init_state = InitState::Armed;
         Ok(())
     }
 
     pub fn disarm(&mut self) {
-        self.init_state = InitState::Disarmed;
-        self.control_law = ControlLawV1::Backup; // Was Frozen, now Backup
-        self.checks.in_flight.reset();
+        self.state.init_state = InitState::Disarmed;
+        self.state.control_law = ControlLawV1::Backup; // Was Frozen, now Backup
+        self.state.checks.in_flight.reset();
     }
 
     /// Check if the system can be reset from fault state
@@ -183,15 +191,16 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     /// - IMU_HEALTHY (sensors recovered)
     /// - THROTTLE_LOW (safety)
     pub fn can_reset_from_fault(&self) -> bool {
-        if self.init_state != InitState::Fault {
+        if self.state.init_state != InitState::Fault {
             return false;
         }
 
         // No critical faults remaining
-        let no_critical = !self.faults.intersects(CRITICAL_FAULTS);
+        let no_critical = !self.state.faults.intersects(CRITICAL_FAULTS);
 
         // Sensors recovered
         let imu_healthy = self
+            .state
             .checks
             .pre_arm
             .current
@@ -199,6 +208,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
 
         // Throttle low for safety
         let throttle_low = self
+            .state
             .checks
             .pre_arm
             .current
@@ -211,7 +221,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     ///
     /// Returns Ok(()) if successfully reset to PreArm state.
     pub fn reset_from_fault(&mut self) -> Result<(), ArmError> {
-        if self.init_state != InitState::Fault {
+        if self.state.init_state != InitState::Fault {
             return Err(ArmError::NotReady);
         }
 
@@ -220,11 +230,11 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         }
 
         // Reset checks for fresh convergence
-        self.checks.pre_arm.samples.reset();
-        self.checks.in_flight.reset();
+        self.state.checks.pre_arm.samples.reset();
+        self.state.checks.in_flight.reset();
 
         // Transition to PreArm
-        self.init_state = InitState::PreArm;
+        self.state.init_state = InitState::PreArm;
         Ok(())
     }
 
@@ -237,7 +247,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         reason: DegradationReason,
         timestamp: Timestamp,
     ) -> Option<DegradationEvent> {
-        let from = self.control_law;
+        let from = self.state.control_law;
         let to = match reason {
             DegradationReason::AttitudeLost => ControlLawV1::Backup,
             DegradationReason::ImuDegraded => ControlLawV1::Alternate,
@@ -252,7 +262,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
 
         // Only trigger if this is a degradation (worse state)
         if to.severity() > from.severity() {
-            self.control_law = to;
+            self.state.control_law = to;
             Some(DegradationEvent {
                 from,
                 to,
@@ -269,41 +279,43 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     /// Checks transition preconditions before starting the transition.
     pub fn request_config_mode(&mut self, to: ConfigMode) -> Result<(), TransitionError> {
         // Must be armed
-        if self.init_state != InitState::Armed {
+        if self.state.init_state != InitState::Armed {
             return Err(TransitionError::NotArmed);
         }
 
         // Cannot be in fault state
-        if self.faults.intersects(CRITICAL_FAULTS) {
+        if self.state.faults.intersects(CRITICAL_FAULTS) {
             return Err(TransitionError::InFaultState);
         }
 
         // Check if already transitioning (Transition mode is the transition state)
-        if self.mode == ConfigMode::Transition {
+        if self.state.mode == ConfigMode::Transition {
             return Err(TransitionError::AlreadyTransitioning);
         }
 
         // Check if already in requested mode
-        if self.mode == to {
+        if self.state.mode == to {
             return Err(TransitionError::AlreadyInMode);
         }
 
         // Update transition checks and verify
         let state = self.pipeline.estimator.get_estimate();
-        self.checks.transition.update_from_state(&state);
-        self.checks
+        self.state.checks.transition.update_from_state(&state);
+        self.state
+            .checks
             .transition
-            .update_from_actuators(&self.actuator_state, 0b1111); // Quad mask
+            .update_from_actuators(&self.state.actuator_state, 0b1111); // Quad mask
 
         // Gate the transition
-        self.checks
+        self.state
+            .checks
             .transition
             .can_transition()
             .map_err(TransitionError::ChecksFailed)?;
 
         // Start the transition (caller manages progress)
         // For now, just update the mode directly
-        self.mode = to;
+        self.state.mode = to;
         Ok(())
     }
 
@@ -311,11 +323,11 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         use crate::kernel_types::ConfigTransitionState;
 
         HealthReport {
-            init_state: self.init_state,
-            control_law: self.control_law,
-            config_mode: self.mode,
-            transition_state: ConfigTransitionState::Stable(self.mode),
-            faults: self.faults,
+            init_state: self.state.init_state,
+            control_law: self.state.control_law,
+            config_mode: self.state.mode,
+            transition_state: ConfigTransitionState::Stable(self.state.mode),
+            faults: self.state.faults,
             channel_health: ChannelHealthV1::Operative,
         }
     }
@@ -324,18 +336,18 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     #[inline(never)]
     pub fn ground_reset(&mut self) {
         // Only allowed if not armed
-        if self.init_state == InitState::Armed {
+        if self.state.init_state == InitState::Armed {
             return;
         }
 
-        self.faults = FaultFlags::empty();
-        self.checks.pre_arm.reset();
-        self.checks.in_flight.reset();
-        self.checks.transition.reset();
-        self.init_state = InitState::ConfigLoading; // Restart init sequence
+        self.state.faults = FaultFlags::empty();
+        self.state.checks.pre_arm.reset();
+        self.state.checks.in_flight.reset();
+        self.state.checks.transition.reset();
+        self.state.init_state = InitState::ConfigLoading; // Restart init sequence
         self.pipeline.estimator.reset();
 
-        self.control_law = ControlLawV1::Primary; // Reset law
+        self.state.control_law = ControlLawV1::Primary; // Reset law
     }
 
     pub fn kick_watchdog(&mut self) {
@@ -352,12 +364,18 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     /// Call with `violation = true` when deadline exceeded, `false` when met.
     pub fn report_timing_violation(&mut self, violation: bool) {
         if violation {
-            self.timing_stats.deadline_violations =
-                self.timing_stats.deadline_violations.saturating_add(1);
-            self.timing_stats.consecutive_violations =
-                self.timing_stats.consecutive_violations.saturating_add(1);
+            self.state.timing_stats.deadline_violations = self
+                .state
+                .timing_stats
+                .deadline_violations
+                .saturating_add(1);
+            self.state.timing_stats.consecutive_violations = self
+                .state
+                .timing_stats
+                .consecutive_violations
+                .saturating_add(1);
         } else {
-            self.timing_stats.consecutive_violations = 0;
+            self.state.timing_stats.consecutive_violations = 0;
         }
     }
 
@@ -365,9 +383,9 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     ///
     /// Returns true if fault state was entered.
     pub fn check_critical_faults(&mut self) -> bool {
-        if self.faults.intersects(CRITICAL_FAULTS) {
-            self.init_state = InitState::Fault;
-            self.control_law = ControlLawV1::Backup; // Was Frozen
+        if self.state.faults.intersects(CRITICAL_FAULTS) {
+            self.state.init_state = InitState::Fault;
+            self.state.control_law = ControlLawV1::Backup; // Was Frozen
             true
         } else {
             false

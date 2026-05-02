@@ -221,7 +221,7 @@ impl SitlRunner {
 
     /// Check if system is armed
     pub fn is_armed(&self) -> bool {
-        self.kernel.init_state == InitState::Armed
+        self.kernel.state.init_state == InitState::Armed
     }
 
     /// Get access to transport
@@ -267,7 +267,7 @@ pub fn create_kernel() -> SitlKernel {
     );
 
     // Initialize throttle check as satisfied (default command has low throttle)
-    kernel.checks.pre_arm.update_throttle(true);
+    kernel.state.checks.pre_arm.update_throttle(true);
 
     kernel
 }

@@ -254,8 +254,11 @@ impl JmavSimBoard {
 
     /// Arm the flight controller
     pub fn arm(&mut self) -> Result<(), ArmError> {
-        info!("Arm command (state={:?})", self.runner.kernel.init_state);
-        info!("Faults: {:?}", self.runner.kernel.faults);
+        info!(
+            "Arm command (state={:?})",
+            self.runner.kernel.state.init_state
+        );
+        info!("Faults: {:?}", self.runner.kernel.state.faults);
 
         self.runner.kernel.arm()?;
 
@@ -279,6 +282,7 @@ impl JmavSimBoard {
     pub fn set_command(&mut self, cmd: Command) {
         self.runner
             .kernel
+            .state
             .checks
             .pre_arm
             .update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
@@ -292,7 +296,7 @@ impl JmavSimBoard {
 
     /// Check if the kernel is armed
     pub fn is_armed(&self) -> bool {
-        self.runner.kernel.init_state == InitState::Armed
+        self.runner.kernel.state.init_state == InitState::Armed
     }
 
     /// Get a reference to the kernel

@@ -44,14 +44,16 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         let dt_us = time.as_micros() as u32;
 
         // Update timing statistics (for monitoring, not degradation triggering)
-        self.timing_stats.last_cycle_us = dt_us;
-        self.timing_stats.total_cycles = self.timing_stats.total_cycles.saturating_add(1);
+        self.state.timing_stats.last_cycle_us = dt_us;
+        self.state.timing_stats.total_cycles =
+            self.state.timing_stats.total_cycles.saturating_add(1);
 
-        if dt_us > self.timing_stats.max_cycle_us {
-            self.timing_stats.max_cycle_us = dt_us;
+        if dt_us > self.state.timing_stats.max_cycle_us {
+            self.state.timing_stats.max_cycle_us = dt_us;
         }
-        if dt_us < self.timing_stats.min_cycle_us || self.timing_stats.min_cycle_us == 0 {
-            self.timing_stats.min_cycle_us = dt_us;
+        if dt_us < self.state.timing_stats.min_cycle_us || self.state.timing_stats.min_cycle_us == 0
+        {
+            self.state.timing_stats.min_cycle_us = dt_us;
         }
 
         // Deadline violations are tracked by the caller via report_timing_violation()
@@ -68,7 +70,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // This detects memory corruption in control-plane enums.
         // On failure: set ENUM_INVALID fault and force safe output.
         if !command.validate_enums() {
-            self.faults.insert(FaultFlags::ENUM_INVALID);
+            self.state.faults.insert(FaultFlags::ENUM_INVALID);
             return UpdateResult {
                 actuator: ActuatorCmd {
                     outputs: self.cfg.safe_output,
@@ -80,11 +82,11 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                 },
                 status: ChannelStatus {
                     mode: ControlMode::Attitude, // Safe default
-                    config_mode: self.mode,
-                    transition_state: ConfigTransitionState::Stable(self.mode),
+                    config_mode: self.state.mode,
+                    transition_state: ConfigTransitionState::Stable(self.state.mode),
                     law: ControlLawV1::Backup,
                     health: ChannelHealthV1::Operative,
-                    faults: self.faults,
+                    faults: self.state.faults,
                     confidence: self.pipeline.estimator.get_estimate().quality,
                     envelope_margin: EnvelopeMargin::default(),
                     sequence: command.sequence,
@@ -103,7 +105,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         self.update_sensor_faults(sensors);
 
         // 1. Safety Gate: If not armed, force safe output immediately
-        if !self.init_state.allows_active_control() {
+        if !self.state.init_state.allows_active_control() {
             return UpdateResult {
                 actuator: ActuatorCmd {
                     outputs: self.cfg.safe_output,
@@ -115,11 +117,11 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                 },
                 status: ChannelStatus {
                     mode: command.mode,
-                    config_mode: self.mode,
-                    transition_state: ConfigTransitionState::Stable(self.mode),
+                    config_mode: self.state.mode,
+                    transition_state: ConfigTransitionState::Stable(self.state.mode),
                     law: ControlLawV1::Backup, // Force Backup reporting when not armed
                     health: ChannelHealthV1::Operative,
-                    faults: self.faults,
+                    faults: self.state.faults,
                     confidence: self.pipeline.estimator.get_estimate().quality,
                     envelope_margin: EnvelopeMargin::default(),
                     sequence: command.sequence,
@@ -192,24 +194,25 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         let state = self.pipeline.estimator.get_estimate();
 
         // 3. Update in-flight checks
-        self.checks.in_flight.update_from_state(&state);
-        self.checks.in_flight.update_from_sensors(sensors);
+        self.state.checks.in_flight.update_from_state(&state);
+        self.state.checks.in_flight.update_from_sensors(sensors);
         // Assume command age 0 for now, or derive from timestamp
-        self.checks
+        self.state
+            .checks
             .in_flight
             .update_command_status(0, self.cfg.command_timeout_ms);
 
         // 4. Handle degradation
         // Timing violations are reported externally via report_timing_violation()
-        let degradation = if self.timing_stats.consecutive_violations >= TIMING_VIOLATION_THRESHOLD
-        {
-            // Persistent timing violation → degrade to Alternate
-            self.handle_degradation(DegradationReason::TimingViolation, timestamp)
-        } else if let Some(reason) = self.checks.in_flight.get_degradation_trigger() {
-            self.handle_degradation(reason, timestamp)
-        } else {
-            None
-        };
+        let degradation =
+            if self.state.timing_stats.consecutive_violations >= TIMING_VIOLATION_THRESHOLD {
+                // Persistent timing violation → degrade to Alternate
+                self.handle_degradation(DegradationReason::TimingViolation, timestamp)
+            } else if let Some(reason) = self.state.checks.in_flight.get_degradation_trigger() {
+                self.handle_degradation(reason, timestamp)
+            } else {
+                None
+            };
 
         // 5. Envelope Protection
         use crate::control::envelope::EnvelopeProtector;
@@ -220,7 +223,8 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             AuthorityProfile::HardEnvelope,
         );
 
-        self.checks
+        self.state
+            .checks
             .in_flight
             .update_from_envelope(&protection_status);
 
@@ -235,7 +239,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // But Backup during flight might mean "Last-ditch stability".
         // The spec says "Last-ditch stability only".
         // For this minimal impl, if Backup, we output safe_output (effectively shutting down/idle).
-        let mut actuator_cmd = if self.control_law == ControlLawV1::Backup {
+        let mut actuator_cmd = if self.state.control_law == ControlLawV1::Backup {
             ActuatorCmd {
                 outputs: self.cfg.safe_output,
                 active_mask: 0b1111,
@@ -248,18 +252,19 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             let axis_cmd = self.pipeline.controller.step(
                 &state,
                 &constrained_cmd,
-                self.mode,
+                self.state.mode,
                 &self.cfg.limits,
             );
             self.pipeline.mixer.mix(&axis_cmd)
         };
 
         // 7. Update actuator state
-        self.actuator_state
+        self.state
+            .actuator_state
             .update_commanded(&actuator_cmd, timestamp);
 
         // 8. Sanitization
-        let sanitize_report = if self.control_law == ControlLawV1::Backup {
+        let sanitize_report = if self.state.control_law == ControlLawV1::Backup {
             SanitizeReport::default()
         } else {
             self.pipeline
@@ -272,11 +277,11 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             actuator: actuator_cmd,
             status: ChannelStatus {
                 mode: command.mode,
-                config_mode: self.mode,
-                transition_state: ConfigTransitionState::Stable(self.mode),
-                law: self.control_law,
+                config_mode: self.state.mode,
+                transition_state: ConfigTransitionState::Stable(self.state.mode),
+                law: self.state.control_law,
                 health: ChannelHealthV1::Operative,
-                faults: self.faults,
+                faults: self.state.faults,
                 confidence: state.quality,
                 envelope_margin: EnvelopeMargin::default(), // TODO calculate
                 sequence: command.sequence,
@@ -288,7 +293,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                 cycle_start_us: 0, // Caller provides absolute timing if needed
                 cycle_end_us: dt_us,
                 duration_us: dt_us, // dt since last call (actual exec time tracked externally)
-                deadline_met: self.timing_stats.consecutive_violations == 0,
+                deadline_met: self.state.timing_stats.consecutive_violations == 0,
             },
             degradation,
         }

@@ -25,14 +25,13 @@
 //! type-state pattern via `Option`).
 
 use crate::checks::{KernelChecks, PreArmFlags};
-use crate::control::{ConfigMode, ControlLawV1, Limits, VehicleController};
+use crate::control::{Limits, VehicleController};
 use crate::ekf::Estimator;
-use crate::fault::FaultFlags;
 use crate::kernel::config::ResolvedKernelConfig;
 use crate::kernel::pipeline::KernelPipeline;
+use crate::kernel::state::KernelState;
 use crate::kernel::AviateKernelImpl;
-use crate::kernel_types::{InitState, TimingStats};
-use crate::mixer::{ActuatorSanitizer, ActuatorState, Mixer, ModeConfig};
+use crate::mixer::{ActuatorSanitizer, Mixer, ModeConfig};
 
 /// Builder for `AviateKernelImpl<E, V, M, S>`. See module docs for usage.
 pub struct AviateKernelBuilder<E, V, M, S>
@@ -152,13 +151,7 @@ where
 
         Ok(AviateKernelImpl {
             pipeline: KernelPipeline::new(estimator, controller, mixer, sanitizer),
-            mode: ConfigMode::Hover,
-            init_state: InitState::PowerOn,
-            faults: FaultFlags::empty(),
-            control_law: ControlLawV1::Primary,
-            checks,
-            actuator_state: ActuatorState::default(),
-            timing_stats: TimingStats::default(),
+            state: KernelState::new(checks),
             cfg: self.cfg,
         })
     }
@@ -168,8 +161,9 @@ where
 mod tests {
     use super::*;
     use crate::control::multirotor::MultirotorController;
-    use crate::control::{AxisCommand, Limits};
+    use crate::control::{AxisCommand, ConfigMode, Limits};
     use crate::ekf::Ekf;
+    use crate::kernel_types::InitState;
     use crate::mixer::{ModeConfig, QuadXMixer, Sanitizer};
     use crate::time::{TimeSource, Timestamp};
     use crate::types::{Normalized, NormalizedSigned, Radians};
@@ -243,7 +237,7 @@ mod tests {
     #[test]
     fn full_chain_builds_kernel_with_default_cfg() -> Result<(), &'static str> {
         let kernel = full_pipeline_builder().build()?;
-        assert_eq!(kernel.init_state, InitState::PowerOn);
+        assert_eq!(kernel.state.init_state, InitState::PowerOn);
         Ok(())
     }
 
@@ -313,7 +307,7 @@ mod tests {
         let kernel = full_pipeline_builder().pre_arm_required(required).build()?;
         // Kernel built without pre-arm-satisfied state must report
         // unmet requirements.
-        assert!(!kernel.checks.pre_arm.is_satisfied());
+        assert!(!kernel.state.checks.pre_arm.is_satisfied());
         Ok(())
     }
 }
