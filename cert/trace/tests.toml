@@ -164,6 +164,40 @@ that the trait surface compiles and produces a valid borrow.
 traces_to = ["434a64f5-be78-46ca-bc0f-de1eaffb297d"]
 
 [[tests]]
+uid = "6bcdce55-17b4-4d55-86a7-f3e7655d0441"
+id = "TST-PIPE-001"
+title = "test_ground_reset_success_unit (pipeline.mixer.mix path)"
+owner = "aviate-core@aviate"
+description = """
+The `kernel.rs::tests::test_ground_reset_success_unit` test
+exercises `kernel.pipeline.mixer.mix(...)` after `ground_reset` to
+ensure the pipeline accessor surface compiles and the mixer's stored
+algorithm identity (DummyMixer) responds to invocation. After Phase
+2 it implicitly verifies LLR-PIPE-102 — that pipeline access is the
+canonical path.
+"""
+traces_to = ["7bf0feea-fd1f-48ae-aa1f-50c59f35621a"]
+
+[[tests]]
+uid = "e4e933ff-41f0-4860-8e57-800fb67cae15"
+id = "TST-PIPE-002"
+title = "full_chain_kernel_mixer_invokes_timestamp_source (builder via pipeline)"
+owner = "aviate-core@aviate"
+description = """
+The `kernel/builder.rs::tests::full_chain_kernel_mixer_invokes_timestamp_source`
+test builds a kernel through `AviateKernelBuilder::build()` and
+exercises `kernel.pipeline.mixer.mix(...)` end-to-end. After Phase 2
+this test verifies that the builder routes the four caller-supplied
+algorithm boxes through `KernelPipeline::new` rather than into
+discarded direct fields — i.e. it verifies LLR-PIPE-101 holds at the
+builder construction boundary.
+"""
+traces_to = [
+    "7ba433cd-35a2-4702-a4af-3d3adf5ce4b5",
+    "7bf0feea-fd1f-48ae-aa1f-50c59f35621a",
+]
+
+[[tests]]
 uid = "ee170b84-4a02-4b23-90d3-bb77bffa433e"
 id = "TST-CFG-003"
 title = "test_make_kernel_with_pre_arm_required"

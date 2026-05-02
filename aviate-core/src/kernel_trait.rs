@@ -189,7 +189,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> AviateK
 
     #[cfg(feature = "test-hooks")]
     fn inject_state(&mut self, state: &StateEstimate) {
-        self.estimator.set_state(state);
+        self.pipeline.estimator.set_state(state);
     }
 
     #[cfg(feature = "test-hooks")]

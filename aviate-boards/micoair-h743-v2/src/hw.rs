@@ -615,7 +615,7 @@ impl BoardStep for MicoAirBoard {
         };
 
         if !self.ekf_initialized && self.sensor_cache.imu.is_some() {
-            self.kernel.estimator.init(
+            self.kernel.pipeline.estimator.init(
                 Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
                 Vector3::new(
                     MetersPerSecond(0.0),

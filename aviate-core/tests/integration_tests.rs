@@ -322,7 +322,7 @@ mod tests {
         );
 
         // Initialize EKF
-        kernel.estimator.init(
+        kernel.pipeline.estimator.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),
@@ -426,7 +426,7 @@ mod tests {
         );
 
         // Init EKF
-        kernel.estimator.init(
+        kernel.pipeline.estimator.init(
             Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
             Vector3::new(
                 MetersPerSecond(0.0),

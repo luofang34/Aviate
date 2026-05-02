@@ -72,6 +72,30 @@ verification_methods = ["review", "test"]
 traces_to = ["ed45538e-11f2-4887-95c2-91625b4a59cb"]
 
 [[requirements]]
+uid = "190d1f8d-40d0-47cc-9bb7-1b5e210d0802"
+id = "HLR-PIPE-001"
+title = "Kernel algorithm-identity bundle is a single substitutable surface"
+owner = "aviate-core@aviate"
+description = """
+The kernel SHALL hold its substitutable algorithm objects (estimator,
+controller, mixer, sanitizer, envelope protector) inside exactly one
+sub-structure (`KernelPipeline<E, V, M, S>`). The kernel SHALL NOT
+expose individual top-level fields for any of these — adding a new
+substitutable algorithm class (e.g. fault detector, command voter)
+requires extending `KernelPipeline` rather than adding a peer field
+on `AviateKernelImpl`.
+
+This generalizes SYS-EST-001's substitutability claim from "the
+estimator can be swapped" to "the entire algorithm bundle has a
+single anchor point." It is the structural prerequisite for
+co-substituting algorithm bundles between redundant channels at
+startup (peer channels exchange `KernelPipeline` algorithm-identity
+hashes; mismatch = firmware drift, refuse to enter lockstep).
+"""
+verification_methods = ["review", "test"]
+traces_to = ["bb2e1695-a2e7-40c4-ae75-9711a8134b70"]
+
+[[requirements]]
 uid = "211a2f8a-493f-4c6c-bf7e-73275154dd54"
 id = "HLR-CFG-002"
 title = "Configuration is validated once and read-only thereafter"
