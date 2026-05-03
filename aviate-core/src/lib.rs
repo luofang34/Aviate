@@ -24,6 +24,7 @@ pub mod kernel_types;
 pub mod kernel_update;
 pub mod math;
 pub mod mixer;
+pub mod replicable;
 pub mod sensor;
 pub mod state;
 pub mod time;

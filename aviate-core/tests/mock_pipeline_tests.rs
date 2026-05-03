@@ -56,6 +56,16 @@ impl EstimatorRuntimeState for MockEstimatorRuntime {
     }
 }
 
+impl aviate_core::replicable::Replicable for MockEstimatorRuntime {
+    const ENCODED_LEN: usize = 5; // u32 (predict_calls) + u8 (initialized)
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut w = aviate_core::replicable::ByteWriter::new(buf);
+        w.write_u32(self.predict_calls);
+        w.write_bool(self.initialized);
+        w.bytes_written()
+    }
+}
+
 #[derive(Default)]
 struct MockEstimator;
 
@@ -111,6 +121,15 @@ struct MockControllerRuntime {
 impl ControllerRuntimeState for MockControllerRuntime {
     fn reset(&mut self) {
         self.step_count = 0;
+    }
+}
+
+impl aviate_core::replicable::Replicable for MockControllerRuntime {
+    const ENCODED_LEN: usize = 4;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut w = aviate_core::replicable::ByteWriter::new(buf);
+        w.write_u32(self.step_count);
+        w.bytes_written()
     }
 }
 

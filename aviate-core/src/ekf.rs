@@ -390,6 +390,54 @@ impl EstimatorRuntimeState for EkfState {
     }
 }
 
+impl crate::replicable::Replicable for EkfState {
+    // 4 (quat) + 3 (pos) + 3 (vel) + 3 (gyro_bias) + 3 (accel_bias)
+    // + 3 (mag_bias) + 3 (last_gyro_body) = 22 f32s for vector data,
+    // + STATE_DIM*STATE_DIM = 324 f32s for the covariance matrix,
+    // + 2 bytes for the boolean latches (initialized, quat_fault).
+    // Total = (22 + 324) * 4 + 2 = 1386 bytes.
+    const ENCODED_LEN: usize = (22 + STATE_DIM * STATE_DIM) * 4 + 2;
+
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut w = crate::replicable::ByteWriter::new(buf);
+        // Quaternion: w, x, y, z in declaration order.
+        w.write_f32(self.quat.w);
+        w.write_f32(self.quat.x);
+        w.write_f32(self.quat.y);
+        w.write_f32(self.quat.z);
+        // Vector3 fields: x, y, z. Newtype wrappers (Meters etc.)
+        // unwrap to the inner f32.
+        w.write_f32(self.pos.x.0);
+        w.write_f32(self.pos.y.0);
+        w.write_f32(self.pos.z.0);
+        w.write_f32(self.vel.x.0);
+        w.write_f32(self.vel.y.0);
+        w.write_f32(self.vel.z.0);
+        w.write_f32(self.gyro_bias.x.0);
+        w.write_f32(self.gyro_bias.y.0);
+        w.write_f32(self.gyro_bias.z.0);
+        w.write_f32(self.accel_bias.x.0);
+        w.write_f32(self.accel_bias.y.0);
+        w.write_f32(self.accel_bias.z.0);
+        w.write_f32(self.mag_bias.x.0);
+        w.write_f32(self.mag_bias.y.0);
+        w.write_f32(self.mag_bias.z.0);
+        w.write_f32(self.last_gyro_body.x.0);
+        w.write_f32(self.last_gyro_body.y.0);
+        w.write_f32(self.last_gyro_body.z.0);
+        // Covariance matrix: row-major, then column-major within each row.
+        for row in &self.p_cov.data {
+            for v in row {
+                w.write_f32(*v);
+            }
+        }
+        // Boolean latches.
+        w.write_bool(self.initialized);
+        w.write_bool(self.quat_fault);
+        w.bytes_written()
+    }
+}
+
 impl Default for EkfState {
     fn default() -> Self {
         Self::new()

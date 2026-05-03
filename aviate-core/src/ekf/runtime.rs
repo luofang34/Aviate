@@ -43,7 +43,12 @@
 ///     including the estimator's runtime state.
 ///   - `Debug` — `KernelState` derives `Debug` for diagnostic dumps
 ///     (`tracing` events, post-mortem panics in tests).
-pub trait EstimatorRuntimeState: Default + Clone + core::fmt::Debug {
+///   - `Replicable` — deterministic canonical byte encoding for
+///     spec §16 cross-channel snapshot transmission, vote, and
+///     hot-spare takeover (see `aviate_core::replicable`).
+pub trait EstimatorRuntimeState:
+    Default + Clone + core::fmt::Debug + crate::replicable::Replicable
+{
     /// Return the runtime state to its post-power-on baseline.
     /// Equivalent to `*self = Self::default()` for simple cases;
     /// implementors with allocated buffers may zero-fill in place.
