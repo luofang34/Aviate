@@ -114,6 +114,62 @@ impl<'a> ByteWriter<'a> {
     }
 }
 
+#[cfg(test)]
+mod byte_writer_tests {
+    // The public `Replicable` impls use a subset of the helpers
+    // (write_f32 / write_bool / write_bytes for EkfState; nothing
+    // for NoControllerState). The remaining helpers (write_u16 /
+    // write_u32 / write_u64 / write_usize) are scaffold for future
+    // KernelState fields that aren't replicable yet (FaultFlags
+    // bitflags, TimingStats counters, etc.). Exercise each helper
+    // directly so coverage tracks them.
+    use super::ByteWriter;
+
+    #[test]
+    fn helpers_emit_correct_bytes() {
+        let mut buf = [0u8; 32];
+        let mut w = ByteWriter::new(&mut buf);
+        w.write_u8(0xAB);
+        w.write_bool(true);
+        w.write_bool(false);
+        w.write_u16(0x1234);
+        w.write_u32(0xDEAD_BEEF);
+        w.write_u64(0xCAFE_BABE_F00D_BAAD);
+        w.write_usize(0x1122_3344);
+        w.write_f32(1.5_f32);
+        let n = w.bytes_written();
+        assert_eq!(n, 1 + 1 + 1 + 2 + 4 + 8 + 8 + 4);
+        // Spot-check little-endian layout:
+        assert_eq!(buf[0], 0xAB);
+        assert_eq!(buf[1], 1);
+        assert_eq!(buf[2], 0);
+        assert_eq!(&buf[3..5], &[0x34, 0x12]);
+        assert_eq!(&buf[5..9], &[0xEF, 0xBE, 0xAD, 0xDE]);
+        assert_eq!(
+            &buf[9..17],
+            &[0xAD, 0xBA, 0x0D, 0xF0, 0xBE, 0xBA, 0xFE, 0xCA]
+        );
+    }
+
+    #[test]
+    fn truncates_when_buffer_runs_out() {
+        let mut buf = [0u8; 3];
+        let mut w = ByteWriter::new(&mut buf);
+        w.write_u32(0x1234_5678);
+        // Only 3 bytes accepted; 4th byte dropped.
+        assert_eq!(w.bytes_written(), 3);
+        assert_eq!(buf, [0x78, 0x56, 0x34]);
+    }
+
+    #[test]
+    fn empty_input_is_a_no_op() {
+        let mut buf = [0u8; 4];
+        let mut w = ByteWriter::new(&mut buf);
+        w.write_bytes(&[]);
+        assert_eq!(w.bytes_written(), 0);
+    }
+}
+
 /// Deterministic canonical byte encoding for kernel-state types.
 ///
 /// Every implementor SHALL:
