@@ -58,7 +58,9 @@
 /// `Clone`/`Debug` is the minimum scaffold that lets snapshot
 /// machinery be added later without re-bounding every existing
 /// implementor.
-pub trait ControllerRuntimeState: Default + Clone + core::fmt::Debug {
+pub trait ControllerRuntimeState:
+    Default + Clone + core::fmt::Debug + crate::replicable::Replicable
+{
     /// Return the runtime state to its post-construction baseline.
     /// Equivalent to `*self = Self::default()` for simple cases;
     /// implementors with allocated buffers may zero-fill in place.
@@ -77,5 +79,17 @@ pub struct NoControllerState;
 impl ControllerRuntimeState for NoControllerState {
     fn reset(&mut self) {
         // Unit struct: no per-instance state to clear.
+    }
+}
+
+impl crate::replicable::Replicable for NoControllerState {
+    // Zero-byte encoding: the unit struct has no payload. A peer
+    // channel reading zero bytes for `state.controller` confirms
+    // both channels are running gains-only controllers without
+    // requiring any data exchange.
+    const ENCODED_LEN: usize = 0;
+
+    fn encode_canonical(&self, _buf: &mut [u8]) -> usize {
+        0
     }
 }

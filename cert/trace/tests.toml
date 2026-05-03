@@ -589,3 +589,42 @@ surfaces. Completion sign for the Phase-0 plan: swapping any one
 trait's impl needs zero changes to internal kernel modules.
 """
 traces_to = ["4dd0a1f2-9e1e-4ec6-9871-a72567281069"]
+
+[[tests]]
+uid = "08cae7a2-a8f7-40ee-80ad-a57b5a636207"
+id = "TST-REPL-101"
+title = "replicable_tests — Replicable contract for EkfState + NoControllerState"
+owner = "aviate-core@aviate"
+description = """
+The integration test
+`aviate-core/tests/replicable_tests.rs` exhausts the
+`Replicable` contract for the in-tree state implementations:
+
+  1. `ekf_state_encoded_len_matches_documented_size` — pins
+     `EkfState::ENCODED_LEN == 1386`. Catches a manual edit drift
+     between the doc-comment and the impl.
+  2. `ekf_state_default_encodes_full_length` — sufficient buffer
+     receives exactly `ENCODED_LEN` bytes.
+  3. `ekf_state_two_default_clones_encode_byte_equal` —
+     determinism: byte-equal states encode byte-equal.
+  4. `ekf_state_mutating_position_changes_encoding` (and analogous
+     `_velocity / _quat / _gyro_bias / _initialized_flag /
+     _quat_fault_flag` tests) — every documented field
+     contributes to the encoding. Each of these is a regression
+     guard: a future refactor that drops a field from
+     `encode_canonical` would silently break byte-equality
+     replication; the assertion catches the drop.
+  5. `ekf_state_truncates_too_small_buffer_without_panic` — a
+     16-byte buffer receives 16 bytes and returns 16, so a
+     mis-sized buffer fails the lockstep byte-equality check
+     downstream rather than panicking in the encoder.
+  6. `no_controller_state_zero_byte_encoding` — pins the unit-
+     struct contract: `ENCODED_LEN == 0`, `encode_canonical`
+     returns 0 without touching the buffer.
+
+Together these are the structural witness for HLR-REPL-001 and
+LLR-REPL-101 — the `Replicable` trait actually delivers
+deterministic, complete, fixed-width canonical encodings for
+today's state types.
+"""
+traces_to = ["60b75d78-b9b1-4842-b964-41d031e0500e"]

@@ -906,3 +906,57 @@ modules = [
 ]
 derived = false
 traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9"]
+
+[[requirements]]
+uid = "60b75d78-b9b1-4842-b964-41d031e0500e"
+id = "LLR-REPL-101"
+title = "Replicable trait + EkfState / NoControllerState canonical encoding"
+owner = "aviate-core@aviate"
+description = """
+The `aviate_core::replicable::Replicable` trait SHALL declare:
+
+    pub trait Replicable {
+        const ENCODED_LEN: usize;
+        fn encode_canonical(&self, buf: &mut [u8]) -> usize;
+    }
+
+`ENCODED_LEN` is a per-type compile-time constant. Implementations
+SHALL write exactly `min(buf.len(), Self::ENCODED_LEN)` bytes and
+return that count. The crate SHALL provide a `ByteWriter` helper
+(`replicable::ByteWriter`) with truncation-tracking
+`write_bytes / write_u8 / write_bool / write_u16 / write_u32 /
+write_u64 / write_usize / write_f32` methods that implementations
+use to assemble the byte stream. `write_usize` widens to `u64` so
+encodings are stable across 32-bit and 64-bit targets.
+
+`EkfState` SHALL implement `Replicable` with
+`ENCODED_LEN = (22 + STATE_DIM*STATE_DIM) * 4 + 2 = 1386` bytes:
+
+  - quat (w,x,y,z), pos (x,y,z), vel (x,y,z), gyro_bias (x,y,z),
+    accel_bias (x,y,z), mag_bias (x,y,z), last_gyro_body (x,y,z) —
+    22 f32s = 88 bytes
+  - p_cov (18×18 row-major, then column-major within each row) —
+    324 f32s = 1296 bytes
+  - initialized (bool), quat_fault (bool) — 2 bytes
+
+Field order in the encoding mirrors the struct's declaration order
+in `ekf.rs`. Newtype wrappers (`Meters`, `MetersPerSecond`, …)
+unwrap to their inner f32 with no extra bytes.
+
+`NoControllerState` SHALL implement `Replicable` with
+`ENCODED_LEN = 0` and an `encode_canonical` that returns 0 without
+touching the buffer.
+
+`EstimatorRuntimeState` and `ControllerRuntimeState` super-trait
+bounds SHALL include `Replicable`, propagating the encoding
+contract to every state type the kernel composes.
+"""
+verification_methods = ["test", "review"]
+modules = [
+    "aviate-core/src/replicable.rs",
+    "aviate-core/src/ekf.rs",
+    "aviate-core/src/ekf/runtime.rs",
+    "aviate-core/src/control/runtime.rs",
+]
+derived = false
+traces_to = ["a64c0403-5284-4072-bd7d-1b542f97e6dd"]

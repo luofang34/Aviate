@@ -38,6 +38,15 @@ impl ControllerRuntimeState for TestRuntime {
     }
 }
 
+impl aviate_core::replicable::Replicable for TestRuntime {
+    const ENCODED_LEN: usize = 4;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut w = aviate_core::replicable::ByteWriter::new(buf);
+        w.write_u32(self.counter);
+        w.bytes_written()
+    }
+}
+
 struct TestStatefulController;
 
 impl VehicleController for TestStatefulController {

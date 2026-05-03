@@ -345,3 +345,45 @@ internal kernel module.
 """
 verification_methods = ["test"]
 traces_to = ["bb2e1695-a2e7-40c4-ae75-9711a8134b70"]
+
+[[requirements]]
+uid = "a64c0403-5284-4072-bd7d-1b542f97e6dd"
+id = "HLR-REPL-001"
+title = "Kernel state types produce deterministic canonical byte encodings"
+owner = "aviate-core@aviate"
+description = """
+Spec §16 cross-channel snapshot replication, voting, and hot-spare
+takeover require every safety-relevant runtime state field to
+produce a byte-identical canonical encoding across redundant
+channels. The kernel SHALL define a `Replicable` trait
+(`aviate_core::replicable`) that pins the contract:
+
+  - Each implementor declares `const ENCODED_LEN: usize` — a
+    compile-time constant giving the exact byte count of the
+    encoded form. A peer channel uses this to allocate its receive
+    buffer at startup.
+  - `encode_canonical(&self, &mut [u8]) -> usize` writes exactly
+    `Self::ENCODED_LEN` bytes (or `min(buf.len(),
+    Self::ENCODED_LEN)` if the caller's buffer is smaller) and
+    returns the byte count. Width is fixed regardless of state
+    value — a value-dependent variable-length encoding would
+    defeat byte-equality comparison.
+  - Two byte-equal states produce byte-equal encodings; mutating
+    any field changes at least one byte of the encoding.
+  - Floats use `to_le_bytes` (target-endian-independent, NaN bit
+    patterns preserved). Booleans encode as a single byte (1/0).
+    Enums encode as a tag byte plus payload.
+
+`EstimatorRuntimeState` and `ControllerRuntimeState` SHALL extend
+`Replicable` (super-trait bound). Every implementor — `EkfState`,
+`NoControllerState`, future MEKF / UKF / particle-filter runtime
+types, future controller integrator / anti-windup state — SHALL
+provide `Replicable`. This makes `KernelState` recursively
+encodable: a future `KernelState::encode_canonical` (Phase-5)
+walks the fields and concatenates their canonical bytes.
+
+This requirement is the structural prerequisite for spec §16
+hot-spare takeover and cross-channel divergence detection.
+"""
+verification_methods = ["test", "review"]
+traces_to = ["d6ca85b4-62d1-48d0-b16e-3415904cc604"]
