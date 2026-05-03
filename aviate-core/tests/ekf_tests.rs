@@ -4,7 +4,7 @@
 //! - update_gnss with valid GNSS data
 //! - GNSS health gating
 
-use aviate_core::ekf::{Ekf, EkfConfig, EkfState, Estimator};
+use aviate_core::ekf::{Ekf, EkfConfig, EkfState};
 use aviate_core::math::{Quaternion, Vector3};
 use aviate_core::sensor::{GnssData, GnssFix, GnssHealth, SensorHealth, SensorReading};
 use aviate_core::time::{TimeSource, Timestamp};
@@ -72,7 +72,7 @@ fn ekf_update_gnss_with_good_health() {
     );
 
     // Should update state
-    ekf.update_gnss(&mut state, &gnss);
+    ekf.update_gnss_state(&mut state, &gnss);
 
     // After update, state should be influenced by GNSS measurement
     // We verify it's initialized and accepted the update
@@ -107,7 +107,7 @@ fn ekf_update_gnss_rejects_degraded_sensor_health() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&mut state, &gnss);
+    ekf.update_gnss_state(&mut state, &gnss);
 
     // EKF should still be initialized (update was rejected, not failed)
     assert!(state.is_initialized());
@@ -141,7 +141,7 @@ fn ekf_update_gnss_rejects_suspect_gnss_health() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&mut state, &gnss);
+    ekf.update_gnss_state(&mut state, &gnss);
 
     // Update should be rejected due to suspect GNSS health
     assert!(state.is_initialized());
@@ -175,7 +175,7 @@ fn ekf_update_gnss_rejects_no_fix() {
         GnssFix::None, // No fix - should reject
     );
 
-    ekf.update_gnss(&mut state, &gnss);
+    ekf.update_gnss_state(&mut state, &gnss);
 
     // Update should be rejected due to no fix
     assert!(state.is_initialized());
@@ -209,7 +209,7 @@ fn ekf_update_gnss_rejects_lost_gnss_health() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&mut state, &gnss);
+    ekf.update_gnss_state(&mut state, &gnss);
 
     // Update should be rejected due to lost GNSS
     assert!(state.is_initialized());
@@ -253,7 +253,7 @@ fn ekf_predict_on_uninitialized_returns_early() {
     };
 
     // Call predict on uninitialized EKF - should return early without panic
-    ekf.predict(&mut state, &imu, 0.001);
+    ekf.predict_state(&mut state, &imu, 0.001);
 
     // Should still be uninitialized
     assert!(!state.is_initialized());
@@ -293,7 +293,7 @@ fn ekf_predict_with_zero_dt_returns_early() {
     };
 
     // Call predict with dt = 0 - should return early
-    ekf.predict(&mut state, &imu, 0.0);
+    ekf.predict_state(&mut state, &imu, 0.0);
 
     // Should still be initialized (didn't crash)
     assert!(state.is_initialized());
@@ -333,7 +333,7 @@ fn ekf_predict_with_negative_dt_returns_early() {
     };
 
     // Call predict with negative dt - should return early
-    ekf.predict(&mut state, &imu, -0.001);
+    ekf.predict_state(&mut state, &imu, -0.001);
 
     // Should still be initialized (didn't crash)
     assert!(state.is_initialized());
@@ -373,7 +373,7 @@ fn ekf_predict_with_nan_dt_returns_early() {
     };
 
     // Call predict with NaN dt - should return early
-    ekf.predict(&mut state, &imu, f32::NAN);
+    ekf.predict_state(&mut state, &imu, f32::NAN);
 
     // Should still be initialized (didn't crash)
     assert!(state.is_initialized());
@@ -452,7 +452,7 @@ fn ekf_gnss_update_moves_state_toward_measurement() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&mut state, &gnss);
+    ekf.update_gnss_state(&mut state, &gnss);
 
     let state_after = state.get_estimate();
 
@@ -510,7 +510,7 @@ fn ekf_predict_integrates_angular_velocity() {
     };
 
     for _ in 0..100 {
-        ekf.predict(&mut state, &imu, 0.01);
+        ekf.predict_state(&mut state, &imu, 0.01);
     }
 
     let estimate = state.get_estimate();
@@ -564,7 +564,7 @@ fn ekf_predict_integrates_velocity_to_position() {
 
     // Run for 1 second
     for _ in 0..100 {
-        ekf.predict(&mut state, &imu, 0.01);
+        ekf.predict_state(&mut state, &imu, 0.01);
     }
 
     let estimate = state.get_estimate();
@@ -616,7 +616,7 @@ fn ekf_innovation_gating_rejects_outlier() {
         ],
     };
     for _ in 0..10 {
-        ekf.predict(&mut state, &imu, 0.01);
+        ekf.predict_state(&mut state, &imu, 0.01);
     }
 
     let state_before = state.get_estimate();
@@ -634,7 +634,7 @@ fn ekf_innovation_gating_rejects_outlier() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&mut state, &outlier_gnss);
+    ekf.update_gnss_state(&mut state, &outlier_gnss);
 
     let state_after = state.get_estimate();
 
@@ -678,7 +678,7 @@ fn ekf_innovation_gate_boundary_accepts_below_threshold() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&mut state, &gnss);
+    ekf.update_gnss_state(&mut state, &gnss);
 
     let estimate = state.get_estimate();
 
@@ -720,7 +720,7 @@ fn ekf_innovation_gate_boundary_rejects_above_threshold() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&mut state, &gnss);
+    ekf.update_gnss_state(&mut state, &gnss);
 
     let estimate = state.get_estimate();
 
@@ -766,7 +766,7 @@ fn ekf_multiple_gnss_updates_converge() {
     //   P_{n+1} = (1 - K_n) * P_n
     // Convergence is limited by measurement noise R dominating as P shrinks
     for _ in 0..20 {
-        ekf.update_gnss(&mut state, &gnss);
+        ekf.update_gnss_state(&mut state, &gnss);
     }
 
     let estimate = state.get_estimate();
@@ -823,7 +823,7 @@ fn ekf_predict_with_nan_imu_gyro_returns_early() {
         ],
     };
 
-    ekf.predict(&mut state, &imu, 0.01);
+    ekf.predict_state(&mut state, &imu, 0.01);
 
     let state_after = state.get_estimate();
 
@@ -870,7 +870,7 @@ fn ekf_predict_with_inf_imu_accel_returns_early() {
         ],
     };
 
-    ekf.predict(&mut state, &imu, 0.01);
+    ekf.predict_state(&mut state, &imu, 0.01);
 
     let state_after = state.get_estimate();
 
@@ -917,7 +917,7 @@ fn ekf_predict_with_extreme_gyro_rate_handles_gracefully() {
     };
 
     // Should not panic even with extreme values
-    ekf.predict(&mut state, &imu, 0.01);
+    ekf.predict_state(&mut state, &imu, 0.01);
 
     let estimate = state.get_estimate();
 
@@ -984,7 +984,7 @@ fn ekf_baro_update_modifies_altitude() {
         source_id: 0,
     };
 
-    ekf.update_baro(&mut state, &baro_reading);
+    ekf.update_baro_state(&mut state, &baro_reading);
 
     let state_after = state.get_estimate();
 
@@ -1045,7 +1045,7 @@ fn ekf_baro_rejects_degraded_sensor_health() {
         source_id: 0,
     };
 
-    ekf.update_baro(&mut state, &baro_reading);
+    ekf.update_baro_state(&mut state, &baro_reading);
 
     let state_after = state.get_estimate();
 
@@ -1094,7 +1094,7 @@ fn ekf_baro_with_no_pressure_does_nothing() {
         source_id: 0,
     };
 
-    ekf.update_baro(&mut state, &baro_reading);
+    ekf.update_baro_state(&mut state, &baro_reading);
 
     let state_after = state.get_estimate();
 
@@ -1156,7 +1156,7 @@ fn ekf_state_uncertainty_grows_during_predict_only() {
     );
 
     // Before any predict, 3m should be within gate (chi² = 9/0.6 = 15 < 25)
-    ekf.update_gnss(&mut state, &gnss_3m);
+    ekf.update_gnss_state(&mut state, &gnss_3m);
     let pos_after_first_update = state.get_estimate().position_ned[0].0;
     assert!(
         pos_after_first_update > 0.4,
@@ -1177,7 +1177,7 @@ fn ekf_state_uncertainty_grows_during_predict_only() {
     // Run many predict steps without update - P should grow
     // This means larger innovations will be accepted (gate widens with P)
     for _ in 0..100 {
-        ekf.predict(&mut state, &imu, 0.01);
+        ekf.predict_state(&mut state, &imu, 0.01);
     }
 
     // Now try GNSS at 5m which was previously rejected
@@ -1194,7 +1194,7 @@ fn ekf_state_uncertainty_grows_during_predict_only() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&mut state, &gnss_5m);
+    ekf.update_gnss_state(&mut state, &gnss_5m);
     let pos_after_large_p = state.get_estimate().position_ned[0].0;
 
     // With grown P, the 5m measurement should now be accepted
@@ -1235,7 +1235,7 @@ fn ekf_kalman_gain_decreases_with_repeated_updates() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&mut state, &gnss);
+    ekf.update_gnss_state(&mut state, &gnss);
     let pos_after_first = state.get_estimate().position_ned[0].0;
     // K1 = P0 / (P0 + R) = 0.1 / 0.6 ≈ 0.167
     // First update: x = 0 + 0.167 * 1.0 ≈ 0.167
@@ -1254,13 +1254,13 @@ fn ekf_kalman_gain_decreases_with_repeated_updates() {
 
     // Do 10 updates to shrink P
     for _ in 0..10 {
-        ekf.update_gnss(&mut state, &gnss);
+        ekf.update_gnss_state(&mut state, &gnss);
     }
     let pos_after_ten = state.get_estimate().position_ned[0].0;
 
     // Do one more update and measure the movement
     let pos_before_11th = pos_after_ten;
-    ekf.update_gnss(&mut state, &gnss);
+    ekf.update_gnss_state(&mut state, &gnss);
     let pos_after_11th = state.get_estimate().position_ned[0].0;
 
     let eleventh_movement = pos_after_11th - pos_before_11th;
@@ -1314,7 +1314,7 @@ fn ekf_quaternion_normalization_preserved_after_long_run() {
                 MetersPerSecondSquared(-9.81),
             ],
         };
-        ekf.predict(&mut state, &imu, 0.01);
+        ekf.predict_state(&mut state, &imu, 0.01);
     }
 
     let estimate = state.get_estimate();
@@ -1368,7 +1368,7 @@ fn ekf_gnss_velocity_update_correctness() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&mut state, &gnss);
+    ekf.update_gnss_state(&mut state, &gnss);
 
     let state_after = state.get_estimate();
 
@@ -1423,7 +1423,7 @@ fn ekf_gnss_velocity_fusion_independent_of_position() {
         GnssFix::ThreeD,
     );
 
-    ekf.update_gnss(&mut state, &gnss);
+    ekf.update_gnss_state(&mut state, &gnss);
 
     let state_after = state.get_estimate();
 
@@ -1512,7 +1512,7 @@ fn ekf_mag_update_moves_yaw_toward_measurement() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag);
 
     let state_after = state.get_estimate();
     let (_, _, yaw_after) = state_after.attitude.to_euler();
@@ -1555,7 +1555,7 @@ fn ekf_mag_rejects_degraded_sensor_health() {
         SensorHealth::Degraded,
     );
 
-    ekf.update_mag(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag);
 
     let state_after = state.get_estimate();
 
@@ -1591,7 +1591,7 @@ fn ekf_mag_rejects_weak_field() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag);
 
     let state_after = state.get_estimate();
 
@@ -1627,7 +1627,7 @@ fn ekf_mag_rejects_strong_field() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag);
 
     let state_after = state.get_estimate();
 
@@ -1664,7 +1664,7 @@ fn ekf_mag_weight_decays_with_inclination() {
         [Microtesla(40.0), Microtesla(15.0), Microtesla(10.0)],
         SensorHealth::Good,
     );
-    ekf_low.update_mag(&mut state_low, &mag_low_incl);
+    ekf_low.update_mag_state(&mut state_low, &mag_low_incl);
     let (_, _, yaw_low) = state_low.get_estimate().attitude.to_euler();
 
     // Second: high inclination (vertical_ratio in decay range 0.8-0.95)
@@ -1688,7 +1688,7 @@ fn ekf_mag_weight_decays_with_inclination() {
         [Microtesla(10.0), Microtesla(15.0), Microtesla(40.0)],
         SensorHealth::Good,
     );
-    ekf_high.update_mag(&mut state_high, &mag_high_incl);
+    ekf_high.update_mag_state(&mut state_high, &mag_high_incl);
     let (_, _, yaw_high) = state_high.get_estimate().attitude.to_euler();
 
     // High inclination should result in smaller yaw change due to weight decay
@@ -1727,7 +1727,7 @@ fn ekf_mag_stops_fusion_at_high_inclination() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag);
 
     let state_after = state.get_estimate();
 
@@ -1772,7 +1772,7 @@ fn ekf_mag_innovation_gating_rejects_outlier() {
         ],
     };
     for _ in 0..10 {
-        ekf.predict(&mut state, &imu, 0.01);
+        ekf.predict_state(&mut state, &imu, 0.01);
     }
 
     let state_before = state.get_estimate();
@@ -1786,7 +1786,7 @@ fn ekf_mag_innovation_gating_rejects_outlier() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag);
 
     let state_after = state.get_estimate();
     let (_, _, yaw_before) = state_before.attitude.to_euler();
@@ -1816,7 +1816,7 @@ fn ekf_mag_uninitialized_returns_early() {
     );
 
     // Should return early without panic
-    ekf.update_mag(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag);
 
     // Should still be uninitialized
     assert!(!state.is_initialized());
@@ -1857,7 +1857,7 @@ fn ekf_mag_innovation_wrapping_above_pi() {
     // This will trigger innovation wrapping: innov = 3.49 - 0 = 3.49 > π
     // Wrapped: innov = 3.49 - 2π ≈ -2.79
     // Then innovation gating may reject, but wrapping is exercised
-    ekf.update_mag(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag);
 
     // Verify EKF is still operational
     assert!(state.is_initialized());
@@ -1897,7 +1897,7 @@ fn ekf_mag_innovation_wrapping_below_minus_pi() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag);
 
     assert!(state.is_initialized());
 }
@@ -1974,7 +1974,7 @@ fn ekf_normal_operation_no_fault() {
 
     // Multiple predict cycles should not trigger fault
     for _ in 0..100 {
-        ekf.predict(&mut state, &imu, 0.01);
+        ekf.predict_state(&mut state, &imu, 0.01);
     }
 
     assert!(
@@ -2017,7 +2017,7 @@ fn ekf_reinit_clears_fault_state() {
     };
 
     for _ in 0..50 {
-        ekf.predict(&mut state, &imu, 0.01);
+        ekf.predict_state(&mut state, &imu, 0.01);
     }
 
     // Re-initialize - this should clear any potential fault state

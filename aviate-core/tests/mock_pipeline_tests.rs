@@ -62,13 +62,16 @@ struct MockEstimator;
 impl Estimator for MockEstimator {
     type RuntimeState = MockEstimatorRuntime;
 
-    fn predict(&self, state: &mut MockEstimatorRuntime, _imu: &ImuData, _dt: Scalar) {
+    fn observe(
+        &self,
+        state: &mut MockEstimatorRuntime,
+        _sensors: &SensorSet,
+        _overrides: Option<&aviate_core::control::SensorOverrides>,
+        _dt: Scalar,
+    ) {
         state.predict_calls = state.predict_calls.wrapping_add(1);
         state.initialized = true;
     }
-    fn update_gnss(&self, _: &mut MockEstimatorRuntime, _: &SensorReading<GnssData>) {}
-    fn update_baro(&self, _: &mut MockEstimatorRuntime, _: &SensorReading<BaroData>) {}
-    fn update_mag(&self, _: &mut MockEstimatorRuntime, _: &SensorReading<MagData>) {}
 
     fn estimate(&self, state: &MockEstimatorRuntime) -> aviate_core::state::StateEstimate {
         // Project the mock's tiny runtime onto the kernel-facing

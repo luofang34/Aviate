@@ -5,7 +5,7 @@ mod tests {
     use aviate_core::control::attitude::AttitudeController;
     use aviate_core::control::rate::RateController;
     use aviate_core::control::{Command, VehicleController};
-    use aviate_core::ekf::{Ekf, EkfState, Estimator};
+    use aviate_core::ekf::{Ekf, EkfState};
     use aviate_core::math::{Quaternion, Vector3};
     use aviate_core::mixer::{ActuatorCmd, Mixer, Sanitizer};
     use aviate_core::sensor::{
@@ -87,7 +87,7 @@ mod tests {
             gyro: [RadiansPerSecond(0.0); 3],
         };
 
-        ekf.predict(&mut state, &imu_zero, 0.01);
+        ekf.predict_state(&mut state, &imu_zero, 0.01);
 
         let est = state.get_estimate();
         assert!(est.position_ned[0].0.abs() < 1e-5);
@@ -118,7 +118,7 @@ mod tests {
 
         let dt = 0.1;
         for _ in 0..10 {
-            ekf.predict(&mut state, &imu_accel, dt);
+            ekf.predict_state(&mut state, &imu_accel, dt);
         }
 
         let est = state.get_estimate();
@@ -160,7 +160,7 @@ mod tests {
             ],
             gyro: [RadiansPerSecond(0.0); 3],
         };
-        ekf.predict(&mut state, &imu_stationary, 1.0);
+        ekf.predict_state(&mut state, &imu_stationary, 1.0);
 
         let gnss = GnssData {
             position_ned: [Meters(1.0), Meters(0.0), Meters(0.0)],
@@ -180,7 +180,7 @@ mod tests {
             health: SensorHealth::Good,
         };
 
-        ekf.update_gnss(&mut state, &gnss_reading);
+        ekf.update_gnss_state(&mut state, &gnss_reading);
 
         let est = state.get_estimate();
         assert!(
@@ -505,7 +505,7 @@ mod tests {
 
         let dt = 0.1;
         for _ in 0..10 {
-            ekf.predict(&mut state, &imu_rot, dt);
+            ekf.predict_state(&mut state, &imu_rot, dt);
         }
 
         let est = state.get_estimate();
@@ -544,7 +544,7 @@ mod tests {
             health: SensorHealth::Good,
         };
 
-        ekf.update_gnss(&mut state, &gnss_reading);
+        ekf.update_gnss_state(&mut state, &gnss_reading);
 
         let est = state.get_estimate();
         assert_eq!(est.position_ned[0].0, 0.0, "Suspect GNSS should be ignored");
@@ -582,7 +582,7 @@ mod tests {
             health: SensorHealth::Good,
         };
 
-        ekf.update_gnss(&mut state, &gnss_reading);
+        ekf.update_gnss_state(&mut state, &gnss_reading);
 
         let est = state.get_estimate();
         assert_eq!(est.position_ned[0].0, 0.0, "Outlier GNSS should be gated");
@@ -623,7 +623,7 @@ mod tests {
             health: SensorHealth::Failed,
         };
 
-        ekf.update_baro(&mut state, &baro_reading);
+        ekf.update_baro_state(&mut state, &baro_reading);
         let est = state.get_estimate();
         assert_eq!(
             est.position_ned[2].0, 0.0,
@@ -663,7 +663,7 @@ mod tests {
             health: SensorHealth::Good,
         };
 
-        ekf.update_gnss(&mut state, &gnss_reading);
+        ekf.update_gnss_state(&mut state, &gnss_reading);
         let est = state.get_estimate();
         assert_eq!(
             est.position_ned[0].0, 0.0,
@@ -690,7 +690,7 @@ mod tests {
             gyro: [RadiansPerSecond(0.0); 3],
         };
 
-        ekf.predict(&mut state, &imu_nan, 0.01);
+        ekf.predict_state(&mut state, &imu_nan, 0.01);
         let est = state.get_estimate();
         assert!(
             !est.position_ned[0].0.is_nan(),
@@ -743,8 +743,8 @@ mod tests {
         };
 
         for _ in 0..50 {
-            ekf.predict(&mut state, &imu_stationary, 0.1);
-            ekf.update_baro(&mut state, &baro_reading);
+            ekf.predict_state(&mut state, &imu_stationary, 0.1);
+            ekf.update_baro_state(&mut state, &baro_reading);
         }
 
         let est = state.get_estimate();
@@ -781,7 +781,7 @@ mod tests {
             health: SensorHealth::Good,
         };
 
-        ekf.update_mag(&mut state, &mag_reading);
+        ekf.update_mag_state(&mut state, &mag_reading);
     }
 
     #[test]
@@ -808,7 +808,7 @@ mod tests {
         };
 
         for _ in 0..1000 {
-            ekf.predict(&mut state, &imu, 0.01);
+            ekf.predict_state(&mut state, &imu, 0.01);
         }
 
         let est = state.get_estimate();

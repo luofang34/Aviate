@@ -197,41 +197,60 @@ impl Ekf {
 impl super::Estimator for Ekf {
     type RuntimeState = EkfState;
 
-    fn predict(&self, state: &mut EkfState, imu: &crate::sensor::ImuData, dt: Scalar) {
-        Ekf::predict_state(self, state, imu, dt)
-    }
-
-    fn update_gnss(
+    fn observe(
         &self,
         state: &mut EkfState,
-        gnss_reading: &crate::sensor::SensorReading<crate::sensor::GnssData>,
+        sensors: &crate::sensor::SensorSet,
+        overrides: Option<&crate::control::SensorOverrides>,
+        dt: Scalar,
     ) {
-        Ekf::update_gnss_state(self, state, gnss_reading)
-    }
+        // EKF-shaped flow: predict-per-IMU + update-per-sensor.
+        // Each gate (validity, health, override) is the same logic
+        // that previously lived in `kernel_update.rs`; moving it
+        // here means the kernel no longer hardcodes which channels
+        // an estimator consumes — `Ekf::observe` decides.
+        let primary_imu = &sensors.imus[0];
+        if primary_imu.valid && primary_imu.health == crate::sensor::SensorHealth::Good {
+            Ekf::predict_state(self, state, &primary_imu.value, dt);
+        }
 
-    fn update_baro(
-        &self,
-        state: &mut EkfState,
-        baro_reading: &crate::sensor::SensorReading<crate::sensor::BaroData>,
-    ) {
-        Ekf::update_baro_state(self, state, baro_reading)
-    }
+        if let Some(o) = overrides {
+            if let Some(gnss_health) = o.gnss_force_state {
+                let mut primary_gnss_reading = sensors.gnss[0];
+                primary_gnss_reading.health = match gnss_health {
+                    crate::sensor::GnssHealth::Good => crate::sensor::SensorHealth::Good,
+                    crate::sensor::GnssHealth::Suspect => crate::sensor::SensorHealth::Degraded,
+                    crate::sensor::GnssHealth::Lost => crate::sensor::SensorHealth::Failed,
+                };
+                Ekf::update_gnss_state(self, state, &primary_gnss_reading);
+            }
+        } else {
+            let primary_gnss = &sensors.gnss[0];
+            if primary_gnss.valid && primary_gnss.health == crate::sensor::SensorHealth::Good {
+                Ekf::update_gnss_state(self, state, primary_gnss);
+            }
+        }
 
-    fn update_mag(
-        &self,
-        state: &mut EkfState,
-        mag_reading: &crate::sensor::SensorReading<crate::sensor::MagData>,
-    ) {
-        Ekf::update_mag_state(self, state, mag_reading)
+        let primary_baro = &sensors.baros[0];
+        if primary_baro.valid && primary_baro.health == crate::sensor::SensorHealth::Good {
+            Ekf::update_baro_state(self, state, primary_baro);
+        }
+
+        let primary_mag = &sensors.mags[0];
+        if primary_mag.valid && primary_mag.health == crate::sensor::SensorHealth::Good {
+            Ekf::update_mag_state(self, state, primary_mag);
+        }
     }
 
     fn estimate(&self, state: &EkfState) -> crate::state::StateEstimate {
         state.get_estimate()
     }
 
-    fn reset(&self, state: &mut EkfState) {
-        EkfState::reset(state);
-    }
+    // No `reset` override: the trait default routes through
+    // `EstimatorRuntimeState::reset(state)`, which delegates to
+    // `EkfState::reset(self)` — the same factory-reset identity
+    // we'd supply explicitly. Letting the default fire keeps the
+    // `EstimatorRuntimeState` impl covered.
 
     #[cfg(feature = "test-hooks")]
     fn inject_state(&self, state: &mut EkfState, est: &crate::state::StateEstimate) {

@@ -166,56 +166,19 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             };
         }
 
-        // 3. EKF Update (predict and update). Pipeline carries the
-        //    algorithm identity (`&self`); KernelState owns the filter
-        //    state (`&mut self.state.estimator`). The disjoint-borrow
-        //    rule lets us read the algorithm and write the state in
-        //    the same call.
-        let primary_imu = &sensors.imus[0];
-        if primary_imu.valid && primary_imu.health == crate::sensor::SensorHealth::Good {
-            self.pipeline.estimator.predict(
-                &mut self.state.estimator,
-                &primary_imu.value,
-                time.dt_sec.0,
-            );
-        }
-
-        // Apply sensor overrides from command
-        if let Some(overrides) = &command.sensor_overrides {
-            if let Some(gnss_health) = overrides.gnss_force_state {
-                let mut primary_gnss_reading = sensors.gnss[0];
-                primary_gnss_reading.health = match gnss_health {
-                    crate::sensor::GnssHealth::Good => crate::sensor::SensorHealth::Good,
-                    crate::sensor::GnssHealth::Suspect => crate::sensor::SensorHealth::Degraded,
-                    crate::sensor::GnssHealth::Lost => crate::sensor::SensorHealth::Failed,
-                };
-                self.pipeline
-                    .estimator
-                    .update_gnss(&mut self.state.estimator, &primary_gnss_reading);
-            }
-        } else {
-            // Normal sensor updates
-            let primary_gnss = &sensors.gnss[0];
-            if primary_gnss.valid && primary_gnss.health == crate::sensor::SensorHealth::Good {
-                self.pipeline
-                    .estimator
-                    .update_gnss(&mut self.state.estimator, primary_gnss);
-            }
-        }
-
-        let primary_baro = &sensors.baros[0];
-        if primary_baro.valid && primary_baro.health == crate::sensor::SensorHealth::Good {
-            self.pipeline
-                .estimator
-                .update_baro(&mut self.state.estimator, primary_baro);
-        }
-
-        let primary_mag = &sensors.mags[0];
-        if primary_mag.valid && primary_mag.health == crate::sensor::SensorHealth::Good {
-            self.pipeline
-                .estimator
-                .update_mag(&mut self.state.estimator, primary_mag);
-        }
+        // 3. Estimator observation. Pipeline carries the algorithm
+        //    identity (`&self`); KernelState owns the filter state
+        //    (`&mut self.state.estimator`). Disjoint-borrow rule
+        //    lets us read the algorithm and write the state in the
+        //    same call. The estimator decides which sensor channels
+        //    it consumes — the kernel does not pre-process or
+        //    pre-select.
+        self.pipeline.estimator.observe(
+            &mut self.state.estimator,
+            sensors,
+            command.sensor_overrides.as_ref(),
+            time.dt_sec.0,
+        );
 
         // Get updated estimate
         let state = self.pipeline.estimator.estimate(&self.state.estimator);

@@ -864,3 +864,45 @@ modules = [
 ]
 derived = false
 traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9"]
+
+[[requirements]]
+uid = "78ac9094-c498-4730-8894-f360443d06fd"
+id = "LLR-EST-111"
+title = "Estimator::observe consolidates per-sensor fusion into one trait method"
+owner = "aviate-core@aviate"
+description = """
+`Estimator::observe(&self, &mut Self::RuntimeState, &SensorSet,
+Option<&SensorOverrides>, Scalar)` SHALL be the single entry point
+through which `kernel_update.rs::update()` advances the estimator.
+The kernel SHALL NOT call `predict`, `update_gnss`, `update_baro`,
+or `update_mag` directly through the trait — those four methods
+were EKF-shaped (predict-per-IMU + update-per-sensor) and have been
+removed from the trait surface. They survive as inherent helpers
+on `Ekf` (`predict_state`, `update_gnss_state`, `update_baro_state`,
+`update_mag_state`) for direct unit-test access.
+
+`Ekf::observe` SHALL replicate the previous kernel-level fusion
+flow: predict from `imus[0]` if valid+Good, apply GNSS overrides
+from `SensorOverrides::gnss_force_state` (forcing health to
+Good/Degraded/Failed), update from primary GNSS / baro / mag
+readings if valid+Good. Implementations MAY consume the
+`SensorSet` channels in any order they choose — the kernel does
+not pre-select.
+
+Implementations SHALL bail without state mutation when `dt` is
+non-finite or non-positive. `overrides == None` SHALL behave as
+"no overrides" (apply normal sensor health gating).
+
+This is the structural prerequisite for non-EKF estimators that
+don't fit the predict-per-IMU + update-per-sensor pattern (UKF
+batch updates, particle-filter resampling, graph-based VIO with
+keyframe triggers, IMM with parallel filter banks).
+"""
+verification_methods = ["test", "review"]
+modules = [
+    "aviate-core/src/ekf.rs",
+    "aviate-core/src/ekf/scalar.rs",
+    "aviate-core/src/kernel_update.rs",
+]
+derived = false
+traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9"]
