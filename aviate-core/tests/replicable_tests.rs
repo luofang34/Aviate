@@ -323,3 +323,92 @@ fn kernel_state_mutating_faults_changes_encoding() {
         "faults field must contribute to the kernel-state encoding"
     );
 }
+
+#[test]
+fn actuator_health_each_variant_encodes_distinct_tag() {
+    // Encode all five ActuatorHealth variants and verify each gets a
+    // distinct single-byte tag. This exercises every match arm in
+    // mixer/replicable.rs's ActuatorHealth::encode_canonical (Good=0,
+    // Degraded=1, Failed=2, Stuck=3, Unknown=4) — a regression that
+    // collapses two variants to the same tag would defeat snapshot
+    // discrimination across channels.
+    use aviate_core::mixer::ActuatorHealth;
+    let mut tags = [0u8; 5];
+    for (i, h) in [
+        ActuatorHealth::Good,
+        ActuatorHealth::Degraded,
+        ActuatorHealth::Failed,
+        ActuatorHealth::Stuck,
+        ActuatorHealth::Unknown,
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mut buf = [0u8; 1];
+        let n = h.encode_canonical(&mut buf);
+        assert_eq!(n, 1, "ActuatorHealth must encode exactly 1 byte");
+        tags[i] = buf[0];
+    }
+    assert_eq!(tags, [0, 1, 2, 3, 4]);
+}
+
+#[test]
+fn actuator_state_some_actual_changes_encoding_vs_none() {
+    // Drive the Some(arr) branch in ActuatorState::encode_canonical:
+    // when actual is Some, the discriminant is 1 and the payload
+    // f32 array follows; when None, discriminant is 0 and zero
+    // payload bytes are written. Replication needs to distinguish
+    // "we have feedback" from "we don't" byte-distinctly.
+    use aviate_core::mixer::ActuatorState;
+    use aviate_core::types::Normalized;
+
+    let baseline = ActuatorState::default(); // actual = None
+    let mut with_actual = ActuatorState::default();
+    with_actual.actual = Some([Normalized(0.5); aviate_core::mixer::MAX_ACTUATORS]);
+
+    let mut buf_a = [0u8; <ActuatorState as Replicable>::ENCODED_LEN];
+    let mut buf_b = [0u8; <ActuatorState as Replicable>::ENCODED_LEN];
+    let na = baseline.encode_canonical(&mut buf_a);
+    let nb = with_actual.encode_canonical(&mut buf_b);
+    assert_eq!(na, nb, "fixed-width invariant: same length for Some/None");
+    assert_ne!(
+        buf_a, buf_b,
+        "Some(actual) must produce a byte-distinct encoding from None"
+    );
+}
+
+#[test]
+fn actuator_state_timestamp_source_each_variant_changes_encoding() {
+    // Drive the TimeSource match in ActuatorState::encode_canonical
+    // through its Gps and Ptp arms. Internal is the default and is
+    // covered by the all-defaults baseline above.
+    use aviate_core::mixer::ActuatorState;
+    use aviate_core::time::{TimeSource, Timestamp};
+
+    let mut internal = ActuatorState::default();
+    internal.timestamp = Timestamp {
+        ticks: 0,
+        source: TimeSource::Internal,
+    };
+    let mut gps = ActuatorState::default();
+    gps.timestamp = Timestamp {
+        ticks: 0,
+        source: TimeSource::Gps,
+    };
+    let mut ptp = ActuatorState::default();
+    ptp.timestamp = Timestamp {
+        ticks: 0,
+        source: TimeSource::Ptp,
+    };
+
+    let mut bi = [0u8; <ActuatorState as Replicable>::ENCODED_LEN];
+    let mut bg = [0u8; <ActuatorState as Replicable>::ENCODED_LEN];
+    let mut bp = [0u8; <ActuatorState as Replicable>::ENCODED_LEN];
+    internal.encode_canonical(&mut bi);
+    gps.encode_canonical(&mut bg);
+    ptp.encode_canonical(&mut bp);
+
+    assert_ne!(bi, bg, "Internal vs Gps must produce distinct encodings");
+    assert_ne!(bg, bp, "Gps vs Ptp must produce distinct encodings");
+    assert_ne!(bi, bp, "Internal vs Ptp must produce distinct encodings");
+}
