@@ -46,6 +46,10 @@
 //! Phantom-DA note: this module avoids `pub use submodule::Trait`
 //! re-exports — see `aviate-core/src/lib.rs` for the rationale.
 
+// COV:EXCL_START(phantom DA: doc-comment + struct-decl lines for
+// ByteWriter pick up coverage attributions from grcov even though
+// they have no executable code; same artifact class documented in
+// `aviate-core/src/ekf.rs` and `aviate-core/src/kernel/config.rs`.)
 /// Helper for `Replicable` impls: writes primitive fields into a
 /// byte buffer with truncation tracking. Saturating: writes stop
 /// silently when the buffer is exhausted, so callers can detect
@@ -54,6 +58,7 @@ pub struct ByteWriter<'a> {
     buf: &'a mut [u8],
     written: usize,
 }
+// COV:EXCL_STOP
 
 impl<'a> ByteWriter<'a> {
     /// Wrap a destination buffer.
@@ -167,6 +172,34 @@ mod byte_writer_tests {
         let mut w = ByteWriter::new(&mut buf);
         w.write_bytes(&[]);
         assert_eq!(w.bytes_written(), 0);
+    }
+
+    #[test]
+    fn write_bytes_copies_full_slice_when_buffer_fits() {
+        // Direct exercise of the copy path inside `write_bytes`. The
+        // integration `replicable_tests` reach `write_bytes` via the
+        // typed helpers (write_f32 etc.); duplicating the call here
+        // means grcov tracks the copy path within the lib's own
+        // compilation unit even if cross-crate inlining would
+        // otherwise hide it.
+        let mut buf = [0u8; 8];
+        let mut w = ByteWriter::new(&mut buf);
+        w.write_bytes(&[0xAA, 0xBB, 0xCC, 0xDD]);
+        assert_eq!(w.bytes_written(), 4);
+        assert_eq!(buf, [0xAA, 0xBB, 0xCC, 0xDD, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn write_bytes_after_full_buffer_no_ops() {
+        // First fill the buffer, then write more — exercises the
+        // `n == 0` branch when `remaining == 0`.
+        let mut buf = [0u8; 2];
+        let mut w = ByteWriter::new(&mut buf);
+        w.write_bytes(&[1, 2]);
+        assert_eq!(w.bytes_written(), 2);
+        w.write_bytes(&[3, 4]);
+        assert_eq!(w.bytes_written(), 2, "no more bytes accepted past capacity");
+        assert_eq!(buf, [1, 2]);
     }
 }
 
