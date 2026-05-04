@@ -8,10 +8,7 @@
 //! fixed-width little-endian byte stream into the caller's buffer and
 //! returns the number of bytes written.
 
-// COV:EXCL_START(phantom DA: this whole module is helper-glue around
-// `copy_into`; LLVM coverage instrumentation accumulates phantom DA
-// entries on the wrapper helpers. Behavioral coverage stays via the
-// `tests` module below — every code path is exercised.)
+// COV:EXCL_START(phantom DA on helper-glue around copy_into)
 
 /// Copy `bytes` into `buf[offset..]`, truncating if the remaining
 /// space is smaller. Returns the number of bytes actually copied —
