@@ -22,23 +22,22 @@
 //! Phantom-DA note: this module avoids `pub use submodule::Trait`
 //! re-exports — see `aviate-core/src/lib.rs` for the rationale.
 
-// COV:EXCL_START(phantom DA: ByteWriter wrapper helpers exercised behaviorally by byte_writer_tests)
-/// Helper for `Replicable` impls: writes primitive fields into a
-/// byte buffer with truncation tracking. Saturating: writes stop
-/// silently when the buffer is exhausted, so callers can detect
-/// undersized buffers via the returned byte count.
+// Helper for `Replicable` impls: writes primitive fields into a
+// byte buffer with truncation tracking. Saturating: writes stop
+// silently when the buffer is exhausted, so callers can detect
+// undersized buffers via the returned byte count. (Doc comments
+// dropped to avoid grcov phantom-DA on doc lines that refused to
+// honor COV:EXCL_START regions.)
 pub struct ByteWriter<'a> {
     buf: &'a mut [u8],
     written: usize,
 }
 
 impl<'a> ByteWriter<'a> {
-    /// Wrap a destination buffer.
     pub fn new(buf: &'a mut [u8]) -> Self {
         Self { buf, written: 0 }
     }
 
-    /// Append `bytes`, truncating if the buffer is too small.
     pub fn write_bytes(&mut self, bytes: &[u8]) {
         let remaining = self.buf.len().saturating_sub(self.written);
         let n = remaining.min(bytes.len());
@@ -49,48 +48,38 @@ impl<'a> ByteWriter<'a> {
         self.written += n;
     }
 
-    /// Append one byte.
     pub fn write_u8(&mut self, x: u8) {
         self.write_bytes(&[x]);
     }
 
-    /// Append a `bool` as one byte (1 = true, 0 = false).
     pub fn write_bool(&mut self, b: bool) {
         self.write_u8(if b { 1 } else { 0 });
     }
 
-    /// Append a `u16` in little-endian order.
     pub fn write_u16(&mut self, x: u16) {
         self.write_bytes(&x.to_le_bytes());
     }
 
-    /// Append a `u32` in little-endian order.
     pub fn write_u32(&mut self, x: u32) {
         self.write_bytes(&x.to_le_bytes());
     }
 
-    /// Append a `u64` in little-endian order.
     pub fn write_u64(&mut self, x: u64) {
         self.write_bytes(&x.to_le_bytes());
     }
 
-    /// Append a `usize` widened to `u64` for cross-target stability.
     pub fn write_usize(&mut self, x: usize) {
         self.write_u64(x as u64);
     }
 
-    /// Append an `f32` in little-endian order, exact bit pattern
-    /// preserved.
     pub fn write_f32(&mut self, x: f32) {
         self.write_bytes(&x.to_le_bytes());
     }
 
-    /// Number of bytes written so far.
     pub fn bytes_written(&self) -> usize {
         self.written
     }
 }
-// COV:EXCL_STOP
 
 #[cfg(test)]
 mod byte_writer_tests {
