@@ -6,42 +6,18 @@
 //! produce a byte-identical canonical encoding across redundant
 //! channels. This trait pins the contract: each implementor writes a
 //! fixed-width little-endian byte stream into the caller's buffer and
-//! returns the number of bytes written.
+//! returns the number of bytes written. See the `Replicable` trait
+//! and `ByteWriter` types in this module for the concrete encoding
+//! rules and helpers; the trait doc enumerates per-shape encoding
+//! conventions (floats, integers, bools, enums, options, arrays,
+//! structs).
 //!
-//! Why "byte-identical, not Hash":
-//! - `core::hash::Hasher` is a one-way digest; the bytes are not
-//!   recoverable for a remote channel to compare. Lockstep needs the
-//!   actual state image, not just a fingerprint.
-//! - `core::hash::Hasher` permits implementations to differ in
-//!   per-call ordering; deterministic encoding bans that.
-//! - Cross-channel transmission needs serialized bytes; the hash is
-//!   computed over them downstream (via the same FNV-1a fold the
-//!   `algorithm_identity_hash` and `canonical_hash` functions use).
-//!
-//! Encoding rules:
-//!
-//!   - **Floats**: `f32::to_le_bytes` / `f64::to_le_bytes`. Target-
-//!     endian-independent, exact bits preserved (NaN bit patterns
-//!     too — relevant for fault-latch states).
-//!   - **Integers**: little-endian via `to_le_bytes`. `usize` is
-//!     widened to `u64` to hash identically on 32-bit and 64-bit
-//!     targets.
-//!   - **Bools**: a single byte, `0` or `1`.
-//!   - **Enums**: a tag byte assigned in declaration order; payload
-//!     follows for variants that carry data.
-//!   - **Options**: a discriminant byte (0 = None, 1 = Some) plus
-//!     payload on Some.
-//!   - **Arrays / slices**: each element in order, no length prefix
-//!     (length is part of the type at compile time for arrays; slice
-//!     fields fold a length prefix as their owner's responsibility).
-//!   - **Structs**: each field in declaration order, no separator
-//!     bytes between fields (fixed-width per type means concatenation
-//!     aliasing is prevented by the type-level shape, not by sentinels).
-//!
-//! Fixed-width invariant: every implementation writes EXACTLY
-//! `ENCODED_LEN` bytes, regardless of state value. A variable-length
-//! encoding (e.g. shrinking when the EKF is uninitialized) would
-//! defeat byte-equality comparison.
+//! Why byte-identical, not Hash: `core::hash::Hasher` is a one-way
+//! digest, the bytes are not recoverable for a remote channel to
+//! compare; lockstep needs the actual state image, not just a
+//! fingerprint. Hashes are computed downstream over these bytes via
+//! the same FNV-1a fold the `algorithm_identity_hash` and
+//! `canonical_hash` functions use.
 //!
 //! Phantom-DA note: this module avoids `pub use submodule::Trait`
 //! re-exports — see `aviate-core/src/lib.rs` for the rationale.
