@@ -22,7 +22,7 @@
 //! Phantom-DA note: this module avoids `pub use submodule::Trait`
 //! re-exports — see `aviate-core/src/lib.rs` for the rationale.
 
-// COV:EXCL_START phantom DA on ByteWriter struct decl + doc + impl block
+// COV:EXCL_START(phantom DA: ByteWriter wrapper helpers exercised behaviorally by byte_writer_tests)
 /// Helper for `Replicable` impls: writes primitive fields into a
 /// byte buffer with truncation tracking. Saturating: writes stop
 /// silently when the buffer is exhausted, so callers can detect
@@ -90,7 +90,7 @@ impl<'a> ByteWriter<'a> {
         self.written
     }
 }
-// COV:EXCL_STOP end ByteWriter phantom-DA wrap
+// COV:EXCL_STOP
 
 #[cfg(test)]
 mod byte_writer_tests {
