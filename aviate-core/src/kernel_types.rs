@@ -320,6 +320,35 @@ pub struct TimingStats {
     pub total_cycles: u64,
 }
 
+impl crate::replicable::Replicable for TimingStats {
+    // 5 × u32 + 1 × u64 = 28 bytes.
+    const ENCODED_LEN: usize = 5 * 4 + 8;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut w = crate::replicable::ByteWriter::new(buf);
+        w.write_u32(self.last_cycle_us);
+        w.write_u32(self.max_cycle_us);
+        w.write_u32(self.min_cycle_us);
+        w.write_u32(self.deadline_violations);
+        w.write_u32(self.consecutive_violations);
+        w.write_u64(self.total_cycles);
+        w.bytes_written()
+    }
+}
+
+impl crate::replicable::Replicable for InitState {
+    const ENCODED_LEN: usize = 1;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut w = crate::replicable::ByteWriter::new(buf);
+        // Discriminants are explicit on the enum decl (PowerOn=0..Fault=8).
+        // Cast through u8 so this is target-endian-independent and a
+        // future reorder of the enum surfaces as a compile error in
+        // the variant's discriminant value, not as a silent encoding
+        // shift.
+        w.write_u8(*self as u8);
+        w.bytes_written()
+    }
+}
+
 /// Per-cycle timing information
 #[derive(Copy, Clone, Debug)]
 pub struct CycleTiming {

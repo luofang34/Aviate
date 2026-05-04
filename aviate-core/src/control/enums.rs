@@ -111,6 +111,24 @@ pub enum ControlLawV1 {
     Backup = 3,
 }
 
+impl crate::replicable::Replicable for ControlLawV1 {
+    const ENCODED_LEN: usize = 1;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut w = crate::replicable::ByteWriter::new(buf);
+        w.write_u8(*self as u8);
+        w.bytes_written()
+    }
+}
+
+impl crate::replicable::Replicable for ConfigMode {
+    const ENCODED_LEN: usize = 1;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut w = crate::replicable::ByteWriter::new(buf);
+        w.write_u8(*self as u8);
+        w.bytes_written()
+    }
+}
+
 impl ControlLawV1 {
     /// Center-codes with maximum Hamming distance (≥8 bits between any pair)
     const CODES: &'static [(Self, u16)] = &[

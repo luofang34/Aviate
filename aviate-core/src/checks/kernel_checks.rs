@@ -32,3 +32,18 @@ impl KernelChecks {
         }
     }
 }
+
+impl crate::replicable::Replicable for KernelChecks {
+    const ENCODED_LEN: usize =
+        PreArmStatus::ENCODED_LEN + InFlightStatus::ENCODED_LEN + TransitionStatus::ENCODED_LEN;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut written = self.pre_arm.encode_canonical(buf);
+        if written < buf.len() {
+            written += self.in_flight.encode_canonical(&mut buf[written..]);
+        }
+        if written < buf.len() {
+            written += self.transition.encode_canonical(&mut buf[written..]);
+        }
+        written
+    }
+}

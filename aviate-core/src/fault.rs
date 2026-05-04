@@ -72,6 +72,16 @@ bitflags::bitflags! {
     }
 }
 
+impl crate::replicable::Replicable for FaultFlags {
+    // u64 backing storage; raw bits encode the latch state.
+    const ENCODED_LEN: usize = 8;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut w = crate::replicable::ByteWriter::new(buf);
+        w.write_u64(self.bits());
+        w.bytes_written()
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FaultAction {
     Monitor,

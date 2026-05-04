@@ -177,3 +177,101 @@ fn no_controller_state_zero_byte_encoding() {
     assert_eq!(n, 0, "unit-struct runtime state writes zero bytes");
     assert_eq!(buf, [0u8; 8], "untouched buffer stays at its initial value");
 }
+
+#[test]
+fn kernel_state_default_encodes_full_length() {
+    // Default kernel state with EkfState + NoControllerState as the
+    // generic parameters. ENCODED_LEN sums every leaf field.
+    use aviate_core::kernel::state::KernelState;
+    let s: KernelState = KernelState::default();
+    let mut buf = [0u8; <KernelState as Replicable>::ENCODED_LEN];
+    let n = s.encode_canonical(&mut buf);
+    assert_eq!(
+        n,
+        <KernelState as Replicable>::ENCODED_LEN,
+        "encode_canonical writes exactly ENCODED_LEN bytes"
+    );
+}
+
+#[test]
+fn kernel_state_encoded_len_is_sum_of_field_lens() {
+    // Cross-check: KernelState's ENCODED_LEN must equal the sum of
+    // each leaf field's ENCODED_LEN. A regression where a field
+    // gets dropped from the const expression would make this fail
+    // (assuming a corresponding mismatch between encoded byte count
+    // and ENCODED_LEN).
+    use aviate_core::checks::KernelChecks;
+    use aviate_core::control::runtime::NoControllerState;
+    use aviate_core::control::{ConfigMode, ControlLawV1};
+    use aviate_core::ekf::EkfState;
+    use aviate_core::fault::FaultFlags;
+    use aviate_core::kernel::state::KernelState;
+    use aviate_core::kernel_types::{InitState, TimingStats};
+    use aviate_core::mixer::{ActuatorFallbackState, ActuatorState};
+
+    let expected = <InitState as Replicable>::ENCODED_LEN
+        + <ConfigMode as Replicable>::ENCODED_LEN
+        + <FaultFlags as Replicable>::ENCODED_LEN
+        + <ControlLawV1 as Replicable>::ENCODED_LEN
+        + <KernelChecks as Replicable>::ENCODED_LEN
+        + <ActuatorState as Replicable>::ENCODED_LEN
+        + <TimingStats as Replicable>::ENCODED_LEN
+        + <EkfState as Replicable>::ENCODED_LEN
+        + <ActuatorFallbackState as Replicable>::ENCODED_LEN
+        + <NoControllerState as Replicable>::ENCODED_LEN;
+
+    assert_eq!(<KernelState as Replicable>::ENCODED_LEN, expected);
+}
+
+#[test]
+fn kernel_state_two_default_clones_encode_byte_equal() {
+    use aviate_core::kernel::state::KernelState;
+    let a: KernelState = KernelState::default();
+    let b = a.clone();
+    let mut buf_a = [0u8; <KernelState as Replicable>::ENCODED_LEN];
+    let mut buf_b = [0u8; <KernelState as Replicable>::ENCODED_LEN];
+    a.encode_canonical(&mut buf_a);
+    b.encode_canonical(&mut buf_b);
+    assert_eq!(
+        buf_a, buf_b,
+        "byte-equal kernel states must produce byte-equal encodings"
+    );
+}
+
+#[test]
+fn kernel_state_mutating_init_state_changes_encoding() {
+    use aviate_core::kernel::state::KernelState;
+    use aviate_core::kernel_types::InitState;
+
+    let baseline: KernelState = KernelState::default();
+    let mut mutated: KernelState = KernelState::default();
+    mutated.init_state = InitState::Armed;
+
+    let mut buf_a = [0u8; <KernelState as Replicable>::ENCODED_LEN];
+    let mut buf_b = [0u8; <KernelState as Replicable>::ENCODED_LEN];
+    baseline.encode_canonical(&mut buf_a);
+    mutated.encode_canonical(&mut buf_b);
+    assert_ne!(
+        buf_a, buf_b,
+        "init_state field must contribute to the kernel-state encoding"
+    );
+}
+
+#[test]
+fn kernel_state_mutating_faults_changes_encoding() {
+    use aviate_core::fault::FaultFlags;
+    use aviate_core::kernel::state::KernelState;
+
+    let baseline: KernelState = KernelState::default();
+    let mut mutated: KernelState = KernelState::default();
+    mutated.faults |= FaultFlags::ALL_IMU_FAILED;
+
+    let mut buf_a = [0u8; <KernelState as Replicable>::ENCODED_LEN];
+    let mut buf_b = [0u8; <KernelState as Replicable>::ENCODED_LEN];
+    baseline.encode_canonical(&mut buf_a);
+    mutated.encode_canonical(&mut buf_b);
+    assert_ne!(
+        buf_a, buf_b,
+        "faults field must contribute to the kernel-state encoding"
+    );
+}

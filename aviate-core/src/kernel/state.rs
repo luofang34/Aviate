@@ -170,6 +170,55 @@ impl<E: EstimatorRuntimeState, R: ControllerRuntimeState> Default for KernelStat
     }
 }
 
+impl<E: EstimatorRuntimeState, R: ControllerRuntimeState> crate::replicable::Replicable
+    for KernelState<E, R>
+{
+    // Sum of every field's ENCODED_LEN, in declaration order. Two
+    // generic-state fields (estimator: E, controller: R) contribute
+    // their associated-type constants, so the kernel's overall
+    // snapshot size flexes with the chosen estimator/controller —
+    // EkfState contributes 1386 bytes; a future MEKF would contribute
+    // its own footprint without any change to this expression.
+    const ENCODED_LEN: usize =
+        <crate::kernel_types::InitState as crate::replicable::Replicable>::ENCODED_LEN
+            + <crate::control::ConfigMode as crate::replicable::Replicable>::ENCODED_LEN
+            + <crate::fault::FaultFlags as crate::replicable::Replicable>::ENCODED_LEN
+            + <crate::control::ControlLawV1 as crate::replicable::Replicable>::ENCODED_LEN
+            + <KernelChecks as crate::replicable::Replicable>::ENCODED_LEN
+            + <ActuatorState as crate::replicable::Replicable>::ENCODED_LEN
+            + <crate::kernel_types::TimingStats as crate::replicable::Replicable>::ENCODED_LEN
+            + <E as crate::replicable::Replicable>::ENCODED_LEN
+            + <ActuatorFallbackState as crate::replicable::Replicable>::ENCODED_LEN
+            + <R as crate::replicable::Replicable>::ENCODED_LEN;
+
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        // Walk the fields in declaration order. Each step advances
+        // the cursor by however many bytes the leaf encoded. If the
+        // caller's buffer runs out, subsequent encodes shrink to
+        // zero (ByteWriter clamps), so the returned count tells the
+        // caller how much actually landed.
+        let mut written = 0usize;
+        macro_rules! step {
+            ($field:expr) => {{
+                if written < buf.len() {
+                    written += $field.encode_canonical(&mut buf[written..]);
+                }
+            }};
+        }
+        step!(self.init_state);
+        step!(self.mode);
+        step!(self.faults);
+        step!(self.control_law);
+        step!(self.checks);
+        step!(self.actuator_state);
+        step!(self.timing_stats);
+        step!(self.estimator);
+        step!(self.fallback);
+        step!(self.controller);
+        written
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
