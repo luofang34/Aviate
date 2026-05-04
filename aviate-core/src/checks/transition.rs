@@ -101,9 +101,7 @@ pub struct TransitionStatus {
 impl crate::replicable::Replicable for TransitionFlags {
     const ENCODED_LEN: usize = 4;
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let mut w = crate::replicable::ByteWriter::new(buf);
-        w.write_u32(self.bits());
-        w.bytes_written()
+        crate::replicable::copy_into(buf, 0, &self.bits().to_le_bytes())
     }
 }
 
@@ -111,12 +109,12 @@ impl crate::replicable::Replicable for TransitionLimits {
     // 4 × f32 = 16 bytes.
     const ENCODED_LEN: usize = 4 * 4;
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let mut w = crate::replicable::ByteWriter::new(buf);
-        w.write_f32(self.min_altitude);
-        w.write_f32(self.max_attitude_rate);
-        w.write_f32(self.min_airspeed);
-        w.write_f32(self.max_asymmetry);
-        w.bytes_written()
+        let mut w = 0usize;
+        w += crate::replicable::copy_into(buf, w, &self.min_altitude.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.max_attitude_rate.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.min_airspeed.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.max_asymmetry.to_le_bytes());
+        w
     }
 }
 

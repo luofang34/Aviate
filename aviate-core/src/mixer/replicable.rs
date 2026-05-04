@@ -9,26 +9,25 @@
 use super::{
     ActuatorFallbackState, ActuatorHealth, ActuatorState, GroupVector, MAX_ACTUATORS, MAX_GROUPS,
 };
-use crate::replicable::{ByteWriter, Replicable};
+use crate::replicable::{copy_into, Replicable};
 
 impl Replicable for GroupVector {
     // 16 × f32 outputs + u16 mask + bool valid = 64 + 2 + 1 = 67.
     const ENCODED_LEN: usize = MAX_ACTUATORS * 4 + 2 + 1;
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let mut w = ByteWriter::new(buf);
+        let mut w = 0usize;
         for n in &self.outputs {
-            w.write_f32(n.0);
+            w += copy_into(buf, w, &n.0.to_le_bytes());
         }
-        w.write_u16(self.mask);
-        w.write_bool(self.valid);
-        w.bytes_written()
+        w += copy_into(buf, w, &self.mask.to_le_bytes());
+        w += copy_into(buf, w, &[if self.valid { 1 } else { 0 }]);
+        w
     }
 }
 
 impl Replicable for ActuatorHealth {
     const ENCODED_LEN: usize = 1;
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let mut w = ByteWriter::new(buf);
         // Tag byte assigned in declaration order; adding a variant
         // SHALL extend this match (the exhaustiveness check fails
         // CI when this lags).
@@ -39,8 +38,7 @@ impl Replicable for ActuatorHealth {
             ActuatorHealth::Stuck => 3,
             ActuatorHealth::Unknown => 4,
         };
-        w.write_u8(tag);
-        w.bytes_written()
+        copy_into(buf, 0, &[tag])
     }
 }
 
@@ -50,45 +48,42 @@ impl Replicable for ActuatorState {
     const ENCODED_LEN: usize = MAX_ACTUATORS + MAX_ACTUATORS * 4 + 1 + MAX_ACTUATORS * 4 + 9;
 
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let mut written = 0usize;
+        let mut w = 0usize;
         for h in &self.health {
-            if written >= buf.len() {
-                break;
-            }
-            written += h.encode_canonical(&mut buf[written..]);
+            let off = w.min(buf.len());
+            w += h.encode_canonical(&mut buf[off..]);
         }
-        let mut w = ByteWriter::new(&mut buf[written..]);
         for n in &self.commanded {
-            w.write_f32(n.0);
+            w += copy_into(buf, w, &n.0.to_le_bytes());
         }
         // Option<[Normalized; 16]>: discriminant byte + payload (when
         // Some) or empty (when None). Fixed-width invariant requires
         // payload bytes to be present even on None — write zeros.
         match &self.actual {
             Some(arr) => {
-                w.write_u8(1);
+                w += copy_into(buf, w, &[1]);
                 for n in arr {
-                    w.write_f32(n.0);
+                    w += copy_into(buf, w, &n.0.to_le_bytes());
                 }
             }
             None => {
-                w.write_u8(0);
+                w += copy_into(buf, w, &[0]);
                 for _ in 0..MAX_ACTUATORS {
-                    w.write_f32(0.0);
+                    w += copy_into(buf, w, &0.0_f32.to_le_bytes());
                 }
             }
         }
         // Timestamp: ticks (u64) + source (TimeSource enum tag).
         // Tag byte via match — adding a variant requires extending
         // this, which fails CI via the exhaustiveness check.
-        w.write_u64(self.timestamp.ticks);
+        w += copy_into(buf, w, &self.timestamp.ticks.to_le_bytes());
         let source_tag: u8 = match self.timestamp.source {
             crate::time::TimeSource::Internal => 0,
             crate::time::TimeSource::Gps => 1,
             crate::time::TimeSource::Ptp => 2,
         };
-        w.write_u8(source_tag);
-        written + w.bytes_written()
+        w += copy_into(buf, w, &[source_tag]);
+        w
     }
 }
 
@@ -99,20 +94,17 @@ impl Replicable for ActuatorFallbackState {
         MAX_GROUPS * GroupVector::ENCODED_LEN + MAX_GROUPS * 2 + MAX_GROUPS * 2;
 
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let mut written = 0usize;
+        let mut w = 0usize;
         for v in &self.last_good {
-            if written >= buf.len() {
-                break;
-            }
-            written += v.encode_canonical(&mut buf[written..]);
+            let off = w.min(buf.len());
+            w += v.encode_canonical(&mut buf[off..]);
         }
-        let mut w = ByteWriter::new(&mut buf[written..]);
         for &a in &self.age {
-            w.write_u16(a);
+            w += copy_into(buf, w, &a.to_le_bytes());
         }
         for &c in &self.consecutive_fallback {
-            w.write_u16(c);
+            w += copy_into(buf, w, &c.to_le_bytes());
         }
-        written + w.bytes_written()
+        w
     }
 }

@@ -114,18 +114,14 @@ pub enum ControlLawV1 {
 impl crate::replicable::Replicable for ControlLawV1 {
     const ENCODED_LEN: usize = 1;
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let mut w = crate::replicable::ByteWriter::new(buf);
-        w.write_u8(*self as u8);
-        w.bytes_written()
+        crate::replicable::copy_into(buf, 0, &[*self as u8])
     }
 }
 
 impl crate::replicable::Replicable for ConfigMode {
     const ENCODED_LEN: usize = 1;
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let mut w = crate::replicable::ByteWriter::new(buf);
-        w.write_u8(*self as u8);
-        w.bytes_written()
+        crate::replicable::copy_into(buf, 0, &[*self as u8])
     }
 }
 

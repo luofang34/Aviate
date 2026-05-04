@@ -105,9 +105,7 @@ pub struct InFlightStatus {
 impl crate::replicable::Replicable for InFlightFlags {
     const ENCODED_LEN: usize = 4;
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let mut w = crate::replicable::ByteWriter::new(buf);
-        w.write_u32(self.bits());
-        w.bytes_written()
+        crate::replicable::copy_into(buf, 0, &self.bits().to_le_bytes())
     }
 }
 

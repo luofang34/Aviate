@@ -59,10 +59,10 @@ impl EstimatorRuntimeState for MockEstimatorRuntime {
 impl aviate_core::replicable::Replicable for MockEstimatorRuntime {
     const ENCODED_LEN: usize = 5; // u32 (predict_calls) + u8 (initialized)
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let mut w = aviate_core::replicable::ByteWriter::new(buf);
-        w.write_u32(self.predict_calls);
-        w.write_bool(self.initialized);
-        w.bytes_written()
+        let mut w = 0usize;
+        w += aviate_core::replicable::copy_into(buf, w, &self.predict_calls.to_le_bytes());
+        w += aviate_core::replicable::copy_into(buf, w, &[if self.initialized { 1 } else { 0 }]);
+        w
     }
 }
 
@@ -127,9 +127,7 @@ impl ControllerRuntimeState for MockControllerRuntime {
 impl aviate_core::replicable::Replicable for MockControllerRuntime {
     const ENCODED_LEN: usize = 4;
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let mut w = aviate_core::replicable::ByteWriter::new(buf);
-        w.write_u32(self.step_count);
-        w.bytes_written()
+        aviate_core::replicable::copy_into(buf, 0, &self.step_count.to_le_bytes())
     }
 }
 

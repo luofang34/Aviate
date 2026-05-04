@@ -324,28 +324,23 @@ impl crate::replicable::Replicable for TimingStats {
     // 5 × u32 + 1 × u64 = 28 bytes.
     const ENCODED_LEN: usize = 5 * 4 + 8;
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let mut w = crate::replicable::ByteWriter::new(buf);
-        w.write_u32(self.last_cycle_us);
-        w.write_u32(self.max_cycle_us);
-        w.write_u32(self.min_cycle_us);
-        w.write_u32(self.deadline_violations);
-        w.write_u32(self.consecutive_violations);
-        w.write_u64(self.total_cycles);
-        w.bytes_written()
+        let mut w = 0usize;
+        w += crate::replicable::copy_into(buf, w, &self.last_cycle_us.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.max_cycle_us.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.min_cycle_us.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.deadline_violations.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.consecutive_violations.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.total_cycles.to_le_bytes());
+        w
     }
 }
 
 impl crate::replicable::Replicable for InitState {
     const ENCODED_LEN: usize = 1;
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let mut w = crate::replicable::ByteWriter::new(buf);
         // Discriminants are explicit on the enum decl (PowerOn=0..Fault=8).
-        // Cast through u8 so this is target-endian-independent and a
-        // future reorder of the enum surfaces as a compile error in
-        // the variant's discriminant value, not as a silent encoding
-        // shift.
-        w.write_u8(*self as u8);
-        w.bytes_written()
+        // Cast through u8 so this is target-endian-independent.
+        crate::replicable::copy_into(buf, 0, &[*self as u8])
     }
 }
 

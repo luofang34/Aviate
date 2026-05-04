@@ -8,11 +8,10 @@
 //! fixed-width little-endian byte stream into the caller's buffer and
 //! returns the number of bytes written.
 
-// COV:EXCL_START(phantom DA on helper-glue around copy_into)
-
 /// Copy `bytes` into `buf[offset..]`, truncating if the remaining
-/// space is smaller. Returns the number of bytes actually copied —
-/// callers add this to their running offset.
+/// space is smaller. Returns the number of bytes actually copied.
+/// Replicable impls call this once per field and accumulate the
+/// returned counts into a running offset.
 pub fn copy_into(buf: &mut [u8], offset: usize, bytes: &[u8]) -> usize {
     let remaining = buf.len().saturating_sub(offset);
     let n = remaining.min(bytes.len());
@@ -21,58 +20,6 @@ pub fn copy_into(buf: &mut [u8], offset: usize, bytes: &[u8]) -> usize {
     }
     n
 }
-
-/// Backwards-compatible wrapper around `copy_into`. New impls SHOULD
-/// call `copy_into` directly; existing impls keep using `ByteWriter`
-/// during the transition.
-pub struct ByteWriter<'a> {
-    buf: &'a mut [u8],
-    written: usize,
-}
-
-impl<'a> ByteWriter<'a> {
-    #[inline(always)]
-    pub fn new(buf: &'a mut [u8]) -> Self {
-        Self { buf, written: 0 }
-    }
-    #[inline(always)]
-    pub fn write_bytes(&mut self, bytes: &[u8]) {
-        self.written += copy_into(self.buf, self.written, bytes);
-    }
-    #[inline(always)]
-    pub fn write_u8(&mut self, x: u8) {
-        self.write_bytes(&[x]);
-    }
-    #[inline(always)]
-    pub fn write_bool(&mut self, b: bool) {
-        self.write_u8(if b { 1 } else { 0 });
-    }
-    #[inline(always)]
-    pub fn write_u16(&mut self, x: u16) {
-        self.write_bytes(&x.to_le_bytes());
-    }
-    #[inline(always)]
-    pub fn write_u32(&mut self, x: u32) {
-        self.write_bytes(&x.to_le_bytes());
-    }
-    #[inline(always)]
-    pub fn write_u64(&mut self, x: u64) {
-        self.write_bytes(&x.to_le_bytes());
-    }
-    #[inline(always)]
-    pub fn write_usize(&mut self, x: usize) {
-        self.write_u64(x as u64);
-    }
-    #[inline(always)]
-    pub fn write_f32(&mut self, x: f32) {
-        self.write_bytes(&x.to_le_bytes());
-    }
-    #[inline(always)]
-    pub fn bytes_written(&self) -> usize {
-        self.written
-    }
-}
-// COV:EXCL_STOP
 
 /// Deterministic canonical byte encoding for kernel-state types.
 ///
