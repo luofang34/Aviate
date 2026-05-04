@@ -34,10 +34,12 @@ pub struct ByteWriter<'a> {
 }
 
 impl<'a> ByteWriter<'a> {
+    #[inline(always)]
     pub fn new(buf: &'a mut [u8]) -> Self {
         Self { buf, written: 0 }
     }
 
+    #[inline(always)]
     pub fn write_bytes(&mut self, bytes: &[u8]) {
         let remaining = self.buf.len().saturating_sub(self.written);
         let n = remaining.min(bytes.len());
@@ -48,34 +50,42 @@ impl<'a> ByteWriter<'a> {
         self.written += n;
     }
 
+    #[inline(always)]
     pub fn write_u8(&mut self, x: u8) {
         self.write_bytes(&[x]);
     }
 
+    #[inline(always)]
     pub fn write_bool(&mut self, b: bool) {
         self.write_u8(if b { 1 } else { 0 });
     }
 
+    #[inline(always)]
     pub fn write_u16(&mut self, x: u16) {
         self.write_bytes(&x.to_le_bytes());
     }
 
+    #[inline(always)]
     pub fn write_u32(&mut self, x: u32) {
         self.write_bytes(&x.to_le_bytes());
     }
 
+    #[inline(always)]
     pub fn write_u64(&mut self, x: u64) {
         self.write_bytes(&x.to_le_bytes());
     }
 
+    #[inline(always)]
     pub fn write_usize(&mut self, x: usize) {
         self.write_u64(x as u64);
     }
 
+    #[inline(always)]
     pub fn write_f32(&mut self, x: f32) {
         self.write_bytes(&x.to_le_bytes());
     }
 
+    #[inline(always)]
     pub fn bytes_written(&self) -> usize {
         self.written
     }
