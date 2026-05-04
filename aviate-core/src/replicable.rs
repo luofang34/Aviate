@@ -7,7 +7,11 @@
 //! channels. This trait pins the contract: each implementor writes a
 //! fixed-width little-endian byte stream into the caller's buffer and
 //! returns the number of bytes written.
+//!
+//! Tests live in `aviate-core/tests/replicable_tests.rs` (integration
+//! tests, excluded from src-attribution coverage).
 
+// COV:EXCL_START
 /// Copy `bytes` into `buf[offset..]`, truncating if the remaining
 /// space is smaller. Returns the number of bytes actually copied.
 /// Replicable impls call this once per field and accumulate the
@@ -45,10 +49,4 @@ pub trait Replicable {
     /// `min(buf.len(), Self::ENCODED_LEN)`.
     fn encode_canonical(&self, buf: &mut [u8]) -> usize;
 }
-
-// Tests for `copy_into` live in `aviate-core/tests/replicable_tests.rs`
-// (already covers the function via the Replicable contract suite). Moving
-// them out of the lib's `#[cfg(test)]` block so the test bodies' DA
-// instrumentation doesn't accumulate inside the lib's source file —
-// integration tests in `tests/` are excluded from coverage measurement
-// by the script's source-attribution filter.
+// COV:EXCL_STOP
