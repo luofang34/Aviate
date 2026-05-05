@@ -813,3 +813,33 @@ The unit-test family in
      used by single-channel fault-degraded mode.
 """
 traces_to = ["8e1a4d7c-3f9b-4e2d-a5c7-1b8f3d6e9c41"]
+
+[[tests]]
+uid = "7a4e2d8b-9c1f-4e3d-b5a7-2f8d1e4c9b03"
+id = "TST-CCS-105"
+title = "channel_snapshot_tests::check_lockstep_agreement_*"
+owner = "aviate-core@aviate"
+description = """
+Two integration tests in
+`aviate-core/tests/channel_snapshot_tests.rs` exercise
+`AviateKernelImpl::check_lockstep_agreement` end-to-end against
+the production trait bundle (Ekf / MultirotorController /
+QuadXMixer / Sanitizer):
+
+  1. `check_lockstep_agreement_enters_when_three_kernels_agree`
+     — three default-state kernels run the one-call gate; all
+     decide `Enter`. Witnesses the happy path through
+     LLR-CCS-106's project+decide composition.
+  2. `check_lockstep_agreement_refuses_when_peer_state_diverges`
+     — one peer kernel has `FaultFlags::ALL_IMU_FAILED` set; the
+     gate surfaces `RefuseStateMismatch { peer: TERTIARY }`,
+     witnessing that the offending peer's `ChannelId` is
+     plumbed through verbatim.
+
+Together with TST-CCS-104 (decision-primitive unit tests), this
+closes the verification chain: unit tests cover the gate logic
+in isolation, integration tests cover the kernel wrapper and
+the project+decide composition through the real production
+state types.
+"""
+traces_to = ["9b2c4f1d-7a3e-4d8b-a6f5-1c3e8d4b9a07"]

@@ -134,6 +134,36 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             state_bytes: &state_buf[..n],
         }
     }
+
+    /// One-call cross-channel agreement check: project the local
+    /// snapshot into `local_buf` and run
+    /// [`crate::kernel::snapshot::decide_lockstep`] against the
+    /// supplied peer snapshots.
+    ///
+    /// Returns the gate decision; the caller routes the redundancy
+    /// response (proceed with lockstep, downgrade to channel-
+    /// isolated, retry next cycle, declare hot-spare takeover). The
+    /// kernel itself does NOT mutate based on the decision — that
+    /// belongs to a higher-level redundancy policy that is out of
+    /// scope here.
+    ///
+    /// `local_buf` SHOULD be sized to
+    /// `<KernelState<E::RuntimeState, V::RuntimeState> as Replicable>::ENCODED_LEN`.
+    /// A short buffer truncates the local projection, which fails
+    /// `agrees_with` against any full-size peer (LLR-CCS-102) and
+    /// surfaces here as `RefuseStateMismatch` — exactly the safe
+    /// failure mode for a buffer-sizing bug.
+    pub fn check_lockstep_agreement<'lb, 'pb>(
+        &self,
+        cycle_seq: u64,
+        channel_id: crate::ChannelId,
+        local_buf: &'lb mut [u8],
+        peers: &[Option<crate::kernel::snapshot::ChannelSnapshot<'pb>>],
+        quorum: usize,
+    ) -> crate::kernel::snapshot::LockstepDecision {
+        let local = self.project_for_cross_channel(cycle_seq, channel_id, local_buf);
+        crate::kernel::snapshot::decide_lockstep(&local, peers, quorum)
+    }
 }
 
 // --- Watchdog ---
