@@ -453,6 +453,30 @@ verification_methods = ["test", "review"]
 traces_to = ["d45a87b2-6e51-42b0-995f-a7b6a6a011b9"]
 
 [[requirements]]
+uid = "5d8a3f1c-7e2b-4e9d-a4f6-3b8c1d5e9a07"
+id = "HLR-CMD-001"
+title = "Runtime tracks command-uplink staleness against the cycle clock"
+owner = "aviate-runtime@aviate"
+description = """
+The runtime SHALL pass a real `command_age_ms` to
+`AviateKernelImpl::update`, measured as elapsed milliseconds
+from the most recent `SystemCommand::FlightControl` frame's
+arrival timestamp to the current cycle clock. Until the first
+FlightControl frame arrives after power-on, the runtime SHALL
+clamp `command_age_ms` to `u32::MAX` so the kernel's
+command-timeout check fires immediately — failsafe before the
+first uplink, not COMMAND_RECENT-by-default.
+
+This requirement closes the Phase-5 placeholder where the
+runtime hardcoded `command_age_ms = 0u32`, which kept
+`COMMAND_RECENT` permanently satisfied regardless of actual
+uplink health. The placeholder was a known gap acknowledged
+in-source; HLR-CMD-001 is the contract that retires it.
+"""
+verification_methods = ["review", "test"]
+traces_to = ["8f3a2c87-9d4e-4a1f-b7e2-3c6a8f1d9e02"]
+
+[[requirements]]
 uid = "fc8e3a1d-5b9f-4e27-a4c6-2f8d1e7b3c50"
 id = "HLR-CCS-002"
 title = "Lockstep entry is gated on per-cycle peer-snapshot agreement"

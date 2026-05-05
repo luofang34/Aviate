@@ -1402,3 +1402,39 @@ verification_methods = ["test", "review"]
 modules = ["aviate-core/src/kernel.rs"]
 derived = false
 traces_to = ["fc8e3a1d-5b9f-4e27-a4c6-2f8d1e7b3c50"]
+
+[[requirements]]
+uid = "6f3a8c1d-9e2b-4e7d-b5a4-1c8f3d7e9b04"
+id = "LLR-CMD-101"
+title = "SitlRunner.last_cmd_rx_ticks captures FlightControl arrival; clamps to u32::MAX before first frame"
+owner = "aviate-runtime@aviate"
+description = """
+`aviate_runtime::sim::SitlRunner` SHALL carry a field
+`last_cmd_rx_ticks: Option<u64>`, initialized to `None` in
+`SitlRunner::new`. Inside the per-cycle command-receive
+branch, the `SystemCommand::FlightControl(cmd)` arm SHALL
+update both `self.last_cmd = cmd` AND
+`self.last_cmd_rx_ticks = Some(self.transport.now().ticks)`,
+in that order, in a single match arm — the timestamp SHALL
+NOT be updated for `Arm` / `Disarm` / non-FlightControl
+frames.
+
+When computing `command_age_ms` for the kernel's `update()`
+call, the runner SHALL:
+
+  1. If `self.last_cmd_rx_ticks == None`, pass `u32::MAX`.
+  2. Otherwise, compute
+     `age_us = self.transport.now().ticks.saturating_sub(rx_ticks)`
+     and pass `u32::try_from(age_us / 1_000)
+     .unwrap_or(u32::MAX)`.
+
+Both branches preserve the failsafe invariant: the kernel's
+`update_command_status` (which reads
+`command_age_ms >= self.cfg.command_timeout_ms` to clear the
+COMMAND_RECENT flag) sees an actionable staleness value
+on every cycle, never a placeholder zero.
+"""
+verification_methods = ["review", "test"]
+modules = ["aviate-runtime/src/sim.rs", "aviate-runtime/src/sim/step.rs"]
+derived = false
+traces_to = ["5d8a3f1c-7e2b-4e9d-a4f6-3b8c1d5e9a07"]
