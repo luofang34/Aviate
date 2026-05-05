@@ -445,3 +445,38 @@ projection + comparison primitive.
 """
 verification_methods = ["test", "review"]
 traces_to = ["d45a87b2-6e51-42b0-995f-a7b6a6a011b9"]
+
+[[requirements]]
+uid = "fc8e3a1d-5b9f-4e27-a4c6-2f8d1e7b3c50"
+id = "HLR-CCS-002"
+title = "Lockstep entry is gated on per-cycle peer-snapshot agreement"
+owner = "aviate-core@aviate"
+description = """
+A peer-lockstep gate SHALL consume the local channel's
+`ChannelSnapshot` and the peer set's `ChannelSnapshot`s and
+return one of:
+
+  - Enter — quorum of peers present, all agree byte-equally;
+  - RefuseHashMismatch — at least one peer's
+    `algorithm_identity_hash` differs from local (firmware
+    bundle skew);
+  - RefuseStateMismatch — algorithm hashes agree but state
+    bytes differ (state divergence);
+  - RefuseQuorum — fewer peers present than the caller-
+    specified quorum requires.
+
+The decision SHALL be a fail-stop single-pass check: hash
+mismatch takes precedence over state mismatch within a single
+peer; first-disagreement-wins across peers (no "majority
+overrules"). `RefuseQuorum` SHALL be returned without
+inspecting peer agreement — absence of evidence is its own
+refuse outcome, distinct from disagreement.
+
+This requirement is the gate-on-mismatch layer paired with
+HLR-CCS-001 (the projection layer): together they witness
+spec §16 cross-channel firmware verification + state
+agreement, with no "different binary, same hash" or "same
+binary, divergent state" attack surface left open.
+"""
+verification_methods = ["test", "review"]
+traces_to = ["d45a87b2-6e51-42b0-995f-a7b6a6a011b9"]

@@ -1258,3 +1258,75 @@ verification_methods = ["test", "review"]
 modules = ["aviate-core/src/kernel.rs"]
 derived = false
 traces_to = ["be4f7d29-3a82-4c6e-9b2f-7e1c5d8a0f43"]
+
+[[requirements]]
+uid = "2a1f9c5e-8d4b-4e7d-b3f6-7a2e1d9b4c08"
+id = "LLR-CCS-104"
+title = "LockstepDecision enum carries Enter / Refuse{Hash,State,Quorum}"
+owner = "aviate-core@aviate"
+description = """
+`aviate_core::kernel::snapshot::LockstepDecision` SHALL be an
+enum with exactly four variants, declared in this order:
+
+  1. `Enter` — unit variant. Authorizes peer-lockstep entry.
+  2. `RefuseHashMismatch { peer: ChannelId }` — at least one
+     peer's `algorithm_identity_hash` diverges from local.
+  3. `RefuseStateMismatch { peer: ChannelId }` — peer hashes
+     agree with local but state bytes diverge.
+  4. `RefuseQuorum { present: usize, required: usize }` —
+     fewer peer snapshots present than the caller-specified
+     quorum.
+
+`Enter` is the only variant that authorizes lockstep entry;
+the three `Refuse*` variants block entry. The variant carries
+the failure mode (offending peer ID for the hash/state
+mismatches; counts for the quorum case) so the higher-level
+redundancy policy can route the response (downgrade to
+channel-isolated, retry next cycle, declare hot-spare
+takeover).
+
+The enum SHALL implement `Clone + Debug + PartialEq + Eq` and
+SHALL NOT implement `Copy` (the fielded variants make Copy
+semantically wrong — the redundancy policy should not be
+pattern-matching against silently-cloned values).
+"""
+verification_methods = ["review", "test"]
+modules = ["aviate-core/src/kernel/snapshot.rs"]
+derived = false
+traces_to = ["fc8e3a1d-5b9f-4e27-a4c6-2f8d1e7b3c50"]
+
+[[requirements]]
+uid = "8e1a4d7c-3f9b-4e2d-a5c7-1b8f3d6e9c41"
+id = "LLR-CCS-105"
+title = "decide_lockstep is a pure first-disagreement-wins gate"
+owner = "aviate-core@aviate"
+description = """
+`fn decide_lockstep<'a>(local: &ChannelSnapshot<'a>, peers:
+&[Option<ChannelSnapshot<'a>>], quorum: usize) ->
+LockstepDecision` SHALL implement the gate logic in this
+exact order:
+
+  1. Count present peers (`peers.iter().filter(|p|
+     p.is_some()).count()`). If `present < quorum`, return
+     `RefuseQuorum { present, required: quorum }` immediately
+     — no peer hashes or bytes inspected.
+  2. Iterate peers in slice order. For each `Some(peer)`:
+     a. If `peer.algorithm_identity_hash !=
+        local.algorithm_identity_hash`, return
+        `RefuseHashMismatch { peer: peer.channel_id }`.
+     b. Else if `peer.state_bytes != local.state_bytes`
+        (length-aware), return `RefuseStateMismatch { peer:
+        peer.channel_id }`.
+  3. If all present peers pass both checks, return `Enter`.
+
+Hash mismatch takes precedence over state mismatch within a
+single peer (LLR-CCS-104.2 vs .3 ordering). First-
+disagreement-wins across peers — there is no "majority
+overrules" semantics. The function SHALL NOT panic, SHALL NOT
+allocate, SHALL NOT consult external state, and SHALL be
+`#[inline]`-eligible.
+"""
+verification_methods = ["test", "review"]
+modules = ["aviate-core/src/kernel/snapshot.rs"]
+derived = false
+traces_to = ["fc8e3a1d-5b9f-4e27-a4c6-2f8d1e7b3c50"]

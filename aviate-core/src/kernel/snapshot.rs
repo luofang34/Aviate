@@ -65,6 +65,86 @@ impl<'a> ChannelSnapshot<'a> {
     }
 }
 
+/// Decision returned by [`decide_lockstep`].
+///
+/// `Enter` is the only outcome that authorizes peer-lockstep entry.
+/// All `Refuse*` variants block entry; the variant carries the
+/// failure mode so the caller can route the higher-level
+/// redundancy response (downgrade to channel-isolated, retry next
+/// cycle, declare hot-spare takeover).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LockstepDecision {
+    /// Quorum of peers present, all agree with local. Lockstep
+    /// entry SHALL proceed.
+    Enter,
+    /// At least one peer's `algorithm_identity_hash` diverges from
+    /// local. Indicates structurally different firmware bundles.
+    /// Carries the offending peer's `ChannelId` for the redundancy
+    /// policy to consult.
+    RefuseHashMismatch { peer: crate::ChannelId },
+    /// At least one peer's algorithm hash agrees with local but
+    /// state bytes diverge. Indicates a state-divergence event
+    /// (one channel ran a cycle the others didn't, sensor input
+    /// fan-out is asymmetric, etc.). Lockstep entry SHALL be
+    /// refused.
+    RefuseStateMismatch { peer: crate::ChannelId },
+    /// Fewer peer snapshots are present than the caller-specified
+    /// quorum requires. Default policy is to refuse — lockstep
+    /// requires confirmed agreement, not absence of disagreement.
+    RefuseQuorum { present: usize, required: usize },
+}
+
+/// Cross-channel agreement gate. Given the local channel's
+/// snapshot and a slice of optional peer snapshots, decide whether
+/// to enter lockstep.
+///
+/// `quorum` is the minimum number of peer snapshots required to be
+/// present (i.e. `Some`). Below quorum, the function returns
+/// [`LockstepDecision::RefuseQuorum`] without inspecting any peer
+/// hashes or bytes — refuse on absence of evidence, not just
+/// presence of disagreement.
+///
+/// At quorum or above, the function inspects each present peer and
+/// returns the FIRST disagreement found (hash mismatch takes
+/// precedence over state mismatch within a single peer). Returning
+/// on first disagreement is intentional: cross-channel
+/// disagreement is a fail-stop event for lockstep — there is no
+/// "majority overrules" semantics here.
+///
+/// The function SHALL NOT panic, SHALL NOT allocate, SHALL NOT
+/// consult any external state, and SHALL be `#[inline]`-eligible.
+pub fn decide_lockstep<'a>(
+    local: &ChannelSnapshot<'a>,
+    peers: &[Option<ChannelSnapshot<'a>>],
+    quorum: usize,
+) -> LockstepDecision {
+    let present = peers.iter().filter(|p| p.is_some()).count();
+    if present < quorum {
+        return LockstepDecision::RefuseQuorum {
+            present,
+            required: quorum,
+        };
+    }
+    for peer_opt in peers {
+        let Some(peer) = peer_opt.as_ref() else {
+            continue;
+        };
+        if peer.algorithm_identity_hash != local.algorithm_identity_hash {
+            return LockstepDecision::RefuseHashMismatch {
+                peer: peer.channel_id,
+            };
+        }
+        if peer.state_bytes.len() != local.state_bytes.len()
+            || peer.state_bytes != local.state_bytes
+        {
+            return LockstepDecision::RefuseStateMismatch {
+                peer: peer.channel_id,
+            };
+        }
+    }
+    LockstepDecision::Enter
+}
+
 #[cfg(test)]
 mod tests {
     use super::ChannelSnapshot;
@@ -135,5 +215,99 @@ mod tests {
             !a.agrees_with(&b),
             "length mismatch ⇒ disagreement (firmware-version skew detection)"
         );
+    }
+
+    use super::{decide_lockstep, LockstepDecision};
+
+    #[test]
+    fn decide_enter_when_all_peers_agree() {
+        let bytes = [1u8, 2, 3, 4];
+        let local = make(ChannelId::PRIMARY, 10, 0xABCD, &bytes);
+        let p1 = make(ChannelId::SECONDARY, 11, 0xABCD, &bytes);
+        let p2 = make(ChannelId::TERTIARY, 12, 0xABCD, &bytes);
+        let peers = [Some(p1), Some(p2)];
+        assert_eq!(decide_lockstep(&local, &peers, 2), LockstepDecision::Enter);
+    }
+
+    #[test]
+    fn decide_refuse_hash_mismatch_takes_priority_over_state() {
+        // A peer with both hash AND state mismatch surfaces as
+        // RefuseHashMismatch — hash divergence is structurally more
+        // serious (different firmware bundles) than state
+        // divergence (same firmware, transient state drift).
+        let local_bytes = [1u8, 2, 3, 4];
+        let peer_bytes = [9u8, 9, 9, 9];
+        let local = make(ChannelId::PRIMARY, 0, 0xABCD, &local_bytes);
+        let peer = make(ChannelId::SECONDARY, 0, 0xDEAD, &peer_bytes);
+        let peers = [Some(peer)];
+        assert_eq!(
+            decide_lockstep(&local, &peers, 1),
+            LockstepDecision::RefuseHashMismatch {
+                peer: ChannelId::SECONDARY,
+            }
+        );
+    }
+
+    #[test]
+    fn decide_refuse_state_mismatch_when_hash_agrees() {
+        let local_bytes = [1u8, 2, 3, 4];
+        let peer_bytes = [1u8, 2, 3, 5]; // single bit flip
+        let local = make(ChannelId::PRIMARY, 0, 0xABCD, &local_bytes);
+        let peer = make(ChannelId::TERTIARY, 0, 0xABCD, &peer_bytes);
+        let peers = [Some(peer)];
+        assert_eq!(
+            decide_lockstep(&local, &peers, 1),
+            LockstepDecision::RefuseStateMismatch {
+                peer: ChannelId::TERTIARY,
+            }
+        );
+    }
+
+    #[test]
+    fn decide_refuse_quorum_when_below_threshold() {
+        let bytes = [1u8, 2, 3, 4];
+        let local = make(ChannelId::PRIMARY, 0, 0xABCD, &bytes);
+        let peers: [Option<ChannelSnapshot>; 2] = [None, None];
+        // Quorum 2 required, 0 present
+        assert_eq!(
+            decide_lockstep(&local, &peers, 2),
+            LockstepDecision::RefuseQuorum {
+                present: 0,
+                required: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn decide_refuse_quorum_does_not_inspect_peers() {
+        // Even if the one present peer would disagree, RefuseQuorum
+        // surfaces first because absence-of-evidence is the
+        // outcome — the gate refuses to GUESS at agreement from a
+        // partial peer set.
+        let bytes_local = [1u8, 2, 3, 4];
+        let bytes_peer = [9u8, 9, 9, 9]; // would mismatch
+        let local = make(ChannelId::PRIMARY, 0, 0xABCD, &bytes_local);
+        let peer = make(ChannelId::SECONDARY, 0, 0xDEAD, &bytes_peer);
+        let peers = [Some(peer), None];
+        // 1 present, quorum 2 required ⇒ RefuseQuorum, not RefuseHashMismatch
+        assert_eq!(
+            decide_lockstep(&local, &peers, 2),
+            LockstepDecision::RefuseQuorum {
+                present: 1,
+                required: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn decide_enter_when_zero_quorum_required_and_no_peers() {
+        // Edge case: zero-quorum is degenerate but well-defined —
+        // an empty peer set with quorum 0 is "trivially in
+        // agreement". Useful for single-channel fault scenarios
+        // where the policy degrades to non-lockstep operation.
+        let bytes = [1u8, 2, 3, 4];
+        let local = make(ChannelId::PRIMARY, 0, 0xABCD, &bytes);
+        let peers: [Option<ChannelSnapshot>; 0] = [];
+        assert_eq!(decide_lockstep(&local, &peers, 0), LockstepDecision::Enter);
     }
 }
