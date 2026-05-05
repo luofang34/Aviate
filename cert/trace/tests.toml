@@ -780,3 +780,36 @@ where projection drops or alters the hash would surface as
 cross-channel disagreement on otherwise-identical firmware.
 """
 traces_to = ["4e8a2b1f-7c3d-4e9a-b5f2-8d1a7c4e3b25"]
+
+[[tests]]
+uid = "5d3a8e1f-7c2b-4e9d-a4f6-1b8e3d7c5a09"
+id = "TST-CCS-104"
+title = "kernel::snapshot::tests::decide_lockstep_*"
+owner = "aviate-core@aviate"
+description = """
+The unit-test family in
+`aviate-core/src/kernel/snapshot.rs::tests` exercises
+`decide_lockstep` along the LLR-CCS-105 contract:
+
+  1. `decide_enter_when_all_peers_agree` — quorum met, all
+     peers byte-equal-with-local ⇒ Enter.
+  2. `decide_refuse_hash_mismatch_takes_priority_over_state`
+     — a peer with both hash and state divergence surfaces as
+     `RefuseHashMismatch` (LLR-CCS-105.2.a precedence over
+     .2.b).
+  3. `decide_refuse_state_mismatch_when_hash_agrees` — a
+     peer with bit-flipped state but matching hash surfaces
+     as `RefuseStateMismatch`.
+  4. `decide_refuse_quorum_when_below_threshold` — empty
+     peer set with `quorum=2` ⇒ `RefuseQuorum { present: 0,
+     required: 2 }`.
+  5. `decide_refuse_quorum_does_not_inspect_peers` — one
+     present peer that would mismatch + quorum 2 ⇒
+     `RefuseQuorum`, NOT `RefuseHashMismatch`. Witnesses
+     the "absence of evidence" semantics from LLR-CCS-105.1
+     (RefuseQuorum returned WITHOUT peer inspection).
+  6. `decide_enter_when_zero_quorum_required_and_no_peers`
+     — degenerate edge case with zero quorum + empty peers,
+     used by single-channel fault-degraded mode.
+"""
+traces_to = ["8e1a4d7c-3f9b-4e2d-a5c7-1b8f3d6e9c41"]
