@@ -388,3 +388,27 @@ hot-spare takeover and cross-channel divergence detection.
 """
 verification_methods = ["test", "review"]
 traces_to = ["d6ca85b4-62d1-48d0-b16e-3415904cc604"]
+
+[[requirements]]
+uid = "fa9b3c0e-7d54-4e1f-b9b2-43c5d8a1f723"
+id = "HLR-RTM-001"
+title = "aviate-runtime env-* features are mutually exclusive at compile time"
+owner = "aviate-runtime@aviate"
+description = """
+`aviate-runtime` SHALL gate sandbox-transport modules
+(`sensor_cache`, `sim`, `telemetry`, `validation`) and the
+`aviate-hal-xil` dependency behind the `env-sitl` / `env-hitl`
+features. The `env-flight` feature SHALL NOT enable any of those.
+Exactly one of `env-flight` / `env-sitl` / `env-hitl` SHALL be
+enabled per build; `env-flight` SHALL be mutually exclusive with
+the other two. The constraint SHALL be enforced at compile time
+via `compile_error!`, not by build-system or configuration
+discipline (which is reviewable but not gate-able).
+
+Together with the boundary file's `in_scope` listing of
+`aviate-runtime`, this requirement makes the "flight build is
+DO-178C-clean" claim a structural property of the source rather
+than a user-followed convention.
+"""
+verification_methods = ["review", "test"]
+traces_to = ["8f3a2c87-9d4e-4a1f-b7e2-3c6a8f1d9e02"]

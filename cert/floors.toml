@@ -26,10 +26,10 @@
 # current=0 (no matching measurement key) and only "passed" because the
 # committed floor was 0 too.
 [floors]
-trace_sys = 5
-trace_hlr = 14
-trace_llr = 37
-trace_test = 35
+trace_sys = 6
+trace_hlr = 15
+trace_llr = 39
+trace_test = 36
 
 [delta_ceilings]
 # Reserved by the tool for new-additions-in-diff checks. Parsed today,
@@ -52,4 +52,5 @@ trace_test = 35
 [per_crate.aviate-drivers]
 [per_crate.aviate-hal-io]
 [per_crate.aviate-link]
+[per_crate.aviate-runtime]
 [per_crate.aviate-security]
