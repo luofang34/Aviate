@@ -399,42 +399,37 @@ impl crate::replicable::Replicable for EkfState {
     const ENCODED_LEN: usize = (22 + STATE_DIM * STATE_DIM) * 4 + 2;
 
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let mut w = crate::replicable::ByteWriter::new(buf);
-        // Quaternion: w, x, y, z in declaration order.
-        w.write_f32(self.quat.w);
-        w.write_f32(self.quat.x);
-        w.write_f32(self.quat.y);
-        w.write_f32(self.quat.z);
-        // Vector3 fields: x, y, z. Newtype wrappers (Meters etc.)
-        // unwrap to the inner f32.
-        w.write_f32(self.pos.x.0);
-        w.write_f32(self.pos.y.0);
-        w.write_f32(self.pos.z.0);
-        w.write_f32(self.vel.x.0);
-        w.write_f32(self.vel.y.0);
-        w.write_f32(self.vel.z.0);
-        w.write_f32(self.gyro_bias.x.0);
-        w.write_f32(self.gyro_bias.y.0);
-        w.write_f32(self.gyro_bias.z.0);
-        w.write_f32(self.accel_bias.x.0);
-        w.write_f32(self.accel_bias.y.0);
-        w.write_f32(self.accel_bias.z.0);
-        w.write_f32(self.mag_bias.x.0);
-        w.write_f32(self.mag_bias.y.0);
-        w.write_f32(self.mag_bias.z.0);
-        w.write_f32(self.last_gyro_body.x.0);
-        w.write_f32(self.last_gyro_body.y.0);
-        w.write_f32(self.last_gyro_body.z.0);
+        use crate::replicable::copy_into;
+        let mut w = 0usize;
+        // Vector helper: writes a Vector3<inner-f32> to buf.
+        macro_rules! v3 {
+            ($v:expr) => {{
+                w += copy_into(buf, w, &$v.x.0.to_le_bytes());
+                w += copy_into(buf, w, &$v.y.0.to_le_bytes());
+                w += copy_into(buf, w, &$v.z.0.to_le_bytes());
+            }};
+        }
+        // Quaternion: w, x, y, z in declaration order (no newtype wrap).
+        w += copy_into(buf, w, &self.quat.w.to_le_bytes());
+        w += copy_into(buf, w, &self.quat.x.to_le_bytes());
+        w += copy_into(buf, w, &self.quat.y.to_le_bytes());
+        w += copy_into(buf, w, &self.quat.z.to_le_bytes());
+        v3!(self.pos);
+        v3!(self.vel);
+        v3!(self.gyro_bias);
+        v3!(self.accel_bias);
+        v3!(self.mag_bias);
+        v3!(self.last_gyro_body);
         // Covariance matrix: row-major, then column-major within each row.
         for row in &self.p_cov.data {
             for v in row {
-                w.write_f32(*v);
+                w += copy_into(buf, w, &v.to_le_bytes());
             }
         }
         // Boolean latches.
-        w.write_bool(self.initialized);
-        w.write_bool(self.quat_fault);
-        w.bytes_written()
+        w += copy_into(buf, w, &[if self.initialized { 1 } else { 0 }]);
+        w += copy_into(buf, w, &[if self.quat_fault { 1 } else { 0 }]);
+        w
     }
 }
 

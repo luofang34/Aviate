@@ -405,5 +405,6 @@ pub struct Sanitizer;
 // 500-line per-.rs cap. No re-export here — rustc's coverage phantom-DA
 // issue triggers on `pub use submodule::X`, not on method-carrying impl
 // blocks split across files.
+mod replicable;
 mod sanitizer_impl;
 // COV:EXCL_STOP

@@ -98,6 +98,41 @@ pub struct TransitionStatus {
     pub limits: TransitionLimits,
 }
 
+impl crate::replicable::Replicable for TransitionFlags {
+    const ENCODED_LEN: usize = 4;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        crate::replicable::copy_into(buf, 0, &self.bits().to_le_bytes())
+    }
+}
+
+impl crate::replicable::Replicable for TransitionLimits {
+    // 4 × f32 = 16 bytes.
+    const ENCODED_LEN: usize = 4 * 4;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut w = 0usize;
+        w += crate::replicable::copy_into(buf, w, &self.min_altitude.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.max_attitude_rate.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.min_airspeed.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.max_asymmetry.to_le_bytes());
+        w
+    }
+}
+
+impl crate::replicable::Replicable for TransitionStatus {
+    const ENCODED_LEN: usize =
+        TransitionFlags::ENCODED_LEN + TransitionFlags::ENCODED_LEN + TransitionLimits::ENCODED_LEN;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut written = self.required.encode_canonical(buf);
+        if written < buf.len() {
+            written += self.current.encode_canonical(&mut buf[written..]);
+        }
+        if written < buf.len() {
+            written += self.limits.encode_canonical(&mut buf[written..]);
+        }
+        written
+    }
+}
+
 impl Default for TransitionStatus {
     fn default() -> Self {
         Self {

@@ -320,6 +320,30 @@ pub struct TimingStats {
     pub total_cycles: u64,
 }
 
+impl crate::replicable::Replicable for TimingStats {
+    // 5 × u32 + 1 × u64 = 28 bytes.
+    const ENCODED_LEN: usize = 5 * 4 + 8;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut w = 0usize;
+        w += crate::replicable::copy_into(buf, w, &self.last_cycle_us.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.max_cycle_us.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.min_cycle_us.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.deadline_violations.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.consecutive_violations.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.total_cycles.to_le_bytes());
+        w
+    }
+}
+
+impl crate::replicable::Replicable for InitState {
+    const ENCODED_LEN: usize = 1;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        // Discriminants are explicit on the enum decl (PowerOn=0..Fault=8).
+        // Cast through u8 so this is target-endian-independent.
+        crate::replicable::copy_into(buf, 0, &[*self as u8])
+    }
+}
+
 /// Per-cycle timing information
 #[derive(Copy, Clone, Debug)]
 pub struct CycleTiming {

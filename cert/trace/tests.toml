@@ -628,3 +628,37 @@ deterministic, complete, fixed-width canonical encodings for
 today's state types.
 """
 traces_to = ["60b75d78-b9b1-4842-b964-41d031e0500e"]
+
+[[tests]]
+uid = "d0b63000-3d43-4495-b0f6-288136e932c7"
+id = "TST-REPL-104"
+title = "replicable_tests — KernelState::encode_canonical contract"
+owner = "aviate-core@aviate"
+description = """
+Five `kernel_state_*` tests in
+`aviate-core/tests/replicable_tests.rs` exercise the kernel-
+state-level encoding contract:
+
+  1. `kernel_state_default_encodes_full_length` —
+     `KernelState::default()` encodes EXACTLY
+     `<KernelState as Replicable>::ENCODED_LEN` bytes. Catches a
+     drift between the const expression and the actual encoder.
+  2. `kernel_state_encoded_len_is_sum_of_field_lens` —
+     `<KernelState as Replicable>::ENCODED_LEN` equals the sum of
+     every leaf field type's `ENCODED_LEN`. Regression guard: a
+     future change that drops a field from the const expression
+     surfaces as inequality here.
+  3. `kernel_state_two_default_clones_encode_byte_equal` —
+     determinism property for the kernel state composition.
+  4. `kernel_state_mutating_init_state_changes_encoding` —
+     verifies the lifecycle cursor field contributes to the
+     overall encoding.
+  5. `kernel_state_mutating_faults_changes_encoding` — verifies
+     the fault-flag field contributes.
+
+Together with TST-REPL-101 (per-leaf type contracts), this is
+the structural witness for HLR-REPL-001 / LLR-REPL-104:
+KernelState's encoding is deterministic, complete, fixed-width,
+and recursive over its field set.
+"""
+traces_to = ["6801bdd2-3f0d-43cb-895e-be48b82cf098"]

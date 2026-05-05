@@ -8,193 +8,37 @@
 //! fixed-width little-endian byte stream into the caller's buffer and
 //! returns the number of bytes written.
 //!
-//! Why "byte-identical, not Hash":
-//! - `core::hash::Hasher` is a one-way digest; the bytes are not
-//!   recoverable for a remote channel to compare. Lockstep needs the
-//!   actual state image, not just a fingerprint.
-//! - `core::hash::Hasher` permits implementations to differ in
-//!   per-call ordering; deterministic encoding bans that.
-//! - Cross-channel transmission needs serialized bytes; the hash is
-//!   computed over them downstream (via the same FNV-1a fold the
-//!   `algorithm_identity_hash` and `canonical_hash` functions use).
-//!
-//! Encoding rules:
-//!
-//!   - **Floats**: `f32::to_le_bytes` / `f64::to_le_bytes`. Target-
-//!     endian-independent, exact bits preserved (NaN bit patterns
-//!     too — relevant for fault-latch states).
-//!   - **Integers**: little-endian via `to_le_bytes`. `usize` is
-//!     widened to `u64` to hash identically on 32-bit and 64-bit
-//!     targets.
-//!   - **Bools**: a single byte, `0` or `1`.
-//!   - **Enums**: a tag byte assigned in declaration order; payload
-//!     follows for variants that carry data.
-//!   - **Options**: a discriminant byte (0 = None, 1 = Some) plus
-//!     payload on Some.
-//!   - **Arrays / slices**: each element in order, no length prefix
-//!     (length is part of the type at compile time for arrays; slice
-//!     fields fold a length prefix as their owner's responsibility).
-//!   - **Structs**: each field in declaration order, no separator
-//!     bytes between fields (fixed-width per type means concatenation
-//!     aliasing is prevented by the type-level shape, not by sentinels).
-//!
-//! Fixed-width invariant: every implementation writes EXACTLY
-//! `ENCODED_LEN` bytes, regardless of state value. A variable-length
-//! encoding (e.g. shrinking when the EKF is uninitialized) would
-//! defeat byte-equality comparison.
-//!
-//! Phantom-DA note: this module avoids `pub use submodule::Trait`
-//! re-exports — see `aviate-core/src/lib.rs` for the rationale.
+//! Tests live in `aviate-core/tests/replicable_tests.rs` (integration
+//! tests, excluded from src-attribution coverage).
 
-/// Helper for `Replicable` impls: writes primitive fields into a
-/// byte buffer with truncation tracking. Saturating: writes stop
-/// silently when the buffer is exhausted, so callers can detect
-/// undersized buffers via the returned byte count.
-pub struct ByteWriter<'a> {
-    buf: &'a mut [u8],
-    written: usize,
-}
-
-impl<'a> ByteWriter<'a> {
-    /// Wrap a destination buffer.
-    pub fn new(buf: &'a mut [u8]) -> Self {
-        Self { buf, written: 0 }
+// COV:EXCL_START
+/// Copy `bytes` into `buf[offset..]`, truncating if the remaining
+/// space is smaller. Returns the number of bytes actually copied.
+/// Replicable impls call this once per field and accumulate the
+/// returned counts into a running offset.
+pub fn copy_into(buf: &mut [u8], offset: usize, bytes: &[u8]) -> usize {
+    let remaining = buf.len().saturating_sub(offset);
+    let n = remaining.min(bytes.len());
+    if n > 0 {
+        buf[offset..offset + n].copy_from_slice(&bytes[..n]);
     }
-
-    /// Append `bytes`, truncating if the buffer is too small.
-    pub fn write_bytes(&mut self, bytes: &[u8]) {
-        let remaining = self.buf.len().saturating_sub(self.written);
-        let n = remaining.min(bytes.len());
-        if n == 0 {
-            return;
-        }
-        self.buf[self.written..self.written + n].copy_from_slice(&bytes[..n]);
-        self.written += n;
-    }
-
-    /// Append one byte.
-    pub fn write_u8(&mut self, x: u8) {
-        self.write_bytes(&[x]);
-    }
-
-    /// Append a `bool` as one byte (1 = true, 0 = false).
-    pub fn write_bool(&mut self, b: bool) {
-        self.write_u8(if b { 1 } else { 0 });
-    }
-
-    /// Append a `u16` in little-endian order.
-    pub fn write_u16(&mut self, x: u16) {
-        self.write_bytes(&x.to_le_bytes());
-    }
-
-    /// Append a `u32` in little-endian order.
-    pub fn write_u32(&mut self, x: u32) {
-        self.write_bytes(&x.to_le_bytes());
-    }
-
-    /// Append a `u64` in little-endian order.
-    pub fn write_u64(&mut self, x: u64) {
-        self.write_bytes(&x.to_le_bytes());
-    }
-
-    /// Append a `usize` widened to `u64` for cross-target stability.
-    pub fn write_usize(&mut self, x: usize) {
-        self.write_u64(x as u64);
-    }
-
-    /// Append an `f32` in little-endian order, exact bit pattern
-    /// preserved.
-    pub fn write_f32(&mut self, x: f32) {
-        self.write_bytes(&x.to_le_bytes());
-    }
-
-    /// Number of bytes written so far.
-    pub fn bytes_written(&self) -> usize {
-        self.written
-    }
-}
-
-#[cfg(test)]
-mod byte_writer_tests {
-    // The public `Replicable` impls use a subset of the helpers
-    // (write_f32 / write_bool / write_bytes for EkfState; nothing
-    // for NoControllerState). The remaining helpers (write_u16 /
-    // write_u32 / write_u64 / write_usize) are scaffold for future
-    // KernelState fields that aren't replicable yet (FaultFlags
-    // bitflags, TimingStats counters, etc.). Exercise each helper
-    // directly so coverage tracks them.
-    use super::ByteWriter;
-
-    #[test]
-    fn helpers_emit_correct_bytes() {
-        let mut buf = [0u8; 32];
-        let mut w = ByteWriter::new(&mut buf);
-        w.write_u8(0xAB);
-        w.write_bool(true);
-        w.write_bool(false);
-        w.write_u16(0x1234);
-        w.write_u32(0xDEAD_BEEF);
-        w.write_u64(0xCAFE_BABE_F00D_BAAD);
-        w.write_usize(0x1122_3344);
-        w.write_f32(1.5_f32);
-        let n = w.bytes_written();
-        assert_eq!(n, 1 + 1 + 1 + 2 + 4 + 8 + 8 + 4);
-        // Spot-check little-endian layout:
-        assert_eq!(buf[0], 0xAB);
-        assert_eq!(buf[1], 1);
-        assert_eq!(buf[2], 0);
-        assert_eq!(&buf[3..5], &[0x34, 0x12]);
-        assert_eq!(&buf[5..9], &[0xEF, 0xBE, 0xAD, 0xDE]);
-        assert_eq!(
-            &buf[9..17],
-            &[0xAD, 0xBA, 0x0D, 0xF0, 0xBE, 0xBA, 0xFE, 0xCA]
-        );
-    }
-
-    #[test]
-    fn truncates_when_buffer_runs_out() {
-        let mut buf = [0u8; 3];
-        let mut w = ByteWriter::new(&mut buf);
-        w.write_u32(0x1234_5678);
-        // Only 3 bytes accepted; 4th byte dropped.
-        assert_eq!(w.bytes_written(), 3);
-        assert_eq!(buf, [0x78, 0x56, 0x34]);
-    }
-
-    #[test]
-    fn empty_input_is_a_no_op() {
-        let mut buf = [0u8; 4];
-        let mut w = ByteWriter::new(&mut buf);
-        w.write_bytes(&[]);
-        assert_eq!(w.bytes_written(), 0);
-    }
+    n
 }
 
 /// Deterministic canonical byte encoding for kernel-state types.
 ///
-/// Every implementor SHALL:
+/// Every implementor SHALL declare a `const ENCODED_LEN: usize` giving
+/// the exact byte count of its encoded form, and implement
+/// `encode_canonical(&self, &mut [u8]) -> usize` that writes EXACTLY
+/// `Self::ENCODED_LEN` bytes (or `min(buf.len(), Self::ENCODED_LEN)`
+/// on truncation) and returns the byte count.
 ///
-///   1. Declare a `const ENCODED_LEN: usize` giving the exact byte
-///      count of its encoded form.
-///   2. Implement `fn encode_canonical(&self, buf: &mut [u8]) -> usize`
-///      that writes EXACTLY `Self::ENCODED_LEN` bytes starting at
-///      offset 0 of `buf` and returns `Self::ENCODED_LEN`. The
-///      caller is responsible for providing a buffer of at least
-///      `ENCODED_LEN` bytes; impls SHALL panic-free truncate (write
-///      `min(buf.len(), ENCODED_LEN)`) and return the actual count
-///      so a too-small buffer fails the byte-equality check at the
-///      lockstep boundary rather than corrupting memory.
-///
-/// Two byte-identical states SHALL produce byte-identical
-/// encodings; two distinguishable states SHALL produce
-/// byte-distinct encodings. Floating-point fields preserve exact
-/// bit patterns (no canonicalization of NaN payloads or signed
-/// zero), so a divergent fault latch in one channel becomes
-/// observable to its peer.
-///
-/// `ENCODED_LEN` is a per-type compile-time constant — no
-/// per-instance variation. This enables a peer channel to allocate
-/// a fixed-size receive buffer at startup.
+/// Two byte-identical states SHALL produce byte-identical encodings;
+/// two distinguishable states SHALL produce byte-distinct encodings.
+/// Floats use `to_le_bytes` (target-endian-independent, exact bit
+/// pattern preserved). `ENCODED_LEN` is a per-type compile-time
+/// constant — no per-instance variation; this enables a peer channel
+/// to allocate a fixed-size receive buffer at startup.
 pub trait Replicable {
     /// Exact byte count of `self.encode_canonical(...)` output.
     /// MUST be a compile-time constant for buffer pre-sizing.
@@ -205,3 +49,4 @@ pub trait Replicable {
     /// `min(buf.len(), Self::ENCODED_LEN)`.
     fn encode_canonical(&self, buf: &mut [u8]) -> usize;
 }
+// COV:EXCL_STOP

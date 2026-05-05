@@ -134,6 +134,42 @@ pub struct PreArmStatus {
     pub samples: SampleCounts,
 }
 
+impl crate::replicable::Replicable for PreArmFlags {
+    const ENCODED_LEN: usize = 4;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        crate::replicable::copy_into(buf, 0, &self.bits().to_le_bytes())
+    }
+}
+
+impl crate::replicable::Replicable for SampleCounts {
+    // 5 × u32 = 20 bytes.
+    const ENCODED_LEN: usize = 5 * 4;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut w = 0usize;
+        w += crate::replicable::copy_into(buf, w, &self.imu.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.baro.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.mag.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.gnss.to_le_bytes());
+        w += crate::replicable::copy_into(buf, w, &self.min_required.to_le_bytes());
+        w
+    }
+}
+
+impl crate::replicable::Replicable for PreArmStatus {
+    const ENCODED_LEN: usize =
+        PreArmFlags::ENCODED_LEN + PreArmFlags::ENCODED_LEN + SampleCounts::ENCODED_LEN;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut written = self.required.encode_canonical(buf);
+        if written < buf.len() {
+            written += self.current.encode_canonical(&mut buf[written..]);
+        }
+        if written < buf.len() {
+            written += self.samples.encode_canonical(&mut buf[written..]);
+        }
+        written
+    }
+}
+
 impl Default for PreArmStatus {
     fn default() -> Self {
         Self {

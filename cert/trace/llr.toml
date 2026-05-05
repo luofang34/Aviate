@@ -960,3 +960,130 @@ modules = [
 ]
 derived = false
 traces_to = ["a64c0403-5284-4072-bd7d-1b542f97e6dd"]
+
+[[requirements]]
+uid = "7e9fef2d-ddcf-4a1e-bafc-73d0e3956fd8"
+id = "LLR-REPL-102"
+title = "Replicable for primitive kernel-state types (enums, bitflags, leaf structs)"
+owner = "aviate-core@aviate"
+description = """
+Every leaf type in `KernelState`'s field set SHALL implement
+`Replicable` with a fixed `ENCODED_LEN`:
+
+  - `InitState` — 1 byte (enum tag via `*self as u8`,
+    discriminants 0..8).
+  - `ConfigMode` / `ControlLawV1` — 1 byte each (enum tag via
+    `*self as u8`).
+  - `ActuatorHealth` — 1 byte (enum tag via match expression in
+    declaration order; the exhaustiveness check fails CI when a
+    variant is added without extending the match).
+  - `FaultFlags` — 8 bytes (raw `u64` bits via
+    `bitflags::Flags::bits()`).
+  - `PreArmFlags` / `InFlightFlags` / `TransitionFlags` — 4 bytes
+    each (raw `u32` bits).
+  - `TimingStats` — 28 bytes (5×u32 + u64 in declaration order).
+  - `SampleCounts` — 20 bytes (5×u32 in declaration order).
+  - `TransitionLimits` — 16 bytes (4×f32 in declaration order).
+  - `GroupVector` — 67 bytes (16×f32 outputs + u16 mask + 1-byte
+    bool valid).
+
+Field order in every encoding mirrors the struct declaration order
+in the defining file. Adding or removing a field requires an
+explicit edit to `encode_canonical` and `ENCODED_LEN` — there is
+no derive macro that auto-emits the encoding, so a structural
+change cannot silently change the byte stream.
+"""
+verification_methods = ["test", "review"]
+modules = [
+    "aviate-core/src/kernel_types.rs",
+    "aviate-core/src/control/enums.rs",
+    "aviate-core/src/fault.rs",
+    "aviate-core/src/checks/pre_arm.rs",
+    "aviate-core/src/checks/in_flight.rs",
+    "aviate-core/src/checks/transition.rs",
+    "aviate-core/src/mixer/replicable.rs",
+]
+derived = false
+traces_to = ["a64c0403-5284-4072-bd7d-1b542f97e6dd"]
+
+[[requirements]]
+uid = "dc141062-0eb9-4d62-9567-af6ccbbda214"
+id = "LLR-REPL-103"
+title = "Replicable for nested kernel-state aggregates (KernelChecks, ActuatorState, ActuatorFallbackState)"
+owner = "aviate-core@aviate"
+description = """
+Aggregate state types compose their leaf fields' encodings in
+declaration order:
+
+  - `PreArmStatus` (28 bytes) = `required` (`PreArmFlags`, 4 B)
+    + `current` (`PreArmFlags`, 4 B) + `samples` (`SampleCounts`,
+    20 B).
+  - `InFlightStatus` (8 bytes) = `required` + `current`
+    (`InFlightFlags`, 4 B each).
+  - `TransitionStatus` (24 bytes) = `required` + `current`
+    (`TransitionFlags`, 4 B each) + `limits` (`TransitionLimits`,
+    16 B).
+  - `KernelChecks` (60 bytes) = `pre_arm` (28 B) + `in_flight`
+    (8 B) + `transition` (24 B).
+  - `ActuatorState` (154 bytes) = health[16] (1 B each) +
+    commanded[16] (4 B each) + actual: Option<[Normalized; 16]>
+    (1 B discriminant + always 64 B payload, even on `None`, to
+    preserve fixed-width invariant) + timestamp (u64 ticks +
+    u8 source tag).
+  - `ActuatorFallbackState` (568 bytes) = last_good[8]
+    (`GroupVector`, 67 B each) + age[8] (u16 each) +
+    consecutive_fallback[8] (u16 each).
+
+Aggregate encoders use `ByteWriter` and the leaf types' own
+`encode_canonical` recursively. Each aggregate's `ENCODED_LEN`
+constant equals the sum of its fields' `ENCODED_LEN`s — checked
+at compile time by the `const ENCODED_LEN: usize = …` expression
+and at run time by `tests/replicable_tests.rs::
+kernel_state_encoded_len_is_sum_of_field_lens`.
+"""
+verification_methods = ["test", "review"]
+modules = [
+    "aviate-core/src/checks/pre_arm.rs",
+    "aviate-core/src/checks/in_flight.rs",
+    "aviate-core/src/checks/transition.rs",
+    "aviate-core/src/checks/kernel_checks.rs",
+    "aviate-core/src/mixer/replicable.rs",
+]
+derived = false
+traces_to = ["a64c0403-5284-4072-bd7d-1b542f97e6dd"]
+
+[[requirements]]
+uid = "6801bdd2-3f0d-43cb-895e-be48b82cf098"
+id = "LLR-REPL-104"
+title = "KernelState::encode_canonical walks every field"
+owner = "aviate-core@aviate"
+description = """
+`KernelState<E, R>: Replicable` SHALL encode each field in
+declaration order and SHALL include the contributions of both
+generic state parameters:
+
+    init_state + mode + faults + control_law + checks +
+    actuator_state + timing_stats + estimator (E) +
+    fallback + controller (R)
+
+`<KernelState<E, R> as Replicable>::ENCODED_LEN` SHALL be a
+compile-time constant equal to the sum of every field type's
+`ENCODED_LEN`. The associated-type contributions of `E` and `R`
+make the snapshot size flex with the chosen estimator and
+controller — `EkfState + NoControllerState` produces a 2203-byte
+snapshot today; a future MEKF estimator with a different state
+shape produces a different size, but the encoding rule is the
+same.
+
+`encode_canonical` SHALL use a step-and-advance pattern: each
+field writes its bytes into the remaining buffer slice and the
+cursor advances by the byte count returned. If the caller's
+buffer runs out mid-encoding, subsequent steps clamp to zero
+(via `ByteWriter`), and the returned count tells the caller how
+much actually landed — the lockstep byte-equality check then
+fails downstream rather than corrupting memory.
+"""
+verification_methods = ["test", "review"]
+modules = ["aviate-core/src/kernel/state.rs"]
+derived = false
+traces_to = ["a64c0403-5284-4072-bd7d-1b542f97e6dd"]

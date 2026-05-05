@@ -102,6 +102,24 @@ pub struct InFlightStatus {
     pub current: InFlightFlags,
 }
 
+impl crate::replicable::Replicable for InFlightFlags {
+    const ENCODED_LEN: usize = 4;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        crate::replicable::copy_into(buf, 0, &self.bits().to_le_bytes())
+    }
+}
+
+impl crate::replicable::Replicable for InFlightStatus {
+    const ENCODED_LEN: usize = InFlightFlags::ENCODED_LEN + InFlightFlags::ENCODED_LEN;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let mut written = self.required.encode_canonical(buf);
+        if written < buf.len() {
+            written += self.current.encode_canonical(&mut buf[written..]);
+        }
+        written
+    }
+}
+
 impl Default for InFlightStatus {
     fn default() -> Self {
         Self {
