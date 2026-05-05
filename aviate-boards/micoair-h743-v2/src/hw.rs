@@ -274,6 +274,13 @@ pub struct MicoAirBoard {
     kernel: HwKernel,
     sensor_cache: SensorCache,
     last_imu_time: Option<u64>,
+    /// Microsecond tick when a `SystemCommand::FlightControl`
+    /// frame last refreshed the active command. `None` until the
+    /// first uplink arrives; clamps `command_age_ms` to
+    /// `u32::MAX` while None so the timeout fires immediately —
+    /// failsafe before the first link, not COMMAND_RECENT-by-
+    /// default.
+    last_cmd_rx_ticks: Option<u64>,
     ekf_initialized: bool,
     iteration: u32,
     iwdg: Option<IWDG>,
@@ -512,6 +519,7 @@ impl MicoAirBoard {
             kernel,
             sensor_cache: SensorCache::new(),
             last_imu_time: None,
+            last_cmd_rx_ticks: None,
             ekf_initialized: false,
             iteration: 0,
             iwdg,
@@ -611,6 +619,7 @@ impl BoardStep for MicoAirBoard {
                     .state.checks
                     .pre_arm
                     .update_throttle(flight_cmd.setpoint.collective_thrust.0 < 0.1);
+                self.last_cmd_rx_ticks = Some(tick_us);
                 flight_cmd.clone()
             }
         };
@@ -637,11 +646,20 @@ impl BoardStep for MicoAirBoard {
             self.kernel.init_step(&sensors, ts);
         }
 
-        // TODO: track real command age from RC/GCS uplink timestamps.
-        // The board doesn't yet surface command arrival times;
-        // passing 0 keeps COMMAND_RECENT permanently satisfied. Real
-        // plumbing is part of Phase 5.
-        let command_age_ms = 0u32;
+        // command_age_ms is the time since the last
+        // SystemCommand::FlightControl frame refreshed `cmd`,
+        // measured in milliseconds against the board's
+        // microsecond tick. None (no command since power-on)
+        // clamps to u32::MAX so the kernel's command-timeout
+        // check fires immediately — failsafe before first link,
+        // not COMMAND_RECENT-by-default.
+        let command_age_ms = match self.last_cmd_rx_ticks {
+            Some(rx_ticks) => {
+                let age_us = tick_us.saturating_sub(rx_ticks);
+                u32::try_from(age_us / 1_000).unwrap_or(u32::MAX)
+            }
+            None => u32::MAX,
+        };
         let result = self.kernel.update(
             ChannelId(0),
             time_delta,

@@ -152,6 +152,13 @@ pub struct SitlRunner {
     /// Last command received
     pub last_cmd: Command,
 
+    /// Microsecond tick when `last_cmd` was last refreshed by an
+    /// uplink `SystemCommand::FlightControl` frame. `None` until
+    /// the first command lands; `command_age_ms` clamps to
+    /// `u32::MAX` while None so `update_command_status` enforces
+    /// the timeout immediately.
+    pub last_cmd_rx_ticks: Option<u64>,
+
     /// Last IMU timestamp for dt calculation
     pub last_imu_time: Option<u64>,
 
@@ -182,6 +189,7 @@ impl SitlRunner {
             board_hal,
             kernel,
             last_cmd: default_command,
+            last_cmd_rx_ticks: None,
             last_imu_time: None,
             sensor_cache: SensorCache::new(),
             ekf_initialized: false,

@@ -103,6 +103,7 @@ impl SitlRunner {
                         .pre_arm
                         .update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
                     self.last_cmd = cmd;
+                    self.last_cmd_rx_ticks = Some(self.transport.now().ticks);
                 }
                 SystemCommand::Arm => {
                     info!("Arm command (state={:?})", self.kernel.state.init_state);
@@ -173,12 +174,21 @@ impl SitlRunner {
         }
 
         // 7. Step kernel.
-        // TODO: track real command age (time since last MAVLink RC frame
-        // arrived). The SITL runner doesn't yet carry uplink-frame
-        // arrival times; passing 0 keeps COMMAND_RECENT permanently
-        // satisfied. Real plumbing is part of the cross-channel /
-        // command-freshness work that lands with Phase 5.
-        let command_age_ms = 0u32;
+        //
+        // command_age_ms is measured from the most recent
+        // SystemCommand::FlightControl arrival (last_cmd_rx_ticks)
+        // against the transport's microsecond clock. Until the
+        // first command lands the runner clamps to u32::MAX so the
+        // kernel's command-timeout check fires immediately —
+        // failsafe behavior, not COMMAND_RECENT-by-default.
+        let command_age_ms = match self.last_cmd_rx_ticks {
+            Some(rx_ticks) => {
+                let now_ticks = self.transport.now().ticks;
+                let age_us = now_ticks.saturating_sub(rx_ticks);
+                u32::try_from(age_us / 1_000).unwrap_or(u32::MAX)
+            }
+            None => u32::MAX,
+        };
         let result = self.kernel.update(
             ChannelId(0),
             time_delta,
