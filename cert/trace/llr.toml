@@ -1330,3 +1330,44 @@ verification_methods = ["test", "review"]
 modules = ["aviate-core/src/kernel/snapshot.rs"]
 derived = false
 traces_to = ["fc8e3a1d-5b9f-4e27-a4c6-2f8d1e7b3c50"]
+
+[[requirements]]
+uid = "9b2c4f1d-7a3e-4d8b-a6f5-1c3e8d4b9a07"
+id = "LLR-CCS-106"
+title = "AviateKernelImpl::check_lockstep_agreement is a one-call project+decide"
+owner = "aviate-core@aviate"
+description = """
+`AviateKernelImpl::check_lockstep_agreement(
+    &self,
+    cycle_seq: u64,
+    channel_id: ChannelId,
+    local_buf: &mut [u8],
+    peers: &[Option<ChannelSnapshot>],
+    quorum: usize,
+) -> LockstepDecision`
+SHALL be a thin wrapper that:
+
+  1. Calls `self.project_for_cross_channel(cycle_seq, channel_id,
+     local_buf)` to obtain the local snapshot (LLR-CCS-103).
+  2. Calls `decide_lockstep(&local, peers, quorum)` to obtain the
+     decision (LLR-CCS-105).
+  3. Returns the decision verbatim.
+
+The kernel SHALL NOT mutate state, SHALL NOT route the
+redundancy response, and SHALL NOT clamp or transform the
+decision — the call is observation-only. The redundancy policy
+(proceed with lockstep, downgrade to channel-isolated, retry,
+hot-spare takeover) is a higher-level concern out of scope for
+this requirement.
+
+Lifetime parameters on `local_buf` and `peers` SHALL be
+independent — they typically come from different caller-owned
+buffers (the local cycle's projection vs. transport-deserialized
+peer frames). `decide_lockstep` already supports independent
+lifetimes (LLR-CCS-105), so this method exposes the same
+flexibility through.
+"""
+verification_methods = ["test", "review"]
+modules = ["aviate-core/src/kernel.rs"]
+derived = false
+traces_to = ["fc8e3a1d-5b9f-4e27-a4c6-2f8d1e7b3c50"]

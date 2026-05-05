@@ -113,9 +113,14 @@ pub enum LockstepDecision {
 ///
 /// The function SHALL NOT panic, SHALL NOT allocate, SHALL NOT
 /// consult any external state, and SHALL be `#[inline]`-eligible.
-pub fn decide_lockstep<'a>(
+///
+/// Lifetime parameters are independent: the local snapshot and the
+/// peer snapshots typically come from different caller-owned
+/// buffers (local cycle's projection vs. transport-deserialized
+/// peer frames). The function compares values, not borrows.
+pub fn decide_lockstep<'a, 'b>(
     local: &ChannelSnapshot<'a>,
-    peers: &[Option<ChannelSnapshot<'a>>],
+    peers: &[Option<ChannelSnapshot<'b>>],
     quorum: usize,
 ) -> LockstepDecision {
     let present = peers.iter().filter(|p| p.is_some()).count();

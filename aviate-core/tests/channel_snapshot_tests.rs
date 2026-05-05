@@ -132,3 +132,61 @@ fn project_truncates_safely_with_short_buffer() {
          length mismatch is the safe-fail signal"
     );
 }
+
+#[test]
+fn check_lockstep_agreement_enters_when_three_kernels_agree() {
+    // TST-CCS-105: three independent kernels at the same default
+    // state run the one-call gate API and all decide Enter.
+    use aviate_core::kernel::snapshot::LockstepDecision;
+    let k_local = make_kernel();
+    let k_p1 = make_kernel();
+    let k_p2 = make_kernel();
+
+    let mut buf_p1 = [0u8; <ProdState as Replicable>::ENCODED_LEN];
+    let mut buf_p2 = [0u8; <ProdState as Replicable>::ENCODED_LEN];
+    let snap_p1 = k_p1.project_for_cross_channel(100, ChannelId::SECONDARY, &mut buf_p1);
+    let snap_p2 = k_p2.project_for_cross_channel(101, ChannelId::TERTIARY, &mut buf_p2);
+
+    let mut buf_local = [0u8; <ProdState as Replicable>::ENCODED_LEN];
+    let decision = k_local.check_lockstep_agreement(
+        99,
+        ChannelId::PRIMARY,
+        &mut buf_local,
+        &[Some(snap_p1), Some(snap_p2)],
+        2, // both peers required
+    );
+    assert_eq!(decision, LockstepDecision::Enter);
+}
+
+#[test]
+fn check_lockstep_agreement_refuses_when_peer_state_diverges() {
+    // TST-CCS-106: one peer mutates its state; the gate surfaces
+    // RefuseStateMismatch with the offending peer's id.
+    use aviate_core::fault::FaultFlags;
+    use aviate_core::kernel::snapshot::LockstepDecision;
+    let k_local = make_kernel();
+    let k_p_good = make_kernel();
+    let mut k_p_bad = make_kernel();
+    k_p_bad.state.faults |= FaultFlags::ALL_IMU_FAILED;
+
+    let mut buf_good = [0u8; <ProdState as Replicable>::ENCODED_LEN];
+    let mut buf_bad = [0u8; <ProdState as Replicable>::ENCODED_LEN];
+    let snap_good = k_p_good.project_for_cross_channel(0, ChannelId::SECONDARY, &mut buf_good);
+    let snap_bad = k_p_bad.project_for_cross_channel(0, ChannelId::TERTIARY, &mut buf_bad);
+
+    let mut buf_local = [0u8; <ProdState as Replicable>::ENCODED_LEN];
+    let decision = k_local.check_lockstep_agreement(
+        0,
+        ChannelId::PRIMARY,
+        &mut buf_local,
+        &[Some(snap_good), Some(snap_bad)],
+        2,
+    );
+    assert_eq!(
+        decision,
+        LockstepDecision::RefuseStateMismatch {
+            peer: ChannelId::TERTIARY,
+        },
+        "diverged peer must surface as RefuseStateMismatch with its own ChannelId"
+    );
+}
