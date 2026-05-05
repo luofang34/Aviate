@@ -1116,3 +1116,57 @@ verification_methods = ["test", "review"]
 modules = ["aviate-core/src/kernel/state.rs"]
 derived = false
 traces_to = ["a64c0403-5284-4072-bd7d-1b542f97e6dd"]
+
+[[requirements]]
+uid = "c2e17d4f-3b8a-49ee-9f42-86a14f0bd8a1"
+id = "LLR-RTM-101"
+title = "aviate-runtime/src/lib.rs feature-guard compile_errors"
+owner = "aviate-runtime@aviate"
+description = """
+`aviate-runtime/src/lib.rs` SHALL contain the following compile-
+time guards, in order:
+
+  1. `#[cfg(not(any(feature = "env-flight", feature = "env-sitl",
+     feature = "env-hitl")))] compile_error!("Exactly one of
+     env-flight/env-sitl/env-hitl must be enabled");`
+  2. `#[cfg(all(feature = "env-flight", any(feature = "env-sitl",
+     feature = "env-hitl")))] compile_error!("env-flight cannot
+     be combined with env-sitl/env-hitl");`
+  3. `#[cfg(all(feature = "env-sitl", feature = "env-hitl"))]
+     compile_error!("env-sitl and env-hitl are mutually
+     exclusive");`
+
+The sandbox-transport modules (`sim`, `sensor_cache`,
+`telemetry`, `validation`) and the `aviate-hal-xil` dependency
+SHALL be gated behind `cfg(any(feature = "env-sitl",
+feature = "env-hitl"))` such that `env-flight` builds compile
+none of them. This is the structural witness that the boundary's
+`in_scope` listing of `aviate-runtime` is closed under cargo's
+dependency resolution for the env-flight feature combination.
+"""
+verification_methods = ["review", "test"]
+modules = ["aviate-runtime/src/lib.rs", "aviate-runtime/Cargo.toml"]
+derived = false
+traces_to = ["fa9b3c0e-7d54-4e1f-b9b2-43c5d8a1f723"]
+
+[[requirements]]
+uid = "5b94a106-d8e7-4bff-bef5-c2e5fa3d2ac4"
+id = "LLR-RTM-102"
+title = "Cargo.toml gates aviate-hal-xil behind env-sitl / env-hitl only"
+owner = "aviate-runtime@aviate"
+description = """
+`aviate-runtime/Cargo.toml` SHALL declare `aviate-hal-xil` with
+`optional = true`, and the `env-sitl` and `env-hitl` features
+SHALL each list `dep:aviate-hal-xil` in their feature
+activations. The `env-flight` feature SHALL NOT list
+`dep:aviate-hal-xil` or any other sandbox-transport feature.
+
+Verification: `cargo tree -p aviate-runtime --no-default-features
+--features env-flight` SHALL contain only crates that are
+listed in `cert/boundary.toml`'s `in_scope` set (or are external
+DAL-D base crates such as `log`).
+"""
+verification_methods = ["review", "test"]
+modules = ["aviate-runtime/Cargo.toml"]
+derived = false
+traces_to = ["fa9b3c0e-7d54-4e1f-b9b2-43c5d8a1f723"]

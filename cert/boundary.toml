@@ -7,10 +7,13 @@
 # the tool's enforcement landing, but the boundary below is already
 # dependency-closed so flipping the flag should be a no-op audit.
 #
-# Notable omission: aviate-runtime. It currently depends on aviate-hal-xil
-# (SITL I/O transport) so it can't be placed in-scope without breaking the
-# closure rule. Promoting it is a follow-up that needs the SITL transport
-# split into a separate crate.
+# `aviate-runtime` joins the boundary under its `env-flight` feature
+# build (real-hardware, no_std). The crate's `env-sitl` / `env-hitl`
+# features pull in `aviate-hal-xil` and other sandbox transports —
+# those features SHALL NOT be enabled in flight builds, enforced by
+# the mutually-exclusive `compile_error!` guards in
+# `aviate-runtime/src/lib.rs`. Boundary closure under env-flight is
+# witnessed by HLR-RTM-001 / LLR-RTM-101.
 
 [schema]
 version = "0.0.1"
@@ -24,6 +27,7 @@ in_scope = [
     "aviate-airframe-multirotor",
     "aviate-airframe-fixed-wing",
     "aviate-link",
+    "aviate-runtime",
     "aviate-security",
 ]
 

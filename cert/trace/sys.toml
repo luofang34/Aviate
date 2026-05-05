@@ -119,3 +119,31 @@ it with HLR-CFG-001 (configuration byte-equality) closes the
 """
 verification_methods = ["review", "test"]
 traces_to = []
+
+[[requirements]]
+uid = "8f3a2c87-9d4e-4a1f-b7e2-3c6a8f1d9e02"
+id = "SYS-RTM-001"
+title = "Flight runtime is inside the certification boundary"
+owner = "aviate-runtime@aviate"
+description = """
+The Aviate flight runtime (`aviate-runtime`) SHALL be in scope of
+the DO-178C boundary when built with its `env-flight` feature. The
+crate SHALL NOT, under that feature, depend on any sandbox
+transport, simulator harness, or development tool that is itself
+out of scope.
+
+Sandbox transports (SITL/HITL via `aviate-hal-xil`) remain available
+through the `env-sitl` / `env-hitl` features for development and
+verification harnesses. Those features SHALL be mutually exclusive
+with `env-flight` so a flight image cannot accidentally pull a
+sandbox dependency in. The mutual exclusion is enforced at compile
+time, not by configuration discipline; see HLR-RTM-001 for the
+contract and LLR-RTM-101 for the mechanism.
+
+Inclusion in the boundary closes the long-standing gap where the
+"Aviate kernel is DO-178C-aimed" claim was honest only for
+`aviate-core` and adjacent crates, while the actual control loop
+(scheduling, runner state machine, board wiring) sat in sandbox.
+"""
+verification_methods = ["review"]
+traces_to = []

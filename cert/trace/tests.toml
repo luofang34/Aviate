@@ -689,3 +689,30 @@ KernelState's encoding is deterministic, complete, fixed-width,
 and recursive over its field set.
 """
 traces_to = ["6801bdd2-3f0d-43cb-895e-be48b82cf098"]
+
+[[tests]]
+uid = "9f7d3e5a-1b8c-4f60-a9d2-7e4f8d3c1a09"
+id = "TST-RTM-101"
+title = "scripts/check_runtime_boundary.sh"
+owner = "aviate-runtime@aviate"
+description = """
+Shell script run in CI that asserts
+`cargo tree -p aviate-runtime --no-default-features
+--features env-flight` contains no out-of-scope crates. The
+allowlist is the set of `in_scope` crates from
+`cert/boundary.toml` plus a small fixed set of approved external
+DAL-D dependencies (currently `log`, `bitflags`, `embedded-hal`,
+plus their transitive base crates).
+
+Failure mode: any new dependency added to `aviate-runtime` —
+direct or transitive — that is not on the allowlist fails CI.
+This is the runtime equivalent of the boundary `in_scope` rule:
+the source-level mutual-exclusion guards (LLR-RTM-101) prevent
+the sandbox transports from being COMPILED into a flight image,
+and this test prevents new sandbox-class dependencies from being
+LINKED in via a non-feature-gated path.
+"""
+traces_to = [
+  "c2e17d4f-3b8a-49ee-9f42-86a14f0bd8a1",
+  "5b94a106-d8e7-4bff-bef5-c2e5fa3d2ac4",
+]
