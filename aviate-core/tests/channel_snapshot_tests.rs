@@ -159,6 +159,35 @@ fn check_lockstep_agreement_enters_when_three_kernels_agree() {
 }
 
 #[test]
+fn check_lockstep_agreement_refuses_when_peer_config_diverges() {
+    // Two kernels with byte-equal state but divergent ResolvedKernelConfig
+    // (different command_timeout_ms) — gate surfaces RefuseConfigMismatch.
+    use aviate_core::kernel::snapshot::LockstepDecision;
+    let k_local = make_kernel();
+    let mut k_peer = make_kernel();
+    k_peer.cfg.command_timeout_ms = k_local.cfg.command_timeout_ms.wrapping_add(1);
+
+    let mut buf_peer = [0u8; <ProdState as Replicable>::ENCODED_LEN];
+    let snap_peer = k_peer.project_for_cross_channel(0, ChannelId::SECONDARY, &mut buf_peer);
+
+    let mut buf_local = [0u8; <ProdState as Replicable>::ENCODED_LEN];
+    let decision = k_local.check_lockstep_agreement(
+        0,
+        ChannelId::PRIMARY,
+        &mut buf_local,
+        &[Some(snap_peer)],
+        1,
+    );
+    assert_eq!(
+        decision,
+        LockstepDecision::RefuseConfigMismatch {
+            peer: ChannelId::SECONDARY,
+        },
+        "diverged config must surface as RefuseConfigMismatch with peer's ChannelId"
+    );
+}
+
+#[test]
 fn check_lockstep_agreement_refuses_when_peer_state_diverges() {
     // TST-CCS-106: one peer mutates its state; the gate surfaces
     // RefuseStateMismatch with the offending peer's id.

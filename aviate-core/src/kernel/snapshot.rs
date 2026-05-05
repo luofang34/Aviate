@@ -27,6 +27,18 @@ use crate::ChannelId;
 /// (no allocation, no_std-friendly). The lifetime ties the
 /// snapshot to that buffer — if the buffer is rewritten, the
 /// snapshot is invalidated by Rust's borrow checker.
+///
+/// The agreement triple is (`algorithm_identity_hash`,
+/// `config_hash`, `state_bytes`). All three SHALL agree
+/// byte-for-byte for peer lockstep entry — covering the three
+/// orthogonal concerns:
+///
+///   - **algorithm**: which code is running (LLR-PIPE-103).
+///   - **config**: which compile-time-resolved tuning the code is
+///     using (LLR-CFG-104). Covers limits, mode_config,
+///     fault_table, command_timeout_ms, safe_output.
+///   - **state**: which runtime state that code holds
+///     (HLR-REPL-001).
 #[derive(Clone, Debug)]
 pub struct ChannelSnapshot<'a> {
     /// Origin channel for this snapshot.
@@ -40,6 +52,11 @@ pub struct ChannelSnapshot<'a> {
     /// running structurally different firmware bundles — peer
     /// lockstep SHALL NOT be entered.
     pub algorithm_identity_hash: u64,
+    /// `ResolvedKernelConfig::canonical_hash()` (LLR-CFG-104) at
+    /// the producing channel. Mismatch here means the channels
+    /// agreed on which code is running but disagreed on its
+    /// tuning — peer lockstep SHALL NOT be entered.
+    pub config_hash: u64,
     /// Canonical encoding of the channel's `KernelState`
     /// (HLR-REPL-001). Length is `KernelState::ENCODED_LEN` for the
     /// chosen `(E, R)` parameterization.
@@ -57,9 +74,10 @@ impl<'a> ChannelSnapshot<'a> {
     /// N cycles behind the local channel").
     ///
     /// Returns true iff the two snapshots witness byte-identical
-    /// firmware-and-state at their respective channels.
+    /// firmware-and-config-and-state at their respective channels.
     pub fn agrees_with(&self, other: &Self) -> bool {
         self.algorithm_identity_hash == other.algorithm_identity_hash
+            && self.config_hash == other.config_hash
             && self.state_bytes.len() == other.state_bytes.len()
             && self.state_bytes == other.state_bytes
     }
@@ -83,10 +101,16 @@ pub enum LockstepDecision {
     /// policy to consult.
     RefuseHashMismatch { peer: crate::ChannelId },
     /// At least one peer's algorithm hash agrees with local but
-    /// state bytes diverge. Indicates a state-divergence event
-    /// (one channel ran a cycle the others didn't, sensor input
-    /// fan-out is asymmetric, etc.). Lockstep entry SHALL be
+    /// `config_hash` diverges. Indicates same code with different
+    /// resolved configuration (limits, mode, fault table,
+    /// command timeout, or safe-output). Lockstep entry SHALL be
     /// refused.
+    RefuseConfigMismatch { peer: crate::ChannelId },
+    /// At least one peer's algorithm and config hashes agree with
+    /// local but state bytes diverge. Indicates a runtime state
+    /// divergence (one channel ran a cycle the others didn't,
+    /// sensor input fan-out is asymmetric, etc.). Lockstep entry
+    /// SHALL be refused.
     RefuseStateMismatch { peer: crate::ChannelId },
     /// Fewer peer snapshots are present than the caller-specified
     /// quorum requires. Default policy is to refuse — lockstep
@@ -134,8 +158,20 @@ pub fn decide_lockstep<'a, 'b>(
         let Some(peer) = peer_opt.as_ref() else {
             continue;
         };
+        // Precedence within a peer: algorithm > config > state.
+        // Algorithm divergence means different code; config
+        // divergence means same code, different tuning; state
+        // divergence means same code+tuning, different runtime
+        // values. The redundancy policy reads the variant to route
+        // recovery — surfacing the most-fundamental cause first
+        // gives it the cleanest signal.
         if peer.algorithm_identity_hash != local.algorithm_identity_hash {
             return LockstepDecision::RefuseHashMismatch {
+                peer: peer.channel_id,
+            };
+        }
+        if peer.config_hash != local.config_hash {
+            return LockstepDecision::RefuseConfigMismatch {
                 peer: peer.channel_id,
             };
         }
@@ -156,10 +192,24 @@ mod tests {
     use crate::ChannelId;
 
     fn make(channel: ChannelId, seq: u64, hash: u64, bytes: &[u8]) -> ChannelSnapshot<'_> {
+        // Two-arg-hash helper: same algorithm + config hash. Used
+        // by tests that focus on agreement at the algorithm/state
+        // level and don't care about the config axis.
+        make_with_config(channel, seq, hash, hash, bytes)
+    }
+
+    fn make_with_config<'a>(
+        channel: ChannelId,
+        seq: u64,
+        algorithm_hash: u64,
+        config_hash: u64,
+        bytes: &'a [u8],
+    ) -> ChannelSnapshot<'a> {
         ChannelSnapshot {
             channel_id: channel,
             cycle_seq: seq,
-            algorithm_identity_hash: hash,
+            algorithm_identity_hash: algorithm_hash,
+            config_hash,
             state_bytes: bytes,
         }
     }
@@ -254,7 +304,45 @@ mod tests {
     }
 
     #[test]
-    fn decide_refuse_state_mismatch_when_hash_agrees() {
+    fn decide_refuse_config_mismatch_when_algorithm_agrees() {
+        // Same algorithm hash, different config hash → config
+        // mismatch. State agreement irrelevant at this point — the
+        // gate stops at the first disagreement axis, and config
+        // takes precedence over state in the algorithm > config >
+        // state ordering.
+        let bytes = [1u8, 2, 3, 4];
+        let local = make_with_config(ChannelId::PRIMARY, 0, 0xABCD, 0x0001, &bytes);
+        let peer = make_with_config(ChannelId::SECONDARY, 0, 0xABCD, 0x0002, &bytes);
+        let peers = [Some(peer)];
+        assert_eq!(
+            decide_lockstep(&local, &peers, 1),
+            LockstepDecision::RefuseConfigMismatch {
+                peer: ChannelId::SECONDARY,
+            }
+        );
+    }
+
+    #[test]
+    fn decide_refuse_config_mismatch_takes_priority_over_state() {
+        // Both config AND state diverge — the gate surfaces config
+        // mismatch (more fundamental: same code, different tuning
+        // is a deployment error; state mismatch may just be
+        // transient).
+        let local_bytes = [1u8, 2, 3, 4];
+        let peer_bytes = [9u8, 9, 9, 9];
+        let local = make_with_config(ChannelId::PRIMARY, 0, 0xABCD, 0x0001, &local_bytes);
+        let peer = make_with_config(ChannelId::SECONDARY, 0, 0xABCD, 0x0002, &peer_bytes);
+        let peers = [Some(peer)];
+        assert_eq!(
+            decide_lockstep(&local, &peers, 1),
+            LockstepDecision::RefuseConfigMismatch {
+                peer: ChannelId::SECONDARY,
+            }
+        );
+    }
+
+    #[test]
+    fn decide_refuse_state_mismatch_when_hash_and_config_agree() {
         let local_bytes = [1u8, 2, 3, 4];
         let peer_bytes = [1u8, 2, 3, 5]; // single bit flip
         let local = make(ChannelId::PRIMARY, 0, 0xABCD, &local_bytes);

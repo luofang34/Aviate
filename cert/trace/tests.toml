@@ -811,8 +811,39 @@ The unit-test family in
   6. `decide_enter_when_zero_quorum_required_and_no_peers`
      — degenerate edge case with zero quorum + empty peers,
      used by single-channel fault-degraded mode.
+  7. `decide_refuse_config_mismatch_when_algorithm_agrees`
+     — same algorithm hash, divergent config hash ⇒
+     `RefuseConfigMismatch`. Witnesses LLR-CCS-105.2.b.
+  8. `decide_refuse_config_mismatch_takes_priority_over_state`
+     — both config and state diverge ⇒
+     `RefuseConfigMismatch` (precedence over state mismatch
+     per LLR-CCS-104.3 vs .4 ordering).
 """
 traces_to = ["8e1a4d7c-3f9b-4e2d-a5c7-1b8f3d6e9c41"]
+
+[[tests]]
+uid = "3e7a2c8d-4f1b-4e9a-b6d3-1c5e8a4d9f02"
+id = "TST-CCS-106"
+title = "channel_snapshot_tests::check_lockstep_agreement_refuses_when_peer_config_diverges"
+owner = "aviate-core@aviate"
+description = """
+`check_lockstep_agreement_refuses_when_peer_config_diverges`
+constructs two production-stack kernels with byte-equal state
+but a single-byte tweak to the peer's
+`ResolvedKernelConfig.command_timeout_ms`. The gate SHALL
+surface `RefuseConfigMismatch { peer: SECONDARY }`, witnessing:
+
+  - that `project_for_cross_channel` populates `config_hash`
+    from `self.cfg.canonical_hash()` (LLR-CCS-103);
+  - that `decide_lockstep` distinguishes config divergence
+    from state divergence and surfaces it as the more-
+    fundamental of the two (LLR-CCS-105.2.b precedence over
+    .2.c).
+
+This test is the end-to-end witness for the algorithm > config
+> state precedence ordering through the real production stack.
+"""
+traces_to = ["9b2c4f1d-7a3e-4d8b-a6f5-1c3e8d4b9a07"]
 
 [[tests]]
 uid = "7a4e2d8b-9c1f-4e3d-b5a7-2f8d1e4c9b03"
