@@ -197,6 +197,10 @@ impl Ekf {
 impl super::Estimator for Ekf {
     type RuntimeState = EkfState;
 
+    // Registered in cert/algorithm_id_registry.toml as
+    // "ekf.basic-18state.v1".
+    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4631; // "ETIMEKF1"
+
     fn observe(
         &self,
         state: &mut EkfState,

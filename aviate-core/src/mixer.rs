@@ -6,6 +6,11 @@ use crate::control::AxisCommand;
 
 /// Mixer trait - converts axis commands to actuator outputs
 pub trait Mixer {
+    /// 64-bit algorithm-identity constant, fixed at the impl site.
+    /// See `Estimator::ALGORITHM_ID` for the contract — same scope
+    /// (mixer-class identity) and same lockstep gating role.
+    const ALGORITHM_ID: u64;
+
     fn mix(&self, axis: &AxisCommand) -> ActuatorCmd;
 }
 
@@ -21,6 +26,10 @@ pub struct QuadXMixer {
 }
 
 impl Mixer for QuadXMixer {
+    // Registered in cert/algorithm_id_registry.toml as
+    // "mixer.quad_x.v1".
+    const ALGORITHM_ID: u64 = 0x4D49_5851_5541_4458; // "MIXQUADX"
+
     fn mix(&self, axis: &AxisCommand) -> ActuatorCmd {
         let t = axis.collective.0; // [0, 1]
         let r = axis.roll.0; // [-1, 1]
@@ -380,7 +389,15 @@ pub const MAX_CONSECUTIVE_FALLBACK: u16 = 10;
 /// across cycles. The fallback state lives only in
 /// `KernelState.fallback` — the sanitizer carries no per-cycle
 /// state of its own.
+// COV:EXCL_START(phantom DA: trait declaration + method signature
+// param lines carry coverage attribution from rustc but have no
+// executable code. Same artifact class as VehicleController.)
 pub trait ActuatorSanitizer {
+    /// 64-bit algorithm-identity constant, fixed at the impl site.
+    /// See `Estimator::ALGORITHM_ID` for the contract — same scope
+    /// (sanitizer-class identity) and same lockstep gating role.
+    const ALGORITHM_ID: u64;
+
     fn sanitize(
         &self,
         cmd: &mut ActuatorCmd,
@@ -388,6 +405,7 @@ pub trait ActuatorSanitizer {
         fallback: &mut ActuatorFallbackState,
     ) -> SanitizeReport;
 }
+// COV:EXCL_STOP
 
 // COV:EXCL_START(phantom DA: rustc's coverage attribution places
 // phantom DA entries on `Sanitizer`'s declaration / surrounding doc

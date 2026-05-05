@@ -74,12 +74,12 @@ where
 
     /// Deterministic identity hash of this pipeline's algorithm bundle.
     ///
-    /// The 64-bit hash is derived from the `core::any::type_name` of the
-    /// four substitutable algorithm parameters (`E`, `V`, `M`, `S`)
-    /// using FNV-1a. Two channels running byte-identical firmware
-    /// produce the same hash; a mismatch indicates the channels are
-    /// running different algorithm bundles and SHALL block lockstep
-    /// entry (spec §16, cross-channel firmware verification).
+    /// The 64-bit hash is folded over the four substitutable trait
+    /// implementations' `ALGORITHM_ID` constants using FNV-1a (offset
+    /// 0xcbf29ce484222325, prime 0x00000100000001b3). Each constant
+    /// is encoded as 8 little-endian bytes; positional ordering (E,
+    /// V, M, S) is part of the hash, so swapping two impls produces a
+    /// different hash even when their `ALGORITHM_ID`s are unchanged.
     ///
     /// Scope: this hash is the *algorithm-identity* witness only — it
     /// does NOT cover algorithm internal tuning (`EkfConfig`,
@@ -88,32 +88,29 @@ where
     /// answers the orthogonal question "are the channels running the
     /// same algorithm classes?".
     ///
-    /// Determinism boundary: `core::any::type_name` is documented as a
-    /// best-effort symbol description that may differ across Rust
-    /// compiler versions and target triples. The hash is therefore
-    /// only deterministic *within a single firmware build*. Channels
-    /// participating in lockstep are required to be byte-identical
-    /// firmware images, so the within-build determinism is sufficient.
+    /// Determinism boundary: each `ALGORITHM_ID` is a compile-time
+    /// `u64` constant declared at the impl site, so the hash is
+    /// stable across compiler versions, target triples, and
+    /// optimization levels — strictly stronger than the previous
+    /// `core::any::type_name` derivation, which was best-effort and
+    /// only stable within one build. Spec §16 cross-channel firmware
+    /// verification SHALL require byte-equal hashes between channels;
+    /// a mismatch blocks lockstep entry.
     pub fn algorithm_identity_hash(&self) -> u64 {
         const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
         const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
         let mut hash = FNV_OFFSET;
-        for type_name in [
-            core::any::type_name::<E>(),
-            core::any::type_name::<V>(),
-            core::any::type_name::<M>(),
-            core::any::type_name::<S>(),
+        for id in [
+            E::ALGORITHM_ID,
+            V::ALGORITHM_ID,
+            M::ALGORITHM_ID,
+            S::ALGORITHM_ID,
         ] {
-            for byte in type_name.as_bytes() {
-                hash ^= u64::from(*byte);
+            for byte in id.to_le_bytes() {
+                hash ^= u64::from(byte);
                 hash = hash.wrapping_mul(FNV_PRIME);
             }
-            // Field separator so concatenation collisions across the
-            // four type-name boundaries become hash-distinguishable
-            // (e.g. ("FooBar", "Baz") vs. ("Foo", "BarBaz")).
-            hash ^= 0xff;
-            hash = hash.wrapping_mul(FNV_PRIME);
         }
         hash
     }
@@ -186,5 +183,28 @@ mod tests {
         // / xors thereafter — collapsing to 0 would indicate a coding
         // error in the loop.
         assert_ne!(make_pipeline().algorithm_identity_hash(), 0);
+    }
+
+    #[test]
+    fn identity_hash_is_stable_across_builds() {
+        // TST-PIPE-104 (LLR-PIPE-104): the hash is a deterministic
+        // function of the four impls' compile-time `ALGORITHM_ID`
+        // constants, so it must equal a fixed value across compiler
+        // versions, target triples, and optimization levels.
+        // Recomputing this assertion's RHS by hand from the four
+        // `ALGORITHM_ID`s would catch a silent change to the FNV
+        // constants or the field ordering. If this assertion ever
+        // fails, do NOT update it without first checking whether a
+        // production-channel hash mismatch was introduced — that is
+        // exactly what spec §16 cross-channel firmware verification
+        // exists to catch.
+        const EXPECTED: u64 = 0x89bb_f951_e1fb_f9f8;
+        let actual = make_pipeline().algorithm_identity_hash();
+        assert_eq!(
+            actual, EXPECTED,
+            "algorithm_identity_hash drifted; \
+             check ALGORITHM_ID constants on Ekf / MultirotorController / \
+             QuadXMixer / Sanitizer and the FNV folding loop"
+        );
     }
 }

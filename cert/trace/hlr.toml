@@ -268,9 +268,10 @@ SHALL satisfy: (a) determinism — invocations on independently-
 constructed pipelines with identical algorithm-bundle types yield
 the same value; (b) bundle-distinctness — swapping any one of the
 four type parameters for a structurally-different type yields a
-different value with overwhelming probability; (c) within-build
-stability — the value is constant across the lifetime of one
-firmware build's executions.
+different value with overwhelming probability; (c) cross-build
+stability — the value is a function of compile-time `ALGORITHM_ID`
+constants declared at each impl site, so it is constant across
+Rust compiler versions, target triples, and optimization levels.
 
 The hash is the kernel's contribution to spec §16 lockstep entry:
 each channel publishes its hash and refuses peer-lockstep on

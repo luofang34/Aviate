@@ -8,6 +8,10 @@ pub struct VtolController;
 impl VehicleController for VtolController {
     type RuntimeState = NoControllerState;
 
+    // Registered in cert/algorithm_id_registry.toml as
+    // "controller.vtol.v1".
+    const ALGORITHM_ID: u64 = 0x4354_4C56_544F_4C31; // "CTLVTOL1"
+
     fn step(
         &self,
         _runtime: &mut NoControllerState,

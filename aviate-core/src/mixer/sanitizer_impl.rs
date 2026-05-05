@@ -17,6 +17,10 @@ use super::{
 use crate::types::{Normalized, Validated};
 
 impl ActuatorSanitizer for Sanitizer {
+    // Registered in cert/algorithm_id_registry.toml as
+    // "sanitizer.group_aware.v1".
+    const ALGORITHM_ID: u64 = 0x5341_4E47_5250_5631; // "SANGRPV1"
+
     fn sanitize(
         &self,
         cmd: &mut ActuatorCmd,

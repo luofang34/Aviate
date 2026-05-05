@@ -28,6 +28,10 @@ impl Default for MultirotorController {
 impl VehicleController for MultirotorController {
     type RuntimeState = NoControllerState;
 
+    // Registered in cert/algorithm_id_registry.toml as
+    // "controller.multirotor.v1".
+    const ALGORITHM_ID: u64 = 0x4354_4C4D_5552_5631; // "CTLMURV1"
+
     fn step(
         &self,
         _runtime: &mut NoControllerState,

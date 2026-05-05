@@ -8,6 +8,10 @@ pub struct FixedWingController;
 impl VehicleController for FixedWingController {
     type RuntimeState = NoControllerState;
 
+    // Registered in cert/algorithm_id_registry.toml as
+    // "controller.fixed_wing.v1".
+    const ALGORITHM_ID: u64 = 0x4354_4C46_5747_5631; // "CTLFWGV1"
+
     fn step(
         &self,
         _runtime: &mut NoControllerState,

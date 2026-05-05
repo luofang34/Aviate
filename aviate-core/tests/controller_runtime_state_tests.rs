@@ -50,6 +50,8 @@ struct TestStatefulController;
 impl VehicleController for TestStatefulController {
     type RuntimeState = TestRuntime;
 
+    const ALGORITHM_ID: u64 = 0x4354_4C54_4553_5431; // "CTLTEST1"
+
     fn step(
         &self,
         runtime: &mut TestRuntime,

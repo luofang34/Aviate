@@ -85,6 +85,16 @@ pub trait Estimator {
     /// Persistent runtime state owned by `KernelState.estimator`.
     type RuntimeState: EstimatorRuntimeState;
 
+    /// 64-bit algorithm-identity constant, fixed at the impl site.
+    /// Two channels with byte-identical firmware produce the same
+    /// `ALGORITHM_ID`; cross-channel mismatch SHALL block lockstep
+    /// entry (spec §16). The constant is independent of compiler
+    /// version, target triple, and `core::any::type_name` symbol
+    /// formatting — those are best-effort and not deterministic.
+    /// Allocate from `cert/algorithm_id_registry.toml` to keep IDs
+    /// globally unique across estimator implementations.
+    const ALGORITHM_ID: u64;
+
     /// Drive the estimator forward by one cycle, consuming the
     /// kernel's complete `SensorSet` snapshot. Implementations
     /// decide which channels they use (IMU-only attitude filter,
@@ -137,12 +147,15 @@ pub trait Estimator {
 pub const STATE_DIM: usize = 18;
 
 // State indices — shared with predict/update/scalar submodules.
+// COV:EXCL_START(phantom DA: const decl lines carry coverage
+// attribution but have no executable code beyond the literal eval.)
 pub(crate) const IDX_POS: usize = 0;
 pub(crate) const IDX_VEL: usize = 3;
 pub(crate) const IDX_ATT: usize = 6;
 pub(crate) const IDX_GB: usize = 9;
 pub(crate) const IDX_AB: usize = 12;
 pub(crate) const IDX_MB: usize = 15;
+// COV:EXCL_STOP
 
 // COV:EXCL_START(phantom DA: struct-field declaration lines for
 // EkfConfig and its Default impl carry coverage attributions from

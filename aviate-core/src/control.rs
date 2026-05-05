@@ -190,6 +190,11 @@ pub trait VehicleController {
     /// Persistent runtime state owned by `KernelState.control`.
     type RuntimeState: runtime::ControllerRuntimeState;
 
+    /// 64-bit algorithm-identity constant, fixed at the impl site.
+    /// See `Estimator::ALGORITHM_ID` for the contract — same scope
+    /// (controller-class identity) and same lockstep gating role.
+    const ALGORITHM_ID: u64;
+
     fn step(
         &self,
         runtime: &mut Self::RuntimeState,
