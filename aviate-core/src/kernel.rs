@@ -131,6 +131,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             channel_id,
             cycle_seq,
             algorithm_identity_hash: self.pipeline.algorithm_identity_hash(),
+            config_hash: self.cfg.canonical_hash(),
             state_bytes: &state_buf[..n],
         }
     }

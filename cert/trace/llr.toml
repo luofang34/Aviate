@@ -1174,27 +1174,40 @@ traces_to = ["fa9b3c0e-7d54-4e1f-b9b2-43c5d8a1f723"]
 [[requirements]]
 uid = "7e3f1a8c-9d6b-4e29-a1f7-3b8d5e2c4a06"
 id = "LLR-CCS-101"
-title = "ChannelSnapshot struct carries id, seq, hash, and borrowed state bytes"
+title = "ChannelSnapshot struct carries id, seq, hashes, and borrowed state bytes"
 owner = "aviate-core@aviate"
 description = """
 `aviate_core::kernel::snapshot::ChannelSnapshot<'a>` SHALL be a
-struct with exactly four fields:
+struct with exactly five fields:
 
   - `channel_id: ChannelId`
   - `cycle_seq: u64`
-  - `algorithm_identity_hash: u64`
-  - `state_bytes: &'a [u8]`
+  - `algorithm_identity_hash: u64` — `KernelPipeline::algorithm_identity_hash()` (LLR-PIPE-103)
+  - `config_hash: u64` — `ResolvedKernelConfig::canonical_hash()` (LLR-CFG-104)
+  - `state_bytes: &'a [u8]` — `KernelState::encode_canonical(...)` output (HLR-REPL-001)
 
 The lifetime `'a` ties the snapshot to a caller-owned buffer; if
 that buffer is mutated, the borrow checker invalidates the
 snapshot at compile time. The struct SHALL implement `Clone +
 Debug` and SHALL NOT implement `Copy` (the borrowed slice's
 lifetime makes Copy semantically wrong).
+
+The triple (algorithm_identity_hash, config_hash, state_bytes)
+covers the three orthogonal concerns of cross-channel
+agreement: WHICH CODE is running, WHICH TUNING that code is
+using, WHICH STATE that code holds. All three SHALL agree
+byte-for-byte for peer lockstep entry — a decomposition that
+distinguishes structural firmware skew (algorithm) from
+deployment-error skew (config) from runtime drift (state) at
+the gate.
 """
 verification_methods = ["review", "test"]
 modules = ["aviate-core/src/kernel/snapshot.rs"]
 derived = false
-traces_to = ["be4f7d29-3a82-4c6e-9b2f-7e1c5d8a0f43"]
+traces_to = [
+  "be4f7d29-3a82-4c6e-9b2f-7e1c5d8a0f43",
+  "4cf7189d-23e6-470a-b71c-c90a81c59970",
+]
 
 [[requirements]]
 uid = "0c4d8b6e-2f7a-4e1d-9c5b-7a3f8e1d4b29"
@@ -1203,22 +1216,24 @@ title = "ChannelSnapshot::agrees_with byte-equality comparison semantics"
 owner = "aviate-core@aviate"
 description = """
 `ChannelSnapshot::agrees_with(&self, other: &Self) -> bool`
-SHALL return true if and only if all three conditions hold:
+SHALL return true if and only if all four conditions hold:
 
   1. `self.algorithm_identity_hash == other.algorithm_identity_hash`
-  2. `self.state_bytes.len() == other.state_bytes.len()`
-  3. `self.state_bytes == other.state_bytes` (byte equality)
+  2. `self.config_hash == other.config_hash`
+  3. `self.state_bytes.len() == other.state_bytes.len()`
+  4. `self.state_bytes == other.state_bytes` (byte equality)
 
 `channel_id` and `cycle_seq` SHALL NOT be considered. The method
 SHALL NOT panic, SHALL NOT allocate, SHALL NOT consult any state
 outside the two snapshots, and SHALL be `#[inline]`-eligible.
 
-The asymmetry between fields (id + seq ignored, hash + bytes
-checked) is deliberate: the gate witnesses firmware-bundle and
-state agreement, not channel identity. A length-mismatch failure
-mode (peer running an incompatible firmware revision with a
-different `KernelState` size) surfaces as disagreement via
-condition 2 — the fail-safe signal for cross-revision skew.
+The asymmetry between fields (id + seq ignored, hashes + bytes
+checked) is deliberate: the gate witnesses firmware-bundle,
+config, and state agreement, not channel identity. A
+length-mismatch failure mode (peer running an incompatible
+firmware revision with a different `KernelState` size) surfaces
+as disagreement via condition 3 — the fail-safe signal for
+cross-revision skew.
 """
 verification_methods = ["test", "review"]
 modules = ["aviate-core/src/kernel/snapshot.rs"]
@@ -1244,6 +1259,8 @@ SHALL:
   - construct a `ChannelSnapshot` with `state_bytes: &state_buf[..n]`;
   - populate `algorithm_identity_hash` from
     `self.pipeline.algorithm_identity_hash()` (LLR-PIPE-103);
+  - populate `config_hash` from `self.cfg.canonical_hash()`
+    (LLR-CFG-104);
   - copy the caller-supplied `cycle_seq` and `channel_id` into the
     matching fields verbatim — no validation, no clamping.
 
@@ -1266,14 +1283,19 @@ title = "LockstepDecision enum carries Enter / Refuse{Hash,State,Quorum}"
 owner = "aviate-core@aviate"
 description = """
 `aviate_core::kernel::snapshot::LockstepDecision` SHALL be an
-enum with exactly four variants, declared in this order:
+enum with exactly five variants, declared in this order:
 
   1. `Enter` — unit variant. Authorizes peer-lockstep entry.
   2. `RefuseHashMismatch { peer: ChannelId }` — at least one
-     peer's `algorithm_identity_hash` diverges from local.
-  3. `RefuseStateMismatch { peer: ChannelId }` — peer hashes
-     agree with local but state bytes diverge.
-  4. `RefuseQuorum { present: usize, required: usize }` —
+     peer's `algorithm_identity_hash` diverges from local
+     (different code).
+  3. `RefuseConfigMismatch { peer: ChannelId }` — peer's
+     algorithm hash agrees with local but `config_hash`
+     diverges (same code, different tuning).
+  4. `RefuseStateMismatch { peer: ChannelId }` — peer's
+     algorithm and config hashes agree with local but state
+     bytes diverge (same code+tuning, different runtime values).
+  5. `RefuseQuorum { present: usize, required: usize }` —
      fewer peer snapshots present than the caller-specified
      quorum.
 
@@ -1314,14 +1336,23 @@ exact order:
      a. If `peer.algorithm_identity_hash !=
         local.algorithm_identity_hash`, return
         `RefuseHashMismatch { peer: peer.channel_id }`.
-     b. Else if `peer.state_bytes != local.state_bytes`
+     b. Else if `peer.config_hash != local.config_hash`,
+        return `RefuseConfigMismatch { peer: peer.channel_id }`.
+     c. Else if `peer.state_bytes != local.state_bytes`
         (length-aware), return `RefuseStateMismatch { peer:
         peer.channel_id }`.
-  3. If all present peers pass both checks, return `Enter`.
+  3. If all present peers pass all three checks, return `Enter`.
 
-Hash mismatch takes precedence over state mismatch within a
-single peer (LLR-CCS-104.2 vs .3 ordering). First-
-disagreement-wins across peers — there is no "majority
+Within a peer the precedence is algorithm > config > state
+(LLR-CCS-104.2 > .3 > .4 ordering): algorithm divergence is the
+most fundamental failure (different code), config divergence is
+the next (same code, different tuning — typically a deployment
+error), state divergence is the least (same code and tuning,
+different runtime values — possibly transient). Surfacing the
+most-fundamental cause first gives the higher-level redundancy
+policy the cleanest signal for routing recovery.
+
+First-disagreement-wins across peers — there is no "majority
 overrules" semantics. The function SHALL NOT panic, SHALL NOT
 allocate, SHALL NOT consult external state, and SHALL be
 `#[inline]`-eligible.
