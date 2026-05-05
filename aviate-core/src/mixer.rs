@@ -389,6 +389,9 @@ pub const MAX_CONSECUTIVE_FALLBACK: u16 = 10;
 /// across cycles. The fallback state lives only in
 /// `KernelState.fallback` — the sanitizer carries no per-cycle
 /// state of its own.
+// COV:EXCL_START(phantom DA: trait declaration + method signature
+// param lines carry coverage attribution from rustc but have no
+// executable code. Same artifact class as VehicleController.)
 pub trait ActuatorSanitizer {
     /// 64-bit algorithm-identity constant, fixed at the impl site.
     /// See `Estimator::ALGORITHM_ID` for the contract — same scope
@@ -402,6 +405,7 @@ pub trait ActuatorSanitizer {
         fallback: &mut ActuatorFallbackState,
     ) -> SanitizeReport;
 }
+// COV:EXCL_STOP
 
 // COV:EXCL_START(phantom DA: rustc's coverage attribution places
 // phantom DA entries on `Sanitizer`'s declaration / surrounding doc
