@@ -15,6 +15,7 @@
 pub mod builder;
 pub mod config;
 pub mod pipeline;
+pub mod snapshot;
 pub mod state;
 
 use crate::checks::{KernelChecks, PreArmFlags};
@@ -102,6 +103,35 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                 mode_config,
                 ..Default::default()
             },
+        }
+    }
+
+    /// Project the local channel's state into a
+    /// [`crate::kernel::snapshot::ChannelSnapshot`] for
+    /// cross-channel exchange (spec §16). Writes the canonical
+    /// kernel-state encoding into `state_buf` and returns a
+    /// `ChannelSnapshot` borrowing the populated portion.
+    ///
+    /// The caller owns `state_buf` (no allocation, no_std-friendly)
+    /// and SHOULD size it to
+    /// `<KernelState<E::RuntimeState, V::RuntimeState> as Replicable>::ENCODED_LEN`.
+    /// A short buffer truncates without panic — `state_bytes.len()`
+    /// will be less than `ENCODED_LEN`, which causes
+    /// `ChannelSnapshot::agrees_with` to fail safely against any
+    /// peer running with a full-size buffer.
+    pub fn project_for_cross_channel<'buf>(
+        &self,
+        cycle_seq: u64,
+        channel_id: crate::ChannelId,
+        state_buf: &'buf mut [u8],
+    ) -> crate::kernel::snapshot::ChannelSnapshot<'buf> {
+        use crate::replicable::Replicable;
+        let n = self.state.encode_canonical(state_buf);
+        crate::kernel::snapshot::ChannelSnapshot {
+            channel_id,
+            cycle_seq,
+            algorithm_identity_hash: self.pipeline.algorithm_identity_hash(),
+            state_bytes: &state_buf[..n],
         }
     }
 }

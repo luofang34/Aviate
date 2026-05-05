@@ -716,3 +716,67 @@ traces_to = [
   "c2e17d4f-3b8a-49ee-9f42-86a14f0bd8a1",
   "5b94a106-d8e7-4bff-bef5-c2e5fa3d2ac4",
 ]
+
+[[tests]]
+uid = "31a8c2e7-9f4d-4b6e-8a1c-7d3f5e2b8a04"
+id = "TST-CCS-101"
+title = "channel_snapshot_tests::project_byte_stable_across_two_default_kernels"
+owner = "aviate-core@aviate"
+description = """
+The integration test
+`aviate-core/tests/channel_snapshot_tests.rs::
+project_byte_stable_across_two_default_kernels` constructs two
+independent `AviateKernelImpl<Ekf, MultirotorController,
+QuadXMixer, Sanitizer>` instances with default state and
+asserts that their `ChannelSnapshot` projections `agrees_with`
+each other despite differing `channel_id` and `cycle_seq`.
+
+The two unit tests in `aviate-core/src/kernel/snapshot.rs::tests`
+cover the comparison primitive in isolation
+(`agrees_with_identical_snapshots`,
+`agrees_ignores_channel_and_seq`); this integration test is the
+end-to-end witness through the production trait bundle.
+"""
+traces_to = [
+  "7e3f1a8c-9d6b-4e29-a1f7-3b8d5e2c4a06",
+  "4e8a2b1f-7c3d-4e9a-b5f2-8d1a7c4e3b25",
+]
+
+[[tests]]
+uid = "9c2e7f4d-3a8b-4e1d-b6f7-2a8d5c1e9f43"
+id = "TST-CCS-102"
+title = "channel_snapshot_tests::project_changes_when_state_mutates"
+owner = "aviate-core@aviate"
+description = """
+`project_changes_when_state_mutates` constructs two kernels;
+mutates `state.faults` on one to set
+`FaultFlags::ALL_IMU_FAILED`; asserts the resulting snapshots
+disagree on `state_bytes` while still agreeing on
+`algorithm_identity_hash`.
+
+This is the regression guard for the encoding completeness
+property: a future change that silently drops a leaf field from
+`KernelState::encode_canonical` would make the two snapshots
+agree despite divergent state — exactly the failure spec §16
+exists to detect.
+"""
+traces_to = [
+  "0c4d8b6e-2f7a-4e1d-9c5b-7a3f8e1d4b29",
+  "4e8a2b1f-7c3d-4e9a-b5f2-8d1a7c4e3b25",
+]
+
+[[tests]]
+uid = "8d4f2e7a-1b9c-4e3d-a7f5-2c8e1d4f9a06"
+id = "TST-CCS-103"
+title = "channel_snapshot_tests::algorithm_hash_matches_pipeline"
+owner = "aviate-core@aviate"
+description = """
+`algorithm_hash_matches_pipeline` projects a kernel snapshot and
+asserts its `algorithm_identity_hash` field equals the value
+returned by the underlying pipeline's
+`algorithm_identity_hash()`. This is the structural witness that
+projection wires the hash through faithfully — a regression
+where projection drops or alters the hash would surface as
+cross-channel disagreement on otherwise-identical firmware.
+"""
+traces_to = ["4e8a2b1f-7c3d-4e9a-b5f2-8d1a7c4e3b25"]
