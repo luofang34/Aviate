@@ -2,16 +2,36 @@
 //! for spec §16 cross-channel firmware verification and state
 //! replication.
 //!
-//! A snapshot bundles two things into one byte-comparable witness:
+//! A snapshot bundles three things into one byte-comparable witness:
 //!
-//!   - `algorithm_identity_hash` (LLR-PIPE-103) — what code is
+//!   - `algorithm_identity_hash` (LLR-PIPE-103) — WHICH CODE is
 //!     running.
-//!   - `state_bytes` (HLR-REPL-001) — what state that code holds.
+//!   - `config_hash` (LLR-CFG-104) — WHICH TUNING that code is
+//!     using.
+//!   - `state_bytes` (HLR-REPL-001) — WHICH STATE that code holds.
 //!
-//! Cross-channel agreement is byte equality of those two together.
+//! Cross-channel agreement is byte equality across all three.
 //! `cycle_seq` and `channel_id` are carried for staleness / origin
 //! tracking but are NOT part of the agreement check — peers run
 //! cycles on their own clocks and have distinct IDs by definition.
+//!
+//! # Relationship to `CrossChannelData`
+//!
+//! `ChannelSnapshot` is the LOCKSTEP-ENTRY witness — the gate for
+//! BLOCKING entry into the redundant mode. It is byte-domain:
+//! disagreement is fail-stop, no fuzz tolerance.
+//!
+//! [`crate::kernel_types::CrossChannelData`] is the per-cycle
+//! DERIVED-SIGNAL carrier — used WITHIN the redundant mode to vote
+//! / blend / median-filter algorithm outputs (state estimates,
+//! actuator commands, channel health). It is value-domain:
+//! disagreement is a normal numerical phenomenon, handled by
+//! consensus rules.
+//!
+//! Both flow over the same physical cross-channel transport;
+//! their roles are orthogonal. A redundant system uses the
+//! snapshot at lockstep entry and the derived data continuously
+//! thereafter.
 //!
 //! This module deliberately does NOT define a wire format. The
 //! caller chooses how to serialize the snapshot for transport

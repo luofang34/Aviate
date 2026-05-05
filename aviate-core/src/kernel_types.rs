@@ -223,11 +223,50 @@ impl ChannelId {
     pub const MAX_CHANNELS: usize = 3;
 }
 
+/// Multi-channel container for **derived** cross-channel signals
+/// — state estimates, health summaries, actuator commands, and the
+/// sequence numbers that pair them. This is the carrier for
+/// consensus / voting / FDIR work on per-cycle algorithm OUTPUTS.
+///
+/// `CrossChannelData` is intentionally distinct from
+/// [`crate::kernel::snapshot::ChannelSnapshot`]:
+///
+///   - `ChannelSnapshot` is the lockstep-entry witness: canonical
+///     bytes of `KernelState` plus algorithm/config identity hashes.
+///     The agreement check is byte-exact (HLR-CCS-001 / HLR-CCS-002).
+///   - `CrossChannelData` is the per-cycle signal exchange: derived
+///     summaries that downstream redundancy logic vote / blend /
+///     median-filter on. The agreement model is value-domain, not
+///     byte-domain — a 0.001-meter difference in two channels'
+///     position estimates is normal disagreement, not a fault.
+///
+/// Both flow over the same physical cross-channel transport but
+/// serve orthogonal purposes:
+///
+///   - lockstep gate (snapshot) gates ENTRY into the redundant
+///     mode — block on byte-disagreement, fail-stop;
+///   - derived-signal exchange (this struct) operates WITHIN the
+///     redundant mode — voting, hot-spare takeover handoff,
+///     consensus on outputs.
+///
+/// Spec §16. The `update()` parameter `_cross_channel:
+/// Option<&CrossChannelData>` is currently a non-consumed
+/// placeholder; activating it is paired with the redundancy-
+/// system rollout (recap item #4) and is out of scope for this
+/// PR.
 #[derive(Clone, Debug)]
 pub struct CrossChannelData {
+    /// Per-channel estimator output for consensus / voting.
     pub estimates: [Option<StateEstimate>; ChannelId::MAX_CHANNELS],
+    /// Per-channel health summary (Operative / Degraded / Failed
+    /// / Offline) for quorum and takeover decisions.
     pub health: [Option<ChannelHealthV1>; ChannelId::MAX_CHANNELS],
+    /// Per-channel actuator command output. The redundancy policy
+    /// chooses one (or votes/medians) before driving the actuators.
     pub commands: [Option<ActuatorCmd>; ChannelId::MAX_CHANNELS],
+    /// Cycle sequence numbers paired 1:1 with each channel's
+    /// estimates/health/commands above. Used to detect a peer that
+    /// is lagging by N cycles or has skipped one entirely.
     pub sequences: [Option<u32>; ChannelId::MAX_CHANNELS],
 }
 
