@@ -1,0 +1,49 @@
+## Aviate algorithm-identity registry.
+##
+## Each substitutable trait impl declares a 64-bit `ALGORITHM_ID`
+## constant (LLR-PIPE-104). The IDs feed
+## `KernelPipeline::algorithm_identity_hash` (LLR-PIPE-103), which
+## spec §16 uses as the cross-channel firmware-bundle witness.
+##
+## **Add a new impl here in the same PR that introduces the impl.**
+## IDs are 64-bit; pick from a clearly-distinct subspace per trait
+## class (estimator / controller / mixer / sanitizer) so accidental
+## collisions are obvious. Prefer ASCII-encoded mnemonics
+## (`u64::from_be_bytes(b"ESTIMEKF")`) for human readability.
+##
+## **Never reuse a retired ID.** A channel running an old firmware
+## image with the retired impl plus a new firmware image with the
+## reused ID would compare byte-equal at the lockstep gate, which is
+## exactly the failure mode this registry exists to prevent.
+##
+## Floors: cargo-evidence does not gate this file directly. The
+## guardrail is LLR-PIPE-104 + TST-PIPE-104 (`identity_hash_is_stable
+## _across_builds`), which pins the FNV folding output for the
+## production bundle (Ekf / MultirotorController / QuadXMixer /
+## Sanitizer). Touching that test means a real cross-channel hash
+## change shipped — review carefully.
+
+[estimator]
+"ekf.basic-18state.v1" = 0x4554_494D_454B_4631  # Ekf
+
+[controller]
+"controller.multirotor.v1"  = 0x4354_4C4D_5552_5631  # MultirotorController
+"controller.fixed_wing.v1"  = 0x4354_4C46_5747_5631  # FixedWingController
+"controller.vtol.v1"        = 0x4354_4C56_544F_4C31  # VtolController
+
+[mixer]
+"mixer.quad_x.v1" = 0x4D49_5851_5541_4458  # QuadXMixer
+
+[sanitizer]
+"sanitizer.group_aware.v1" = 0x5341_4E47_5250_5631  # Sanitizer
+
+# Test-only impls (live alongside the trait impls in tests/, kept
+# out of the production allocation space — high bit can be 0 or
+# any pattern as long as it doesn't collide with production IDs).
+[testing]
+"mixer.kernel_dummy.v1"      = 0x4D49_5854_4553_5431  # tests::DummyMixer
+"controller.test_stateful.v1"= 0x4354_4C54_4553_5431  # TestStatefulController
+"estimator.mock.v1"          = 0x4553_544D_4F43_4B00  # MockEstimator
+"controller.mock.v1"         = 0x4354_4C4D_4F43_4B00  # MockController
+"mixer.mock.v1"              = 0x4D49_584D_4F43_4B00  # MockMixer
+"sanitizer.mock.v1"          = 0x5341_4E4D_4F43_4B00  # MockSanitizer

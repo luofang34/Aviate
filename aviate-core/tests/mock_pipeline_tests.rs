@@ -72,6 +72,8 @@ struct MockEstimator;
 impl Estimator for MockEstimator {
     type RuntimeState = MockEstimatorRuntime;
 
+    const ALGORITHM_ID: u64 = 0x4553_544D_4F43_4B00; // "ESTMOCK\0"
+
     fn observe(
         &self,
         state: &mut MockEstimatorRuntime,
@@ -136,6 +138,8 @@ struct MockController;
 impl VehicleController for MockController {
     type RuntimeState = MockControllerRuntime;
 
+    const ALGORITHM_ID: u64 = 0x4354_4C4D_4F43_4B00; // "CTLMOCK\0"
+
     fn step(
         &self,
         runtime: &mut MockControllerRuntime,
@@ -159,6 +163,8 @@ impl VehicleController for MockController {
 struct MockMixer;
 
 impl Mixer for MockMixer {
+    const ALGORITHM_ID: u64 = 0x4D49_584D_4F43_4B00; // "MIXMOCK\0"
+
     fn mix(&self, _axis: &AxisCommand) -> ActuatorCmd {
         ActuatorCmd::default()
     }
@@ -169,6 +175,8 @@ impl Mixer for MockMixer {
 struct MockSanitizer;
 
 impl ActuatorSanitizer for MockSanitizer {
+    const ALGORITHM_ID: u64 = 0x5341_4E4D_4F43_4B00; // "SANMOCK\0"
+
     fn sanitize(
         &self,
         _cmd: &mut ActuatorCmd,

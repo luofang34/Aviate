@@ -6,6 +6,11 @@ use crate::control::AxisCommand;
 
 /// Mixer trait - converts axis commands to actuator outputs
 pub trait Mixer {
+    /// 64-bit algorithm-identity constant, fixed at the impl site.
+    /// See `Estimator::ALGORITHM_ID` for the contract — same scope
+    /// (mixer-class identity) and same lockstep gating role.
+    const ALGORITHM_ID: u64;
+
     fn mix(&self, axis: &AxisCommand) -> ActuatorCmd;
 }
 
@@ -21,6 +26,10 @@ pub struct QuadXMixer {
 }
 
 impl Mixer for QuadXMixer {
+    // Registered in cert/algorithm_id_registry.toml as
+    // "mixer.quad_x.v1".
+    const ALGORITHM_ID: u64 = 0x4D49_5851_5541_4458; // "MIXQUADX"
+
     fn mix(&self, axis: &AxisCommand) -> ActuatorCmd {
         let t = axis.collective.0; // [0, 1]
         let r = axis.roll.0; // [-1, 1]
@@ -381,6 +390,11 @@ pub const MAX_CONSECUTIVE_FALLBACK: u16 = 10;
 /// `KernelState.fallback` — the sanitizer carries no per-cycle
 /// state of its own.
 pub trait ActuatorSanitizer {
+    /// 64-bit algorithm-identity constant, fixed at the impl site.
+    /// See `Estimator::ALGORITHM_ID` for the contract — same scope
+    /// (sanitizer-class identity) and same lockstep gating role.
+    const ALGORITHM_ID: u64;
+
     fn sanitize(
         &self,
         cmd: &mut ActuatorCmd,

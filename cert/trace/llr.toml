@@ -556,29 +556,58 @@ traces_to = ["74314e31-1466-4755-83f3-505dafdaf77b"]
 [[requirements]]
 uid = "421bab25-b06e-4804-9beb-ea939ae5b79a"
 id = "LLR-PIPE-103"
-title = "algorithm_identity_hash uses FNV-1a over type_name of E,V,M,S"
+title = "algorithm_identity_hash folds FNV-1a over the four ALGORITHM_ID constants"
 owner = "aviate-core@aviate"
 description = """
 `KernelPipeline::<E, V, M, S>::algorithm_identity_hash` SHALL be
-implemented as 64-bit FNV-1a (offset basis
-0xcbf29ce484222325, prime 0x00000100000001b3) folded over the
-concatenation of `core::any::type_name::<E>()`,
-`core::any::type_name::<V>()`, `core::any::type_name::<M>()`,
-`core::any::type_name::<S>()`, separated by a sentinel byte
-(0xff) so adjacent type-name boundaries cannot collide via
-concatenation aliasing. The function SHALL NOT read `self`'s
-fields and SHALL NOT consult any runtime configuration. The
-function SHALL NOT panic and SHALL be `#[inline]`-eligible
-(no allocation, no I/O, no locking).
+implemented as 64-bit FNV-1a (offset basis 0xcbf29ce484222325,
+prime 0x00000100000001b3) folded over the four traits' compile-
+time `ALGORITHM_ID` constants encoded as little-endian u64s, in
+the positional order (E::ALGORITHM_ID, V::ALGORITHM_ID,
+M::ALGORITHM_ID, S::ALGORITHM_ID). Positional ordering is part
+of the hash — swapping any two impls changes the output even
+when the participating constants are unchanged. The function
+SHALL NOT read `self`'s fields and SHALL NOT consult any runtime
+configuration. The function SHALL NOT panic and SHALL be
+`#[inline]`-eligible (no allocation, no I/O, no locking).
 
-`core::any::type_name` is documented as a best-effort symbol that
-may differ across Rust compiler versions and target triples; the
-LLR therefore guarantees within-build determinism only. Channels
-participating in lockstep are required to be byte-identical
-firmware images, so within-build determinism is sufficient.
+Because every input is a compile-time `u64` constant declared at
+the impl site, the hash is stable across compiler versions,
+target triples, and optimization levels — strictly stronger than
+the prior `core::any::type_name`-based derivation, which was
+best-effort and only stable within a single build.
 """
 verification_methods = ["test"]
 modules = ["aviate-core/src/kernel/pipeline.rs"]
+derived = false
+traces_to = ["ef3875e1-eb75-4ad1-968d-5e13fa536548"]
+
+[[requirements]]
+uid = "1a7c8d83-2914-4fa2-8a3e-b3e0bbd0f4a1"
+id = "LLR-PIPE-105"
+title = "Each substitutable trait declares ALGORITHM_ID: u64 const"
+owner = "aviate-core@aviate"
+description = """
+`Estimator`, `VehicleController`, `Mixer`, and `ActuatorSanitizer`
+SHALL each declare `const ALGORITHM_ID: u64;` as a required
+trait item. Every impl SHALL bind a 64-bit value at the impl
+site — never derived from `core::any::type_name`, never read
+from runtime configuration, never computed at runtime. The
+allocation is tracked by `cert/algorithm_id_registry.toml`
+which lists every assigned ID by trait class; PRs that add a
+new impl SHALL add a registry row in the same change.
+
+This LLR is the structural input to LLR-PIPE-103: replacing
+`core::any::type_name` with explicit constants is what gives
+the identity hash its cross-build / cross-compiler / cross-
+target-triple stability.
+"""
+verification_methods = ["test", "review"]
+modules = [
+  "aviate-core/src/ekf.rs",
+  "aviate-core/src/control.rs",
+  "aviate-core/src/mixer.rs",
+]
 derived = false
 traces_to = ["ef3875e1-eb75-4ad1-968d-5e13fa536548"]
 

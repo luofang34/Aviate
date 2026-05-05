@@ -436,6 +436,33 @@ properties LLR-PIPE-103 / HLR-PIPE-002 require:
 traces_to = ["421bab25-b06e-4804-9beb-ea939ae5b79a"]
 
 [[tests]]
+uid = "67dab32f-7e1e-46cc-9d50-8f4d5b78e52f"
+id = "TST-PIPE-105"
+title = "kernel::pipeline::tests::identity_hash_is_stable_across_builds"
+owner = "aviate-core@aviate"
+description = """
+`identity_hash_is_stable_across_builds` pins the production
+algorithm-bundle hash (Ekf / MultirotorController / QuadXMixer
+/ Sanitizer) to a known 64-bit constant. The constant is
+derived from FNV-1a folding of the four impls' `ALGORITHM_ID`
+u64 constants — by construction it is independent of compiler
+version, target triple, and optimization level, satisfying
+HLR-PIPE-002.c.
+
+The test acts as the inverse safety witness: a deliberate or
+accidental change to any participating `ALGORITHM_ID` is
+caught by the assertion failure. If the test fails, the
+operator SHALL audit whether a real cross-channel firmware
+hash divergence is being shipped (the spec §16 failure mode
+this entire mechanism exists to detect) before considering an
+update to the pinned constant.
+"""
+traces_to = [
+  "1a7c8d83-2914-4fa2-8a3e-b3e0bbd0f4a1",
+  "421bab25-b06e-4804-9beb-ea939ae5b79a",
+]
+
+[[tests]]
 uid = "fbf2b8c0-3cde-4bed-982b-532979bd3bb8"
 id = "TST-CTL-102"
 title = "controller_runtime_state_tests — stateful regression suite"

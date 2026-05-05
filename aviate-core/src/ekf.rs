@@ -85,6 +85,16 @@ pub trait Estimator {
     /// Persistent runtime state owned by `KernelState.estimator`.
     type RuntimeState: EstimatorRuntimeState;
 
+    /// 64-bit algorithm-identity constant, fixed at the impl site.
+    /// Two channels with byte-identical firmware produce the same
+    /// `ALGORITHM_ID`; cross-channel mismatch SHALL block lockstep
+    /// entry (spec §16). The constant is independent of compiler
+    /// version, target triple, and `core::any::type_name` symbol
+    /// formatting — those are best-effort and not deterministic.
+    /// Allocate from `cert/algorithm_id_registry.toml` to keep IDs
+    /// globally unique across estimator implementations.
+    const ALGORITHM_ID: u64;
+
     /// Drive the estimator forward by one cycle, consuming the
     /// kernel's complete `SensorSet` snapshot. Implementations
     /// decide which channels they use (IMU-only attitude filter,
