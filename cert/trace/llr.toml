@@ -1170,3 +1170,91 @@ verification_methods = ["review", "test"]
 modules = ["aviate-runtime/Cargo.toml"]
 derived = false
 traces_to = ["fa9b3c0e-7d54-4e1f-b9b2-43c5d8a1f723"]
+
+[[requirements]]
+uid = "7e3f1a8c-9d6b-4e29-a1f7-3b8d5e2c4a06"
+id = "LLR-CCS-101"
+title = "ChannelSnapshot struct carries id, seq, hash, and borrowed state bytes"
+owner = "aviate-core@aviate"
+description = """
+`aviate_core::kernel::snapshot::ChannelSnapshot<'a>` SHALL be a
+struct with exactly four fields:
+
+  - `channel_id: ChannelId`
+  - `cycle_seq: u64`
+  - `algorithm_identity_hash: u64`
+  - `state_bytes: &'a [u8]`
+
+The lifetime `'a` ties the snapshot to a caller-owned buffer; if
+that buffer is mutated, the borrow checker invalidates the
+snapshot at compile time. The struct SHALL implement `Clone +
+Debug` and SHALL NOT implement `Copy` (the borrowed slice's
+lifetime makes Copy semantically wrong).
+"""
+verification_methods = ["review", "test"]
+modules = ["aviate-core/src/kernel/snapshot.rs"]
+derived = false
+traces_to = ["be4f7d29-3a82-4c6e-9b2f-7e1c5d8a0f43"]
+
+[[requirements]]
+uid = "0c4d8b6e-2f7a-4e1d-9c5b-7a3f8e1d4b29"
+id = "LLR-CCS-102"
+title = "ChannelSnapshot::agrees_with byte-equality comparison semantics"
+owner = "aviate-core@aviate"
+description = """
+`ChannelSnapshot::agrees_with(&self, other: &Self) -> bool`
+SHALL return true if and only if all three conditions hold:
+
+  1. `self.algorithm_identity_hash == other.algorithm_identity_hash`
+  2. `self.state_bytes.len() == other.state_bytes.len()`
+  3. `self.state_bytes == other.state_bytes` (byte equality)
+
+`channel_id` and `cycle_seq` SHALL NOT be considered. The method
+SHALL NOT panic, SHALL NOT allocate, SHALL NOT consult any state
+outside the two snapshots, and SHALL be `#[inline]`-eligible.
+
+The asymmetry between fields (id + seq ignored, hash + bytes
+checked) is deliberate: the gate witnesses firmware-bundle and
+state agreement, not channel identity. A length-mismatch failure
+mode (peer running an incompatible firmware revision with a
+different `KernelState` size) surfaces as disagreement via
+condition 2 — the fail-safe signal for cross-revision skew.
+"""
+verification_methods = ["test", "review"]
+modules = ["aviate-core/src/kernel/snapshot.rs"]
+derived = false
+traces_to = ["be4f7d29-3a82-4c6e-9b2f-7e1c5d8a0f43"]
+
+[[requirements]]
+uid = "4e8a2b1f-7c3d-4e9a-b5f2-8d1a7c4e3b25"
+id = "LLR-CCS-103"
+title = "AviateKernelImpl::project_for_cross_channel writes canonical bytes into caller buffer"
+owner = "aviate-core@aviate"
+description = """
+`AviateKernelImpl::project_for_cross_channel(
+    &self,
+    cycle_seq: u64,
+    channel_id: ChannelId,
+    state_buf: &'buf mut [u8],
+) -> ChannelSnapshot<'buf>`
+SHALL:
+
+  - call `self.state.encode_canonical(state_buf)` and bind the
+    returned byte count `n`;
+  - construct a `ChannelSnapshot` with `state_bytes: &state_buf[..n]`;
+  - populate `algorithm_identity_hash` from
+    `self.pipeline.algorithm_identity_hash()` (LLR-PIPE-103);
+  - copy the caller-supplied `cycle_seq` and `channel_id` into the
+    matching fields verbatim — no validation, no clamping.
+
+The caller owns `state_buf`. If `state_buf.len() < KernelState::
+ENCODED_LEN`, the encoded bytes truncate; subsequent
+`agrees_with` against a full-size peer snapshot fails on the
+length-mismatch condition (LLR-CCS-102.2), which is the safe
+failure mode — caller-side buffer-sizing bugs surface as cross-
+channel disagreement, not as silent data corruption.
+"""
+verification_methods = ["test", "review"]
+modules = ["aviate-core/src/kernel.rs"]
+derived = false
+traces_to = ["be4f7d29-3a82-4c6e-9b2f-7e1c5d8a0f43"]

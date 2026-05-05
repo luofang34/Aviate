@@ -412,3 +412,36 @@ than a user-followed convention.
 """
 verification_methods = ["review", "test"]
 traces_to = ["8f3a2c87-9d4e-4a1f-b7e2-3c6a8f1d9e02"]
+
+[[requirements]]
+uid = "be4f7d29-3a82-4c6e-9b2f-7e1c5d8a0f43"
+id = "HLR-CCS-001"
+title = "Kernel projects single-channel snapshot for cross-channel agreement"
+owner = "aviate-core@aviate"
+description = """
+The flight kernel SHALL expose a `project_for_cross_channel`
+method that produces a `ChannelSnapshot` carrying:
+
+  - the producing channel's `ChannelId`;
+  - that channel's cycle sequence number;
+  - the `KernelPipeline::algorithm_identity_hash()` value
+    (HLR-PIPE-002);
+  - the canonical bytes of the channel's `KernelState`
+    (HLR-REPL-001).
+
+The first three fields are scalar; the fourth borrows from a
+caller-owned buffer (no allocation, no_std-friendly). Two
+snapshots from peer channels SHALL be byte-comparable: if the
+algorithm-identity hashes match AND the state bytes are
+length-equal AND byte-equal, the snapshots `agrees_with` each
+other. Channel ID and cycle sequence are NOT part of the
+agreement check — peers run cycles on their own clocks and have
+distinct IDs by definition.
+
+This requirement is the structural projection layer for spec §16
+lockstep entry. A future PR adds the gate that REJECTS lockstep
+when peer snapshots disagree; this PR delivers only the
+projection + comparison primitive.
+"""
+verification_methods = ["test", "review"]
+traces_to = ["d45a87b2-6e51-42b0-995f-a7b6a6a011b9"]
