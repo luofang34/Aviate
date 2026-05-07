@@ -84,8 +84,8 @@ pub struct ChannelSnapshot<'a> {
 }
 
 impl<'a> ChannelSnapshot<'a> {
-    /// Cross-channel agreement: byte-equality of the
-    /// algorithm-identity hash AND the canonical state bytes.
+    /// Cross-channel agreement: byte-equality of the algorithm-identity
+    /// hash, resolved-config hash, and canonical state bytes.
     ///
     /// `cycle_seq` and `channel_id` are NOT compared — peers run
     /// cycles on their own clocks and have distinct IDs by

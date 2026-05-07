@@ -13,15 +13,15 @@
 //!   - `actuator_state` — cached actuator commanded state (for transition checks)
 //!   - `timing_stats`   — per-cycle timing instrumentation (spec §18)
 //!
-//! Phase 4 will additionally pull EKF persistent state (quat, pos,
-//! vel, biases, p_cov, initialized, quat_fault, last_gyro_body) and
-//! sanitizer fallback state (last_good, age, consecutive_fallback)
-//! into `KernelState` and flip the `Estimator` / `ActuatorSanitizer`
-//! trait surfaces to take `&mut <State>` arguments. After Phase 4,
-//! "every safety-relevant persistent state field has exactly one owner
-//! (`KernelState`)" becomes a hard, structurally-enforced rule —
-//! prerequisite for redundant-channel snapshot replication, voting,
-//! and hot-spare takeover (spec §16).
+//! Phase 4 pulled EKF persistent state (quat, pos, vel, biases, p_cov,
+//! initialized, quat_fault, last_gyro_body), sanitizer fallback state
+//! (last_good, age, consecutive_fallback), and controller runtime state
+//! into `KernelState`; the `Estimator`, `ActuatorSanitizer`, and
+//! `VehicleController` trait surfaces now take `&mut <State>` arguments.
+//! The "every safety-relevant persistent state field has exactly one
+//! owner (`KernelState`)" rule is therefore structurally enforced —
+//! prerequisite for redundant-channel snapshot replication, voting, and
+//! hot-spare takeover (spec §16).
 //!
 //! ## Borrow destructuring idiom
 //!
