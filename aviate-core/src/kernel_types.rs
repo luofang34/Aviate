@@ -223,6 +223,14 @@ impl ChannelId {
     pub const MAX_CHANNELS: usize = 3;
 }
 
+/// Multi-channel container for **derived** cross-channel signals
+/// — estimates, health, commands, sequences. Used WITHIN
+/// redundant mode for consensus / voting / FDIR; agreement model
+/// is value-domain (a 0.001-m difference between two channels'
+/// position estimates is normal). Distinct from
+/// [`crate::kernel::snapshot::ChannelSnapshot`], which is the
+/// byte-domain lockstep-ENTRY witness; see that module for the
+/// full role boundary. Spec §16.
 #[derive(Clone, Debug)]
 pub struct CrossChannelData {
     pub estimates: [Option<StateEstimate>; ChannelId::MAX_CHANNELS],
