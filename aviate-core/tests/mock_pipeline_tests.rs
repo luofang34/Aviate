@@ -238,12 +238,7 @@ fn make_command() -> Command {
 
 fn make_kernel() -> AviateKernelImpl<MockEstimator, MockController, MockMixer, MockSanitizer> {
     AviateKernelImpl {
-        pipeline: KernelPipeline::new(
-            MockEstimator::default(),
-            MockController,
-            MockMixer,
-            MockSanitizer,
-        ),
+        pipeline: KernelPipeline::new(MockEstimator, MockController, MockMixer, MockSanitizer),
         state: KernelState::new(KernelChecks::with_pre_arm_required(PreArmFlags::empty())),
         cfg: ResolvedKernelConfig::default(),
     }

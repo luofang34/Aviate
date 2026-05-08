@@ -61,8 +61,10 @@ fn canonical_hash_distinguishes_mode_config() {
 #[test]
 fn canonical_hash_distinguishes_fault_table() {
     let cfg_default = ResolvedKernelConfig::default();
-    let mut cfg_empty = ResolvedKernelConfig::default();
-    cfg_empty.fault_table = FaultHandlingTable { entries: &[] };
+    let cfg_empty = ResolvedKernelConfig {
+        fault_table: FaultHandlingTable { entries: &[] },
+        ..Default::default()
+    };
     assert_ne!(cfg_default.canonical_hash(), cfg_empty.canonical_hash());
 }
 
