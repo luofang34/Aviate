@@ -30,9 +30,9 @@
 //! | Mag    | Gazebo plugin  | FFI |
 
 #![forbid(unsafe_code)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(clippy::expect_used)]
+#![forbid(clippy::panic)]
+#![forbid(clippy::unwrap_used)]
+#![forbid(clippy::expect_used)]
 
 use std::io;
 

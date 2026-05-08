@@ -66,6 +66,6 @@ panic = "abort"
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
-panic = "deny"
-unwrap_used = "deny"
-expect_used = "deny"
+panic = "forbid"
+unwrap_used = "forbid"
+expect_used = "forbid"

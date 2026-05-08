@@ -874,7 +874,11 @@ mod tests {
         assert!(imu.has_data());
         assert!(matches!(imu.data_ready(), Ok(true)));
 
-        let reading = imu.read().unwrap();
+        let reading = imu.read();
+        assert!(reading.is_ok());
+        let Ok(reading) = reading else {
+            return;
+        };
         assert_eq!(reading.accel, [1.0, 2.0, 3.0]);
         assert_eq!(reading.gyro, [0.1, 0.2, 0.3]);
 
@@ -892,13 +896,25 @@ mod tests {
         sensors.feed_hil_sensor_mag(0.2, 0.0, 0.4);
 
         // Read back
-        let imu = sensors.imu.read().unwrap();
+        let imu = sensors.imu.read();
+        assert!(imu.is_ok());
+        let Ok(imu) = imu else {
+            return;
+        };
         assert!((imu.accel[2] - (-9.81)).abs() < 0.01);
 
-        let baro = sensors.baro.read().unwrap();
+        let baro = sensors.baro.read();
+        assert!(baro.is_ok());
+        let Ok(baro) = baro else {
+            return;
+        };
         assert!((baro.pressure_pa - 101325.0).abs() < 1.0);
 
-        let mag = sensors.mag.read().unwrap();
+        let mag = sensors.mag.read();
+        assert!(mag.is_ok());
+        let Ok(mag) = mag else {
+            return;
+        };
         assert!((mag.field_ut[0] - 20.0).abs() < 0.1); // 0.2 Gauss = 20 µT
     }
 
@@ -920,7 +936,11 @@ mod tests {
             150,       // epv cm
         );
 
-        let gnss = sensors.gnss.read().unwrap();
+        let gnss = sensors.gnss.read();
+        assert!(gnss.is_ok());
+        let Ok(gnss) = gnss else {
+            return;
+        };
         assert!((gnss.lat_deg - 47.3977).abs() < 0.0001);
         assert!((gnss.lon_deg - 8.5456).abs() < 0.0001);
         assert!((gnss.alt_m - 500.0).abs() < 0.1);
@@ -945,10 +965,14 @@ mod tests {
             count: 4,
         };
 
-        actuator.write(&cmd).unwrap();
+        assert!(actuator.write(&cmd).is_ok());
         assert!(actuator.has_cmd());
 
-        let taken = actuator.take_cmd().unwrap();
+        let taken = actuator.take_cmd();
+        assert!(taken.is_some());
+        let Some(taken) = taken else {
+            return;
+        };
         assert_eq!(taken.outputs[0], 0.5);
         assert_eq!(taken.count, 4);
 
@@ -972,7 +996,7 @@ mod tests {
             outputs: [0.5; 16],
             count: 4,
         };
-        actuator.write(&cmd).unwrap();
+        assert!(actuator.write(&cmd).is_ok());
         assert!(actuator.has_cmd());
 
         // Disarm should clear buffered command
@@ -1031,7 +1055,11 @@ mod tests {
 
             imu.inject_fault(SensorFault::NaN);
 
-            let reading = imu.read().expect("Should return Ok with NaN values");
+            let reading = imu.read();
+            assert!(reading.is_ok());
+            let Ok(reading) = reading else {
+                return;
+            };
             assert!(reading.accel[0].is_nan());
             assert!(reading.accel[1].is_nan());
             assert!(reading.accel[2].is_nan());
@@ -1090,7 +1118,11 @@ mod tests {
                 offset: [1.0, 2.0, 3.0],
             });
 
-            let reading = imu.read().expect("Should return biased reading");
+            let reading = imu.read();
+            assert!(reading.is_ok());
+            let Ok(reading) = reading else {
+                return;
+            };
             assert!((reading.accel[0] - 1.0).abs() < 1e-5);
             assert!((reading.accel[1] - 2.0).abs() < 1e-5);
             assert!((reading.accel[2] - (-9.81 + 3.0)).abs() < 1e-5);
@@ -1107,7 +1139,11 @@ mod tests {
             // Inject bias: add 1000 Pa
             baro.inject_fault(SensorFault::BiasShiftScalar { offset: 1000.0 });
 
-            let reading = baro.read().expect("Should return biased reading");
+            let reading = baro.read();
+            assert!(reading.is_ok());
+            let Ok(reading) = reading else {
+                return;
+            };
             assert!((reading.pressure_pa - 102325.0).abs() < 1e-5);
         }
 
@@ -1158,7 +1194,11 @@ mod tests {
             let mut gnss = FakeGnss::new();
             gnss.inject_fault(SensorFault::NaN);
 
-            let reading = gnss.read().expect("Should return Ok with NaN values");
+            let reading = gnss.read();
+            assert!(reading.is_ok());
+            let Ok(reading) = reading else {
+                return;
+            };
             assert!(reading.lat_deg.is_nan());
             assert!(reading.lon_deg.is_nan());
             assert!(reading.alt_m.is_nan());

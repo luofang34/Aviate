@@ -24,6 +24,10 @@
 
 // Flight builds are no_std (embedded targets)
 #![cfg_attr(feature = "env-flight", no_std)]
+#![cfg_attr(feature = "env-flight", forbid(unsafe_code))]
+#![cfg_attr(feature = "env-flight", forbid(clippy::panic))]
+#![cfg_attr(feature = "env-flight", forbid(clippy::unwrap_used))]
+#![cfg_attr(feature = "env-flight", forbid(clippy::expect_used))]
 
 // ============================================================================
 // Environment Feature Guards (DO-178C Safety)

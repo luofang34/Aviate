@@ -22,9 +22,9 @@
 //! traits defined here and are selected at runtime via configuration.
 
 #![forbid(unsafe_code)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(clippy::expect_used)]
+#![forbid(clippy::panic)]
+#![forbid(clippy::unwrap_used)]
+#![forbid(clippy::expect_used)]
 
 pub mod backend;
 pub mod bridge;

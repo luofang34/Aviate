@@ -4,9 +4,9 @@
 //! All MCU-specific implementations are done via traits.
 
 #![no_std]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(clippy::expect_used)]
+#![forbid(clippy::panic)]
+#![forbid(clippy::unwrap_used)]
+#![forbid(clippy::expect_used)]
 
 /// Boot magic constants (used internally by chip backends for encoding)
 pub mod magic {

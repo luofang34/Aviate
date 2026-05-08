@@ -227,18 +227,27 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    fn find_available_port() -> u16 {
+    fn find_available_port() -> Option<u16> {
         // Bind to port 0 to get an available port
-        let socket = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind");
-        socket
-            .local_addr()
-            .expect("Failed to get local addr")
-            .port()
+        let socket = UdpSocket::bind("127.0.0.1:0");
+        assert!(socket.is_ok());
+        let Ok(socket) = socket else {
+            return None;
+        };
+
+        let addr = socket.local_addr();
+        assert!(addr.is_ok());
+        let Ok(addr) = addr else {
+            return None;
+        };
+        Some(addr.port())
     }
 
     #[test]
     fn test_transport_create() {
-        let port = find_available_port();
+        let Some(port) = find_available_port() else {
+            return;
+        };
         let config = HilTransportConfig {
             local_port: port,
             simulator_addr: SocketAddr::from(([127, 0, 0, 1], port + 1)),
@@ -251,8 +260,12 @@ mod tests {
 
     #[test]
     fn test_transport_send_receive() {
-        let port1 = find_available_port();
-        let port2 = find_available_port();
+        let Some(port1) = find_available_port() else {
+            return;
+        };
+        let Some(port2) = find_available_port() else {
+            return;
+        };
 
         // Create transport (FC side)
         let config = HilTransportConfig {
@@ -261,46 +274,64 @@ mod tests {
             sys_id: 1,
             comp_id: 1,
         };
-        let mut transport = HilTransport::new(config).expect("Failed to create transport");
+        let transport = HilTransport::new(config);
+        assert!(transport.is_ok());
+        let Ok(mut transport) = transport else {
+            return;
+        };
 
         // Create simulator socket
-        let sim_socket = UdpSocket::bind(("127.0.0.1", port2)).expect("Failed to bind sim socket");
-        sim_socket
-            .set_nonblocking(true)
-            .expect("Failed to set nonblocking");
+        let sim_socket = UdpSocket::bind(("127.0.0.1", port2));
+        assert!(sim_socket.is_ok());
+        let Ok(sim_socket) = sim_socket else {
+            return;
+        };
+        assert!(sim_socket.set_nonblocking(true).is_ok());
 
         // Send actuator controls
-        let mut controls = HilActuatorControls::default();
-        controls.time_usec = 1234567890;
+        let mut controls = HilActuatorControls {
+            time_usec: 1234567890,
+            ..Default::default()
+        };
         controls.controls[0] = 0.5;
         controls.mode = HilActuatorControls::MODE_FLAG_ARMED;
 
-        transport
-            .send_actuator_controls(&controls)
-            .expect("Failed to send");
+        assert!(transport.send_actuator_controls(&controls).is_ok());
 
         // Give network time
         thread::sleep(Duration::from_millis(10));
 
         // Receive on simulator side
         let mut buf = [0u8; 256];
-        let (len, _) = sim_socket.recv_from(&mut buf).expect("Failed to receive");
+        let received = sim_socket.recv_from(&mut buf);
+        assert!(received.is_ok());
+        let Ok((len, _)) = received else {
+            return;
+        };
         assert!(len > 0);
 
         // Parse the received frame
-        let (frame, _) = parse_frame(&buf[..len]).expect("Failed to parse");
-        if let HilMessage::ActuatorControls(parsed) = frame.message {
-            assert!(parsed.is_armed());
-            assert!((controls.controls[0] - parsed.controls[0]).abs() < 1e-6);
-        } else {
-            panic!("Wrong message type");
-        }
+        let frame = parse_frame(&buf[..len]);
+        assert!(frame.is_ok());
+        let Ok((frame, _)) = frame else {
+            return;
+        };
+        assert!(matches!(&frame.message, HilMessage::ActuatorControls(_)));
+        let HilMessage::ActuatorControls(parsed) = frame.message else {
+            return;
+        };
+        assert!(parsed.is_armed());
+        assert!((controls.controls[0] - parsed.controls[0]).abs() < 1e-6);
     }
 
     #[test]
     fn test_transport_receive_sensor() {
-        let port1 = find_available_port();
-        let port2 = find_available_port();
+        let Some(port1) = find_available_port() else {
+            return;
+        };
+        let Some(port2) = find_available_port() else {
+            return;
+        };
 
         // Create transport (FC side)
         let config = HilTransportConfig {
@@ -309,10 +340,18 @@ mod tests {
             sys_id: 1,
             comp_id: 1,
         };
-        let mut transport = HilTransport::new(config).expect("Failed to create transport");
+        let transport = HilTransport::new(config);
+        assert!(transport.is_ok());
+        let Ok(mut transport) = transport else {
+            return;
+        };
 
         // Create simulator socket
-        let sim_socket = UdpSocket::bind(("127.0.0.1", port2)).expect("Failed to bind sim socket");
+        let sim_socket = UdpSocket::bind(("127.0.0.1", port2));
+        assert!(sim_socket.is_ok());
+        let Ok(sim_socket) = sim_socket else {
+            return;
+        };
 
         // Build and send HIL_SENSOR from simulator
         let sensor = HilSensor {
@@ -336,11 +375,15 @@ mod tests {
 
         let msg = HilMessage::Sensor(sensor);
         let mut buf = [0u8; 256];
-        let len = serialize_frame(&msg, 1, 1, 1, &mut buf).expect("Failed to serialize");
+        let len = serialize_frame(&msg, 1, 1, 1, &mut buf);
+        assert!(len.is_some());
+        let Some(len) = len else {
+            return;
+        };
 
-        sim_socket
+        assert!(sim_socket
             .send_to(&buf[..len], ("127.0.0.1", port1))
-            .expect("Failed to send");
+            .is_ok());
 
         // Give network time
         thread::sleep(Duration::from_millis(10));
@@ -350,7 +393,9 @@ mod tests {
         let received = transport.take_sensor();
         assert!(received.is_some());
 
-        let received = received.expect("No sensor data");
+        let Some(received) = received else {
+            return;
+        };
         assert_eq!(received.time_usec, sensor.time_usec);
         assert!((received.zacc - sensor.zacc).abs() < 1e-6);
     }

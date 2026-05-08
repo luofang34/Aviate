@@ -357,6 +357,16 @@ impl FaultController {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "xil-fault")]
+    fn lock_sensor<T>(sensor: &Arc<Mutex<T>>) -> Option<std::sync::MutexGuard<'_, T>> {
+        let guard = sensor.lock();
+        assert!(guard.is_ok());
+        let Ok(guard) = guard else {
+            return None;
+        };
+        Some(guard)
+    }
+
     #[test]
     fn test_fault_controller_creation() {
         let config = XilConfig::for_instance(99); // Use high instance to avoid port conflicts
@@ -377,7 +387,11 @@ mod tests {
         let mag = Arc::new(Mutex::new(FakeMag::new()));
         let gnss = Arc::new(Mutex::new(FakeGnss::new()));
 
-        let mut ctrl = FaultController::new(&config, imu, baro, mag, gnss).unwrap();
+        let ctrl = FaultController::new(&config, imu, baro, mag, gnss);
+        assert!(ctrl.is_ok());
+        let Ok(mut ctrl) = ctrl else {
+            return;
+        };
 
         // Poll should return 0 when no commands pending
         assert_eq!(ctrl.poll(), 0);
@@ -398,14 +412,19 @@ mod tests {
             Arc::clone(&baro),
             Arc::clone(&mag),
             Arc::clone(&gnss),
-        )
-        .unwrap();
+        );
+        assert!(ctrl.is_ok());
+        let Ok(ctrl) = ctrl else {
+            return;
+        };
 
         // Apply fault directly (bypassing UDP)
         assert!(ctrl.apply_imu_fault(&FaultSpec::HealthDegraded));
 
         // Verify fault was applied
-        let imu = imu.lock().unwrap();
+        let Some(imu) = lock_sensor(&imu) else {
+            return;
+        };
         assert!(imu.has_fault());
     }
 
@@ -419,10 +438,17 @@ mod tests {
         let gnss = Arc::new(Mutex::new(FakeGnss::new()));
 
         // Inject faults
-        imu.lock().unwrap().inject_fault(SensorFault::HealthFailed);
-        baro.lock()
-            .unwrap()
-            .inject_fault(SensorFault::HealthDegraded);
+        let Some(mut imu_guard) = lock_sensor(&imu) else {
+            return;
+        };
+        imu_guard.inject_fault(SensorFault::HealthFailed);
+        drop(imu_guard);
+
+        let Some(mut baro_guard) = lock_sensor(&baro) else {
+            return;
+        };
+        baro_guard.inject_fault(SensorFault::HealthDegraded);
+        drop(baro_guard);
 
         let ctrl = FaultController::new(
             &config,
@@ -430,15 +456,26 @@ mod tests {
             Arc::clone(&baro),
             Arc::clone(&mag),
             Arc::clone(&gnss),
-        )
-        .unwrap();
+        );
+        assert!(ctrl.is_ok());
+        let Ok(ctrl) = ctrl else {
+            return;
+        };
 
         // Clear all
         ctrl.clear_all();
 
         // Verify faults were cleared
-        assert!(!imu.lock().unwrap().has_fault());
-        assert!(!baro.lock().unwrap().has_fault());
+        let Some(imu_guard) = lock_sensor(&imu) else {
+            return;
+        };
+        assert!(!imu_guard.has_fault());
+        drop(imu_guard);
+
+        let Some(baro_guard) = lock_sensor(&baro) else {
+            return;
+        };
+        assert!(!baro_guard.has_fault());
     }
 }
 
@@ -451,16 +488,33 @@ mod integration_tests {
     use std::thread;
     use std::time::Duration;
 
-    /// Helper to create a fault controller with shared sensors
-    fn setup_fault_ctrl(
-        instance: u8,
-    ) -> (
+    type Shared<T> = Arc<Mutex<T>>;
+    type FaultCtrlSetup = (
         FaultController,
-        Arc<Mutex<FakeImu>>,
-        Arc<Mutex<FakeBaro>>,
-        Arc<Mutex<FakeMag>>,
-        Arc<Mutex<FakeGnss>>,
-    ) {
+        Shared<FakeImu>,
+        Shared<FakeBaro>,
+        Shared<FakeMag>,
+        Shared<FakeGnss>,
+    );
+
+    fn lock_sensor<T>(sensor: &Arc<Mutex<T>>) -> Option<std::sync::MutexGuard<'_, T>> {
+        let guard = sensor.lock();
+        assert!(guard.is_ok());
+        let Ok(guard) = guard else {
+            return None;
+        };
+        Some(guard)
+    }
+
+    fn sensor_has_fault<T>(sensor: &Arc<Mutex<T>>, has_fault: impl FnOnce(&T) -> bool) -> bool {
+        let Some(guard) = lock_sensor(sensor) else {
+            return false;
+        };
+        has_fault(&guard)
+    }
+
+    /// Helper to create a fault controller with shared sensors
+    fn setup_fault_ctrl(instance: u8) -> Option<FaultCtrlSetup> {
         let config = XilConfig::for_instance(instance);
         let imu = Arc::new(Mutex::new(FakeImu::new()));
         let baro = Arc::new(Mutex::new(FakeBaro::new()));
@@ -473,21 +527,30 @@ mod integration_tests {
             Arc::clone(&baro),
             Arc::clone(&mag),
             Arc::clone(&gnss),
-        )
-        .unwrap();
+        );
+        assert!(ctrl.is_ok());
+        let Ok(ctrl) = ctrl else {
+            return None;
+        };
 
-        (ctrl, imu, baro, mag, gnss)
+        Some((ctrl, imu, baro, mag, gnss))
     }
 
     #[test]
     fn test_client_controller_inject_imu_fault() {
         // Use high instance number to avoid port conflicts with parallel tests
         let instance = 80;
-        let (mut ctrl, imu, _baro, _mag, _gnss) = setup_fault_ctrl(instance);
+        let Some((mut ctrl, imu, _baro, _mag, _gnss)) = setup_fault_ctrl(instance) else {
+            return;
+        };
 
         // Create client for same instance
         let config = XilConfig::for_instance(instance);
-        let mut client = FaultClient::new(&config).unwrap();
+        let client = FaultClient::new(&config);
+        assert!(client.is_ok());
+        let Ok(mut client) = client else {
+            return;
+        };
 
         // Spawn controller poll in background thread
         let handle = thread::spawn(move || {
@@ -502,29 +565,50 @@ mod integration_tests {
         // Send inject command
         let ack = client.inject(SensorTarget::Imu, FaultSpec::HealthDegraded);
         assert!(ack.is_ok());
-        let ack = ack.unwrap();
+        let Ok(ack) = ack else {
+            return;
+        };
         assert!(ack.is_ok());
 
         // Wait for controller thread
-        let count = handle.join().unwrap();
+        let count = handle.join();
+        assert!(count.is_ok());
+        let Ok(count) = count else {
+            return;
+        };
         assert_eq!(count, 1);
 
         // Verify fault was applied
-        assert!(imu.lock().unwrap().has_fault());
+        assert!(sensor_has_fault(&imu, FakeImu::has_fault));
     }
 
     #[test]
     fn test_client_controller_clear_all() {
         let instance = 81;
-        let (mut ctrl, imu, baro, _mag, _gnss) = setup_fault_ctrl(instance);
+        let Some((mut ctrl, imu, baro, _mag, _gnss)) = setup_fault_ctrl(instance) else {
+            return;
+        };
 
         // Pre-inject faults directly
-        imu.lock().unwrap().inject_fault(SensorFault::HealthFailed);
-        baro.lock().unwrap().inject_fault(SensorFault::NaN);
+        let Some(mut imu_guard) = lock_sensor(&imu) else {
+            return;
+        };
+        imu_guard.inject_fault(SensorFault::HealthFailed);
+        drop(imu_guard);
+
+        let Some(mut baro_guard) = lock_sensor(&baro) else {
+            return;
+        };
+        baro_guard.inject_fault(SensorFault::NaN);
+        drop(baro_guard);
 
         // Create client
         let config = XilConfig::for_instance(instance);
-        let mut client = FaultClient::new(&config).unwrap();
+        let client = FaultClient::new(&config);
+        assert!(client.is_ok());
+        let Ok(mut client) = client else {
+            return;
+        };
 
         // Spawn controller poll
         let handle = thread::spawn(move || {
@@ -537,13 +621,20 @@ mod integration_tests {
         // Send clear all
         let ack = client.clear_all();
         assert!(ack.is_ok());
-        assert!(ack.unwrap().is_ok());
+        let Ok(ack) = ack else {
+            return;
+        };
+        assert!(ack.is_ok());
 
-        handle.join().unwrap();
+        let joined = handle.join();
+        assert!(joined.is_ok());
+        let Ok(_count) = joined else {
+            return;
+        };
 
         // Verify faults were cleared
-        assert!(!imu.lock().unwrap().has_fault());
-        assert!(!baro.lock().unwrap().has_fault());
+        assert!(!sensor_has_fault(&imu, FakeImu::has_fault));
+        assert!(!sensor_has_fault(&baro, FakeBaro::has_fault));
     }
 
     #[test]
@@ -554,10 +645,12 @@ mod integration_tests {
         // Run the test twice with identical fault sequences
         for run in 0..2 {
             let instance = 82 + run;
-            let (ctrl, imu, baro, mag, gnss) = setup_fault_ctrl(instance);
+            let Some((ctrl, imu, baro, mag, gnss)) = setup_fault_ctrl(instance) else {
+                return;
+            };
 
             let config = XilConfig::for_instance(instance);
-            let _client = FaultClient::new(&config).unwrap();
+            assert!(FaultClient::new(&config).is_ok());
 
             // Define a deterministic fault sequence
             let fault_sequence = [
@@ -579,17 +672,17 @@ mod integration_tests {
             }
 
             // Verify consistent state
-            assert!(imu.lock().unwrap().has_fault());
-            assert!(baro.lock().unwrap().has_fault());
-            assert!(mag.lock().unwrap().has_fault());
-            assert!(gnss.lock().unwrap().has_fault());
+            assert!(sensor_has_fault(&imu, FakeImu::has_fault));
+            assert!(sensor_has_fault(&baro, FakeBaro::has_fault));
+            assert!(sensor_has_fault(&mag, FakeMag::has_fault));
+            assert!(sensor_has_fault(&gnss, FakeGnss::has_fault));
 
             // Clear all and verify clean state
             ctrl.clear_all();
-            assert!(!imu.lock().unwrap().has_fault());
-            assert!(!baro.lock().unwrap().has_fault());
-            assert!(!mag.lock().unwrap().has_fault());
-            assert!(!gnss.lock().unwrap().has_fault());
+            assert!(!sensor_has_fault(&imu, FakeImu::has_fault));
+            assert!(!sensor_has_fault(&baro, FakeBaro::has_fault));
+            assert!(!sensor_has_fault(&mag, FakeMag::has_fault));
+            assert!(!sensor_has_fault(&gnss, FakeGnss::has_fault));
         }
     }
 
@@ -597,13 +690,15 @@ mod integration_tests {
     fn test_multiple_inject_clear_cycles() {
         // Verify fault injection is deterministic across multiple inject/clear cycles
         let instance = 84;
-        let (ctrl, imu, _baro, _mag, _gnss) = setup_fault_ctrl(instance);
+        let Some((ctrl, imu, _baro, _mag, _gnss)) = setup_fault_ctrl(instance) else {
+            return;
+        };
 
         for cycle in 0..3 {
             // Inject
             assert!(ctrl.apply_imu_fault(&FaultSpec::HealthDegraded));
             assert!(
-                imu.lock().unwrap().has_fault(),
+                sensor_has_fault(&imu, FakeImu::has_fault),
                 "Cycle {}: fault should be active",
                 cycle
             );
@@ -611,7 +706,7 @@ mod integration_tests {
             // Clear
             ctrl.clear_sensor(SensorTarget::Imu);
             assert!(
-                !imu.lock().unwrap().has_fault(),
+                !sensor_has_fault(&imu, FakeImu::has_fault),
                 "Cycle {}: fault should be cleared",
                 cycle
             );
@@ -621,7 +716,9 @@ mod integration_tests {
     #[test]
     fn test_different_fault_types_per_sensor() {
         let instance = 85;
-        let (ctrl, imu, baro, mag, gnss) = setup_fault_ctrl(instance);
+        let Some((ctrl, imu, baro, mag, gnss)) = setup_fault_ctrl(instance) else {
+            return;
+        };
 
         // Apply different fault types to each sensor
         assert!(ctrl.apply_imu_fault(&FaultSpec::BiasShift {
@@ -632,16 +729,16 @@ mod integration_tests {
         assert!(ctrl.apply_gnss_fault(&FaultSpec::Dropout { cycles: 10 }));
 
         // All should have faults
-        assert!(imu.lock().unwrap().has_fault());
-        assert!(baro.lock().unwrap().has_fault());
-        assert!(mag.lock().unwrap().has_fault());
-        assert!(gnss.lock().unwrap().has_fault());
+        assert!(sensor_has_fault(&imu, FakeImu::has_fault));
+        assert!(sensor_has_fault(&baro, FakeBaro::has_fault));
+        assert!(sensor_has_fault(&mag, FakeMag::has_fault));
+        assert!(sensor_has_fault(&gnss, FakeGnss::has_fault));
 
         // Clear only IMU
         ctrl.clear_sensor(SensorTarget::Imu);
-        assert!(!imu.lock().unwrap().has_fault());
-        assert!(baro.lock().unwrap().has_fault()); // still has fault
-        assert!(mag.lock().unwrap().has_fault()); // still has fault
-        assert!(gnss.lock().unwrap().has_fault()); // still has fault
+        assert!(!sensor_has_fault(&imu, FakeImu::has_fault));
+        assert!(sensor_has_fault(&baro, FakeBaro::has_fault)); // still has fault
+        assert!(sensor_has_fault(&mag, FakeMag::has_fault)); // still has fault
+        assert!(sensor_has_fault(&gnss, FakeGnss::has_fault)); // still has fault
     }
 }

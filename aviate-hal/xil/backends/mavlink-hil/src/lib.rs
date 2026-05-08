@@ -38,9 +38,9 @@
 //! which is the standard MAVLink convention.
 
 #![forbid(unsafe_code)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(clippy::expect_used)]
+#![forbid(clippy::panic)]
+#![forbid(clippy::unwrap_used)]
+#![forbid(clippy::expect_used)]
 
 pub mod messages;
 pub mod transport;
@@ -256,14 +256,50 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    fn find_available_port() -> u16 {
-        let socket = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind"); // COV:EXCL(TEST)
-        socket.local_addr().expect("Failed to get addr").port() // COV:EXCL(TEST)
+    fn find_available_port() -> Option<u16> {
+        let socket = UdpSocket::bind("127.0.0.1:0"); // COV:EXCL(TEST)
+        assert!(socket.is_ok());
+        let Ok(socket) = socket else {
+            return None;
+        };
+
+        let addr = socket.local_addr(); // COV:EXCL(TEST)
+        assert!(addr.is_ok());
+        let Ok(addr) = addr else {
+            return None;
+        };
+        Some(addr.port())
+    }
+
+    fn bind_sim_socket(port: u16) -> Option<UdpSocket> {
+        let socket = UdpSocket::bind(("127.0.0.1", port)); // COV:EXCL(TEST)
+        assert!(socket.is_ok());
+        let Ok(socket) = socket else {
+            return None;
+        };
+        Some(socket)
+    }
+
+    fn create_backend(config: HilBackendConfig) -> Option<HilBackend> {
+        let backend = HilBackend::new(config); // COV:EXCL(TEST)
+        assert!(backend.is_ok());
+        let Ok(backend) = backend else {
+            return None;
+        };
+        Some(backend)
+    }
+
+    fn serialize_test_frame(msg: &HilMessage, buf: &mut [u8]) -> Option<usize> {
+        let len = serialize_frame(msg, 1, 1, 1, buf); // COV:EXCL(TEST)
+        assert!(len.is_some());
+        len
     }
 
     #[test]
     fn test_backend_create() {
-        let port = find_available_port();
+        let Some(port) = find_available_port() else {
+            return;
+        };
         let config = HilBackendConfig {
             local_port: port,
             ..Default::default()
@@ -274,18 +310,26 @@ mod tests {
 
     #[test]
     fn test_backend_sensor_conversion() {
-        let port1 = find_available_port();
-        let port2 = find_available_port();
+        let Some(port1) = find_available_port() else {
+            return;
+        };
+        let Some(port2) = find_available_port() else {
+            return;
+        };
 
         let config = HilBackendConfig {
             local_port: port1,
             simulator_addr: SocketAddr::from(([127, 0, 0, 1], port2)),
             ..Default::default()
         };
-        let mut backend = HilBackend::new(config).expect("Failed to create backend"); // COV:EXCL(TEST)
+        let Some(mut backend) = create_backend(config) else {
+            return;
+        };
 
         // Send HIL_SENSOR from "simulator"
-        let sim_socket = UdpSocket::bind(("127.0.0.1", port2)).expect("Failed to bind"); // COV:EXCL(TEST)
+        let Some(sim_socket) = bind_sim_socket(port2) else {
+            return;
+        };
 
         let sensor = HilSensor {
             time_usec: 1000000,
@@ -308,50 +352,68 @@ mod tests {
 
         let msg = HilMessage::Sensor(sensor);
         let mut buf = [0u8; 256];
-        let len = serialize_frame(&msg, 1, 1, 1, &mut buf).expect("Failed to serialize"); // COV:EXCL(TEST)
+        let Some(len) = serialize_test_frame(&msg, &mut buf) else {
+            return;
+        };
 
-        sim_socket
+        assert!(sim_socket
             .send_to(&buf[..len], ("127.0.0.1", port1))
-            .expect("Failed to send"); // COV:EXCL(TEST)
+            .is_ok()); // COV:EXCL(TEST)
 
         thread::sleep(Duration::from_millis(10));
 
-        let packet = backend.poll().expect("No sensor data"); // COV:EXCL(TEST)
+        let packet = backend.poll(); // COV:EXCL(TEST)
+        assert!(packet.is_some());
+        let Some(packet) = packet else {
+            return;
+        };
         assert!(packet.imu.is_some());
         assert!(packet.baro.is_some());
         assert!(packet.mag.is_some());
 
         // Check IMU conversion
-        let imu = packet.imu.expect("No IMU"); // COV:EXCL(TEST)
+        let Some(imu) = packet.imu else {
+            return;
+        }; // COV:EXCL(TEST)
         assert!((imu.accel[2] - (-9.81)).abs() < 1e-6);
         assert!((imu.gyro[0] - 0.01).abs() < 1e-6);
 
         // Check baro conversion (hPa to Pa)
-        let baro = packet.baro.expect("No baro"); // COV:EXCL(TEST)
+        let Some(baro) = packet.baro else {
+            return;
+        }; // COV:EXCL(TEST)
         assert!((baro.pressure_pa - 101325.0).abs() < 1.0);
 
         // Check mag conversion (Gauss to uT)
-        let mag = packet.mag.expect("No mag"); // COV:EXCL(TEST)
+        let Some(mag) = packet.mag else {
+            return;
+        }; // COV:EXCL(TEST)
         assert!((mag.field_ut[0] - 20.0).abs() < 1e-6); // 0.2 Gauss = 20 uT
     }
 
     #[test]
     fn test_backend_actuator_send() {
-        let port1 = find_available_port();
-        let port2 = find_available_port();
+        let Some(port1) = find_available_port() else {
+            return;
+        };
+        let Some(port2) = find_available_port() else {
+            return;
+        };
 
         let config = HilBackendConfig {
             local_port: port1,
             simulator_addr: SocketAddr::from(([127, 0, 0, 1], port2)),
             ..Default::default()
         };
-        let mut backend = HilBackend::new(config).expect("Failed to create backend"); // COV:EXCL(TEST)
+        let Some(mut backend) = create_backend(config) else {
+            return;
+        };
 
         // Set up "simulator" to receive
-        let sim_socket = UdpSocket::bind(("127.0.0.1", port2)).expect("Failed to bind"); // COV:EXCL(TEST)
-        sim_socket
-            .set_nonblocking(true)
-            .expect("Failed to set nonblocking"); // COV:EXCL(TEST)
+        let Some(sim_socket) = bind_sim_socket(port2) else {
+            return;
+        };
+        assert!(sim_socket.set_nonblocking(true).is_ok()); // COV:EXCL(TEST)
 
         // Send actuator command
         let cmd = SimActuatorCmd {
@@ -363,37 +425,53 @@ mod tests {
             armed: true,
         };
 
-        backend.send_actuators(&cmd).expect("Failed to send"); // COV:EXCL(TEST)
+        assert!(backend.send_actuators(&cmd).is_ok()); // COV:EXCL(TEST)
 
         thread::sleep(Duration::from_millis(10));
 
         // Receive on simulator side
         let mut buf = [0u8; 256];
-        let (len, _) = sim_socket.recv_from(&mut buf).expect("Failed to receive"); // COV:EXCL(TEST)
+        let received = sim_socket.recv_from(&mut buf); // COV:EXCL(TEST)
+        assert!(received.is_ok());
+        let Ok((len, _)) = received else {
+            return;
+        };
 
-        let (frame, _) = parse_frame(&buf[..len]).expect("Failed to parse"); // COV:EXCL(TEST)
-        if let HilMessage::ActuatorControls(ctrl) = frame.message {
-            assert!(ctrl.is_armed());
-            assert!((ctrl.controls[0] - 0.5).abs() < 1e-6);
-            assert!((ctrl.controls[1] - 0.6).abs() < 1e-6);
-        } else {
-            panic!("Wrong message type"); // COV:EXCL(TEST)
-        }
+        let frame = parse_frame(&buf[..len]); // COV:EXCL(TEST)
+        assert!(frame.is_ok());
+        let Ok((frame, _)) = frame else {
+            return;
+        };
+        assert!(matches!(&frame.message, HilMessage::ActuatorControls(_)));
+        let HilMessage::ActuatorControls(ctrl) = frame.message else {
+            return;
+        };
+        assert!(ctrl.is_armed());
+        assert!((ctrl.controls[0] - 0.5).abs() < 1e-6);
+        assert!((ctrl.controls[1] - 0.6).abs() < 1e-6);
     }
 
     #[test]
     fn test_backend_gps_conversion() {
-        let port1 = find_available_port();
-        let port2 = find_available_port();
+        let Some(port1) = find_available_port() else {
+            return;
+        };
+        let Some(port2) = find_available_port() else {
+            return;
+        };
 
         let config = HilBackendConfig {
             local_port: port1,
             simulator_addr: SocketAddr::from(([127, 0, 0, 1], port2)),
             ..Default::default()
         };
-        let mut backend = HilBackend::new(config).expect("Failed to create backend"); // COV:EXCL(TEST)
+        let Some(mut backend) = create_backend(config) else {
+            return;
+        };
 
-        let sim_socket = UdpSocket::bind(("127.0.0.1", port2)).expect("Failed to bind"); // COV:EXCL(TEST)
+        let Some(sim_socket) = bind_sim_socket(port2) else {
+            return;
+        };
 
         let gps = HilGps {
             time_usec: 1000000,
@@ -415,18 +493,26 @@ mod tests {
 
         let msg = HilMessage::Gps(gps);
         let mut buf = [0u8; 256];
-        let len = serialize_frame(&msg, 1, 1, 1, &mut buf).expect("Failed to serialize"); // COV:EXCL(TEST)
+        let Some(len) = serialize_test_frame(&msg, &mut buf) else {
+            return;
+        };
 
-        sim_socket
+        assert!(sim_socket
             .send_to(&buf[..len], ("127.0.0.1", port1))
-            .expect("Failed to send"); // COV:EXCL(TEST)
+            .is_ok()); // COV:EXCL(TEST)
 
         thread::sleep(Duration::from_millis(10));
 
-        let packet = backend.poll().expect("No GPS data"); // COV:EXCL(TEST)
+        let packet = backend.poll(); // COV:EXCL(TEST)
+        assert!(packet.is_some());
+        let Some(packet) = packet else {
+            return;
+        };
         assert!(packet.gnss.is_some());
 
-        let gnss = packet.gnss.expect("No GNSS"); // COV:EXCL(TEST)
+        let Some(gnss) = packet.gnss else {
+            return;
+        }; // COV:EXCL(TEST)
         assert!((gnss.lat_deg - 47.397742).abs() < 1e-6);
         assert!((gnss.lon_deg - 8.545594).abs() < 1e-6);
         assert!((gnss.alt_m - 488.0).abs() < 0.1);
@@ -437,12 +523,16 @@ mod tests {
 
     #[test]
     fn test_poll_returns_none_when_no_data() {
-        let port = find_available_port();
+        let Some(port) = find_available_port() else {
+            return;
+        };
         let config = HilBackendConfig {
             local_port: port,
             ..Default::default()
         };
-        let mut backend = HilBackend::new(config).expect("Failed to create backend"); // COV:EXCL(TEST)
+        let Some(mut backend) = create_backend(config) else {
+            return;
+        };
 
         // Poll without sending any data - should return None
         assert!(backend.poll().is_none());

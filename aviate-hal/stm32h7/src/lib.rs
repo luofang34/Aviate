@@ -64,9 +64,9 @@
 
 #![no_std]
 // Note: time.rs uses unsafe for DWT register access
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(clippy::expect_used)]
+#![forbid(clippy::panic)]
+#![forbid(clippy::unwrap_used)]
+#![forbid(clippy::expect_used)]
 
 pub mod clock;
 pub mod pwm;
