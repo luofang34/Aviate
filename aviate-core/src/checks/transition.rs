@@ -287,4 +287,18 @@ mod tests {
         let res = status.can_transition();
         assert_eq!(res, Err(TransitionFailure::MultipleFailures));
     }
+
+    #[test]
+    fn with_required_sets_required_flags_and_default_limits() {
+        let required = TransitionFlags::STABLE_FLIGHT | TransitionFlags::ACTUATORS_OK;
+        let status = TransitionStatus::with_required(required);
+
+        assert_eq!(status.required, required);
+        assert!(status.current.is_empty());
+        assert_eq!(
+            status.limits.min_altitude,
+            TransitionLimits::default().min_altitude
+        );
+        assert_eq!(status.missing(), required);
+    }
 }
