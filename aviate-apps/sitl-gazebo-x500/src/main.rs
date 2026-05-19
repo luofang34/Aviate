@@ -33,8 +33,11 @@ use aviate_hal_xil::sim_types::{
 /// Cycle period for the FC loop (1 kHz, matching loop_periods::GAZEBO_US).
 const CYCLE_PERIOD_US: u64 = 1_000;
 
-/// Approximate motor max angular velocity for X500 rotor (rad/s).
-/// Maps Normalized([0.0, 1.0]) actuator output to gz physics rotor speed.
+/// X500 rotor `maxRotVelocity` from the PX4-gazebo-models SDF
+/// (`motorConstant` 8.55e-6 N/(rad/s)² × 1000² × 4 motors ≈ 34 N max
+/// thrust against ≈20 N weight, so a thrust-to-weight ratio of ~1.7
+/// at full motor output). Maps `Normalized([0.0, 1.0])` actuator
+/// output linearly to rotor speed.
 const MOTOR_MAX_RPS: f64 = 1000.0;
 
 /// Zurich reference for the auto-generated SITL world.
