@@ -10,7 +10,7 @@
 //! Each test docstring cites its LLR(s); cert/trace/tests.toml carries
 //! the reciprocal `traces_to` link.
 
-#![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::panic)]
 
 use aviate_core::checks::PreArmFlags;
 use aviate_core::control::multirotor::MultirotorController;

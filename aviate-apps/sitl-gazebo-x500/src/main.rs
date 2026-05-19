@@ -96,11 +96,23 @@ fn main() -> std::io::Result<()> {
         let cmd = board.step();
 
         // 4. Forward actuator outputs to gz-sim as rotor velocities.
+        //
+        // Aviate's mixer produces normalized [0, 1] outputs whose
+        // semantics the kernel treats as normalized **thrust** (the
+        // mixer's additive corrections compose meaningfully in
+        // thrust units; in motor-speed units, mid-throttle would
+        // produce only `cmd²` of max thrust). The X500 rotor model
+        // in PX4-gazebo-models implements quadratic thrust:
+        // `thrust = motorConstant · ω²`. So normalized-thrust input
+        // maps to motor angular velocity as `ω = MAX · √cmd`.
+        // Without the sqrt, "0.65 hover" actually produces only
+        // 0.42 of max thrust — well below the X500's 0.57 weight-
+        // to-max-thrust ratio, and the vehicle sinks.
         let motor_speeds = [
-            cmd.outputs[0].0 as f64 * MOTOR_MAX_RPS,
-            cmd.outputs[1].0 as f64 * MOTOR_MAX_RPS,
-            cmd.outputs[2].0 as f64 * MOTOR_MAX_RPS,
-            cmd.outputs[3].0 as f64 * MOTOR_MAX_RPS,
+            cmd_to_omega(cmd.outputs[0].0),
+            cmd_to_omega(cmd.outputs[1].0),
+            cmd_to_omega(cmd.outputs[2].0),
+            cmd_to_omega(cmd.outputs[3].0),
         ];
         if let Err(e) = plugin.set_motor_speeds(&motor_speeds) {
             log::warn!("set_motor_speeds failed: {e:?}");
@@ -133,13 +145,13 @@ fn synthesize_packet(
         _ => 0.001,
     };
 
-    // Body-frame angular velocity is already in body frame per
-    // `AviateModelState` doc.
-    let gyro = [
+    // Gz reports angular velocity in body frame, but with FLU body
+    // convention; aviate-core expects FRD. Flip Y and Z.
+    let gyro = flu_to_frd_body([
         state.ang_vel[0] as f32,
         state.ang_vel[1] as f32,
         state.ang_vel[2] as f32,
-    ];
+    ]);
 
     // Accelerometer reading: specific force = inertial acceleration −
     // gravity, expressed in body frame. For a multirotor in steady
@@ -217,33 +229,46 @@ fn synthesize_packet(
     }
 }
 
-/// Convert an ENU attitude quaternion `[w, x, y, z]` to its NED
-/// equivalent. Both encode the rotation from body to world; only the
-/// world frame differs.
+/// Convert an attitude quaternion produced by gz-sim (ENU world,
+/// FLU body: forward-left-up) to Aviate's convention (NED world,
+/// FRD body: forward-right-down). Both encode the rotation from
+/// body to world; world AND body frames differ.
 ///
-/// The change-of-basis matrix from ENU to NED is `[[0,1,0],[1,0,0],
-/// [0,0,-1]]` (swap X/Y, flip Z). Det = +1, so it is a proper
-/// rotation by 180° about the unit axis `(1, 1, 0)/√2`. The
-/// corresponding rotor is `q_NED_ENU = (0, 1/√2, 1/√2, 0)`.
+/// Two basis swaps are needed:
 ///
-/// `q_NED_body = q_NED_ENU · q_ENU_body` — left-multiply the input
-/// quaternion. Closed form derived by expanding the Hamilton
-/// product with `q_NED_ENU` fixed at `(0, s, s, 0)` where
-/// `s = 1/√2`:
+/// * **World ENU → NED**: change-of-basis `[[0,1,0],[1,0,0],
+///   [0,0,-1]]` — det +1, a 180° rotation about `(1,1,0)/√2`,
+///   rotor `q_ENU→NED = (0, 1/√2, 1/√2, 0)`.
+/// * **Body FRD → FLU**: 180° rotation about the forward (X)
+///   axis (negates Y and Z), rotor `q_FRD→FLU = (0, 1, 0, 0)`.
 ///
+/// Composition for the same physical attitude:
+///   `q_NED_FRD = q_ENU→NED · q_ENU_FLU · q_FRD→FLU`
+///
+/// Expanding the Hamilton product (`s = 1/√2`):
 /// ```text
-///   w_out = -s·(x_in + y_in)
-///   x_out =  s·(w_in + z_in)
-///   y_out =  s·(w_in − z_in)
-///   z_out =  s·(y_in − x_in)
+///   w_out = s·(w_in + z_in)
+///   x_out = s·(x_in + y_in)
+///   y_out = s·(x_in − y_in)
+///   z_out = s·(w_in − z_in)
 /// ```
 ///
-/// See `tests::enu_quat_to_ned_*` for round-trip and brute-force
-/// verification.
-fn enu_quat_to_ned(q_enu: [f32; 4]) -> [f32; 4] {
-    let [w, x, y, z] = q_enu;
+/// For `q_ENU_FLU = identity` (vehicle in FLU body aligned with
+/// ENU world, the gz-sim default), the result is `(s, 0, 0, s)` —
+/// a 90° yaw about NED-Down, i.e. body-X points East in NED. That
+/// matches the gz model's default pose (model frame X = world X =
+/// East in ENU = +Y = East in NED). See `tests::enu_quat_to_ned_*`.
+fn enu_quat_to_ned(q_enu_flu: [f32; 4]) -> [f32; 4] {
+    let [w, x, y, z] = q_enu_flu;
     let s = core::f32::consts::FRAC_1_SQRT_2;
-    [-s * (x + y), s * (w + z), s * (w - z), s * (y - x)]
+    [s * (w + z), s * (x + y), s * (x - y), s * (w - z)]
+}
+
+/// Convert a body-frame vector from gz-sim's FLU convention
+/// (forward, left, up) to Aviate's FRD (forward, right, down).
+/// `Y` and `Z` flip; `X` (forward) is unchanged.
+fn flu_to_frd_body(v_flu: [f32; 3]) -> [f32; 3] {
+    [v_flu[0], -v_flu[1], -v_flu[2]]
 }
 
 /// Rotate a world-frame vector into body frame via the inverse of `q`.
@@ -268,6 +293,17 @@ fn rotate_world_to_body(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+/// Convert an Aviate `Normalized` [0, 1] actuator command into a
+/// quad rotor angular-velocity setpoint (rad/s) for the X500's
+/// `MulticopterMotorModelSystem`. Linearizes thrust against the
+/// rotor's quadratic `motorConstant · ω²` law via `√cmd`. Inputs
+/// outside [0, 1] (which the mixer should already clamp) are
+/// saturated at 0 so we never command a negative motor speed.
+fn cmd_to_omega(normalized: f32) -> f64 {
+    let clamped = normalized.clamp(0.0, 1.0);
+    (clamped as f64).sqrt() * MOTOR_MAX_RPS
+}
+
 /// ISA pressure (Pa) at a given altitude MSL (m), troposphere model.
 fn isa_pressure(altitude_msl_m: f32) -> f32 {
     let t0 = 288.15_f32;
@@ -284,7 +320,7 @@ fn isa_pressure(altitude_msl_m: f32) -> f32 {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+#[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -370,69 +406,86 @@ mod tests {
 
     #[test]
     fn enu_quat_to_ned_identity_input_matches_closed_form() {
-        // q_enu = identity means body axes are aligned with ENU
-        // axes (body-X = East, body-Y = North, body-Z = Up). In NED,
-        // those body axes point along NED-Y, NED-X, NED-(-Z) — a
-        // 180° rotation about (1, 1, 0)/√2, which is the rotor
-        // `q_NED_ENU = (0, 1/√2, 1/√2, 0)`. The closed form must
-        // return exactly that rotor.
+        // q_enu_flu = identity means body (FLU) axes are aligned
+        // with ENU world axes: body-X (Forward) = East, body-Y
+        // (Left) = North, body-Z (Up) = Up. The equivalent NED+FRD
+        // attitude: body-X (Forward) still East = NED-Y, body-Y
+        // (Right) = South = -NED-X, body-Z (Down) = Down = +NED-Z.
+        // That is a +90° yaw rotation about NED-Down, rotor
+        // `(cos 45°, 0, 0, sin 45°) = (1/√2, 0, 0, 1/√2)`.
         let s = core::f32::consts::FRAC_1_SQRT_2;
-        let expected = [0.0, s, s, 0.0];
+        let expected = [s, 0.0, 0.0, s];
         let got = enu_quat_to_ned([1.0, 0.0, 0.0, 0.0]);
         assert!(quat_close(got, expected), "identity ENU: got {:?}", got);
     }
 
     #[test]
-    fn enu_quat_to_ned_rotates_x_into_swap() {
-        // q_enu = [0, 1, 0, 0] is a 180° rotation about ENU-X (East).
-        // Apply the body→world DCM under both q_enu (in ENU world)
-        // and q_ned (in NED world) to a body-frame vector, then
-        // swap-and-flip the ENU result. Both representations should
-        // describe the same physical rotation.
-        let q_enu = [0.0, 1.0, 0.0, 0.0];
-        let q_ned = enu_quat_to_ned(q_enu);
-        assert!(
-            (quat_norm(q_ned) - 1.0).abs() < 1e-4,
-            "non-unit norm {:?}",
-            q_ned
-        );
+    fn enu_quat_to_ned_consistent_under_frame_swap() {
+        // For an arbitrary FLU body vector `v_flu`, both attitude
+        // representations must take it to the same physical
+        // world-frame vector — after the appropriate basis swaps.
+        //
+        //   q_ENU_FLU · v_flu                 → v_ENU
+        //   q_NED_FRD · (flu_to_frd v_flu)    → v_NED
+        //   v_NED == enu_vec_to_ned(v_ENU)
+        let cases: &[[f32; 4]] = &[
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+            [0.5, 0.5, 0.5, 0.5],
+        ];
+        let v_flu = [0.7_f32, -0.2, 0.5];
+        let v_frd = flu_to_frd_body(v_flu);
+        for &q_enu_flu in cases {
+            let q_ned_frd = enu_quat_to_ned(q_enu_flu);
+            assert!(
+                (quat_norm(q_ned_frd) - 1.0).abs() < 1e-4,
+                "non-unit norm for q={:?}: {:?}",
+                q_enu_flu,
+                q_ned_frd
+            );
 
-        let body_vec = [0.7_f32, -0.2, 0.5];
-        // World vector under q_enu rotation (ENU frame).
-        let dcm_enu = dcm_world_from_body(q_enu);
-        let world_enu = [
-            dcm_enu[0][0] * body_vec[0]
-                + dcm_enu[0][1] * body_vec[1]
-                + dcm_enu[0][2] * body_vec[2],
-            dcm_enu[1][0] * body_vec[0]
-                + dcm_enu[1][1] * body_vec[1]
-                + dcm_enu[1][2] * body_vec[2],
-            dcm_enu[2][0] * body_vec[0]
-                + dcm_enu[2][1] * body_vec[1]
-                + dcm_enu[2][2] * body_vec[2],
-        ];
-        // Same body vector under q_ned (NED frame).
-        let dcm_ned = dcm_world_from_body(q_ned);
-        let world_ned = [
-            dcm_ned[0][0] * body_vec[0]
-                + dcm_ned[0][1] * body_vec[1]
-                + dcm_ned[0][2] * body_vec[2],
-            dcm_ned[1][0] * body_vec[0]
-                + dcm_ned[1][1] * body_vec[1]
-                + dcm_ned[1][2] * body_vec[2],
-            dcm_ned[2][0] * body_vec[0]
-                + dcm_ned[2][1] * body_vec[1]
-                + dcm_ned[2][2] * body_vec[2],
-        ];
-        // Reinterpret world_enu as a NED vector via the standard
-        // swap+flip; should equal world_ned.
-        let world_enu_as_ned = enu_vec_to_ned(world_enu);
-        assert!(
-            vec_close(world_enu_as_ned, world_ned),
-            "ENU→NED frame swap mismatch:\n  world_enu(swapped)={:?}\n  world_ned        ={:?}",
-            world_enu_as_ned,
-            world_ned
-        );
+            let dcm_enu = dcm_world_from_body(q_enu_flu);
+            let v_enu_world = [
+                dcm_enu[0][0] * v_flu[0]
+                    + dcm_enu[0][1] * v_flu[1]
+                    + dcm_enu[0][2] * v_flu[2],
+                dcm_enu[1][0] * v_flu[0]
+                    + dcm_enu[1][1] * v_flu[1]
+                    + dcm_enu[1][2] * v_flu[2],
+                dcm_enu[2][0] * v_flu[0]
+                    + dcm_enu[2][1] * v_flu[1]
+                    + dcm_enu[2][2] * v_flu[2],
+            ];
+            let dcm_ned = dcm_world_from_body(q_ned_frd);
+            let v_ned_world = [
+                dcm_ned[0][0] * v_frd[0]
+                    + dcm_ned[0][1] * v_frd[1]
+                    + dcm_ned[0][2] * v_frd[2],
+                dcm_ned[1][0] * v_frd[0]
+                    + dcm_ned[1][1] * v_frd[1]
+                    + dcm_ned[1][2] * v_frd[2],
+                dcm_ned[2][0] * v_frd[0]
+                    + dcm_ned[2][1] * v_frd[1]
+                    + dcm_ned[2][2] * v_frd[2],
+            ];
+            let v_ned_via_swap = enu_vec_to_ned(v_enu_world);
+            assert!(
+                vec_close(v_ned_via_swap, v_ned_world),
+                "frame-swap mismatch for q={:?}:\n  ENU→swap = {:?}\n  NED      = {:?}",
+                q_enu_flu,
+                v_ned_via_swap,
+                v_ned_world
+            );
+        }
+    }
+
+    #[test]
+    fn flu_to_frd_body_flips_y_and_z() {
+        assert_eq!(flu_to_frd_body([1.0, 2.0, 3.0]), [1.0, -2.0, -3.0]);
+        assert_eq!(flu_to_frd_body([0.0, 0.0, 0.0]), [0.0, 0.0, 0.0]);
+        assert_eq!(flu_to_frd_body([-4.5, 0.0, 7.1]), [-4.5, 0.0, -7.1]);
     }
 
     // --- rotate_world_to_body -----------------------------------------------
@@ -476,13 +529,20 @@ mod tests {
         // of representative unit quaternions. The closed-form
         // `rotate_world_to_body` is `DCM_world_from_body^T · v`;
         // verify that equality directly.
+        let s = core::f32::consts::FRAC_1_SQRT_2;
+        let half = 0.5_f32;
+        // 45° about (1,1,1)/√3 axis: w = cos(22.5°), xyz = sin(22.5°)·(1/√3, 1/√3, 1/√3)
+        let cos_22_5 = (core::f32::consts::PI / 8.0).cos();
+        let sin_22_5 = (core::f32::consts::PI / 8.0).sin();
+        let third_axis = 1.0_f32 / (3.0_f32).sqrt();
+        let sin_22_5_third = sin_22_5 * third_axis;
         let cases: &[[f32; 4]] = &[
-            [0.7071068, 0.7071068, 0.0, 0.0],
-            [0.7071068, 0.0, 0.7071068, 0.0],
-            [0.7071068, 0.0, 0.0, 0.7071068],
-            [0.5, 0.5, 0.5, 0.5],
-            [0.6532815, 0.2705981, 0.6532815, 0.2705981],
-            [0.4082483, 0.4082483, 0.4082483, 0.7071068],
+            [s, s, 0.0, 0.0],
+            [s, 0.0, s, 0.0],
+            [s, 0.0, 0.0, s],
+            [half, half, half, half],
+            [cos_22_5, sin_22_5_third, sin_22_5_third, sin_22_5_third],
+            [cos_22_5, sin_22_5 * 0.6, sin_22_5 * 0.8, 0.0],
         ];
         let v = [0.3_f32, -0.7, 1.5];
 

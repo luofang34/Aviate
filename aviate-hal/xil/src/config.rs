@@ -221,14 +221,10 @@ fn collapse_multiline_arrays(content: &str) -> String {
             out.push(ch);
             continue;
         }
-        if !in_string {
-            if ch == '[' {
-                depth += 1;
-            } else if ch == ']' {
-                if depth > 0 {
-                    depth -= 1;
-                }
-            }
+        if !in_string && ch == '[' {
+            depth += 1;
+        } else if !in_string && ch == ']' && depth > 0 {
+            depth -= 1;
         }
         if ch == '\n' && depth > 0 {
             out.push(' ');
@@ -441,11 +437,7 @@ fn split_top_level_commas(s: &str) -> Vec<&str> {
         match ch {
             '"' => in_string = !in_string,
             '[' if !in_string => depth += 1,
-            ']' if !in_string => {
-                if depth > 0 {
-                    depth -= 1;
-                }
-            }
+            ']' if !in_string && depth > 0 => depth -= 1,
             ',' if depth == 0 && !in_string => {
                 out.push(&s[start..i]);
                 start = i + 1;

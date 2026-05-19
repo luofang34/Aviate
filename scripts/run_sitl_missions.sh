@@ -30,6 +30,7 @@ DEFAULT_MISSIONS=(
     attitude_control
     position_hold
     gnss_dropout
+    command_timeout
 )
 
 MISSIONS=("${@:-${DEFAULT_MISSIONS[@]}}")

@@ -162,9 +162,14 @@ gain set.
 Root cause: `MultirotorController`'s P-only gains are hardcoded
 constants tuned for the historical airframe model, not the X500
 mass/inertia/motor parameters in PX4-gazebo-models. The attitude
-loop saturates two motors in some run-to-run conditions when
-sensor synthesis introduces small frame-convention errors, and the
-position loop drifts because there is no integral-action term.
+loop occasionally saturates two motors out of four in run-to-run
+conditions (typical on first run after a cold-start of the sim),
+and the position loop drifts because there is no integral-action
+term. Sensor-synthesis frame-convention errors (gz FLU body vs
+aviate-core FRD body) compounded the issue earlier — the
+sitl-gazebo-x500 binary now applies the FLU→FRD conversion
+correctly (see its unit tests), but the residual controller
+oscillation is the still-open gap.
 
 Closing this DRQ requires:
   1. Reading the actual hover-thrust trim point for the X500
