@@ -23,6 +23,8 @@
 
 mod router_gen;
 mod spawner;
+#[cfg(feature = "gazebo")]
+mod world_gen;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -218,7 +220,7 @@ fn run_xil_test(
 ) -> ExitCode {
     #[cfg(feature = "gazebo")]
     {
-        use aviate_app_sitl_gazebo_x500::{generate_temp_world, WorldParams};
+        use crate::world_gen::{generate_temp_world, WorldParams};
         use spawner::FcConfig;
         use std::path::PathBuf;
 
@@ -417,7 +419,7 @@ fn run_script_test(
     headless: bool,
     fc_binary: Option<PathBuf>,
 ) -> ExitCode {
-    use aviate_app_sitl_gazebo_x500::{generate_temp_world, WorldParams};
+    use crate::world_gen::{generate_temp_world, WorldParams};
     use spawner::{FcConfig, Spawner};
     use std::time::Duration;
 
