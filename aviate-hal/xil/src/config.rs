@@ -268,6 +268,36 @@ fn parse_vec3(s: &str) -> [f32; 3] {
     ]
 }
 
+/// Parse a list of [x, y, z] vectors like `[[0,0,-5], [10,0,-5]]`.
+/// Used for `TrajectoryTracking.waypoints`. Whitespace-tolerant;
+/// invalid entries collapse to `[0,0,0]`.
+fn parse_vec3_list(s: &str) -> Vec<[f32; 3]> {
+    let inner = s.trim().trim_start_matches('[').trim_end_matches(']');
+    let mut out = Vec::new();
+    let mut depth: i32 = 0;
+    let mut start = 0;
+    let bytes = inner.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'[' => {
+                if depth == 0 {
+                    start = i;
+                }
+                depth += 1;
+            }
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    let slice = &inner[start..=i];
+                    out.push(parse_vec3(slice));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Builder for phases while parsing
 struct PhaseBuilder {
     name: String,
@@ -399,6 +429,14 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
         let mut position: [f32; 3] = [0.0; 3];
         let mut altitude: f32 = 0.0;
         let mut hold_secs: f32 = 0.0;
+        let mut center: [f32; 3] = [0.0; 3];
+        let mut xy_tolerance: f32 = 0.0;
+        let mut z_tolerance: f32 = 0.0;
+        let mut xy_max: f32 = 0.0;
+        let mut z_max: f32 = 0.0;
+        let mut max_time_s: f32 = 0.0;
+        let mut roll_pitch_max_deg: f32 = 0.0;
+        let mut waypoints: Vec<[f32; 3]> = Vec::new();
 
         // Items contain inline arrays like `position = [0.0, 0.0, -10.0]`
         // whose commas would corrupt a naive `split(',')`. Use the
@@ -423,6 +461,14 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
                     "position" => position = parse_vec3(&v),
                     "altitude" => altitude = v.parse().unwrap_or(0.0),
                     "hold_secs" => hold_secs = v.parse().unwrap_or(0.0),
+                    "center" => center = parse_vec3(&v),
+                    "xy_tolerance" => xy_tolerance = v.parse().unwrap_or(0.0),
+                    "z_tolerance" => z_tolerance = v.parse().unwrap_or(0.0),
+                    "xy_max" => xy_max = v.parse().unwrap_or(0.0),
+                    "z_max" => z_max = v.parse().unwrap_or(0.0),
+                    "max_time_s" => max_time_s = v.parse().unwrap_or(0.0),
+                    "roll_pitch_max_deg" => roll_pitch_max_deg = v.parse().unwrap_or(0.0),
+                    "waypoints" => waypoints = parse_vec3_list(&v),
                     _ => {}
                 }
             }
@@ -447,6 +493,26 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
                 tolerance,
                 hold_secs,
             },
+            "station_keeping" => Criterion::StationKeeping {
+                center_ned: center,
+                xy_tolerance,
+                z_tolerance,
+            },
+            "max_excursion" => Criterion::MaxExcursion {
+                center_ned: center,
+                xy_max,
+                z_max,
+            },
+            "trajectory_tracking" => Criterion::TrajectoryTracking {
+                waypoints,
+                tolerance,
+                max_time_s,
+            },
+            "returned_near" => Criterion::ReturnedNear {
+                target_ned: position,
+                tolerance,
+            },
+            "attitude_bounded" => Criterion::AttitudeBounded { roll_pitch_max_deg },
             _ => continue,
         };
 

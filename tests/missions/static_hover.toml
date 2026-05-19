@@ -1,0 +1,110 @@
+# Aviate SITL: Static hover with throughout-phase verification
+#
+# This mission's verification model is: every phase's criteria
+# walk the per-step trace (position + attitude) and fail the
+# phase if any single sample violates the bound. There is no
+# end-of-phase shortcut — a vehicle that briefly hits the target
+# and then drifts away fails.
+#
+# Expected result with the current control stack:
+#
+#   * arm                     → PASS (Armed=true is end-state)
+#   * settle                  → PASS (zero thrust, idle)
+#   * takeoff                 → PARTIAL (climb works, attitude
+#                                drift may exceed bound)
+#   * hover_station_keep      → **FAIL** (no closed-loop XY/Z
+#                                hold; the vehicle drifts)
+#   * descend / land / disarm → mostly PASS
+#
+# The failures are the honest output. See DRQ-CTL-003 for the
+# closed-loop work that has to land before this mission passes.
+
+[test]
+name = "static_hover"
+description = "Real static hover — strict throughout-phase verification"
+lockstep = true
+
+[[vehicles]]
+id = "x500"
+model = "x500"
+instance = 0
+spawn_position = [0.0, 0.0, 0.0]
+spawn_heading = 0.0
+
+[vehicles.mission]
+name = "static_hover"
+
+[[vehicles.mission.phases]]
+name = "arm"
+duration_ms = 500
+action = { type = "arm" }
+verify = [{ type = "armed", value = true }]
+
+[[vehicles.mission.phases]]
+name = "settle"
+duration_ms = 2000
+action = { type = "thrust", value = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "station_keeping", center = [0.0, 0.0, 0.0], xy_tolerance = 0.2, z_tolerance = 0.2 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 10.0 },
+]
+
+# Closed-loop position climb. The kernel routes the position
+# target through SET_POSITION_TARGET_LOCAL_NED → PositionHold
+# mode → cascaded pos/vel/att/rate. We assert the vehicle reaches
+# the target altitude AND keeps its body within 20° of level the
+# entire time (no tumbling).
+[[vehicles.mission.phases]]
+name = "takeoff"
+duration_ms = 8000
+action = { type = "goto", position = [0.0, 0.0, -5.0], heading = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "reached_waypoint", position = [0.0, 0.0, -5.0], tolerance = 1.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
+  { type = "max_excursion", center = [0.0, 0.0, -2.5], xy_max = 3.0, z_max = 4.0 },
+]
+
+# The canonical "this is a real hover" test. The vehicle is
+# commanded to stay at (0, 0, -5); we require:
+#   * every trace sample inside the 0.5 m XY × 0.3 m Z box
+#   * roll/pitch within 10° throughout
+# A drift of 1 m sideways → fail. A 30° tilt for one sample → fail.
+[[vehicles.mission.phases]]
+name = "hover_station_keep"
+duration_ms = 8000
+action = { type = "goto", position = [0.0, 0.0, -5.0], heading = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "station_keeping", center = [0.0, 0.0, -5.0], xy_tolerance = 0.5, z_tolerance = 0.3 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 10.0 },
+]
+
+# Closed-loop descent. The vehicle visits a lower altitude
+# without exceeding the descent rate budget.
+[[vehicles.mission.phases]]
+name = "descend_to_1m"
+duration_ms = 6000
+action = { type = "goto", position = [0.0, 0.0, -1.0], heading = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "reached_waypoint", position = [0.0, 0.0, -1.0], tolerance = 1.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
+  { type = "max_excursion", center = [0.0, 0.0, -3.0], xy_max = 2.0, z_max = 4.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "land"
+duration_ms = 4000
+action = { type = "thrust", value = 0.0 }
+verify = [
+  { type = "max_altitude", value = 1.0 },
+  { type = "max_excursion", center = [0.0, 0.0, 0.0], xy_max = 3.0, z_max = 5.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "disarm"
+duration_ms = 500
+action = { type = "disarm" }
+verify = [{ type = "armed", value = false }]

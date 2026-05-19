@@ -148,15 +148,22 @@ pub enum FaultSpec {
 
 /// Verification criteria for a phase.
 ///
-/// Two semantic shapes:
-///   - **End-of-phase**: `Armed`, `AltitudeHold`, `PositionHold`,
-///     `MaxDrift`, `MaxAltitude`, `SensorDataReceived` evaluate
-///     against the vehicle's final state at the end of the phase.
-///   - **Trace-aware**: `MinAltitude` (peak altitude during phase),
-///     `ReachedWaypoint` (closest approach to target during phase),
-///     and `StableHover` (sustained band-hold over a sliding
-///     window) evaluate against the per-step trace accumulated
-///     during the phase.
+/// Three semantic shapes, in increasing strictness:
+///
+///   - **End-state**: one sample at phase end. (`Armed`,
+///     `AltitudeHold`, `PositionHold`, `MaxAltitude`, `MaxDrift`,
+///     `ReturnedNear`, `YawDriftBounded`, `SensorDataReceived`.)
+///   - **At-some-point**: any sample in the trace must match.
+///     (`MinAltitude`, `ReachedWaypoint`, `StableHover`.)
+///   - **Throughout-phase**: every sample in the trace must
+///     match. (`StationKeeping`, `MaxExcursion`, `AttitudeBounded`,
+///     `AttitudeRateBounded`, `TelemetryAgreesWithTruth`.)
+///
+/// The "throughout-phase" shape is what enforces real flight —
+/// a vehicle that briefly hit a target and then jumped 20 m
+/// sideways fails a `StationKeeping` criterion even though it
+/// would pass `MinAltitude` or `ReachedWaypoint`. New tests
+/// should use the throughout-phase shape by default.
 #[derive(Debug, Clone)]
 pub enum Criterion {
     /// Vehicle must be armed at end of phase
@@ -190,6 +197,49 @@ pub enum Criterion {
         tolerance: f32,
         hold_secs: f32,
     },
+    /// **Throughout phase**: every trace sample must be inside the
+    /// box centred at `center_ned` with half-extents `xy_tolerance`
+    /// (horizontal) and `z_tolerance` (vertical). A single sample
+    /// outside the box FAILS the criterion. This is the canonical
+    /// "the vehicle held position" check — strictly stricter than
+    /// `StableHover` because it constrains XY as well as Z, and
+    /// every sample as opposed to a sliding window.
+    StationKeeping {
+        center_ned: [f32; 3],
+        xy_tolerance: f32,
+        z_tolerance: f32,
+    },
+    /// **Throughout phase**: every trace sample's deviation from
+    /// `center_ned` is bounded. Looser than `StationKeeping`
+    /// (does not assert holding still); use to bound "runaway
+    /// flight" while a transition or maneuver is in progress.
+    MaxExcursion {
+        center_ned: [f32; 3],
+        xy_max: f32,
+        z_max: f32,
+    },
+    /// **Trace-walking**: the vehicle visits each of `waypoints`
+    /// in order, each within `tolerance` of its target NED point,
+    /// completing the sequence within `max_time_s`. A waypoint is
+    /// "visited" the first time a sample lands inside its
+    /// tolerance ball; visits must occur in declaration order.
+    TrajectoryTracking {
+        waypoints: Vec<[f32; 3]>,
+        tolerance: f32,
+        max_time_s: f32,
+    },
+    /// **End-state**: end-of-phase 3D position within `tolerance`
+    /// of `target_ned`. Used for "return to home" checks.
+    ReturnedNear {
+        target_ned: [f32; 3],
+        tolerance: f32,
+    },
+    /// **Throughout phase**: every trace sample's roll and pitch
+    /// (extracted from the body attitude quaternion) are below
+    /// `roll_pitch_max_deg`. Yaw is unbounded — at low altitudes
+    /// the vehicle yaws naturally as the EKF converges. A tumbling
+    /// vehicle fails this criterion immediately.
+    AttitudeBounded { roll_pitch_max_deg: f32 },
 }
 
 /// Result of a phase execution

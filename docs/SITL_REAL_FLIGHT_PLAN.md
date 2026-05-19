@@ -1,170 +1,173 @@
-# SITL Real-Flight Test Harness — Plan
+# SITL Real-Flight Test Harness — Plan (v2)
 
-The current SITL harness reports `Result: PASS` for missions where
-the vehicle briefly lifted off and crashed back. The harness needs
-to demonstrate **actual** flight: a clean takeoff, a hover that
-stays within a stationkeeping box, intended-course maneuvers, and a
-controlled landing — verified by both Gazebo ground truth AND the
-MAVLink telemetry the kernel itself reports.
+## The problem with v1
 
-## Architecture invariants
+The previous harness reported `Result: PASS` for runs where the
+vehicle briefly climbed, drifted away, and crashed. Three failure
+modes hid behind the "PASS":
 
-The redesign keeps the existing module separation:
+1. **End-of-phase-only checks**: criteria like `MinAltitude` and
+   `MaxAltitude` only sample the vehicle at the END of a phase
+   (or its peak). A vehicle that pops up to 4 m, drifts 20 m
+   sideways, and crashes at 0.3 m can still pass an `EndAltitude
+   < 5 m` gate.
+
+2. **Altitude-only verification**: position has three axes. A
+   vehicle that holds altitude while flying laterally off into
+   the distance is not hovering. A criterion that only checks Z
+   can not catch a runaway in XY.
+
+3. **No attitude verification**: a tumbling vehicle that happens
+   to be near the right altitude at the right moment passes a
+   geometric criterion. Real flight requires the body axes to be
+   roughly aligned with the commanded ones throughout the phase.
+
+A test harness that PASSES non-flight is **worse than no harness**
+— it gives false confidence and hides regressions. The harness
+must report PASS only when the vehicle did the intended thing.
+
+## Verification axes
+
+Every flight phase has three observation channels and the harness
+must check all three:
+
+|  Axis        | Source       | What it catches                          |
+|--------------|--------------|------------------------------------------|
+| Position 3D  | gz pose      | drift, runaway, wrong-direction flight   |
+| Attitude     | gz pose      | tumble, sustained tilt, yaw rotation     |
+| Telemetry    | MAVLink      | FC-vs-truth disagreement (EKF divergence)|
+
+Every criterion must specify which sample(s) it checks. Three
+shapes apply, in increasing strictness:
+
+- **End-state**: one sample at phase end. (E.g. armed/disarmed.)
+- **At-some-point**: any sample in the trace. (E.g. "vehicle
+  visited waypoint X.")
+- **Throughout-phase**: every sample in the trace. (E.g. "vehicle
+  stayed within the station-keeping box.")
+
+The earlier framework only used the first two. Real flight needs
+the third — that is where "no jumping around" is enforced.
+
+## Strict criteria
+
+The replacement criterion set:
+
+### Position
+
+| Name | Shape | Asserts |
+|---|---|---|
+| `StationKeeping { center, xy_tol, z_tol }` | throughout | every trace sample is inside `(center.xy ± xy_tol, center.z ± z_tol)` |
+| `TrajectoryTracking { waypoints, tolerance, max_time_s }` | trace-walking | the vehicle visits each waypoint in order, each within `tolerance` of the target NED point, completing the sequence within `max_time_s` |
+| `ReturnedNear { target, tolerance }` | end-state | end-of-phase 3D position within `tolerance` of `target` |
+| `MaxExcursion { center, xy_max, z_max }` | throughout | every sample's deviation from `center` is bounded; catches runaway flight |
+
+### Attitude
+
+| Name | Shape | Asserts |
+|---|---|---|
+| `AttitudeBounded { roll_pitch_max_deg }` | throughout | `|roll|` and `|pitch|` (extracted from quaternion) are bounded for every sample. Yaw is unbounded (it drifts naturally). |
+| `YawDriftBounded { max_drift_deg }` | end-state | total yaw rotation from start to end of phase is bounded |
+| `AttitudeRateBounded { max_rad_per_s }` | throughout | per-sample angular velocity is bounded; catches tumble |
+
+### Cross-channel
+
+| Name | Shape | Asserts |
+|---|---|---|
+| `TelemetryAgreesWithTruth { xy_tol, z_tol }` | throughout | the FC's reported position (via MAVLink GLOBAL_POSITION_INT) is within tolerance of the gz ground-truth position. Disagreement means the EKF is diverging. |
+
+### The cost
+
+These criteria are designed to FAIL. With the current control
+stack (no I-term, no integral position hold) the vehicle drifts.
+The harness must report that drift as failure, not paper it over.
+A failing real-flight test is the correct output until the
+controller can deliver real flight.
+
+## Design rules
+
+The user's feedback shapes these:
+
+1. **A vehicle's altitude profile alone is not flight evidence.**
+   At least one criterion in every flight phase must check XY too.
+2. **An end-of-phase snapshot alone is not flight evidence.** At
+   least one criterion in every flight phase must walk the trace.
+3. **Criteria are not "weak by default".** Default tolerance is
+   the tight bound; loosening it requires a comment explaining
+   what we're observing instead.
+4. **Criteria fail loudly.** The failing criterion's actual value
+   is logged with the expected. No "PASSED" lines hide real
+   failures.
+5. **Cross-channel agreement is its own criterion.** EKF divergence
+   that doesn't appear in gz ground truth is a fault even if the
+   vehicle physically flew the right course (because in real
+   hardware the FC drives the actuator from EKF, not truth).
+
+## Mission shape
+
+Each mission has phases. Each phase has an action and a set of
+criteria. The action commands the FC; the criteria observe the
+result. Per-phase verification:
 
 ```
-            ┌────────────────────────────┐
-            │ tests/missions/*.toml      │  ← mission DSL
-            └─────────────┬──────────────┘
-                          │
-            ┌─────────────▼──────────────┐
-            │ tests/gcs-test             │  ← MAVLink-only driver
-            │   • spawns gz + FC         │      (no FC internals)
-            │   • drives via MAVLink     │
-            │   • reads ground truth     │
-            │     from gz bridge         │
-            │   • reads telemetry from   │
-            │     FC's MAVLink stream    │
-            └─────────────┬──────────────┘
-                          │ MAVLink UDP
-            ┌─────────────▼──────────────┐
-            │ aviate-apps/sitl-gazebo-x500│ ← FC binary (black box)
-            │   • aviate-runtime          │    to the harness
-            │   • aviate-core kernel      │
-            │   • aviate-hal-xil bridge   │
-            └─────────────────────────────┘
+arm     → Armed(true)
+takeoff → ReachedAltitude(target_z) AND AttitudeBounded(20°)
+hover   → StationKeeping(center, 0.5m XY, 0.3m Z, 5s) AND
+          AttitudeBounded(10°) AND
+          TelemetryAgreesWithTruth(0.5m XY, 0.3m Z)
+course  → TrajectoryTracking(waypoints, 1.0m tol, 30s)
+return  → ReturnedNear(home, 1.5m) AND AttitudeBounded(20°)
+land    → MaxExcursion(home, 1m XY, 6m Z) AND end-state
+          on ground (alt < 0.5m)
+disarm  → Armed(false)
 ```
 
-- The harness never reaches into kernel internals; verification is
-  via the two external observation channels (gz ground truth, FC
-  MAVLink telemetry).
-- The FC binary is the unit-under-test; controllers, EKF, and
-  bridges all live inside it.
-- The mission TOML is a declarative artifact; new actions/criteria
-  are added through the parser, not by editing the runner.
+This is the contract real-flight evidence must satisfy. Anything
+less is not real flight.
 
-## Cert-evidence chain
+## Implementation plan
 
-Each mission row in `cert/trace/tests.toml` cites:
-1. The HLR/LLR(s) it witnesses (e.g. HLR-CTL-203 hover-hold).
-2. The criterion the mission asserts (drift bound, attitude bound).
-3. The execution command, reproducible offline.
+1. **Extend the per-phase trace** to record `(elapsed, position,
+   attitude_quat, mavlink_telemetry_position)`. The MAVLink
+   listener is its own piece of work — telemetry agreement can
+   be deferred behind a feature gate while we get the position
+   + attitude criteria in.
+2. **Add the new Criterion variants** to
+   `aviate-hal-xil::mission::Criterion` and their evaluators in
+   `runner.rs`. Each new variant has a `verify_criterion_*`
+   helper that walks the trace.
+3. **Update the TOML parser** in `config.rs` to accept the new
+   criterion shapes (multi-field inline tables, nested arrays
+   of waypoints).
+4. **Add explicit failure messages** to every criterion. The
+   message includes: criterion name, what was checked, the
+   actual value (the failing sample), the expected bound, and
+   the phase time at which the failure occurred. No `PASSED`
+   line ever appears without those details.
+5. **Rewrite the missions** that ship with the harness against
+   the new criteria. `hover_trim_check` becomes a real hover
+   mission with `StationKeeping` and `AttitudeBounded`. The
+   `square_course` mission keeps its waypoints but the criteria
+   become `TrajectoryTracking`. Both are expected to fail today
+   — that is the honest record of the controller's state.
+6. **Document the failures** as evidence: the mission TOMLs
+   carry the cert-grade thresholds; `cert/trace/derived.toml`
+   carries the DRQ describing the gap; the test plan file
+   carries the verification-axis matrix.
+7. **No criterion is weakened to make the test pass.** If a
+   real test fails today, the fix is to the controller / EKF,
+   not to the harness.
 
-A mission passes only when **both** observation channels report
-within tolerance — disagreement between gz truth and FC telemetry
-is itself a fault.
+## Cert-grade thresholds
 
-## The cascaded-flight contract
+The current HLRs (HLR-CTL-203, HLR-EST-203) require:
+- Altitude hover bound: ≤ 0.3 m
+- Horizontal hover bound: ≤ 0.5 m
+- Position estimate error: ≤ 0.5 m XY, ≤ 0.3 m Z
+- Attitude bound during hover: ≤ 10° roll/pitch
+- Position estimate vs truth agreement: same tolerances as above
 
-A multirotor SITL that "actually flies" needs five things working
-together:
-
-1. **Hover-thrust calibration**: the trim where motor lift =
-   airframe weight. X500: 0.77 normalized (`sqrt(20.3/34.2)`).
-2. **Cold-start attitude**: EKF starts with a quaternion that
-   matches the actual body attitude (TRIAD from first IMU sample
-   handles the pitch/roll; the world_gen yaw alignment makes the
-   default `IDENTITY` initial guess match reality on yaw).
-3. **Stable cascaded controllers** with the inner loop ≥ 5× faster
-   than the outer (cascaded-control stability rule):
-   - rate (inner)
-   - attitude
-   - velocity
-   - position (outer)
-4. **Integral action** on the position-error loop. Without an
-   I-term the position controller has steady-state error
-   proportional to hover-trim mismatch and gain ratios; the
-   vehicle visibly drifts.
-5. **A min-thrust gate on axis control**: collective below ~0.1
-   means we're on the ground; running the attitude loop against
-   ground reaction force will yaw the chassis but not lift it,
-   eating thrust on takeoff.
-
-## Mission criteria — what "real flight" means
-
-Three classes of criterion live in `aviate-hal-xil::mission::Criterion`:
-
-| Class           | Examples                                | Source       |
-|-----------------|-----------------------------------------|--------------|
-| End-of-phase    | `Armed`, `AltitudeHold`, `PositionHold` | gz truth     |
-| Trace-aware     | `MinAltitude`, `ReachedWaypoint`        | gz truth     |
-| Window-sliding  | `StableHover`, `StableAttitude`         | gz truth     |
-| Telemetry       | `MavTelemetryAltitudeAgrees`            | MAVLink      |
-
-The mission framework today already carries the gz-truth criteria.
-The MAVLink-telemetry criteria are the new piece this PR adds.
-
-## Implementation plan — in priority order
-
-### Step 1 — Controller integral term (close steady-state drift)
-
-`aviate-core/src/control/position.rs` is P-only. Add an integral
-accumulator + anti-windup clamp. The accumulator lives in the
-controller's runtime state (`Pos­CtrlRuntime`), reset on disarm.
-
-Result: the position controller's vertical channel converges on
-the commanded altitude even when hover-trim is slightly off.
-
-### Step 2 — Tune the X500 cascade
-
-With trim 0.77 and the new I-term, walk the gains:
-- pos_xy: 0.5, pos_z: 0.8
-- vel_xy: 0.4, vel_z: 0.6 (with I-term on z)
-- att: 6, 6, 2 (current default)
-- rate: 0.4, 0.4, 0.3
-
-The cascade ratio rule (att/rate ≤ 0.2) must be respected. The
-existing 6/0.15 ratio of 40 is far outside that — the rate loop
-saturates against any non-trivial attitude error. Lower att and
-raise rate together until the ratio is ≤ 5 (the standard rule of
-thumb for stability).
-
-### Step 3 — TRIAD-style EKF init + world_gen yaw alignment
-
-In `aviate-runtime/src/sim/step.rs`: the first IMU sample lets us
-recover pitch/roll from gravity direction. Yaw stays at zero and
-the mag update refines it during the settle phase. In
-`tests/gcs-test/src/world_gen.rs`: convert NED-yaw to ENU-pose-yaw
-(`π/2 - heading`) so the gz spawn orientation matches NED+FRD
-`IDENTITY` when `spawn_heading == 0`.
-
-### Step 4 — MAVLink telemetry observer
-
-Today the harness only reads ground truth from the gz bridge. Add
-a MAVLink listener thread in `gcs-test` that captures
-`GLOBAL_POSITION_INT` and `ATTITUDE` messages from the FC's
-stream. Both go into the per-phase trace so criteria can compare.
-
-New criterion: `TelemetryPositionAgreesWithTruth { tolerance }`
-that asserts the FC's reported position matches gz ground truth
-within tolerance for the entire phase. Disagreement is a fault
-even if the vehicle physically flew the right course.
-
-### Step 5 — Real-flight missions
-
-Three replace the existing smoke-level missions:
-
-- `static_hover.toml` — arm → settle → climb to 5 m (position
-  target) → 10 s stationkeeping (`StableHover` ±0.5 m + ±0.3 m
-  horizontal drift) → descend to 1 m → land. Passes only if the
-  vehicle holds position; closed-loop is the witness.
-- `square_course.toml` — same takeoff/landing scaffolding, but
-  between hover and land the vehicle flies N 10 m → E 10 m → S
-  10 m → W 10 m, with `ReachedWaypoint` ±1 m at each corner.
-- `attitude_test.toml` — open-loop attitude commands (level →
-  +15° roll → level → +15° pitch → level) with
-  `StableAttitude { roll_pitch_max_deg: 20, yaw_max_deg: 30 }`
-  asserting the vehicle holds the commanded attitude.
-
-### Step 6 — Reliability gate
-
-Each mission runs 5× in the sweep. The reliability bar is **5/5
-PASS, no exceptions**. Below that the work is not done.
-
-## What's deferred
-
-Cert-grade thresholds (0.3 m altitude, 0.5 m horizontal) remain on
-DRQ-CTL-002. This plan delivers integration-grade flight — the
-vehicle visibly flies a course you can watch in the GUI — but the
-quantitative bounds still need a control-law refresh (LQR or full
-PID with gain scheduling). The integration witness is the first
-step; the cert-grade tightening is its own iteration.
+These are the bounds the new criteria check by default. The DRQ
+acknowledging the gap between today's controller and these
+thresholds is DRQ-CTL-002 + DRQ-CTL-003. Until those close, the
+real-flight missions are honest test failures.

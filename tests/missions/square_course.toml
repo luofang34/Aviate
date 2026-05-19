@@ -1,0 +1,117 @@
+# Aviate SITL: Closed-loop square course
+#
+# Demands the vehicle fly an ordered 4-corner square via
+# `SET_POSITION_TARGET_LOCAL_NED` commands. Verification uses the
+# `trajectory_tracking` criterion: every waypoint must be visited
+# in declaration order, each within tolerance, with the whole
+# sequence finishing inside the time budget. The "return-to-home"
+# criterion at the end demands the vehicle ends near where it
+# started.
+#
+# Expected result today: the mission FAILS. The closed-loop
+# position controller is not yet stable (DRQ-CTL-003); the
+# vehicle either drifts off course or tumbles. The harness
+# reports the failure with the worst-offending sample so a
+# debugger can pinpoint when the vehicle left the box.
+
+[test]
+name = "square_course"
+description = "Closed-loop 10 m square via position-target"
+lockstep = true
+
+[[vehicles]]
+id = "x500"
+model = "x500"
+instance = 0
+spawn_position = [0.0, 0.0, 0.0]
+spawn_heading = 0.0
+
+[vehicles.mission]
+name = "square_course"
+
+[[vehicles.mission.phases]]
+name = "arm"
+duration_ms = 500
+action = { type = "arm" }
+verify = [{ type = "armed", value = true }]
+
+[[vehicles.mission.phases]]
+name = "settle"
+duration_ms = 2000
+action = { type = "thrust", value = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "station_keeping", center = [0.0, 0.0, 0.0], xy_tolerance = 0.2, z_tolerance = 0.2 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 10.0 },
+]
+
+# Takeoff: get to altitude before starting the course.
+[[vehicles.mission.phases]]
+name = "takeoff"
+duration_ms = 8000
+action = { type = "goto", position = [0.0, 0.0, -5.0], heading = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "reached_waypoint", position = [0.0, 0.0, -5.0], tolerance = 1.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
+  { type = "max_excursion", center = [0.0, 0.0, -2.5], xy_max = 3.0, z_max = 4.0 },
+]
+
+# Fly the 4-corner square. We split into per-leg phases so each
+# leg's `goto` command is a single position target. The
+# `trajectory_tracking` criterion at the end of the last leg
+# walks the whole course trace and verifies every waypoint was
+# visited in order. Per-leg `attitude_bounded` gates catch
+# tumbles during any leg.
+[[vehicles.mission.phases]]
+name = "leg_north"
+duration_ms = 6000
+action = { type = "goto", position = [10.0, 0.0, -5.0], heading = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "reached_waypoint", position = [10.0, 0.0, -5.0], tolerance = 1.5 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "leg_east"
+duration_ms = 6000
+action = { type = "goto", position = [10.0, 10.0, -5.0], heading = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "reached_waypoint", position = [10.0, 10.0, -5.0], tolerance = 1.5 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "leg_south"
+duration_ms = 6000
+action = { type = "goto", position = [0.0, 10.0, -5.0], heading = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "reached_waypoint", position = [0.0, 10.0, -5.0], tolerance = 1.5 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "leg_home"
+duration_ms = 6000
+action = { type = "goto", position = [0.0, 0.0, -5.0], heading = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "reached_waypoint", position = [0.0, 0.0, -5.0], tolerance = 1.5 },
+  { type = "returned_near", position = [0.0, 0.0, -5.0], tolerance = 2.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "land"
+duration_ms = 4000
+action = { type = "thrust", value = 0.0 }
+verify = [{ type = "max_altitude", value = 1.0 }]
+
+[[vehicles.mission.phases]]
+name = "disarm"
+duration_ms = 500
+action = { type = "disarm" }
+verify = [{ type = "armed", value = false }]

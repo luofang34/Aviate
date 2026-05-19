@@ -1,25 +1,28 @@
-# Aviate SITL: Open-loop climb / hover / descent / land
+# Aviate SITL: Open-loop climb-and-land — attitude-bounded
 #
-# Witnesses the FC ↔ gz-sim ↔ kernel integration loop in
-# OPEN-LOOP attitude+thrust mode:
+# Demonstrates the FC ↔ gz-sim ↔ kernel integration loop in
+# OPEN-LOOP attitude+thrust mode. Each flight phase carries:
 #
-#   * arm → settle (EKF converges on a still IMU)
-#   * climb at thrust=0.85 — must clear 3 m
-#   * hold at the calibrated hover trim (0.81)
-#   * descend at thrust=0.55
-#   * land at thrust=0
+#   * the existing reached-altitude / max-altitude end-state
+#     gates that demonstrate motors actually push the airframe,
+#   * an `attitude_bounded` throughout-phase gate that fails if
+#     the body tumbles past ±30° (catches "climbed briefly then
+#     flipped"),
+#   * a `max_excursion` throughout-phase gate that fails if the
+#     vehicle wanders horizontally far from the spawn point
+#     (catches "shot off sideways and crashed").
 #
-# This is the integration-grade witness. Closed-loop position
-# control (waypoint courses, sustained station-keeping with
-# bounded drift) is tracked as a deferred witness — see
-# DRQ-CTL-003 in cert/trace/derived.toml. The mission DSL already
-# carries the closed-loop criteria (`Waypoint`, `StableHover`);
-# the gap is the EKF position estimate / controller-tuning pair
-# that the closed loop needs.
+# These bounds are loose vs the cert-grade hover thresholds
+# tracked on DRQ-CTL-002 — open-loop attitude commands cannot
+# hold position. The strict-hover mission `static_hover.toml`
+# uses `station_keeping` + tighter attitude bounds and FAILS
+# today because the closed-loop position controller is not yet
+# ready (DRQ-CTL-003). Both missions are honest — neither
+# passes a flight that did not actually happen.
 
 [test]
 name = "hover_trim_check"
-description = "Open-loop climb, hover at trim, controlled descent, land"
+description = "Open-loop climb / descend / land, attitude-bounded"
 lockstep = true
 
 [[vehicles]]
@@ -38,18 +41,19 @@ duration_ms = 500
 action = { type = "arm" }
 verify = [{ type = "armed", value = true }]
 
-# Settle: hold zero thrust for 2 s post-arm so the EKF can
-# converge on a quiet IMU before the climb phase engages the
-# closed-loop attitude controller. Without this the cold-start
-# attitude transient destabilizes the first second of climb.
 [[vehicles.mission.phases]]
 name = "settle"
 duration_ms = 2000
 action = { type = "thrust", value = 0.0 }
-verify = [{ type = "armed", value = true }]
+verify = [
+  { type = "armed", value = true },
+  { type = "station_keeping", center = [0.0, 0.0, 0.0], xy_tolerance = 0.2, z_tolerance = 0.2 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 10.0 },
+]
 
-# Climb at 0.85 thrust for 4 s. Reach ≥ 2 m — anything less means
-# the rotor or trim calibration is broken.
+# Climb at 0.85 thrust. Reach ≥ 2 m, stay within a 3 m XY box
+# around the spawn point (catches "shot off sideways"), and
+# never tip past ±30° (catches "tumbled into the air").
 [[vehicles.mission.phases]]
 name = "climb"
 duration_ms = 4000
@@ -57,20 +61,24 @@ action = { type = "thrust", value = 0.85 }
 verify = [
   { type = "armed", value = true },
   { type = "min_altitude", value = 2.0 },
+  { type = "max_excursion", center = [0.0, 0.0, -2.0], xy_max = 3.0, z_max = 5.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 30.0 },
 ]
 
-# Hold at the calibrated hover trim. Open-loop drift is documented
-# (~0.4 m/s descent at trim due to per-airframe trim error +
-# closed-loop axis correction eating some lift); we assert only
-# that the kernel stayed armed and the altitude did not exceed
-# the climb ceiling. Tighter station-keeping is DRQ-CTL-003.
+# Hold at the calibrated hover trim. Open-loop trim cannot keep
+# the vehicle stationary — it drifts. We assert only the
+# attitude bound and the bounding-box excursion, not strict
+# station-keeping. A tighter `station_keeping` criterion lives
+# on the closed-loop sibling mission (`static_hover.toml`) and
+# is the test that needs to pass before we claim real hover.
 [[vehicles.mission.phases]]
 name = "hover_at_trim"
 duration_ms = 4000
 action = { type = "thrust", value = 0.81 }
 verify = [
   { type = "armed", value = true },
-  { type = "max_altitude", value = 10.0 },
+  { type = "max_excursion", center = [0.0, 0.0, -3.0], xy_max = 4.0, z_max = 5.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 30.0 },
 ]
 
 [[vehicles.mission.phases]]
@@ -79,14 +87,18 @@ duration_ms = 3000
 action = { type = "thrust", value = 0.55 }
 verify = [
   { type = "armed", value = true },
-  { type = "max_altitude", value = 10.0 },
+  { type = "max_excursion", center = [0.0, 0.0, -2.0], xy_max = 4.0, z_max = 5.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 30.0 },
 ]
 
 [[vehicles.mission.phases]]
 name = "land"
 duration_ms = 3000
 action = { type = "thrust", value = 0.0 }
-verify = [{ type = "max_altitude", value = 1.0 }]
+verify = [
+  { type = "max_altitude", value = 1.0 },
+  { type = "max_excursion", center = [0.0, 0.0, 0.0], xy_max = 4.0, z_max = 5.0 },
+]
 
 [[vehicles.mission.phases]]
 name = "disarm"
