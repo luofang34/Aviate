@@ -874,3 +874,436 @@ the project+decide composition through the real production
 state types.
 """
 traces_to = ["9b2c4f1d-7a3e-4d8b-a6f5-1c3e8d4b9a07"]
+
+# -------------------------------------------------------------------
+# Behavioral TST rows (200-series). Each LLR in the 200-series has at
+# least one TST entry pointing to the test that verifies it. Some LLRs
+# fan out to multiple tests (e.g. each pre-arm gate is its own #[test]).
+# -------------------------------------------------------------------
+
+[[tests]]
+uid = "fb539a31-d366-464a-8d33-b31fe62c55e0"
+id = "TST-EST-204"
+title = "ekf_predict_with_nan_dt_returns_early + ekf_predict_with_nan_imu_gyro_returns_early + ekf_predict_with_inf_imu_accel_returns_early"
+owner = "aviate-core@aviate"
+description = """
+Three sibling tests in `aviate-core/tests/ekf_tests.rs` cover the
+non-finite-input gates: non-finite `dt`, non-finite gyro
+component, non-finite accelerometer component. Each test
+constructs an initialized `Ekf`, calls `predict()` with the bad
+input, and asserts state is unchanged. Together they witness
+LLR-EST-204 (NUMERIC_ERROR latch + no state mutation on
+non-finite input).
+"""
+traces_to = ["a8a37317-dd7c-4218-b891-58066c2affb5"]
+
+[[tests]]
+uid = "5adbb9cb-0014-435b-9110-3568dd26bddd"
+id = "TST-EST-205"
+title = "ekf_has_numeric_fault_false_initially + ekf_init_clears_quat_fault + ekf_reinit_clears_fault_state + ekf_normal_operation_no_fault"
+owner = "aviate-core@aviate"
+description = """
+Four tests in `aviate-core/tests/ekf_tests.rs` witness LLR-EST-205:
+the initial state of the latch is clean; the latch is cleared only
+through explicit init/reinit; normal operation does not spuriously
+set it. The persistence-across-clean-inputs case is covered
+implicitly: any of the four tests transitively asserts that the
+latch does not change on routine cycle inputs.
+"""
+traces_to = ["7b2330c0-b6fa-4874-9716-5adc566b637c"]
+
+[[tests]]
+uid = "62289c53-7e8f-4ef4-b488-302626edb84a"
+id = "TST-MIX-201"
+title = "test_quad_mixer_saturation"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/mixer_tests.rs::test_quad_mixer_saturation`
+exercises `QuadXMixer::mix()` with axis commands at the authority
+boundary and asserts each motor slot stays inside `[0.0, 1.0]`.
+Witnesses LLR-MIX-201 (bounded output property).
+"""
+traces_to = ["073c3781-dad2-4983-a04c-f721baa11100"]
+
+[[tests]]
+uid = "4ddf5547-e942-4200-91a0-b3e6a5ed09f1"
+id = "TST-MIX-202"
+title = "test_quad_mixer_hover"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/mixer_tests.rs::test_quad_mixer_hover` invokes
+`QuadXMixer::mix()` with a zero-attitude command at hover throttle
+and asserts all four motor slots receive the same value. Witnesses
+LLR-MIX-202 (geometric symmetry property).
+"""
+traces_to = ["05e74b39-5688-4f3b-a359-adb0ecad97a5"]
+
+[[tests]]
+uid = "ee6e4699-ad57-4071-a26a-2c93960c961e"
+id = "TST-MIX-203"
+title = "test_sanitizer_last_good_fallback + test_sanitizer_critical_failure_zero_output"
+owner = "aviate-core@aviate"
+description = """
+Two tests in `aviate-core/tests/mixer_tests.rs` witness LLR-MIX-203:
+`test_sanitizer_last_good_fallback` covers the normal substitution
+path (replace with stored last-good); `test_sanitizer_critical_failure_zero_output`
+covers the catastrophic fallback when no last-good exists (emit
+zero). Together they exercise the same-cycle substitution contract.
+"""
+traces_to = ["7645870e-d505-4c5c-b4e2-a2496eb6128c"]
+
+[[tests]]
+uid = "04447fc9-e1cc-42bb-811a-09515d567cd5"
+id = "TST-MIX-204"
+title = "test_consecutive_fallback_counter_increments + test_consecutive_fallback_resets_on_valid + test_consecutive_fallback_per_group_independence + test_consecutive_fallback_clamped_does_not_increment"
+owner = "aviate-core@aviate"
+description = """
+Four tests in `aviate-core/tests/mixer_tests.rs` witness LLR-MIX-204:
+counter increments on consecutive fallback; resets on clean cycle;
+groups are independent; saturation at `MAX_CONSECUTIVE_FALLBACK`
+does not corrupt neighboring groups. Together they prove the
+monotonicity contract.
+"""
+traces_to = ["c3b739d2-2cd3-471c-8c52-e0a0f26fc74e"]
+
+[[tests]]
+uid = "56933a67-5050-4eb7-b54f-1fca44decfdc"
+id = "TST-FLT-201"
+title = "kernel_outputs_safe_when_not_armed"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/kernel.rs::kernel_outputs_safe_when_not_armed`
+constructs a kernel in a not-armed state and asserts that the
+returned `ActuatorCmd` matches the configured safe pattern.
+Witnesses LLR-FLT-201 (disarmed update path emits safe pattern).
+"""
+traces_to = ["afc40ab1-44eb-412b-b6e3-519018bd93dd"]
+
+[[tests]]
+uid = "3e7bd854-8ccd-492b-aba3-f24e2ed52923"
+id = "TST-FLT-203"
+title = "kernel_arm_fails_when_not_ready + kernel_arm_fails_when_faulted + kernel_arm_fails_when_already_armed + kernel_arm_fails_with_missing_convergence + kernel_arm_fails_when_throttle_not_low + kernel_requires_all_pre_arm_flags + kernel_pre_arm_missing_flags_reported"
+owner = "aviate-core@aviate"
+description = """
+Seven tests in `aviate-core/tests/kernel.rs` cover the pre-arm
+gates enumerated by LLR-FLT-203 (and HLR-FLT-202). Each test
+constructs a kernel with all other gates satisfied, fails the
+single gate under test, and verifies `arm()` returns
+`Err(ArmError::*)`. Together they witness LLR-INIT-202 (each gate
+individually testable) and LLR-FLT-203 (gate enumeration).
+"""
+traces_to = ["98620e8c-14dc-410a-bee7-6e9c29c6bdb4", "69824cad-4c2f-4c71-8188-51f5bab374a7"]
+
+[[tests]]
+uid = "af21011c-3b68-48a7-85a4-c62e56808174"
+id = "TST-FLT-204"
+title = "arm_error_all_variants_distinct + arm_error_not_ready"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/kernel.rs::arm_error_all_variants_distinct`
+proves each `ArmError` variant is observable and distinct;
+`arm_error_not_ready` proves the specific NotReady path. Together
+they witness LLR-FLT-204 (one-to-one mapping between pre-arm gates
+and `ArmError` discriminants).
+"""
+traces_to = ["384e2fb5-1264-4870-854d-f6a1e89a1117"]
+
+[[tests]]
+uid = "8d22c280-e215-4c9d-9f4d-12302a4db129"
+id = "TST-FLT-206"
+title = "test_ground_reset_clears_state + test_ground_reset_clears_fallback_and_actuator_state + test_ground_reset_ignored_when_armed"
+owner = "aviate-core@aviate"
+description = """
+Three tests in `aviate-core/tests/kernel.rs` witness LLR-FLT-206:
+ground_reset clears KernelState (including latched faults);
+ground_reset clears fallback and actuator state; ground_reset is
+ignored when armed (safety: no in-flight clear). Together they
+prove the only-path-to-clear contract.
+"""
+traces_to = ["a1ebe76a-37a3-4c67-9eea-e4676184fc74"]
+
+[[tests]]
+uid = "9ed879b4-5b98-44c2-9c2d-12498db803cd"
+id = "TST-FLT-207"
+title = "fault_table_command_timeout_degrade"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/fault.rs::fault_table_command_timeout_degrade`
+proves that command-timeout maps through the FaultHandlingTable to
+a Degrade action. The cycle-level COMMAND_RECENT clear is also
+witnessed indirectly through TST-CMD-101 (the existing
+command_age_ms plumbing test).
+"""
+traces_to = ["80d33847-106a-46c5-9c98-c6e4eb330103"]
+
+[[tests]]
+uid = "63e3ebaf-eea1-4eec-bfd8-ab0c2c5c5c6d"
+id = "TST-CTL-204"
+title = "altitude_exceeds_max_clamped + roll_rate_exceeds_max_clamped + attitude_roll_exceeds_positive_limit + multiple_limits_exceeded_all_flagged"
+owner = "aviate-core@aviate"
+description = """
+Four representative tests in `aviate-core/tests/control_envelope.rs`
+cover envelope clamping across altitude, rate, attitude, and
+multi-axis cases. Witness LLR-CTL-204 (envelope clamp before
+mixer). The full control_envelope.rs suite (~20 tests) cross-
+covers the same LLR through related boundary cases.
+"""
+traces_to = ["33539bff-8bb8-408e-9e8e-370d8b0fd6a3"]
+
+[[tests]]
+uid = "9dca3221-9ecf-48fb-bf53-9dc28c4d990a"
+id = "TST-CTL-201"
+title = "mc_controller_attitude_only_path + roll_error_produces_roll_rate_correction + zero_error_produces_zero_output"
+owner = "aviate-core@aviate"
+description = """
+Tests covering the rate-loop closure: `mc_controller_attitude_only_path`
+(in multirotor_controller_tests.rs) exercises the rate-output path
+through the full controller; `roll_error_produces_roll_rate_correction`
+and `zero_error_produces_zero_output` (in control_attitude.rs +
+control_rate.rs) prove the per-axis correction direction and the
+zero-error case. Witnesses LLR-CTL-201 (rate tracking) at the
+synthetic unit-test level. Gazebo XIL augments via the X-tagged
+hover-and-track scenario.
+"""
+traces_to = ["bc09f708-fcc2-4ad4-95ca-1a133eee3d83"]
+
+[[tests]]
+uid = "237f2a02-cf8b-4e3d-96ba-3b90905fc4ea"
+id = "TST-CTL-202"
+title = "positive_roll_error_produces_positive_output + positive_error_scales_with_gain + output_saturates_at_positive_one + axes_are_independent"
+owner = "aviate-core@aviate"
+description = """
+Four tests in `aviate-core/tests/control_rate.rs` cover the
+attitude-loop → rate-output shape: sign correctness, monotonicity
+in gain, saturation at the actuator authority limit, and axis
+independence. Witnesses LLR-CTL-202 at the synthetic level
+(transient overshoot/settle bounds verify in Gazebo XIL).
+"""
+traces_to = ["b6e14a3c-ac9b-4280-8c29-6d8991352b05"]
+
+[[tests]]
+uid = "02b7b707-c4d6-4a66-bc5d-73a623ac86a1"
+id = "TST-INIT-201"
+title = "ekf_state_two_default_clones_encode_byte_equal + ekf_state_mutating_*_changes_encoding"
+owner = "aviate-core@aviate"
+description = """
+Suite in `aviate-core/tests/replicable_tests.rs`:
+`ekf_state_two_default_clones_encode_byte_equal` directly witnesses
+bit-equal encoding for identical state; the `*_mutating_*` family
+asserts every mutated field changes the canonical encoding,
+proving the encoding is sensitive to every safety-relevant field.
+Together they witness LLR-INIT-201 (KernelState bit-replay)
+through its `Replicable` decomposition.
+"""
+traces_to = ["6000dd0e-0d29-4626-8a4f-21f0e5be9273"]
+
+# --- new TST rows witnessing aviate-core/tests/behavioral_tests.rs ---
+
+[[tests]]
+uid = "e6db0968-01ca-4bc9-ba5a-e108e2a0dd0f"
+id = "TST-FLT-202"
+title = "disarmed_safe_output_is_independent_of_inputs"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/behavioral_tests.rs::disarmed_safe_output_is_independent_of_inputs`
+calls `update()` on a not-armed kernel four times: clean estimator +
+zero command, clean estimator + saturating command, corrupted
+estimator (ESTIMATOR_DIVERGED latched) + zero command, corrupted
+estimator + saturating command + stale `command_age_ms`. Asserts
+every motor slot in the returned `ActuatorCmd` is zero across all
+four configurations, witnessing LLR-FLT-202.
+"""
+traces_to = ["ec484ea9-adda-4ad2-8b95-a0e82edcfd54"]
+
+[[tests]]
+uid = "ae6e3349-ba72-4b51-b955-7dc47ed3d702"
+id = "TST-FLT-205"
+title = "numeric_fault_latched_inhibits_actuator_output"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/behavioral_tests.rs::numeric_fault_latched_inhibits_actuator_output`
+arms a healthy kernel, verifies a non-zero hover command produces
+non-zero motor output as precondition, latches
+`FaultFlags::NUMERIC_ERROR` into `KernelState.faults` (the same path
+`inject_fault` would take under `test-hooks`), and asserts the next
+`update()` call returns all-zero motor commands. Witnesses
+LLR-FLT-205.
+"""
+traces_to = ["ef751b33-00fb-4598-892d-2f4682b95b91"]
+
+[[tests]]
+uid = "17ff2a74-0496-4453-806c-249d63b51d71"
+id = "TST-MORPH-201"
+title = "config_mode_request_atomicity_under_pre_conditions"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/behavioral_tests.rs::config_mode_request_atomicity_under_pre_conditions`
+exercises three pre-condition failures of `request_config_mode()`:
+NotArmed, AlreadyInMode (after arm), and InFaultState (after fault
+latch). After each rejection, asserts `kernel.state.mode` remained
+unchanged — pinning the atomicity contract at the rejection
+boundary. Witnesses LLR-MORPH-201.
+"""
+traces_to = ["394c7c2b-ea23-4bad-bb84-5e2deb55e7cb"]
+
+[[tests]]
+uid = "465c4b91-3bc5-42cd-ae1e-352c66c0d7ea"
+id = "TST-EST-201"
+title = "ekf_cold_start_converges_under_static_imu"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/behavioral_tests.rs::ekf_cold_start_converges_under_static_imu`
+seeds an `EkfState` with a 5° roll + 5° pitch deliberate offset,
+runs `Ekf::observe()` for 10.0 s (1000 cycles at 100 Hz) of healthy
+static IMU + mag input, and asserts the final roll/pitch error
+falls below 2.0° (per HLR-EST-201). Witnesses LLR-EST-201.
+"""
+traces_to = ["b224509a-6d91-490b-921d-1f20618525fd"]
+
+[[tests]]
+uid = "284a1c15-d500-458b-b791-4be0b6403f51"
+id = "TST-EST-202"
+title = "ekf_predict_integrates_angular_velocity"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/ekf_tests.rs::ekf_predict_integrates_angular_velocity`
+applies a 100-cycle 0.1 rad/s yaw rate and asserts the integrated
+attitude advances by the expected total. Witnesses LLR-EST-202
+(predict_state body-rate tracking) at the synthetic level — the
+HLR-EST-202 ±30°/s smooth-maneuver bound is verified at the
+Gazebo XIL tier (see X-tagged scenarios).
+"""
+traces_to = ["8b33176d-4e43-413d-a750-7380a6f4ca45"]
+
+[[tests]]
+uid = "3ba510f1-4976-404b-8702-250094c47f56"
+id = "TST-EST-207"
+title = "ekf_innovation_gating_rejects_outlier + ekf_innovation_gate_boundary_{accepts,rejects}_below/above_threshold"
+owner = "aviate-core@aviate"
+description = """
+Three tests in `aviate-core/tests/ekf_tests.rs` cover the
+innovation gate: a high-innovation sample is rejected; a sample
+just below the threshold is accepted; a sample just above the
+threshold is rejected. Together they witness LLR-EST-207 (innovation
+gating on GNSS-return after a dropout) — the same gate is applied
+to every GNSS scalar update regardless of whether the prior cycle
+saw a dropout, so these tests cover the resume-path behavior
+directly.
+"""
+traces_to = ["7639c50e-8d68-4f92-afac-bbb3b8382095"]
+
+[[tests]]
+uid = "466b7be7-1cf3-4cd2-a2db-8842173d8622"
+id = "TST-FLT-209"
+title = "update_command_age_gates_command_recent_flag (recovery boundary)"
+owner = "aviate-core@aviate"
+description = """
+The third sub-assertion in
+`aviate-core/tests/kernel.rs::update_command_age_gates_command_recent_flag`
+covers the recovery direction: after observing a stale command and
+clearing `COMMAND_RECENT`, supplying a fresh command on the next
+cycle re-engages the flag. Witnesses LLR-FLT-209 (command-recency
+is recoverable, not latched).
+"""
+traces_to = ["d20185a8-dd10-45f4-a1b6-f5b31e25cd40"]
+
+# --- X-side mission TOMLs (run via gcs-test against Gazebo SITL) ---
+# These witness the X-tagged LLRs at the integrated tier. The unit
+# tests above pin the same LLRs at the synthetic tier; the mission
+# TOMLs add real-physics confirmation. Mission runs require a Linux
+# host (or Docker) with the gz-sim plugin built — macOS Homebrew's
+# gz-msgs10 has a protobuf macro skew that blocks the .so build (see
+# task #12 description).
+
+[[tests]]
+uid = "dbe3b08e-3bfb-4732-96e9-3e2e7c8d5170"
+id = "TST-XIL-CTL-203"
+title = "tests/missions/hover_stability.toml"
+owner = "aviate-core@aviate"
+description = """
+Mission scenario witnessing LLR-CTL-203 (hover hold) at the
+integrated tier. Phases: arm → takeoff to 10 m → 8 s hover hold
+with `altitude_hold` and `max_drift` criteria → descent → land →
+disarm. Current tolerance is 2.0 m altitude / 3.0 m drift; the
+cert-grade HLR-CTL-203 target is 0.3 m / 0.5 m and is the next
+ratchet. Execution: `cargo run -p gcs-test --features gazebo -- run
+--xil tests/missions/hover_stability.toml`.
+"""
+traces_to = ["79ec1f95-d04d-4f28-a346-727a3d3f8ecb"]
+
+[[tests]]
+uid = "2bb6332f-1adc-4720-91e0-d65ac4aff3f4"
+id = "TST-XIL-CTL-202"
+title = "tests/missions/attitude_control.toml"
+owner = "aviate-core@aviate"
+description = """
+Mission scenario witnessing LLR-CTL-202 (attitude loop step
+response) at the integrated tier. Sends attitude-target commands
+and verifies the vehicle holds the commanded attitude inside the
+configured tolerance. Synthetic unit-level evidence lives in
+TST-CTL-202 (`control_rate.rs` shape suite); this scenario
+augments with real-physics overshoot/settle measurements.
+"""
+traces_to = ["b6e14a3c-ac9b-4280-8c29-6d8991352b05"]
+
+[[tests]]
+uid = "2b07e571-bf42-40ed-805a-6204418d9ba6"
+id = "TST-XIL-EST-203"
+title = "tests/missions/position_hold.toml"
+owner = "aviate-core@aviate"
+description = """
+Mission scenario witnessing LLR-EST-203 (position estimate tracks
+ground truth) at the integrated tier. The kernel commanded to hold
+position; ground-truth horizontal/vertical position is sampled from
+Gazebo via the bridge plugin and compared to the kernel's reported
+estimate. No synthetic-tier surrogate exists for this LLR — Gazebo
+is the primary evidence.
+"""
+traces_to = ["52248c34-20bf-418d-9ac2-93dff2689c92"]
+
+[[tests]]
+uid = "68039c04-e233-4bc1-a969-9a999f81df01"
+id = "TST-XIL-EST-206"
+title = "tests/missions/gnss_dropout.toml"
+owner = "aviate-core@aviate"
+description = """
+Mission scenario witnessing LLR-EST-206 (GNSS dropout
+dead-reckoning) at the integrated tier. Authored in this PR;
+phases: arm → takeoff → hover warmup → inject GNSS
+`health_failed` → 5 s hover under dropout → clear faults → hover
+under recovery → land → disarm. The unit-tier TST-EST-206 carries
+the strict 2.0 m drift bound; this scenario uses a looser 5.0 m
+drift bound (real-physics aerodynamic disturbance) but exercises
+the full sensor-fault-injection plumbing through aviate-hal-xil.
+"""
+traces_to = ["1d6f3a1e-9a0c-453d-a336-c3da478a2597"]
+
+[[tests]]
+uid = "f4cc160c-f093-47b2-9f10-dd2b573fae46"
+id = "TST-XIL-FLT-201"
+title = "tests/missions/basic_flight.toml"
+owner = "aviate-core@aviate"
+description = """
+Mission scenario witnessing LLR-FLT-201 (disarmed safe output) and
+the integrated arm-disarm cycle at the system tier. Smoke test that
+exercises the full FC↔Gazebo control loop end-to-end: spawn world,
+spawn vehicle, run arm-takeoff-hover-land-disarm sequence, verify
+no fault was triggered and the disarm transition produced safe
+output. Anchor scenario for the X-tagged verification tier.
+"""
+traces_to = ["afc40ab1-44eb-412b-b6e3-519018bd93dd"]
+
+[[tests]]
+uid = "583ba64f-e716-4258-a452-0daef5a8135f"
+id = "TST-EST-206"
+title = "ekf_gnss_dropout_bounded_dead_reckoning_drift"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/behavioral_tests.rs::ekf_gnss_dropout_bounded_dead_reckoning_drift`
+seeds `EkfState` at origin/identity, warms up for 10.0 s of healthy
+sensors, then drops GNSS health to `Lost` and continues for 5.0 s
+of predict-only operation (IMU + baro + mag still healthy). Asserts
+horizontal position drift over the dropout window is ≤ 2.0 m and
+no numeric fault latches. Witnesses LLR-EST-206.
+"""
+traces_to = ["1d6f3a1e-9a0c-453d-a336-c3da478a2597"]
