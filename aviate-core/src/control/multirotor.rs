@@ -124,11 +124,25 @@ impl VehicleController for MultirotorController {
         // 4. Rate Control
         let torque_norm = self.rate_ctrl.step(rate_sp, state.angular_velocity);
 
-        // 5. Output
+        // 5. Output. Yaw command is bounded so it cannot overwhelm
+        // collective thrust in the mixer — under a large EKF-yaw
+        // transient the rate loop will saturate the yaw axis, which
+        // subtracts from two motors and adds to two others (X500
+        // diagonal pattern). With unbounded yaw the saturated motors
+        // clamp and the vehicle loses ~50% of its lift while the
+        // controller argues with itself about yaw. The cap leaves
+        // most of the dynamic range for thrust + roll + pitch.
+        //
+        // This is a workaround for the open closed-loop control
+        // gap tracked on DRQ-CTL-003 — once the EKF / controller
+        // pair converges cleanly the cap can be raised or removed.
+        const YAW_PRIORITY_CAP: f32 = 0.2;
         AxisCommand {
             roll: torque_norm[0],
             pitch: torque_norm[1],
-            yaw: torque_norm[2],
+            yaw: crate::types::NormalizedSigned(
+                torque_norm[2].0.clamp(-YAW_PRIORITY_CAP, YAW_PRIORITY_CAP),
+            ),
             collective: collective_sp,
         }
     }

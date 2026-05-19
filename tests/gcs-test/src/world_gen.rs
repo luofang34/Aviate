@@ -266,7 +266,14 @@ fn write_ground_plane(sdf: &mut String) {
 
 fn write_vehicle(sdf: &mut String, vehicle: &VehicleTestConfig) {
     let [x, y, z] = vehicle.spawn_position;
-    let heading = vehicle.spawn_heading;
+    // Mission `spawn_heading` is NED yaw (0 = North). gz `<pose>`
+    // yaw is ENU (0 = East). The FC's ENU→NED conversion adds a
+    // +π/2 yaw to the attitude it hands the kernel. Subtracting
+    // π/2 from the gz yaw makes the kernel see IDENTITY attitude
+    // at spawn_heading=0 — the EKF starts in agreement with the
+    // body, so the attitude controller has zero initial error.
+    let ned_heading = vehicle.spawn_heading;
+    let enu_pose_yaw = std::f32::consts::FRAC_PI_2 - ned_heading;
 
     emit!(
         sdf,
@@ -283,7 +290,7 @@ fn write_vehicle(sdf: &mut String, vehicle: &VehicleTestConfig) {
         x,
         y,
         z,
-        heading
+        enu_pose_yaw
     );
     sdf.push('\n');
     emit!(sdf, r#"      <!-- Odometry publisher -->"#);

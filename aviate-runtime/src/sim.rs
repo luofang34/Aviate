@@ -7,7 +7,7 @@
 //! ## Shared Components
 //!
 //! This module provides factory functions and types that are shared across all SITL boards:
-//! - `create_kernel()` - Creates an AviateKernel with MultirotorController + QuadXMixer
+//! - `create_kernel()` - Creates an AviateKernel with MultirotorController + QuadXMixerX500
 //! - `default_command()` - Creates a safe failsafe command with zero thrust
 //! - `sitl_timestamp()` - Returns a SITL timestamp
 //! - `BoardInfo` - Common board information structure
@@ -39,7 +39,7 @@ use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::Command;
 use aviate_core::ekf::Ekf;
 use aviate_core::hal::SystemHal;
-use aviate_core::mixer::QuadXMixer;
+use aviate_core::mixer::QuadXMixerX500;
 use aviate_core::mixer::Sanitizer;
 use aviate_core::{AviateKernel, DefaultAviateKernel, InitState};
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
@@ -96,7 +96,7 @@ impl aviate_hal_io::TimeHal for SitlTime {
 pub type SitlBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, SitlTime, FakeActuator>;
 
 /// SITL Kernel type
-pub type SitlKernel = DefaultAviateKernel<MultirotorController, QuadXMixer>;
+pub type SitlKernel = DefaultAviateKernel<MultirotorController, QuadXMixerX500>;
 
 // ============================================================================
 // UDP Telemetry Transport (SITL-only)
@@ -287,7 +287,7 @@ const X500_HOVER_THRUST_NORM: f32 = 0.81;
 
 pub fn create_kernel() -> SitlKernel {
     let controller = MultirotorController::with_hover_thrust(X500_HOVER_THRUST_NORM);
-    let mixer = QuadXMixer {
+    let mixer = QuadXMixerX500 {
         timestamp_source: sitl_timestamp,
     };
     let mode_config = ModeConfig {

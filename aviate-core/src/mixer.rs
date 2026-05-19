@@ -21,6 +21,13 @@ pub trait Mixer {
 ///       \[X\]
 ///      /   \
 ///   2(CCW)  3(CW)
+///
+/// PX4 X500 airframes (and many other off-the-shelf quad-X drones)
+/// use the opposite spin pattern: CW on the FL+RR diagonal,
+/// CCW on the FR+RL diagonal. See [`QuadXMixerX500`] for that
+/// variant. Picking the wrong mixer for the airframe makes the
+/// yaw loop close in the wrong direction — the controller
+/// commands +yaw and the body yaws -yaw, runaway-style.
 pub struct QuadXMixer {
     pub timestamp_source: fn() -> Timestamp,
 }
@@ -84,6 +91,68 @@ impl Mixer for QuadXMixer {
         let m3 = t - r - p - y;
 
         // Clamp to [0, 1]
+        let mut outputs = [Normalized(0.0); MAX_ACTUATORS];
+        outputs[0] = Normalized(m0.clamp(0.0, 1.0));
+        outputs[1] = Normalized(m1.clamp(0.0, 1.0));
+        outputs[2] = Normalized(m2.clamp(0.0, 1.0));
+        outputs[3] = Normalized(m3.clamp(0.0, 1.0));
+
+        ActuatorCmd {
+            outputs,
+            active_mask: 0b1111,
+            sequence: 0,
+            timestamp: (self.timestamp_source)(),
+            fallback_mask: 0,
+            sanitized: false,
+        }
+    }
+}
+
+/// Quadrotor X-configuration mixer matching the PX4-gazebo-models
+/// X500 motor layout (and the PX4 "Quad X" airframe class).
+///
+/// Motor indices match the gz model's `rotor_N` link names:
+/// ```text
+///    rotor_2(CW,FL)   rotor_0(CCW,FR)
+///                \   /
+///                 [X]
+///                /   \
+///    rotor_1(CCW,RL)  rotor_3(CW,RR)
+/// ```
+///
+/// Yaw signs flip on the CCW corners vs [`QuadXMixer`]; the
+/// pitch / roll equations match physical position. Picking this
+/// mixer for the X500 closes the yaw loop in the correct
+/// direction; picking the wrong mixer makes the yaw command
+/// produce body rotation in the opposite direction (positive
+/// feedback → tumble).
+pub struct QuadXMixerX500 {
+    pub timestamp_source: fn() -> Timestamp,
+}
+
+impl Mixer for QuadXMixerX500 {
+    const ALGORITHM_ID: u64 = 0x4D49_5851_5435_3030; // "MIXQX500"
+
+    fn mix(&self, axis: &AxisCommand) -> ActuatorCmd {
+        let t = axis.collective.0;
+        let r = axis.roll.0;
+        let p = axis.pitch.0;
+        let y = axis.yaw.0;
+
+        // Per-motor formulas. Roll and pitch follow physical
+        // position. Yaw sign follows the spin direction's reaction
+        // torque on the body — CCW motors produce +CW body torque
+        // (so +yaw command means more thrust on CCW motors).
+        //
+        //   rotor_0: FR, CCW → -r +p +y
+        //   rotor_1: RL, CCW → +r -p +y
+        //   rotor_2: FL, CW  → +r +p -y
+        //   rotor_3: RR, CW  → -r -p -y
+        let m0 = t - r + p + y;
+        let m1 = t + r - p + y;
+        let m2 = t + r + p - y;
+        let m3 = t - r - p - y;
+
         let mut outputs = [Normalized(0.0); MAX_ACTUATORS];
         outputs[0] = Normalized(m0.clamp(0.0, 1.0));
         outputs[1] = Normalized(m1.clamp(0.0, 1.0));
