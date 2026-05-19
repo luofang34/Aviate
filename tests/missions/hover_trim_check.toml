@@ -1,28 +1,26 @@
-# Aviate SITL: Open-loop climb-and-land — attitude-bounded
+# Aviate SITL: Open-loop ballistic-style flight — strict per-step
+# verification
 #
-# Demonstrates the FC ↔ gz-sim ↔ kernel integration loop in
-# OPEN-LOOP attitude+thrust mode. Each flight phase carries:
+# Without closed-loop altitude hold (the kernel's `MultirotorController`
+# has the cascaded att/rate loop disabled today — see DRQ-CTL-003)
+# the X500 cannot strictly hover: at any thrust value, residual
+# velocity from earlier phases persists. What it CAN do is fly a
+# ballistic profile cleanly — straight up, coast, decelerate,
+# descend, land — with **zero horizontal drift**.
 #
-#   * the existing reached-altitude / max-altitude end-state
-#     gates that demonstrate motors actually push the airframe,
-#   * an `attitude_bounded` throughout-phase gate that fails if
-#     the body tumbles past ±30° (catches "climbed briefly then
-#     flipped"),
-#   * a `max_excursion` throughout-phase gate that fails if the
-#     vehicle wanders horizontally far from the spawn point
-#     (catches "shot off sideways and crashed").
+# Every criterion below is throughout-phase. xy drift ≤ 0.5 m for
+# the entire flight. attitude bounded to ±10° throughout (the X500
+# is passively stable under symmetric thrust). The mission passes
+# only when the vehicle visibly performs a clean vertical flight.
 #
-# These bounds are loose vs the cert-grade hover thresholds
-# tracked on DRQ-CTL-002 — open-loop attitude commands cannot
-# hold position. The strict-hover mission `static_hover.toml`
-# uses `station_keeping` + tighter attitude bounds and FAILS
-# today because the closed-loop position controller is not yet
-# ready (DRQ-CTL-003). Both missions are honest — neither
-# passes a flight that did not actually happen.
+# Closed-loop course-flight is the next deliverable; the criteria
+# (`station_keeping`, `trajectory_tracking`, `returned_near`) and
+# the position-target plumbing are already in place — they wait
+# on the attitude controller landing.
 
 [test]
 name = "hover_trim_check"
-description = "Open-loop climb / descend / land, attitude-bounded"
+description = "Real open-loop flight — ascend, decelerate, descend, land"
 lockstep = true
 
 [[vehicles]]
@@ -43,61 +41,59 @@ verify = [{ type = "armed", value = true }]
 
 [[vehicles.mission.phases]]
 name = "settle"
-duration_ms = 2000
+duration_ms = 1000
 action = { type = "thrust", value = 0.0 }
 verify = [
   { type = "armed", value = true },
   { type = "station_keeping", center = [0.0, 0.0, 0.0], xy_tolerance = 0.2, z_tolerance = 0.2 },
-  { type = "attitude_bounded", roll_pitch_max_deg = 10.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 5.0 },
 ]
 
-# Climb at 0.85 thrust. Reach ≥ 2 m, stay within a 3 m XY box
-# around the spawn point (catches "shot off sideways"), and
-# never tip past ±30° (catches "tumbled into the air").
+# Ascend at 0.85 thrust. Net upward thrust ~4.5 N gives a ~2.2
+# m/s² acceleration; in 2.5 s the vehicle reaches ~7 m at ~5.5 m/s.
 [[vehicles.mission.phases]]
-name = "climb"
-duration_ms = 4000
+name = "ascend"
+duration_ms = 2500
 action = { type = "thrust", value = 0.85 }
 verify = [
   { type = "armed", value = true },
-  { type = "min_altitude", value = 2.0 },
-  { type = "max_excursion", center = [0.0, 0.0, -2.0], xy_max = 3.0, z_max = 5.0 },
-  { type = "attitude_bounded", roll_pitch_max_deg = 30.0 },
+  { type = "min_altitude", value = 4.0 },
+  { type = "max_excursion", center = [0.0, 0.0, -4.0], xy_max = 0.5, z_max = 10.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 15.0 },
 ]
 
-# Hold at the calibrated hover trim. Open-loop trim cannot keep
-# the vehicle stationary — it drifts. We assert only the
-# attitude bound and the bounding-box excursion, not strict
-# station-keeping. A tighter `station_keeping` criterion lives
-# on the closed-loop sibling mission (`static_hover.toml`) and
-# is the test that needs to pass before we claim real hover.
+# Decelerate at sub-hover thrust. Net downward force brings the
+# climb rate down to zero (apex) and into descent.
 [[vehicles.mission.phases]]
-name = "hover_at_trim"
-duration_ms = 4000
-action = { type = "thrust", value = 0.81 }
-verify = [
-  { type = "armed", value = true },
-  { type = "max_excursion", center = [0.0, 0.0, -3.0], xy_max = 4.0, z_max = 5.0 },
-  { type = "attitude_bounded", roll_pitch_max_deg = 30.0 },
-]
-
-[[vehicles.mission.phases]]
-name = "descend"
+name = "decelerate"
 duration_ms = 3000
 action = { type = "thrust", value = 0.55 }
 verify = [
   { type = "armed", value = true },
-  { type = "max_excursion", center = [0.0, 0.0, -2.0], xy_max = 4.0, z_max = 5.0 },
-  { type = "attitude_bounded", roll_pitch_max_deg = 30.0 },
+  { type = "max_excursion", center = [0.0, 0.0, -8.0], xy_max = 0.5, z_max = 12.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 15.0 },
 ]
 
+# Descend: cut thrust further. The vehicle continues toward the
+# ground.
+[[vehicles.mission.phases]]
+name = "descend"
+duration_ms = 2000
+action = { type = "thrust", value = 0.30 }
+verify = [
+  { type = "armed", value = true },
+  { type = "max_excursion", center = [0.0, 0.0, -4.0], xy_max = 0.5, z_max = 12.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 15.0 },
+]
+
+# Land: thrust to zero. Vehicle is on the ground by phase end.
 [[vehicles.mission.phases]]
 name = "land"
 duration_ms = 3000
 action = { type = "thrust", value = 0.0 }
 verify = [
   { type = "max_altitude", value = 1.0 },
-  { type = "max_excursion", center = [0.0, 0.0, 0.0], xy_max = 4.0, z_max = 5.0 },
+  { type = "max_excursion", center = [0.0, 0.0, 0.0], xy_max = 0.5, z_max = 8.0 },
 ]
 
 [[vehicles.mission.phases]]

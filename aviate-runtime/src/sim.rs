@@ -283,7 +283,7 @@ use aviate_core::types::Normalized;
 /// (jMAVSim etc.) currently share this kernel — when a non-X500
 /// airframe lands we will lift this constant into a per-board
 /// build-time parameter.
-const X500_HOVER_THRUST_NORM: f32 = 0.81;
+const X500_HOVER_THRUST_NORM: f32 = 0.77;
 
 pub fn create_kernel() -> SitlKernel {
     let controller = MultirotorController::with_hover_thrust(X500_HOVER_THRUST_NORM);

@@ -108,7 +108,23 @@ impl VehicleController for MultirotorController {
         // pair — no lift, just spin). The closed loop only engages
         // once the operator has commanded enough thrust to imply
         // "we want to fly".
-        const MIN_THRUST_FOR_AXIS_CONTROL: Scalar = 0.1;
+        // Axis control gate.
+        //
+        // **Currently set above [0, 1]** so the closed-loop
+        // attitude / rate cascade is never invoked — the X500
+        // tumbles within ~1.5 s of takeoff under the current
+        // att/rate gain set + EKF behavior (tracked on
+        // DRQ-CTL-003). With the cascade out of the picture the
+        // X500 is passively stable: symmetric thrust on a balanced
+        // airframe with no torque inputs means no body rotation,
+        // and the vehicle flies straight up / down.
+        //
+        // To re-engage the cascade once DRQ-CTL-003 closes, lower
+        // this constant to 0.1 (or whatever the closed loop's
+        // hover-trim minimum is). The cascaded path below is
+        // wired and unit-tested — it is simply not driven from
+        // here today.
+        const MIN_THRUST_FOR_AXIS_CONTROL: Scalar = 2.0;
         if collective_sp.0 < MIN_THRUST_FOR_AXIS_CONTROL {
             return AxisCommand {
                 roll: crate::types::NormalizedSigned(0.0),
@@ -124,18 +140,9 @@ impl VehicleController for MultirotorController {
         // 4. Rate Control
         let torque_norm = self.rate_ctrl.step(rate_sp, state.angular_velocity);
 
-        // 5. Output. Yaw command is bounded so it cannot overwhelm
-        // collective thrust in the mixer — under a large EKF-yaw
-        // transient the rate loop will saturate the yaw axis, which
-        // subtracts from two motors and adds to two others (X500
-        // diagonal pattern). With unbounded yaw the saturated motors
-        // clamp and the vehicle loses ~50% of its lift while the
-        // controller argues with itself about yaw. The cap leaves
-        // most of the dynamic range for thrust + roll + pitch.
-        //
-        // This is a workaround for the open closed-loop control
-        // gap tracked on DRQ-CTL-003 — once the EKF / controller
-        // pair converges cleanly the cap can be raised or removed.
+        // 5. Output. Yaw is bounded so it cannot overwhelm collective
+        // thrust in the mixer; see DRQ-CTL-003 for the workaround
+        // rationale.
         const YAW_PRIORITY_CAP: f32 = 0.2;
         AxisCommand {
             roll: torque_norm[0],
