@@ -79,6 +79,26 @@ pub struct ResolvedKernelConfig {
     /// early-return paths (numeric error, enum corruption) bypass
     /// this and emit the safe pattern immediately (LLR-FLT-205).
     pub slew_limit_per_cycle: [Normalized; MAX_ACTUATORS],
+
+    /// Per-airframe hover-thrust trim, as a Normalized value (0..1).
+    ///
+    /// The closed-loop velocity controller uses this as the offset
+    /// around which it commands collective-thrust corrections — for
+    /// a hovering multirotor at this commanded value, motor thrust
+    /// equals airframe weight. Wrong value here means the closed
+    /// loop saturates trying to hold altitude.
+    ///
+    /// Quadratic-rotor airframes (most multirotors) need
+    /// `hover_thrust_norm = sqrt(weight / max_thrust)` because the
+    /// rotor maps `thrust = motorConstant * omega^2` and the FC
+    /// pipeline maps `omega = sqrt(cmd) * MAX_RPS`. For the X500
+    /// with 2.06 kg mass and 34.2 N max thrust, this is √(20.3/34.2)
+    /// ≈ 0.77.
+    ///
+    /// Default 0.5: safe for builds whose airframe has not yet been
+    /// calibrated — the closed loop will be sluggish but will not
+    /// destabilize at full saturation.
+    pub hover_thrust_norm: Normalized,
 }
 // COV:EXCL_STOP
 
@@ -94,6 +114,7 @@ impl Default for ResolvedKernelConfig {
             command_timeout_ms: DEFAULT_COMMAND_TIMEOUT_MS,
             safe_output: [Normalized(0.0); MAX_ACTUATORS],
             slew_limit_per_cycle: [Normalized(0.0); MAX_ACTUATORS],
+            hover_thrust_norm: Normalized(0.5),
         }
     }
 }

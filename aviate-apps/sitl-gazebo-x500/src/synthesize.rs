@@ -84,6 +84,14 @@ pub fn synthesize_packet(
         state.ang_vel[2] as f32,
     ]);
 
+    let q_enu = [
+        state.quat[0] as f32,
+        state.quat[1] as f32,
+        state.quat[2] as f32,
+        state.quat[3] as f32,
+    ];
+    let q_ned = enu_quat_to_ned(q_enu);
+
     // Accelerometer reading: specific force = inertial acceleration −
     // gravity, expressed in body frame. For a multirotor in steady
     // hover, accel_body ≈ (0, 0, −g) (g pulls Down in NED, IMU
@@ -100,15 +108,7 @@ pub fn synthesize_packet(
         }
         None => [0.0, 0.0, 0.0],
     };
-    // Project (accel - g) into body frame. The plugin gives us the
-    // model's world-frame quaternion in ENU `[w, x, y, z]`.
-    let q_enu = [
-        state.quat[0] as f32,
-        state.quat[1] as f32,
-        state.quat[2] as f32,
-        state.quat[3] as f32,
-    ];
-    let q_ned = enu_quat_to_ned(q_enu);
+    // q_ned was computed above for the gyro conversion; re-use it.
     let accel_ned = [
         accel_inertial_ned[0],
         accel_inertial_ned[1],
@@ -144,6 +144,11 @@ pub fn synthesize_packet(
         lat_deg: REF_LATITUDE_DEG + (now_ned_pos[0] as f64) * lat_per_m,
         lon_deg: REF_LONGITUDE_DEG + (now_ned_pos[1] as f64) * lon_per_m,
         alt_m: altitude_msl_m,
+        // Aviate kernel uses local NED — pass ground-truth NED
+        // position directly so the GNSS update agrees with the EKF
+        // frame; the lat/lon/alt fields stay for telemetry parity
+        // with real receivers.
+        position_ned: now_ned_pos,
         vel_ned: now_ned_vel,
         fix: SimGnssFix::ThreeD,
         satellites: 14,
@@ -226,13 +231,27 @@ pub fn rotate_world_to_body(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
 
 /// Convert an Aviate `Normalized` [0, 1] actuator command into a
 /// quad rotor angular-velocity setpoint (rad/s) for the X500's
-/// `MulticopterMotorModelSystem`. Linearizes thrust against the
-/// rotor's quadratic `motorConstant · ω²` law via `√cmd`. Inputs
-/// outside [0, 1] (which the mixer should already clamp) are
-/// saturated at 0 so we never command a negative motor speed.
+/// `MulticopterMotorModelSystem`.
+///
+/// Linear mapping: `ω = cmd · MAX_RPS`. The gz rotor produces
+/// thrust `T = motorConstant · ω²`, so per-motor thrust is
+/// `motorConstant · cmd² · MAX_RPS²` — quadratic in cmd. The
+/// implication: the **hover-thrust trim** seen by the kernel is
+/// `cmd_hover = √(weight / (4 · motorConstant · MAX_RPS²))`. For
+/// the X500 (2.06 kg, motorConstant 8.55e-6, MAX_RPS 1000):
+/// `cmd_hover = √(20.25 / 34.2) ≈ 0.77`, matching the empirical
+/// hover-trim — which is what `ResolvedKernelConfig.
+/// hover_thrust_norm` carries through to the controller.
+///
+/// An earlier revision used `ω = √cmd · MAX_RPS` so that thrust
+/// became linear in cmd. That left the mixer's "normalized thrust"
+/// semantics intact at the cost of disagreeing with how an actual
+/// X500 ESC interprets a normalized command — and the gz physics
+/// produced ~6× less lift than expected. The linear mapping here
+/// matches the X500 PX4-gazebo-models contract directly.
 pub fn cmd_to_omega(normalized: f32) -> f64 {
     let clamped = normalized.clamp(0.0, 1.0);
-    (clamped as f64).sqrt() * MOTOR_MAX_RPS
+    (clamped as f64) * MOTOR_MAX_RPS
 }
 
 /// ISA pressure (Pa) at a given altitude MSL (m), troposphere model.

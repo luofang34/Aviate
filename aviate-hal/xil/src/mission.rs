@@ -146,23 +146,50 @@ pub enum FaultSpec {
     BiasScalar { offset: f32 },
 }
 
-/// Verification criteria for a phase
+/// Verification criteria for a phase.
+///
+/// Two semantic shapes:
+///   - **End-of-phase**: `Armed`, `AltitudeHold`, `PositionHold`,
+///     `MaxDrift`, `MaxAltitude`, `SensorDataReceived` evaluate
+///     against the vehicle's final state at the end of the phase.
+///   - **Trace-aware**: `MinAltitude` (peak altitude during phase),
+///     `ReachedWaypoint` (closest approach to target during phase),
+///     and `StableHover` (sustained band-hold over a sliding
+///     window) evaluate against the per-step trace accumulated
+///     during the phase.
 #[derive(Debug, Clone)]
 pub enum Criterion {
-    /// Vehicle must be armed
+    /// Vehicle must be armed at end of phase
     Armed(bool),
-    /// Minimum altitude reached (meters, positive up)
+    /// Vehicle reached at least this altitude at some point during
+    /// the phase (meters, positive up).
     MinAltitude(f32),
-    /// Maximum altitude (for landing verification)
+    /// Vehicle altitude at end of phase is at most this value
     MaxAltitude(f32),
-    /// Altitude hold within tolerance
+    /// End-of-phase altitude is within `tolerance` of `target`
     AltitudeHold { target: f32, tolerance: f32 },
-    /// Position hold within tolerance (NED)
+    /// End-of-phase 3D position is within `tolerance` of `target` (NED)
     PositionHold { target: [f32; 3], tolerance: f32 },
-    /// Maximum horizontal drift from start
+    /// End-of-phase horizontal drift from `start_position` ≤ `max`
     MaxDrift(f32),
-    /// Received sensor data
+    /// Sensor data received at least once
     SensorDataReceived,
+    /// Vehicle was within `tolerance` metres of `target` at some
+    /// point during the phase (NED). Pins "the FC actually reached
+    /// the commanded waypoint", not "the FC ended where commanded".
+    /// Useful when the next phase commands the vehicle to move on
+    /// before this phase strictly ends.
+    ReachedWaypoint { target: [f32; 3], tolerance: f32 },
+    /// Vehicle held altitude within `[altitude-tolerance,
+    /// altitude+tolerance]` continuously for at least `hold_secs`
+    /// of the phase. Sliding window — the run can include
+    /// transients before/after the held interval, but the
+    /// interval must be contiguous.
+    StableHover {
+        altitude: f32,
+        tolerance: f32,
+        hold_secs: f32,
+    },
 }
 
 /// Result of a phase execution

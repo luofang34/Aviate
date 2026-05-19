@@ -312,8 +312,18 @@ where
 
                 Some(SensorReading {
                     value: GnssData {
-                        // Convert lat/lon to local NED (simplified - just use altitude for now)
-                        position_ned: [Meters(0.0), Meters(0.0), Meters(-raw.alt_m)],
+                        // Lat/lon → local NED projection is not yet wired
+                        // in this layer (no reference point lives here).
+                        // The XIL pipeline puts the local NED position
+                        // directly into the `position_ned` field of the
+                        // raw GNSS reading; flight builds that have a
+                        // real GNSS receiver must do the WGS84 projection
+                        // upstream. See `RawGnssReading::position_ned`.
+                        position_ned: [
+                            Meters(raw.position_ned[0]),
+                            Meters(raw.position_ned[1]),
+                            Meters(raw.position_ned[2]),
+                        ],
                         velocity_ned: [
                             MetersPerSecond(raw.vel_ned[0]),
                             MetersPerSecond(raw.vel_ned[1]),

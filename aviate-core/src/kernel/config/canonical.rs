@@ -36,6 +36,8 @@ pub(super) fn canonical_hash(cfg: &ResolvedKernelConfig) -> u64 {
     for n in &cfg.slew_limit_per_cycle {
         h.feed_f32(n.0);
     }
+    h.feed_separator();
+    h.feed_f32(cfg.hover_thrust_norm.0);
     h.finish()
 }
 

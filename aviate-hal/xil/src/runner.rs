@@ -541,6 +541,11 @@ impl<B: SimulatorBackend> MissionRunner<B> {
     fn run_phase(&mut self, phase: &Phase) -> PhaseResult {
         let phase_start = Instant::now();
         let mut phase_max_altitude = 0.0f32;
+        // Per-step trace: (elapsed seconds from phase start, position
+        // in NED metres). Used by `ReachedWaypoint` and `StableHover`
+        // criteria. Each step records one sample; at 1 kHz this is
+        // ~bounded by phase duration in samples.
+        let mut trace: Vec<(f32, [f32; 3])> = Vec::new();
 
         while phase_start.elapsed() < phase.duration {
             let current_step = self.backend.sim_step();
@@ -556,6 +561,8 @@ impl<B: SimulatorBackend> MissionRunner<B> {
                     if phase_max_altitude > self.max_altitude {
                         self.max_altitude = phase_max_altitude;
                     }
+                    let elapsed = phase_start.elapsed().as_secs_f32();
+                    trace.push((elapsed, self.current_state.position));
                 }
 
                 // Execute action
@@ -573,7 +580,7 @@ impl<B: SimulatorBackend> MissionRunner<B> {
         let criteria_results: Vec<CriterionResult> = phase
             .verify
             .iter()
-            .map(|c| self.verify_criterion(c, phase_max_altitude))
+            .map(|c| self.verify_criterion(c, phase_max_altitude, &trace))
             .collect();
 
         let passed = criteria_results.iter().all(|r| r.passed);
@@ -660,7 +667,12 @@ impl<B: SimulatorBackend> MissionRunner<B> {
     }
 
     /// Verify a criterion
-    fn verify_criterion(&self, criterion: &Criterion, phase_max_alt: f32) -> CriterionResult {
+    fn verify_criterion(
+        &self,
+        criterion: &Criterion,
+        phase_max_alt: f32,
+        trace: &[(f32, [f32; 3])],
+    ) -> CriterionResult {
         match criterion {
             Criterion::Armed(expected) => CriterionResult {
                 criterion: "armed".to_string(),
@@ -714,6 +726,61 @@ impl<B: SimulatorBackend> MissionRunner<B> {
                     passed: drift <= *max,
                     actual_value: format!("{:.2}m", drift),
                     expected: format!("<= {:.2}m", max),
+                }
+            }
+            Criterion::ReachedWaypoint { target, tolerance } => {
+                let (min_err, _) = trace
+                    .iter()
+                    .map(|(_, pos)| {
+                        let dx = pos[0] - target[0];
+                        let dy = pos[1] - target[1];
+                        let dz = pos[2] - target[2];
+                        (dx * dx + dy * dy + dz * dz).sqrt()
+                    })
+                    .fold((f32::INFINITY, 0u32), |(min, n), e| (min.min(e), n + 1));
+                CriterionResult {
+                    criterion: "reached_waypoint".to_string(),
+                    passed: min_err <= *tolerance,
+                    actual_value: format!("min error: {:.2}m", min_err),
+                    expected: format!("<= {:.2}m at any point", tolerance),
+                }
+            }
+            Criterion::StableHover {
+                altitude,
+                tolerance,
+                hold_secs,
+            } => {
+                // Sliding-window check: find the longest contiguous
+                // run of samples whose altitude (positive up) is in
+                // band. Pass iff that run is at least `hold_secs`.
+                let in_band = |z_ned: f32| {
+                    let alt = -z_ned;
+                    (alt - altitude).abs() <= *tolerance
+                };
+                let mut best_run = 0.0_f32;
+                let mut run_start: Option<f32> = None;
+                for (t, pos) in trace {
+                    if in_band(pos[2]) {
+                        if run_start.is_none() {
+                            run_start = Some(*t);
+                        }
+                        if let Some(s) = run_start {
+                            best_run = best_run.max(t - s);
+                        }
+                    } else {
+                        run_start = None;
+                    }
+                }
+                CriterionResult {
+                    criterion: "stable_hover".to_string(),
+                    passed: best_run >= *hold_secs,
+                    actual_value: format!("best continuous run: {:.2}s", best_run),
+                    expected: format!(
+                        ">= {:.2}s in [{:.2},{:.2}]m band",
+                        hold_secs,
+                        altitude - tolerance,
+                        altitude + tolerance,
+                    ),
                 }
             }
             Criterion::SensorDataReceived => CriterionResult {

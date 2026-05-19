@@ -6,13 +6,20 @@ use crate::types::{FloatExt, MetersPerSecond, Normalized, Scalar};
 pub struct VelocityController {
     pub gains: [Scalar; 3],     // P gains for X, Y, Z velocity
     pub max_roll_pitch: Scalar, // Max roll/pitch angle in radians
+    /// Hover thrust trim (Normalized [0..1]) — the collective-thrust
+    /// command at which motor lift equals airframe weight. The
+    /// vertical loop commands corrections AROUND this value. Wrong
+    /// trim makes the loop saturate; airframe-specific.
+    /// See `ResolvedKernelConfig.hover_thrust_norm`.
+    pub hover_thrust_norm: Scalar,
 }
 
 impl VelocityController {
-    pub fn new(gains: [Scalar; 3], max_roll_pitch: Scalar) -> Self {
+    pub fn new(gains: [Scalar; 3], max_roll_pitch: Scalar, hover_thrust_norm: Scalar) -> Self {
         Self {
             gains,
             max_roll_pitch,
+            hover_thrust_norm,
         }
     }
 
@@ -33,7 +40,14 @@ impl VelocityController {
         // In NED: +Z is down. To arrest descent (current.z > setpoint.z), need more thrust.
         // error.z = setpoint.z - current.z (negative when descending too fast)
         // We invert because negative error (descending too fast) needs positive thrust correction
-        let collective_thrust_cmd = (-error.z * self.gains[2]).clamp(-0.5, 0.5) + 0.5; // 0.5 is hover thrust
+        let trim = self.hover_thrust_norm;
+        // Allow corrections to span the full range below trim (to drop
+        // thrust to zero) and the remaining headroom above (to
+        // saturate at 1.0). Without this asymmetric clamp, an
+        // airframe with trim>0.5 can never command full thrust.
+        let max_up = 1.0 - trim;
+        let max_dn = trim;
+        let collective_thrust_cmd = trim + (-error.z * self.gains[2]).clamp(-max_dn, max_up);
         let collective = Normalized(collective_thrust_cmd.clamp(0.0, 1.0));
 
         // Roll/Pitch commands are derived from X/Y velocity errors (horizontal)

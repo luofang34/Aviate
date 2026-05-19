@@ -46,7 +46,7 @@ for mission in "${MISSIONS[@]}"; do
         set +e
         result=$(
             timeout 60 cargo run --quiet -p gcs-test --features gazebo -- \
-                run --xil "${MISSIONS_DIR}/${mission}.toml" 2>&1 \
+                run --xil --headless "${MISSIONS_DIR}/${mission}.toml" 2>&1 \
                 | grep "^Result:" \
                 | tail -1
         )

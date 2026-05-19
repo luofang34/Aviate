@@ -132,7 +132,7 @@ echo "=== Running Test ==="
 #   - Multi-vehicle coordination (with mavrouter)
 #   - Result reporting
 
-./target/debug/gcs-test run --xil "$TEST_CONFIG"
+./target/debug/gcs-test run --xil --headless "$TEST_CONFIG"
 TEST_EXIT=$?
 
 echo ""

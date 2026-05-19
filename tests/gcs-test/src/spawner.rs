@@ -52,6 +52,11 @@ use log::info;
 /// Gazebo spawner for SITL mode
 pub struct GazeboSpawner {
     child: Option<Child>,
+    /// Optional GUI client process. macOS `gz sim` cannot host server +
+    /// GUI in one process (https://github.com/gazebosim/gz-sim/issues/44);
+    /// when the caller asks for GUI we spawn the server headless and a
+    /// separate `gz sim -g` client that attaches via gz-transport.
+    gui_child: Option<Child>,
     world_path: Option<PathBuf>,
 }
 
@@ -59,27 +64,49 @@ impl GazeboSpawner {
     pub fn new() -> Self {
         Self {
             child: None,
+            gui_child: None,
             world_path: None,
         }
     }
 
-    /// Launch Gazebo with the specified world file
+    /// Launch Gazebo with the specified world file.
+    ///
+    /// `headless = true`: server-only, EGL rendering, no GUI client.
+    /// `headless = false`: server-only (same as headless server) PLUS
+    /// a separate `gz sim -g` GUI client process so the plugin (a
+    /// server-side system) loads correctly on macOS.
     pub fn launch(&mut self, world_path: &Path, headless: bool) -> Result<(), String> {
         // Clean up any existing processes first
         self.cleanup();
 
-        let child = launch_gazebo(world_path, headless)
-            .map_err(|e| format!("Failed to launch Gazebo: {}", e))?;
+        let child = launch_gazebo(world_path)
+            .map_err(|e| format!("Failed to launch Gazebo server: {}", e))?;
 
         info!(
             target: "gcs",
-            "Gazebo started (PID: {}, headless={})",
+            "Gazebo server started (PID: {}, headless={})",
             child.id(),
-            headless
+            headless,
         );
 
         self.child = Some(child);
         self.world_path = Some(world_path.to_path_buf());
+
+        if !headless {
+            // Give the server a moment to begin advertising topics
+            // before the GUI client tries to attach.
+            std::thread::sleep(Duration::from_millis(500));
+            match launch_gazebo_gui() {
+                Ok(gui) => {
+                    info!(target: "gcs", "Gazebo GUI started (PID: {})", gui.id());
+                    self.gui_child = Some(gui);
+                }
+                Err(e) => {
+                    // Non-fatal: tests can still run without the GUI.
+                    log::warn!(target: "gcs", "GUI launch failed (continuing headless): {}", e);
+                }
+            }
+        }
 
         Ok(())
     }
@@ -102,6 +129,10 @@ impl GazeboSpawner {
 
     /// Cleanup Gazebo processes and shared memory
     pub fn cleanup(&mut self) {
+        if let Some(ref mut gui) = self.gui_child {
+            let _ = gui.kill();
+        }
+        self.gui_child = None;
         if let Some(ref mut child) = self.child {
             let _ = child.kill();
             // Give SIGKILL a moment to land before unlinking shm.
@@ -256,7 +287,7 @@ impl Default for Spawner {
 // ============================================================================
 
 /// Launch Gazebo with the specified world file
-fn launch_gazebo(world_path: &Path, headless: bool) -> Result<Child, std::io::Error> {
+fn launch_gazebo(world_path: &Path) -> Result<Child, std::io::Error> {
     // Set up environment paths
     let aviate_dir = env::current_dir().unwrap_or_default();
 
@@ -276,17 +307,17 @@ fn launch_gazebo(world_path: &Path, headless: bool) -> Result<Child, std::io::Er
     let plugin_dir = aviate_dir.join("aviate-hal/xil/backends/gz/plugin/build");
     let gz_plugin_path = plugin_dir.to_string_lossy().to_string();
 
+    // Always run the server in server-only mode. The GUI (if requested)
+    // is a separate `gz sim -g` process — see `launch_gazebo_gui`. On
+    // macOS server+GUI in one process is not supported
+    // (https://github.com/gazebosim/gz-sim/issues/44); the split-process
+    // form is portable across macOS and Linux.
     let mut cmd = Command::new("gz");
-    cmd.arg("sim");
-
-    if headless {
-        cmd.arg("-s"); // Server only
-        cmd.arg("-r"); // Run immediately
-        cmd.arg("--headless-rendering");
-        cmd.env_remove("DISPLAY");
-    } else {
-        cmd.arg("-r"); // Run immediately
-    }
+    cmd.arg("sim")
+        .arg("-s") // Server only
+        .arg("-r") // Run immediately
+        .arg("--headless-rendering");
+    cmd.env_remove("DISPLAY");
 
     cmd.arg(world_path);
 
@@ -315,6 +346,20 @@ fn launch_gazebo(world_path: &Path, headless: bool) -> Result<Child, std::io::Er
     cmd.stdout(Stdio::inherit());
     cmd.stderr(Stdio::inherit());
 
+    cmd.spawn()
+}
+
+/// Launch the Gazebo GUI as a separate client process.
+///
+/// On macOS `gz sim` cannot host server + GUI in one process; on
+/// Linux it can, but spawning a separate GUI client is the same
+/// shape and works there too — kept identical across platforms so
+/// the test harness has one launch path.
+fn launch_gazebo_gui() -> Result<Child, std::io::Error> {
+    let mut cmd = Command::new("gz");
+    cmd.arg("sim").arg("-g");
+    cmd.stdout(Stdio::inherit());
+    cmd.stderr(Stdio::inherit());
     cmd.spawn()
 }
 

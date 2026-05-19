@@ -165,6 +165,13 @@ pub enum GnssFix {
 }
 
 /// Raw GNSS reading
+///
+/// In production builds the global lat/lon/alt fields drive a
+/// WGS84-to-local-NED projection one layer up (the kernel only sees
+/// local NED). In SITL/HIL the projection happens at the producer
+/// side, and `position_ned` carries the projected local position
+/// directly — both fields can be populated; the kernel reads
+/// `position_ned`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RawGnssReading {
     /// Latitude in degrees
@@ -173,6 +180,10 @@ pub struct RawGnssReading {
     pub lon_deg: f64,
     /// Altitude above MSL in meters
     pub alt_m: f32,
+    /// Local NED position in meters (N, E, D). Populated by the SITL
+    /// pipeline directly; production HW builds should set this from
+    /// a WGS84→NED projection of (lat, lon, alt).
+    pub position_ned: [f32; 3],
     /// Velocity NED in m/s
     pub vel_ned: [f32; 3],
     /// Fix type

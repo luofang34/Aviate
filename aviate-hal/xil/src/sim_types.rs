@@ -58,6 +58,11 @@ pub struct SimGnssData {
     pub lon_deg: f64,
     /// Altitude above MSL in meters
     pub alt_m: f32,
+    /// Local NED position in meters (N, E, D). Aviate's kernel consumes
+    /// `position_ned` directly; the lat/lon/alt fields are kept for
+    /// telemetry/diagnostics and for real GNSS receivers that have not
+    /// done the projection upstream.
+    pub position_ned: [f32; 3],
     /// Velocity NED in m/s
     pub vel_ned: [f32; 3],
     /// Fix type

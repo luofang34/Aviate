@@ -306,8 +306,14 @@ fn parse_action(s: &str) -> Action {
     let mut fault_str = String::new();
     let mut cycles: u32 = 0;
     let mut offset = [0.0f32; 3];
+    let mut position = [0.0f32; 3];
+    let mut heading: f32 = 0.0;
+    let mut altitude: f32 = 0.0;
 
-    for part in s.split(',') {
+    // Use bracket-depth-aware splitter so inline arrays like
+    // `position = [0.0, 0.0, -5.0]` don't get torn apart by the
+    // commas inside the array.
+    for part in split_top_level_commas(s) {
         if let Some((k, v)) = parse_kv(part) {
             match k.as_str() {
                 "type" => type_str = v,
@@ -316,6 +322,9 @@ fn parse_action(s: &str) -> Action {
                 "fault" => fault_str = v,
                 "cycles" => cycles = v.parse().unwrap_or(0),
                 "offset" => offset = parse_vec3(&v),
+                "position" => position = parse_vec3(&v),
+                "heading" => heading = v.parse().unwrap_or(0.0),
+                "altitude" => altitude = v.parse().unwrap_or(0.0),
                 _ => {}
             }
         }
@@ -326,6 +335,16 @@ fn parse_action(s: &str) -> Action {
         "disarm" => Action::Disarm,
         "thrust" => Action::Thrust(value),
         "wait" => Action::Wait,
+        "goto" => Action::GoTo { position, heading },
+        // `takeoff` is sugar for `goto [0, 0, -altitude]` with heading
+        // 0 — climb in place at the vehicle's spawn XY. The runner
+        // does not currently substitute the live spawn position;
+        // missions that need a non-origin takeoff should use `goto`
+        // directly.
+        "takeoff" => Action::GoTo {
+            position: [0.0, 0.0, -altitude],
+            heading,
+        },
         "inject_fault" => {
             let sensor = match sensor_str.as_str() {
                 "imu" => SensorTarget::Imu,
@@ -378,6 +397,8 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
         let mut target: f32 = 0.0;
         let mut tolerance: f32 = 0.0;
         let mut position: [f32; 3] = [0.0; 3];
+        let mut altitude: f32 = 0.0;
+        let mut hold_secs: f32 = 0.0;
 
         // Items contain inline arrays like `position = [0.0, 0.0, -10.0]`
         // whose commas would corrupt a naive `split(',')`. Use the
@@ -400,6 +421,8 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
                     "target" => target = v.parse().unwrap_or(0.0),
                     "tolerance" => tolerance = v.parse().unwrap_or(0.0),
                     "position" => position = parse_vec3(&v),
+                    "altitude" => altitude = v.parse().unwrap_or(0.0),
+                    "hold_secs" => hold_secs = v.parse().unwrap_or(0.0),
                     _ => {}
                 }
             }
@@ -414,6 +437,15 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
             "position_hold" => Criterion::PositionHold {
                 target: position,
                 tolerance,
+            },
+            "reached_waypoint" => Criterion::ReachedWaypoint {
+                target: position,
+                tolerance,
+            },
+            "stable_hover" => Criterion::StableHover {
+                altitude,
+                tolerance,
+                hold_secs,
             },
             _ => continue,
         };

@@ -199,6 +199,62 @@ tightening is the next ratchet, not the structural contract.
 safety_impact = "medium"
 
 [[requirements]]
+uid = "8e9c67e1-91bd-4183-94fd-304e49b40689"
+id = "DRQ-CTL-003"
+title = "Closed-loop position control end-to-end"
+owner = "aviate-core@aviate"
+description = """
+The kernel accepts `SET_POSITION_TARGET_LOCAL_NED` and routes it
+through `MultirotorController::step` (pos_ctrl → vel_ctrl →
+att_ctrl → rate_ctrl). The mission DSL carries the criteria
+needed to verify closed-loop flight (`Waypoint`, `StableHover`).
+**End-to-end the loop does not yet hold position.** Two failure
+modes:
+
+  1. **EKF position divergence.** Under closed-loop control the
+     attitude controller commands non-trivial roll/pitch rates;
+     the IMU integration in `Ekf::predict_state` accumulates
+     position error faster than the GNSS update can correct,
+     even with the now-correctly-plumbed `position_ned` field on
+     `RawGnssReading`. Within a few seconds the EKF reports the
+     vehicle 50–100 m away from ground truth, the position loop
+     responds to the (false) error, and the vehicle either flies
+     in the wrong direction or saturates the mixer.
+
+  2. **Mixer thrust loss under saturated yaw.** With a non-zero
+     EKF yaw error and a near-saturated collective thrust, the
+     mixer adds yaw-axis corrections that drive two of four
+     motor commands to zero, dropping the realized lift to ~50 %
+     of commanded. The closed-loop altitude path then commands
+     even more thrust to compensate, which only deepens the
+     saturation.
+
+Closing this DRQ requires (at least): tighter EKF tuning under
+high-disturbance IMU input, an integral term on the position
+loop to drive out steady-state error, and a thrust-priority
+mixer that scales yaw correction when it would push any motor
+below zero. None of these is gated by a missing API or trace
+row — they are control-engineering work on top of the existing
+structural surface.
+
+Witnessed (negative) by `tests/missions/square_course.toml`,
+which executes the full position-target path but does not
+reliably pass its `ReachedWaypoint` criteria today. Open-loop
+flight is witnessed by `tests/missions/hover_trim_check.toml`
+(climb → hover at trim → descend → land) which passes 5/5.
+"""
+rationale = """
+Honest scope: this PR delivers the harness, the criteria, and
+the controller calibration to **support** closed-loop missions
+(hover_thrust trim, linear motor mapping, min-thrust gate, EKF
+TRIAD seed, GNSS local-NED plumbing). The remaining work — make
+the closed loop actually hold position to within a 1 m bound —
+is a separate engineering iteration with its own verification
+budget, not a one-line tuning fix.
+"""
+safety_impact = "medium"
+
+[[requirements]]
 uid = "a6c98ab3-41d3-4947-8361-250ace2adb69"
 id = "DRQ-FLT-001"
 title = "Command-loss safe-mode slew limit"

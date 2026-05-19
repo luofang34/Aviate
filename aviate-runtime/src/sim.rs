@@ -269,9 +269,24 @@ use aviate_core::types::Normalized;
 /// Create an AviateKernel configured for SITL multirotor simulation
 ///
 /// This is shared by all SITL boards (Gazebo, jMAVSim, etc.) to ensure
-/// consistent kernel initialization.
+/// consistent kernel initialization. Hover thrust is the normalized
+/// command at which 4× rotor lift equals airframe weight. With the
+/// linear `omega = cmd · MAX_RPS` motor mapping in the X500 FC
+/// binary and the gz model's `motorConstant 8.55e-6` and
+/// `MAX_RPS 1000`, per-motor thrust is `motorConstant · ω² =
+/// 8.55 · cmd² N`. Empirically the X500 with the PX4-gazebo-models
+/// rotor + frame assembly hovers around `cmd ≈ 0.83` (effective
+/// mass ~2.4 kg once link inertias and aerodynamic drag enter);
+/// the literal Newtonian calculation from base + rotor masses
+/// alone gives 0.77 but underestimates the steady-state thrust
+/// margin the vehicle actually needs. Other SITL boards
+/// (jMAVSim etc.) currently share this kernel — when a non-X500
+/// airframe lands we will lift this constant into a per-board
+/// build-time parameter.
+const X500_HOVER_THRUST_NORM: f32 = 0.81;
+
 pub fn create_kernel() -> SitlKernel {
-    let controller = MultirotorController::default();
+    let controller = MultirotorController::with_hover_thrust(X500_HOVER_THRUST_NORM);
     let mixer = QuadXMixer {
         timestamp_source: sitl_timestamp,
     };
@@ -281,6 +296,10 @@ pub fn create_kernel() -> SitlKernel {
     };
 
     let mut kernel = AviateKernel::new(Ekf::default(), controller, mixer, Sanitizer, mode_config);
+    // Mirror the controller's trim into ResolvedKernelConfig so the
+    // canonical hash includes it and a cross-channel mismatch in the
+    // tuning value is detected at lockstep entry.
+    kernel.cfg.hover_thrust_norm = aviate_core::types::Normalized(X500_HOVER_THRUST_NORM);
 
     // Initialize throttle check as satisfied (default command has low throttle)
     kernel.state.checks.pre_arm.update_throttle(true);

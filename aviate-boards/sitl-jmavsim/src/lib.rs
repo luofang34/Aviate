@@ -204,6 +204,7 @@ impl JmavSimBoard {
                     lat_deg: gnss.lat_deg,
                     lon_deg: gnss.lon_deg,
                     alt_m: gnss.alt_m,
+                    position_ned: gnss.position_ned,
                     vel_ned: gnss.vel_ned,
                     fix: gnss.fix,
                     h_acc: gnss.h_acc,

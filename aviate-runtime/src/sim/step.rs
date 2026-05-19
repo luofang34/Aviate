@@ -155,9 +155,59 @@ impl SitlRunner {
             }
         }
 
-        // 5. Initialize EKF once we have sensor data
+        // 5. Initialize EKF once we have sensor data.
+        //
+        // Seed the attitude estimate from the first IMU sample via
+        // a TRIAD-style closed form: the gravity vector points
+        // straight down in NED, so the IMU's specific-force vector
+        // (which points up against gravity at rest) tells us the
+        // body's tilt directly. Yaw is unobservable from accel
+        // alone — leave it at zero and let the mag update refine
+        // it. Initializing close to the truth avoids the cold-start
+        // attitude transient that otherwise wrestles with the
+        // closed-loop controller during takeoff and saturates
+        // motors against an EKF that lags reality.
         if !self.ekf_initialized && self.sensor_cache.imu.is_some() {
             info!("Initializing EKF with sensor data");
+            let init_quat = self
+                .sensor_cache
+                .imu
+                .as_ref()
+                .map(|imu| {
+                    use aviate_core::math::Vector3 as V3;
+                    let ax = imu.value.accel[0].0;
+                    let ay = imu.value.accel[1].0;
+                    let az = imu.value.accel[2].0;
+                    let mag = (ax * ax + ay * ay + az * az).sqrt();
+                    if mag < 1.0 {
+                        return Quaternion::IDENTITY;
+                    }
+                    // Body's measured "up" direction (specific
+                    // force points opposite to gravity at rest).
+                    let g_body = V3::new(-ax / mag, -ay / mag, -az / mag);
+                    // NED gravity unit vector points down, so
+                    // body-to-world rotation maps g_body → +Z.
+                    let target = V3::new(0.0, 0.0, 1.0);
+                    let dot = g_body.x * target.x + g_body.y * target.y + g_body.z * target.z;
+                    if dot > 0.9999 {
+                        return Quaternion::IDENTITY;
+                    }
+                    let axis = V3::new(
+                        g_body.y * target.z - g_body.z * target.y,
+                        g_body.z * target.x - g_body.x * target.z,
+                        g_body.x * target.y - g_body.y * target.x,
+                    );
+                    let axis_norm = (axis.x * axis.x + axis.y * axis.y + axis.z * axis.z).sqrt();
+                    if axis_norm < 1e-6 {
+                        return Quaternion::IDENTITY;
+                    }
+                    let angle = dot.clamp(-1.0, 1.0).acos();
+                    Quaternion::from_axis_angle(
+                        V3::new(axis.x / axis_norm, axis.y / axis_norm, axis.z / axis_norm),
+                        angle,
+                    )
+                })
+                .unwrap_or(Quaternion::IDENTITY);
             self.kernel.state.estimator.init(
                 Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
                 Vector3::new(
@@ -165,7 +215,7 @@ impl SitlRunner {
                     MetersPerSecond(0.0),
                     MetersPerSecond(0.0),
                 ),
-                Quaternion::IDENTITY,
+                init_quat,
             );
             self.ekf_initialized = true;
         }

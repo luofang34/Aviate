@@ -59,8 +59,10 @@ enum Commands {
         #[arg(long)]
         xil: bool,
 
-        /// Run in headless mode (no GUI)
-        #[arg(long, default_value = "true")]
+        /// Run Gazebo headless (no GUI). Default: GUI on. Pass
+        /// `--headless` for CI / mission sweeps where no display is
+        /// available.
+        #[arg(long)]
         headless: bool,
 
         /// Use MAVLink-only mode (no ground truth verification)
@@ -83,8 +85,8 @@ enum Commands {
         #[arg(long)]
         fc_binary: Option<PathBuf>,
 
-        /// Run in headless mode (no GUI)
-        #[arg(long, default_value = "true")]
+        /// Run Gazebo headless (no GUI). Default: GUI on.
+        #[arg(long)]
         headless: bool,
     },
     /// List available mission configs

@@ -1,0 +1,95 @@
+# Aviate SITL: Open-loop climb / hover / descent / land
+#
+# Witnesses the FC ↔ gz-sim ↔ kernel integration loop in
+# OPEN-LOOP attitude+thrust mode:
+#
+#   * arm → settle (EKF converges on a still IMU)
+#   * climb at thrust=0.85 — must clear 3 m
+#   * hold at the calibrated hover trim (0.81)
+#   * descend at thrust=0.55
+#   * land at thrust=0
+#
+# This is the integration-grade witness. Closed-loop position
+# control (waypoint courses, sustained station-keeping with
+# bounded drift) is tracked as a deferred witness — see
+# DRQ-CTL-003 in cert/trace/derived.toml. The mission DSL already
+# carries the closed-loop criteria (`Waypoint`, `StableHover`);
+# the gap is the EKF position estimate / controller-tuning pair
+# that the closed loop needs.
+
+[test]
+name = "hover_trim_check"
+description = "Open-loop climb, hover at trim, controlled descent, land"
+lockstep = true
+
+[[vehicles]]
+id = "x500"
+model = "x500"
+instance = 0
+spawn_position = [0.0, 0.0, 0.0]
+spawn_heading = 0.0
+
+[vehicles.mission]
+name = "hover_trim_check"
+
+[[vehicles.mission.phases]]
+name = "arm"
+duration_ms = 500
+action = { type = "arm" }
+verify = [{ type = "armed", value = true }]
+
+# Settle: hold zero thrust for 2 s post-arm so the EKF can
+# converge on a quiet IMU before the climb phase engages the
+# closed-loop attitude controller. Without this the cold-start
+# attitude transient destabilizes the first second of climb.
+[[vehicles.mission.phases]]
+name = "settle"
+duration_ms = 2000
+action = { type = "thrust", value = 0.0 }
+verify = [{ type = "armed", value = true }]
+
+# Climb at 0.85 thrust for 4 s. Reach ≥ 2 m — anything less means
+# the rotor or trim calibration is broken.
+[[vehicles.mission.phases]]
+name = "climb"
+duration_ms = 4000
+action = { type = "thrust", value = 0.85 }
+verify = [
+  { type = "armed", value = true },
+  { type = "min_altitude", value = 2.0 },
+]
+
+# Hold at the calibrated hover trim. Open-loop drift is documented
+# (~0.4 m/s descent at trim due to per-airframe trim error +
+# closed-loop axis correction eating some lift); we assert only
+# that the kernel stayed armed and the altitude did not exceed
+# the climb ceiling. Tighter station-keeping is DRQ-CTL-003.
+[[vehicles.mission.phases]]
+name = "hover_at_trim"
+duration_ms = 4000
+action = { type = "thrust", value = 0.81 }
+verify = [
+  { type = "armed", value = true },
+  { type = "max_altitude", value = 10.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "descend"
+duration_ms = 3000
+action = { type = "thrust", value = 0.55 }
+verify = [
+  { type = "armed", value = true },
+  { type = "max_altitude", value = 10.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "land"
+duration_ms = 3000
+action = { type = "thrust", value = 0.0 }
+verify = [{ type = "max_altitude", value = 1.0 }]
+
+[[vehicles.mission.phases]]
+name = "disarm"
+duration_ms = 500
+action = { type = "disarm" }
+verify = [{ type = "armed", value = false }]

@@ -20,7 +20,7 @@ use aviate_core::types::MetersPerSecond;
 
 #[test]
 fn zero_velocity_error_produces_hover_thrust() {
-    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5);
+    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5, 0.5);
     let setpoint = Vector3::new(
         MetersPerSecond(0.0),
         MetersPerSecond(0.0),
@@ -44,7 +44,7 @@ fn zero_velocity_error_produces_hover_thrust() {
 
 #[test]
 fn zero_horizontal_error_produces_level_attitude() {
-    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5);
+    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5, 0.5);
     let setpoint = Vector3::new(
         MetersPerSecond(0.0),
         MetersPerSecond(0.0),
@@ -72,7 +72,7 @@ fn zero_horizontal_error_produces_level_attitude() {
 
 #[test]
 fn descending_too_fast_increases_collective() {
-    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5);
+    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5, 0.5);
     // NED: positive Z is down, so +2.0 means descending at 2 m/s
     let setpoint = Vector3::new(
         MetersPerSecond(0.0),
@@ -98,7 +98,7 @@ fn descending_too_fast_increases_collective() {
 
 #[test]
 fn climbing_too_fast_decreases_collective() {
-    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5);
+    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5, 0.5);
     // NED: negative Z velocity means climbing
     let setpoint = Vector3::new(
         MetersPerSecond(0.0),
@@ -124,7 +124,7 @@ fn climbing_too_fast_decreases_collective() {
 
 #[test]
 fn commanded_descent_rate() {
-    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5);
+    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5, 0.5);
     // Command 1 m/s descent (positive Z in NED)
     let setpoint = Vector3::new(
         MetersPerSecond(0.0),
@@ -153,7 +153,7 @@ fn commanded_descent_rate() {
 
 #[test]
 fn forward_velocity_error_produces_pitch_down() {
-    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5);
+    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5, 0.5);
     // Want to go forward (positive X in NED = North)
     let setpoint = Vector3::new(
         MetersPerSecond(5.0),
@@ -180,7 +180,7 @@ fn forward_velocity_error_produces_pitch_down() {
 
 #[test]
 fn rightward_velocity_error_produces_roll_right() {
-    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5);
+    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5, 0.5);
     // Want to go right (positive Y in NED = East)
     let setpoint = Vector3::new(
         MetersPerSecond(0.0),
@@ -211,7 +211,7 @@ fn rightward_velocity_error_produces_roll_right() {
 
 #[test]
 fn collective_clamps_at_zero() {
-    let ctrl = VelocityController::new([0.1, 0.1, 0.5], 0.5);
+    let ctrl = VelocityController::new([0.1, 0.1, 0.5], 0.5, 0.5);
     // Very high climb rate error
     let setpoint = Vector3::new(
         MetersPerSecond(0.0),
@@ -232,7 +232,7 @@ fn collective_clamps_at_zero() {
 
 #[test]
 fn collective_clamps_at_one() {
-    let ctrl = VelocityController::new([0.1, 0.1, 0.5], 0.5);
+    let ctrl = VelocityController::new([0.1, 0.1, 0.5], 0.5, 0.5);
     // Very high descent rate error
     let setpoint = Vector3::new(
         MetersPerSecond(0.0),
@@ -258,7 +258,7 @@ fn collective_clamps_at_one() {
 #[test]
 fn roll_pitch_limited_to_max() {
     let max_angle = 0.5; // ~28 degrees
-    let ctrl = VelocityController::new([1.0, 1.0, 0.2], max_angle);
+    let ctrl = VelocityController::new([1.0, 1.0, 0.2], max_angle, 0.5);
     // Large velocity error
     let setpoint = Vector3::new(
         MetersPerSecond(50.0),
@@ -307,8 +307,8 @@ fn higher_horizontal_gain_produces_larger_tilt() {
     );
     let current_att = Quaternion::IDENTITY;
 
-    let ctrl_low = VelocityController::new([0.05, 0.05, 0.2], 0.5);
-    let ctrl_high = VelocityController::new([0.1, 0.1, 0.2], 0.5);
+    let ctrl_low = VelocityController::new([0.05, 0.05, 0.2], 0.5, 0.5);
+    let ctrl_high = VelocityController::new([0.1, 0.1, 0.2], 0.5, 0.5);
 
     let (_, att_low) = ctrl_low.step(setpoint, current, &current_att);
     let (_, att_high) = ctrl_high.step(setpoint, current, &current_att);
@@ -330,7 +330,7 @@ fn higher_horizontal_gain_produces_larger_tilt() {
 
 #[test]
 fn small_velocity_error() {
-    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5);
+    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5, 0.5);
     let setpoint = Vector3::new(
         MetersPerSecond(0.1),
         MetersPerSecond(0.0),
@@ -354,7 +354,7 @@ fn small_velocity_error() {
 
 #[test]
 fn matching_velocities_at_non_zero() {
-    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5);
+    let ctrl = VelocityController::new([0.1, 0.1, 0.2], 0.5, 0.5);
     let velocity = Vector3::new(
         MetersPerSecond(3.0),
         MetersPerSecond(2.0),

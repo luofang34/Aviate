@@ -3,7 +3,7 @@ use crate::control::position::PositionController;
 use crate::control::rate::RateController;
 use crate::control::runtime::NoControllerState;
 use crate::control::velocity::VelocityController;
-use crate::control::{AxisCommand, Command, ConfigMode, Limits, VehicleController};
+use crate::control::{AxisCommand, Command, ConfigMode, Limits, Scalar, VehicleController};
 use crate::math::{Quaternion, Vector3};
 use crate::state::StateEstimate;
 
@@ -16,11 +16,27 @@ pub struct MultirotorController {
 
 impl Default for MultirotorController {
     fn default() -> Self {
+        Self::with_hover_thrust(0.5)
+    }
+}
+
+impl MultirotorController {
+    /// Construct a multirotor controller with the airframe's hover-trim
+    /// value. The vertical velocity loop commands collective-thrust
+    /// corrections around this point; setting it correctly is the
+    /// difference between a vehicle that holds altitude and one that
+    /// sinks under closed-loop control. See `ResolvedKernelConfig.
+    /// hover_thrust_norm` for the canonical record.
+    pub fn with_hover_thrust(hover_thrust_norm: Scalar) -> Self {
+        // Default gains. These are the same as the pre-Phase-X
+        // values that hover_trim_check passed against; closed-loop
+        // position-target stability needs further tuning and is
+        // tracked separately.
         Self {
-            pos_ctrl: PositionController::new([0.2, 0.2, 0.5]), // Default P gains for pos (X,Y,Z)
-            vel_ctrl: VelocityController::new([0.1, 0.1, 0.2], 0.349), // Default P gains for vel (X,Y,Z), max 20deg roll/pitch
-            rate_ctrl: RateController::new([0.15, 0.15, 0.2]), // Default P gains for rate (R,P,Y)
-            att_ctrl: AttitudeController::new([6.0, 6.0, 2.0]), // Default P gains for att (R,P,Y)
+            pos_ctrl: PositionController::new([0.2, 0.2, 0.5]),
+            vel_ctrl: VelocityController::new([0.1, 0.1, 0.2], 0.349, hover_thrust_norm),
+            rate_ctrl: RateController::new([0.15, 0.15, 0.2]),
+            att_ctrl: AttitudeController::new([6.0, 6.0, 2.0]),
         }
     }
 }
@@ -82,6 +98,24 @@ impl VehicleController for MultirotorController {
             );
             collective_sp = col;
             att_sp = att;
+        }
+
+        // Below the minimum-thrust gate the axis loops are suppressed.
+        // With near-zero collective the vehicle is on the ground; running
+        // the attitude/rate loop on small EKF-attitude errors with no
+        // lift would yaw the chassis against the ground (one diagonal
+        // of motors firing while the other is idle is a pure torque
+        // pair — no lift, just spin). The closed loop only engages
+        // once the operator has commanded enough thrust to imply
+        // "we want to fly".
+        const MIN_THRUST_FOR_AXIS_CONTROL: Scalar = 0.1;
+        if collective_sp.0 < MIN_THRUST_FOR_AXIS_CONTROL {
+            return AxisCommand {
+                roll: crate::types::NormalizedSigned(0.0),
+                pitch: crate::types::NormalizedSigned(0.0),
+                yaw: crate::types::NormalizedSigned(0.0),
+                collective: collective_sp,
+            };
         }
 
         // 3. Attitude Control
