@@ -6,28 +6,28 @@
 //! ## Usage
 //!
 //! ```ignore
-//! use aviate_hal_xil::{FaultController, XilConfig};
+//! use aviate_hal_xil::{FaultController, FaultSensors, XilConfig};
 //! use aviate_hal_io::{FakeImu, FakeBaro, FakeMag, FakeGnss};
 //!
-//! // Create fake sensors
-//! let imu = Arc::new(Mutex::new(FakeImu::new()));
-//! let baro = Arc::new(Mutex::new(FakeBaro::new()));
-//! let mag = Arc::new(Mutex::new(FakeMag::new()));
-//! let gnss = Arc::new(Mutex::new(FakeGnss::new()));
-//!
-//! // Create fault controller
 //! let config = XilConfig::for_instance(0);
-//! let ctrl = FaultController::new(&config, imu, baro, mag, gnss)?;
+//! let mut ctrl = FaultController::new(&config)?;
 //!
-//! // Poll for commands (non-blocking)
-//! ctrl.poll();
+//! // Sensors live where the FC owns them — no Arc<Mutex> needed.
+//! let mut imu = FakeImu::new();
+//! let mut baro = FakeBaro::new();
+//! let mut mag = FakeMag::new();
+//! let mut gnss = FakeGnss::new();
+//!
+//! // Per-cycle: hand the FaultController mutable references and
+//! // let it apply any inbound fault commands to the sensors.
+//! ctrl.poll(&mut FaultSensors { imu: &mut imu, baro: &mut baro,
+//!                                mag: &mut mag, gnss: &mut gnss });
 //! ```
 
 #![forbid(unsafe_code)]
 
 use std::io;
 use std::net::UdpSocket;
-use std::sync::{Arc, Mutex};
 
 use crate::fault_protocol::{AckStatus, FaultAck, FaultCommand, FAULT_CMD_SIZE};
 #[cfg(feature = "xil-fault")]
@@ -38,6 +38,19 @@ use crate::{PortSlot, XilConfig};
 #[cfg(feature = "xil-fault")]
 use aviate_hal_io::SensorFault;
 use aviate_hal_io::{FakeBaro, FakeGnss, FakeImu, FakeMag};
+
+/// Mutable-borrow bundle of the four fake sensors a `FaultController`
+/// can corrupt. Used as the second argument to `poll()` so the
+/// controller does not need to own the sensors — the SitlRunner can
+/// keep them inside `BoardHal` and just hand out references each
+/// cycle. Avoids the `Arc<Mutex<>>` machinery that an owning design
+/// would require in a single-threaded runtime.
+pub struct FaultSensors<'a> {
+    pub imu: &'a mut FakeImu,
+    pub baro: &'a mut FakeBaro,
+    pub mag: &'a mut FakeMag,
+    pub gnss: &'a mut FakeGnss,
+}
 
 /// Fault controller error
 #[derive(Debug)]
@@ -69,33 +82,19 @@ impl std::error::Error for FaultCtrlError {
 ///
 /// Only functional when the `xil-fault` feature is enabled on aviate-hal-io.
 /// When disabled, commands are acknowledged with `NotEnabled` status.
-#[allow(dead_code)] // Fields are used when xil-fault feature is enabled
 pub struct FaultController {
     /// UDP socket for receiving commands
     socket: UdpSocket,
-    /// IMU sensor (shared with board HAL)
-    imu: Arc<Mutex<FakeImu>>,
-    /// Barometer sensor
-    baro: Arc<Mutex<FakeBaro>>,
-    /// Magnetometer sensor
-    mag: Arc<Mutex<FakeMag>>,
-    /// GNSS sensor
-    gnss: Arc<Mutex<FakeGnss>>,
     /// Receive buffer
     buf: [u8; 64],
 }
 
 impl FaultController {
-    /// Create a new fault controller
-    ///
-    /// Binds to the fault command port for the given instance.
-    pub fn new(
-        config: &XilConfig,
-        imu: Arc<Mutex<FakeImu>>,
-        baro: Arc<Mutex<FakeBaro>>,
-        mag: Arc<Mutex<FakeMag>>,
-        gnss: Arc<Mutex<FakeGnss>>,
-    ) -> Result<Self, FaultCtrlError> {
+    /// Create a new fault controller bound to the per-instance fault
+    /// command port. Sensors are NOT owned — they are passed in by
+    /// reference at `poll` time, so the SitlRunner can keep them in
+    /// its `BoardHal` without `Arc<Mutex<>>` overhead.
+    pub fn new(config: &XilConfig) -> Result<Self, FaultCtrlError> {
         let port = config.net.port(config.instance as u16, PortSlot::FaultCmd);
         let addr = format!("127.0.0.1:{}", port);
 
@@ -106,18 +105,16 @@ impl FaultController {
 
         Ok(Self {
             socket,
-            imu,
-            baro,
-            mag,
-            gnss,
             buf: [0u8; 64],
         })
     }
 
-    /// Poll for incoming fault commands (non-blocking)
+    /// Poll for incoming fault commands (non-blocking). Each command
+    /// is applied to the sensors borrowed via `FaultSensors`, and an
+    /// ack is sent back to the originating address.
     ///
     /// Returns the number of commands processed.
-    pub fn poll(&mut self) -> usize {
+    pub fn poll(&mut self, sensors: &mut FaultSensors<'_>) -> usize {
         let mut count = 0;
 
         loop {
@@ -125,7 +122,7 @@ impl FaultController {
                 Ok((len, src)) => {
                     if len >= FAULT_CMD_SIZE {
                         if let Some(cmd) = FaultCommand::from_bytes(&self.buf[..len]) {
-                            let ack = self.handle_command(&cmd);
+                            let ack = Self::handle_command(&cmd, sensors);
                             let ack_bytes = ack.to_bytes();
                             let _ = self.socket.send_to(&ack_bytes, src);
                             count += 1;
@@ -147,11 +144,11 @@ impl FaultController {
     }
 
     /// Handle a single fault command
-    fn handle_command(&self, cmd: &FaultCommand) -> FaultAck {
+    fn handle_command(cmd: &FaultCommand, sensors: &mut FaultSensors<'_>) -> FaultAck {
         // When xil-fault feature is not enabled, return NotEnabled
         #[cfg(not(feature = "xil-fault"))]
         {
-            let _ = cmd; // suppress unused warning
+            let _ = sensors;
             FaultAck::error(cmd, AckStatus::NotEnabled)
         }
 
@@ -162,7 +159,7 @@ impl FaultController {
                 None => {
                     // Clear all sensors
                     if cmd.fault.is_none() {
-                        self.clear_all();
+                        Self::clear_all(sensors);
                         FaultAck::ok(cmd)
                     } else {
                         // Can't apply fault to "all" - only clear is valid
@@ -171,8 +168,8 @@ impl FaultController {
                 }
                 Some(target) => {
                     let result = match &cmd.fault {
-                        None => self.clear_sensor(target),
-                        Some(spec) => self.apply_fault(target, spec),
+                        None => Self::clear_sensor(target, sensors),
+                        Some(spec) => Self::apply_fault(target, spec, sensors),
                     };
 
                     if result {
@@ -187,74 +184,39 @@ impl FaultController {
 
     /// Clear all sensor faults
     #[cfg(feature = "xil-fault")]
-    fn clear_all(&self) {
-        if let Ok(mut imu) = self.imu.lock() {
-            imu.clear_faults();
-        }
-        if let Ok(mut baro) = self.baro.lock() {
-            baro.clear_faults();
-        }
-        if let Ok(mut mag) = self.mag.lock() {
-            mag.clear_faults();
-        }
-        if let Ok(mut gnss) = self.gnss.lock() {
-            gnss.clear_faults();
-        }
+    fn clear_all(sensors: &mut FaultSensors<'_>) {
+        sensors.imu.clear_faults();
+        sensors.baro.clear_faults();
+        sensors.mag.clear_faults();
+        sensors.gnss.clear_faults();
     }
 
     /// Clear a specific sensor's faults
     #[cfg(feature = "xil-fault")]
-    fn clear_sensor(&self, target: SensorTarget) -> bool {
+    fn clear_sensor(target: SensorTarget, sensors: &mut FaultSensors<'_>) -> bool {
         match target {
-            SensorTarget::Imu => {
-                if let Ok(mut imu) = self.imu.lock() {
-                    imu.clear_faults();
-                    true
-                } else {
-                    false
-                }
-            }
-            SensorTarget::Baro => {
-                if let Ok(mut baro) = self.baro.lock() {
-                    baro.clear_faults();
-                    true
-                } else {
-                    false
-                }
-            }
-            SensorTarget::Mag => {
-                if let Ok(mut mag) = self.mag.lock() {
-                    mag.clear_faults();
-                    true
-                } else {
-                    false
-                }
-            }
-            SensorTarget::Gnss => {
-                if let Ok(mut gnss) = self.gnss.lock() {
-                    gnss.clear_faults();
-                    true
-                } else {
-                    false
-                }
-            }
+            SensorTarget::Imu => sensors.imu.clear_faults(),
+            SensorTarget::Baro => sensors.baro.clear_faults(),
+            SensorTarget::Mag => sensors.mag.clear_faults(),
+            SensorTarget::Gnss => sensors.gnss.clear_faults(),
         }
+        true
     }
 
     /// Apply a fault to a specific sensor
     #[cfg(feature = "xil-fault")]
-    fn apply_fault(&self, target: SensorTarget, spec: &FaultSpec) -> bool {
+    fn apply_fault(target: SensorTarget, spec: &FaultSpec, sensors: &mut FaultSensors<'_>) -> bool {
         match target {
-            SensorTarget::Imu => self.apply_imu_fault(spec),
-            SensorTarget::Baro => self.apply_baro_fault(spec),
-            SensorTarget::Mag => self.apply_mag_fault(spec),
-            SensorTarget::Gnss => self.apply_gnss_fault(spec),
+            SensorTarget::Imu => Self::apply_imu_fault(spec, sensors.imu),
+            SensorTarget::Baro => Self::apply_baro_fault(spec, sensors.baro),
+            SensorTarget::Mag => Self::apply_mag_fault(spec, sensors.mag),
+            SensorTarget::Gnss => Self::apply_gnss_fault(spec, sensors.gnss),
         }
     }
 
     /// Apply fault to IMU
     #[cfg(feature = "xil-fault")]
-    fn apply_imu_fault(&self, spec: &FaultSpec) -> bool {
+    fn apply_imu_fault(spec: &FaultSpec, imu: &mut FakeImu) -> bool {
         let fault = match spec {
             FaultSpec::HealthDegraded => SensorFault::HealthDegraded,
             FaultSpec::HealthFailed => SensorFault::HealthFailed,
@@ -268,18 +230,13 @@ impl FaultController {
                 return false;
             }
         };
-
-        if let Ok(mut imu) = self.imu.lock() {
-            imu.inject_fault(fault);
-            true
-        } else {
-            false
-        }
+        imu.inject_fault(fault);
+        true
     }
 
     /// Apply fault to barometer
     #[cfg(feature = "xil-fault")]
-    fn apply_baro_fault(&self, spec: &FaultSpec) -> bool {
+    fn apply_baro_fault(spec: &FaultSpec, baro: &mut FakeBaro) -> bool {
         let fault = match spec {
             FaultSpec::HealthDegraded => SensorFault::HealthDegraded,
             FaultSpec::HealthFailed => SensorFault::HealthFailed,
@@ -293,18 +250,13 @@ impl FaultController {
                 return false;
             }
         };
-
-        if let Ok(mut baro) = self.baro.lock() {
-            baro.inject_fault(fault);
-            true
-        } else {
-            false
-        }
+        baro.inject_fault(fault);
+        true
     }
 
     /// Apply fault to magnetometer
     #[cfg(feature = "xil-fault")]
-    fn apply_mag_fault(&self, spec: &FaultSpec) -> bool {
+    fn apply_mag_fault(spec: &FaultSpec, mag: &mut FakeMag) -> bool {
         let fault = match spec {
             FaultSpec::HealthDegraded => SensorFault::HealthDegraded,
             FaultSpec::HealthFailed => SensorFault::HealthFailed,
@@ -318,18 +270,13 @@ impl FaultController {
                 return false;
             }
         };
-
-        if let Ok(mut mag) = self.mag.lock() {
-            mag.inject_fault(fault);
-            true
-        } else {
-            false
-        }
+        mag.inject_fault(fault);
+        true
     }
 
     /// Apply fault to GNSS
     #[cfg(feature = "xil-fault")]
-    fn apply_gnss_fault(&self, spec: &FaultSpec) -> bool {
+    fn apply_gnss_fault(spec: &FaultSpec, gnss: &mut FakeGnss) -> bool {
         let fault = match spec {
             FaultSpec::HealthDegraded => SensorFault::HealthDegraded,
             FaultSpec::HealthFailed => SensorFault::HealthFailed,
@@ -343,223 +290,202 @@ impl FaultController {
                 return false;
             }
         };
-
-        if let Ok(mut gnss) = self.gnss.lock() {
-            gnss.inject_fault(fault);
-            true
-        } else {
-            false
-        }
+        gnss.inject_fault(fault);
+        true
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
+    /// Build a fresh four-tuple of fake sensors for in-process tests.
+    fn fresh_sensors() -> (FakeImu, FakeBaro, FakeMag, FakeGnss) {
+        (
+            FakeImu::new(),
+            FakeBaro::new(),
+            FakeMag::new(),
+            FakeGnss::new(),
+        )
+    }
+
     #[test]
     fn test_fault_controller_creation() {
-        let config = XilConfig::for_instance(99); // Use high instance to avoid port conflicts
-        let imu = Arc::new(Mutex::new(FakeImu::new()));
-        let baro = Arc::new(Mutex::new(FakeBaro::new()));
-        let mag = Arc::new(Mutex::new(FakeMag::new()));
-        let gnss = Arc::new(Mutex::new(FakeGnss::new()));
-
-        let ctrl = FaultController::new(&config, imu, baro, mag, gnss);
+        let config = XilConfig::for_instance(99); // high instance to avoid port conflicts
+        let ctrl = FaultController::new(&config);
         assert!(ctrl.is_ok());
     }
 
     #[test]
     fn test_fault_controller_poll_empty() {
         let config = XilConfig::for_instance(98);
-        let imu = Arc::new(Mutex::new(FakeImu::new()));
-        let baro = Arc::new(Mutex::new(FakeBaro::new()));
-        let mag = Arc::new(Mutex::new(FakeMag::new()));
-        let gnss = Arc::new(Mutex::new(FakeGnss::new()));
-
-        let mut ctrl = FaultController::new(&config, imu, baro, mag, gnss).unwrap();
+        let mut ctrl =
+            FaultController::new(&config).expect("controller should bind on free instance");
+        let (mut imu, mut baro, mut mag, mut gnss) = fresh_sensors();
+        let mut sensors = FaultSensors {
+            imu: &mut imu,
+            baro: &mut baro,
+            mag: &mut mag,
+            gnss: &mut gnss,
+        };
 
         // Poll should return 0 when no commands pending
-        assert_eq!(ctrl.poll(), 0);
+        assert_eq!(ctrl.poll(&mut sensors), 0);
     }
 
     #[cfg(feature = "xil-fault")]
     #[test]
     fn test_fault_controller_apply_imu_fault() {
-        let config = XilConfig::for_instance(97);
-        let imu = Arc::new(Mutex::new(FakeImu::new()));
-        let baro = Arc::new(Mutex::new(FakeBaro::new()));
-        let mag = Arc::new(Mutex::new(FakeMag::new()));
-        let gnss = Arc::new(Mutex::new(FakeGnss::new()));
-
-        let ctrl = FaultController::new(
-            &config,
-            Arc::clone(&imu),
-            Arc::clone(&baro),
-            Arc::clone(&mag),
-            Arc::clone(&gnss),
-        )
-        .unwrap();
-
-        // Apply fault directly (bypassing UDP)
-        assert!(ctrl.apply_imu_fault(&FaultSpec::HealthDegraded));
-
-        // Verify fault was applied
-        let imu = imu.lock().unwrap();
+        let (mut imu, _baro, _mag, _gnss) = fresh_sensors();
+        assert!(FaultController::apply_imu_fault(
+            &FaultSpec::HealthDegraded,
+            &mut imu
+        ));
         assert!(imu.has_fault());
     }
 
     #[cfg(feature = "xil-fault")]
     #[test]
     fn test_fault_controller_clear_all() {
-        let config = XilConfig::for_instance(96);
-        let imu = Arc::new(Mutex::new(FakeImu::new()));
-        let baro = Arc::new(Mutex::new(FakeBaro::new()));
-        let mag = Arc::new(Mutex::new(FakeMag::new()));
-        let gnss = Arc::new(Mutex::new(FakeGnss::new()));
+        let (mut imu, mut baro, mut mag, mut gnss) = fresh_sensors();
+        imu.inject_fault(SensorFault::HealthFailed);
+        baro.inject_fault(SensorFault::HealthDegraded);
 
-        // Inject faults
-        imu.lock().unwrap().inject_fault(SensorFault::HealthFailed);
-        baro.lock()
-            .unwrap()
-            .inject_fault(SensorFault::HealthDegraded);
+        let mut sensors = FaultSensors {
+            imu: &mut imu,
+            baro: &mut baro,
+            mag: &mut mag,
+            gnss: &mut gnss,
+        };
+        FaultController::clear_all(&mut sensors);
 
-        let ctrl = FaultController::new(
-            &config,
-            Arc::clone(&imu),
-            Arc::clone(&baro),
-            Arc::clone(&mag),
-            Arc::clone(&gnss),
-        )
-        .unwrap();
-
-        // Clear all
-        ctrl.clear_all();
-
-        // Verify faults were cleared
-        assert!(!imu.lock().unwrap().has_fault());
-        assert!(!baro.lock().unwrap().has_fault());
+        assert!(!imu.has_fault());
+        assert!(!baro.has_fault());
     }
 }
 
-/// Integration tests for FaultClient + FaultController end-to-end
+/// Integration tests for FaultClient + FaultController end-to-end.
+///
+/// These tests do need `Arc<Mutex<>>` because they spawn a polling
+/// thread to receive the UDP fault command — the thread and the
+/// asserting test body both want to read fault state. In production
+/// the poll happens in the FC's single-threaded main loop and does
+/// not need the Mutex.
 #[cfg(all(test, feature = "xil-fault"))]
+#[allow(clippy::expect_used, clippy::panic)]
 mod integration_tests {
     use super::*;
     use crate::fault_protocol::FaultClient;
     use crate::mission::{FaultSpec, SensorTarget};
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::Duration;
 
-    /// Helper to create a fault controller with shared sensors
-    fn setup_fault_ctrl(
-        instance: u8,
-    ) -> (
-        FaultController,
+    type SharedSensors = (
         Arc<Mutex<FakeImu>>,
         Arc<Mutex<FakeBaro>>,
         Arc<Mutex<FakeMag>>,
         Arc<Mutex<FakeGnss>>,
-    ) {
-        let config = XilConfig::for_instance(instance);
-        let imu = Arc::new(Mutex::new(FakeImu::new()));
-        let baro = Arc::new(Mutex::new(FakeBaro::new()));
-        let mag = Arc::new(Mutex::new(FakeMag::new()));
-        let gnss = Arc::new(Mutex::new(FakeGnss::new()));
+    );
 
-        let ctrl = FaultController::new(
-            &config,
-            Arc::clone(&imu),
-            Arc::clone(&baro),
-            Arc::clone(&mag),
-            Arc::clone(&gnss),
+    fn fresh_shared_sensors() -> SharedSensors {
+        (
+            Arc::new(Mutex::new(FakeImu::new())),
+            Arc::new(Mutex::new(FakeBaro::new())),
+            Arc::new(Mutex::new(FakeMag::new())),
+            Arc::new(Mutex::new(FakeGnss::new())),
         )
-        .unwrap();
+    }
 
-        (ctrl, imu, baro, mag, gnss)
+    /// Spawn a single-poll thread that takes ownership of `ctrl`,
+    /// locks the shared sensors briefly, and runs one `poll()`.
+    /// Returns the join handle and a count of processed commands.
+    fn spawn_one_poll(
+        mut ctrl: FaultController,
+        sensors: SharedSensors,
+        delay: Duration,
+    ) -> thread::JoinHandle<usize> {
+        thread::spawn(move || {
+            thread::sleep(delay);
+            let (imu, baro, mag, gnss) = sensors;
+            let mut imu_g = imu.lock().expect("imu lock");
+            let mut baro_g = baro.lock().expect("baro lock");
+            let mut mag_g = mag.lock().expect("mag lock");
+            let mut gnss_g = gnss.lock().expect("gnss lock");
+            ctrl.poll(&mut FaultSensors {
+                imu: &mut imu_g,
+                baro: &mut baro_g,
+                mag: &mut mag_g,
+                gnss: &mut gnss_g,
+            })
+        })
     }
 
     #[test]
     fn test_client_controller_inject_imu_fault() {
-        // Use high instance number to avoid port conflicts with parallel tests
         let instance = 80;
-        let (mut ctrl, imu, _baro, _mag, _gnss) = setup_fault_ctrl(instance);
-
-        // Create client for same instance
         let config = XilConfig::for_instance(instance);
-        let mut client = FaultClient::new(&config).unwrap();
+        let ctrl = FaultController::new(&config).expect("ctrl bind");
+        let shared = fresh_shared_sensors();
 
-        // Spawn controller poll in background thread
-        let handle = thread::spawn(move || {
-            // Give client time to send
-            thread::sleep(Duration::from_millis(10));
-            ctrl.poll()
-        });
+        let mut client = FaultClient::new(&config).expect("client bind");
 
-        // Wait for controller to start listening
+        let handle = spawn_one_poll(ctrl, shared.clone(), Duration::from_millis(10));
         thread::sleep(Duration::from_millis(5));
 
-        // Send inject command
         let ack = client.inject(SensorTarget::Imu, FaultSpec::HealthDegraded);
-        assert!(ack.is_ok());
-        let ack = ack.unwrap();
-        assert!(ack.is_ok());
+        let ack = ack.expect("inject send");
+        assert!(ack.is_ok(), "ack status: {:?}", ack.status);
 
-        // Wait for controller thread
-        let count = handle.join().unwrap();
+        let count = handle.join().expect("poll thread join");
         assert_eq!(count, 1);
 
-        // Verify fault was applied
-        assert!(imu.lock().unwrap().has_fault());
+        let (imu, _baro, _mag, _gnss) = shared;
+        assert!(imu.lock().expect("imu read").has_fault());
     }
 
     #[test]
     fn test_client_controller_clear_all() {
         let instance = 81;
-        let (mut ctrl, imu, baro, _mag, _gnss) = setup_fault_ctrl(instance);
-
-        // Pre-inject faults directly
-        imu.lock().unwrap().inject_fault(SensorFault::HealthFailed);
-        baro.lock().unwrap().inject_fault(SensorFault::NaN);
-
-        // Create client
         let config = XilConfig::for_instance(instance);
-        let mut client = FaultClient::new(&config).unwrap();
+        let ctrl = FaultController::new(&config).expect("ctrl bind");
+        let shared = fresh_shared_sensors();
 
-        // Spawn controller poll
-        let handle = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(10));
-            ctrl.poll()
-        });
+        // Pre-inject faults directly.
+        shared
+            .0
+            .lock()
+            .expect("imu pre")
+            .inject_fault(SensorFault::HealthFailed);
+        shared
+            .1
+            .lock()
+            .expect("baro pre")
+            .inject_fault(SensorFault::NaN);
 
+        let mut client = FaultClient::new(&config).expect("client bind");
+
+        let handle = spawn_one_poll(ctrl, shared.clone(), Duration::from_millis(10));
         thread::sleep(Duration::from_millis(5));
 
-        // Send clear all
-        let ack = client.clear_all();
+        let ack = client.clear_all().expect("clear_all send");
         assert!(ack.is_ok());
-        assert!(ack.unwrap().is_ok());
+        handle.join().expect("poll thread join");
 
-        handle.join().unwrap();
-
-        // Verify faults were cleared
-        assert!(!imu.lock().unwrap().has_fault());
-        assert!(!baro.lock().unwrap().has_fault());
+        assert!(!shared.0.lock().expect("imu post").has_fault());
+        assert!(!shared.1.lock().expect("baro post").has_fault());
     }
 
     #[test]
     fn test_reproducibility_same_sequence_same_result() {
-        // Test that the same fault sequence produces identical results
-        // This is critical for deterministic SITL testing
-
-        // Run the test twice with identical fault sequences
+        // Two runs, identical fault sequences, identical observable
+        // sensor states. No UDP — exercise the apply path directly.
         for run in 0..2 {
             let instance = 82 + run;
-            let (ctrl, imu, baro, mag, gnss) = setup_fault_ctrl(instance);
+            let (imu, baro, mag, gnss) = fresh_shared_sensors();
+            let _config = XilConfig::for_instance(instance);
 
-            let config = XilConfig::for_instance(instance);
-            let _client = FaultClient::new(&config).unwrap();
-
-            // Define a deterministic fault sequence
             let fault_sequence = [
                 (SensorTarget::Imu, FaultSpec::HealthDegraded),
                 (SensorTarget::Baro, FaultSpec::BiasScalar { offset: 100.0 }),
@@ -567,81 +493,98 @@ mod integration_tests {
                 (SensorTarget::Gnss, FaultSpec::HealthFailed),
             ];
 
-            // Apply faults (using direct apply to avoid UDP timing issues in test)
             for (target, fault) in &fault_sequence {
-                let result = match target {
-                    SensorTarget::Imu => ctrl.apply_imu_fault(fault),
-                    SensorTarget::Baro => ctrl.apply_baro_fault(fault),
-                    SensorTarget::Mag => ctrl.apply_mag_fault(fault),
-                    SensorTarget::Gnss => ctrl.apply_gnss_fault(fault),
+                let mut imu_g = imu.lock().expect("imu lock");
+                let mut baro_g = baro.lock().expect("baro lock");
+                let mut mag_g = mag.lock().expect("mag lock");
+                let mut gnss_g = gnss.lock().expect("gnss lock");
+                let mut sensors = FaultSensors {
+                    imu: &mut imu_g,
+                    baro: &mut baro_g,
+                    mag: &mut mag_g,
+                    gnss: &mut gnss_g,
                 };
-                assert!(result, "Failed to apply fault for {:?}", target);
+                assert!(
+                    FaultController::apply_fault(*target, fault, &mut sensors),
+                    "apply failed for {:?}",
+                    target
+                );
             }
 
-            // Verify consistent state
-            assert!(imu.lock().unwrap().has_fault());
-            assert!(baro.lock().unwrap().has_fault());
-            assert!(mag.lock().unwrap().has_fault());
-            assert!(gnss.lock().unwrap().has_fault());
+            assert!(imu.lock().expect("imu post").has_fault());
+            assert!(baro.lock().expect("baro post").has_fault());
+            assert!(mag.lock().expect("mag post").has_fault());
+            assert!(gnss.lock().expect("gnss post").has_fault());
 
-            // Clear all and verify clean state
-            ctrl.clear_all();
-            assert!(!imu.lock().unwrap().has_fault());
-            assert!(!baro.lock().unwrap().has_fault());
-            assert!(!mag.lock().unwrap().has_fault());
-            assert!(!gnss.lock().unwrap().has_fault());
+            // Clear via direct call to the helper.
+            let mut imu_g = imu.lock().expect("imu lock2");
+            let mut baro_g = baro.lock().expect("baro lock2");
+            let mut mag_g = mag.lock().expect("mag lock2");
+            let mut gnss_g = gnss.lock().expect("gnss lock2");
+            FaultController::clear_all(&mut FaultSensors {
+                imu: &mut imu_g,
+                baro: &mut baro_g,
+                mag: &mut mag_g,
+                gnss: &mut gnss_g,
+            });
+            drop((imu_g, baro_g, mag_g, gnss_g));
+
+            assert!(!imu.lock().expect("imu cleared").has_fault());
+            assert!(!baro.lock().expect("baro cleared").has_fault());
+            assert!(!mag.lock().expect("mag cleared").has_fault());
+            assert!(!gnss.lock().expect("gnss cleared").has_fault());
         }
     }
 
     #[test]
     fn test_multiple_inject_clear_cycles() {
-        // Verify fault injection is deterministic across multiple inject/clear cycles
-        let instance = 84;
-        let (ctrl, imu, _baro, _mag, _gnss) = setup_fault_ctrl(instance);
+        let mut imu = FakeImu::new();
 
         for cycle in 0..3 {
-            // Inject
-            assert!(ctrl.apply_imu_fault(&FaultSpec::HealthDegraded));
-            assert!(
-                imu.lock().unwrap().has_fault(),
-                "Cycle {}: fault should be active",
-                cycle
-            );
+            assert!(FaultController::apply_imu_fault(
+                &FaultSpec::HealthDegraded,
+                &mut imu
+            ));
+            assert!(imu.has_fault(), "cycle {} fault should be active", cycle);
 
-            // Clear
-            ctrl.clear_sensor(SensorTarget::Imu);
-            assert!(
-                !imu.lock().unwrap().has_fault(),
-                "Cycle {}: fault should be cleared",
-                cycle
-            );
+            imu.clear_faults();
+            assert!(!imu.has_fault(), "cycle {} fault should be cleared", cycle);
         }
     }
 
     #[test]
     fn test_different_fault_types_per_sensor() {
-        let instance = 85;
-        let (ctrl, imu, baro, mag, gnss) = setup_fault_ctrl(instance);
+        let mut imu = FakeImu::new();
+        let mut baro = FakeBaro::new();
+        let mut mag = FakeMag::new();
+        let mut gnss = FakeGnss::new();
 
-        // Apply different fault types to each sensor
-        assert!(ctrl.apply_imu_fault(&FaultSpec::BiasShift {
-            offset: [0.1, 0.2, 0.3]
-        }));
-        assert!(ctrl.apply_baro_fault(&FaultSpec::BiasScalar { offset: 50.0 }));
-        assert!(ctrl.apply_mag_fault(&FaultSpec::NaN));
-        assert!(ctrl.apply_gnss_fault(&FaultSpec::Dropout { cycles: 10 }));
+        assert!(FaultController::apply_imu_fault(
+            &FaultSpec::BiasShift {
+                offset: [0.1, 0.2, 0.3]
+            },
+            &mut imu
+        ));
+        assert!(FaultController::apply_baro_fault(
+            &FaultSpec::BiasScalar { offset: 50.0 },
+            &mut baro
+        ));
+        assert!(FaultController::apply_mag_fault(&FaultSpec::NaN, &mut mag));
+        assert!(FaultController::apply_gnss_fault(
+            &FaultSpec::Dropout { cycles: 10 },
+            &mut gnss
+        ));
 
-        // All should have faults
-        assert!(imu.lock().unwrap().has_fault());
-        assert!(baro.lock().unwrap().has_fault());
-        assert!(mag.lock().unwrap().has_fault());
-        assert!(gnss.lock().unwrap().has_fault());
+        assert!(imu.has_fault());
+        assert!(baro.has_fault());
+        assert!(mag.has_fault());
+        assert!(gnss.has_fault());
 
         // Clear only IMU
-        ctrl.clear_sensor(SensorTarget::Imu);
-        assert!(!imu.lock().unwrap().has_fault());
-        assert!(baro.lock().unwrap().has_fault()); // still has fault
-        assert!(mag.lock().unwrap().has_fault()); // still has fault
-        assert!(gnss.lock().unwrap().has_fault()); // still has fault
+        imu.clear_faults();
+        assert!(!imu.has_fault());
+        assert!(baro.has_fault());
+        assert!(mag.has_fault());
+        assert!(gnss.has_fault());
     }
 }

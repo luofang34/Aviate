@@ -67,6 +67,18 @@ pub struct ResolvedKernelConfig {
     /// inside `mode_config` and supersede this for normal sanitization.
     /// See DRQ-MIX-001 for the full per-mode migration.
     pub safe_output: [Normalized; MAX_ACTUATORS],
+
+    /// Per-actuator per-cycle slew limit (DRQ-FLT-001 / DRQ-MORPH-001).
+    ///
+    /// `slew_limit_per_cycle[i] > 0`: the per-cycle delta on channel
+    /// `i` is clamped to `±slew_limit_per_cycle[i]` of the previous
+    /// cycle's output. `<= 0` or non-finite: channel unconstrained
+    /// (default — preserves existing airframe behavior).
+    ///
+    /// Applies only in the normal control path; severe-fault
+    /// early-return paths (numeric error, enum corruption) bypass
+    /// this and emit the safe pattern immediately (LLR-FLT-205).
+    pub slew_limit_per_cycle: [Normalized; MAX_ACTUATORS],
 }
 // COV:EXCL_STOP
 
@@ -81,6 +93,7 @@ impl Default for ResolvedKernelConfig {
             fault_table: FaultHandlingTable::DEFAULT,
             command_timeout_ms: DEFAULT_COMMAND_TIMEOUT_MS,
             safe_output: [Normalized(0.0); MAX_ACTUATORS],
+            slew_limit_per_cycle: [Normalized(0.0); MAX_ACTUATORS],
         }
     }
 }

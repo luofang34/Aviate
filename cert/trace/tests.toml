@@ -1317,6 +1317,51 @@ output. Anchor scenario for the X-tagged verification tier.
 traces_to = ["afc40ab1-44eb-412b-b6e3-519018bd93dd"]
 
 [[tests]]
+uid = "bb9f1fbe-8425-4d86-bd76-dd07ff252e89"
+id = "TST-FLT-208"
+title = "slew_limit_tests::{positive_limit_caps_first_cycle_delta, slew_limited_output_converges_over_cycles, zero_limit_preserves_baseline_outputs}"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/slew_limit_tests.rs` drives the slew limiter
+through the full `kernel.update()` path via the public
+`ResolvedKernelConfig.slew_limit_per_cycle` surface and pins:
+(1) zero limit reproduces the unconstrained baseline exactly,
+(2) the first-cycle delta is bounded by the configured per-channel
+limit when commanded to jump from a stationary previous output,
+(3) the limited output converges to the un-slewed baseline over
+multiple cycles (no permanent authority cost). The standalone unit
+suite at `aviate-core/src/kernel/slew.rs::tests` covers the math
+in isolation; this row witnesses the wiring through the kernel
+update path that LLR-FLT-208 and LLR-MORPH-202 require.
+"""
+traces_to = ["176bf48d-1f99-4769-9dd5-c501719f71ec", "6de143ed-43fb-4011-81a9-3ccbd89b410f"]
+
+[[tests]]
+uid = "4bf83d05-581a-4573-bc52-6852efe44ed1"
+id = "TST-XIL-EST-204"
+title = "tests/missions/numeric_fault_inject.toml"
+owner = "aviate-core@aviate"
+description = """
+Mission scenario witnessing LLR-EST-204 (non-finite sample latches
+NUMERIC_ERROR) and LLR-FLT-205 (NUMERIC_ERROR latched → safe
+actuator pattern) at the integration tier. Phases: arm → takeoff →
+hover_warmup → inject IMU `nan` → hold under NaN for 3 s → clear
+faults → hover_after_recovery → land → disarm. The integration
+property is that altitude stays bounded (≤ 25 m) during the NaN
+window — if the kernel propagated NaN into position state, the
+estimator would emit NaN/garbage well outside this envelope. The
+strict unit-tier latched-flag property is verified by
+`aviate-core/tests/behavioral_tests.rs::ekf_imu_nan_isolation`;
+this scenario verifies the full fault-injection plumbing through
+aviate-hal-xil (sensor-target=imu, fault=nan, clear_faults) and
+that the kernel survives + recovers (re-arm not required —
+remains armed across the fault window).
+Execution: `cargo run -p gcs-test --features gazebo -- run --xil
+tests/missions/numeric_fault_inject.toml`.
+"""
+traces_to = ["a8a37317-dd7c-4218-b891-58066c2affb5", "ef751b33-00fb-4598-892d-2f4682b95b91"]
+
+[[tests]]
 uid = "583ba64f-e716-4258-a452-0daef5a8135f"
 id = "TST-EST-206"
 title = "ekf_gnss_dropout_bounded_dead_reckoning_drift"

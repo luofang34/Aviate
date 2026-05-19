@@ -133,6 +133,16 @@ where
         &mut self.gnss
     }
 
+    /// Disjoint mutable borrow of all four sensor drivers at once.
+    /// Rust's borrow checker rejects four sequential `.imu_mut()`
+    /// `.baro_mut()` etc. calls because each takes `&mut self`; this
+    /// method splits the borrow through a single call so the caller
+    /// can hand the refs to a sensor-bundle struct (e.g.
+    /// `FaultSensors`).
+    pub fn sensors_mut(&mut self) -> (&mut I, &mut B, &mut M, &mut G) {
+        (&mut self.imu, &mut self.baro, &mut self.mag, &mut self.gnss)
+    }
+
     /// Get a reference to the actuator driver
     pub fn actuator(&self) -> &A {
         &self.actuator

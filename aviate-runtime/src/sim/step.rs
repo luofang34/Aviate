@@ -41,6 +41,22 @@ impl SitlRunner {
         // 1. Poll transport for incoming messages
         self.transport.poll();
 
+        // 1b. Poll the fault command listener (if bound). Inbound
+        //     `FaultCommand`s are applied to the fake sensors here,
+        //     BEFORE we feed them new HIL data — so a NaN-inject
+        //     command takes effect on the very next sensor read,
+        //     not the one after.
+        if let Some(ref mut fault_ctrl) = self.fault_ctrl {
+            let (imu, baro, mag, gnss) = self.board_hal.sensors_mut();
+            let mut sensors = aviate_hal_xil::FaultSensors {
+                imu,
+                baro,
+                mag,
+                gnss,
+            };
+            fault_ctrl.poll(&mut sensors);
+        }
+
         // 2. Feed fake sensors with HIL data (via BoardHal accessors)
         //    This is the key integration point - same pattern as real HW feeding real sensors
         if let Some(sensor_data) = self.transport.take_sensor_data() {

@@ -109,10 +109,16 @@ pub fn generate_world(config: &TestConfig, params: &WorldParams) -> String {
 
 fn write_physics(sdf: &mut String, params: &WorldParams) {
     emit!(sdf, r#"    <physics name="1ms" type="ignored">"#);
-    emit!(sdf, r#"      <max_step_size>{}</max_step_size>"#,
-        params.step_size);
-    emit!(sdf, r#"      <real_time_factor>{}</real_time_factor>"#,
-        params.real_time_factor);
+    emit!(
+        sdf,
+        r#"      <max_step_size>{}</max_step_size>"#,
+        params.step_size
+    );
+    emit!(
+        sdf,
+        r#"      <real_time_factor>{}</real_time_factor>"#,
+        params.real_time_factor
+    );
     emit!(sdf, r#"    </physics>"#);
     sdf.push('\n');
 }
@@ -166,8 +172,11 @@ fn write_aviate_plugins(sdf: &mut String, config: &TestConfig, params: &WorldPar
         emit!(sdf, r#"      <instance>{}</instance>"#, vehicle.instance);
         emit!(sdf, r#"      <lockstep>{}</lockstep>"#, params.lockstep);
         if params.lockstep {
-            emit!(sdf, r#"      <lockstep_timeout_us>{}</lockstep_timeout_us>"#,
-                params.lockstep_timeout_us);
+            emit!(
+                sdf,
+                r#"      <lockstep_timeout_us>{}</lockstep_timeout_us>"#,
+                params.lockstep_timeout_us
+            );
         }
         emit!(sdf, r#"    </plugin>"#);
     }
@@ -178,11 +187,20 @@ fn write_spherical_coords(sdf: &mut String, params: &WorldParams) {
     emit!(sdf, r#"    <!-- Spherical coordinates for GPS -->"#);
     emit!(sdf, r#"    <spherical_coordinates>"#);
     emit!(sdf, r#"      <surface_model>EARTH_WGS84</surface_model>"#);
-    emit!(sdf, r#"      <world_frame_orientation>ENU</world_frame_orientation>"#);
-    emit!(sdf, r#"      <latitude_deg>{}</latitude_deg>"#,
-        params.latitude);
-    emit!(sdf, r#"      <longitude_deg>{}</longitude_deg>"#,
-        params.longitude);
+    emit!(
+        sdf,
+        r#"      <world_frame_orientation>ENU</world_frame_orientation>"#
+    );
+    emit!(
+        sdf,
+        r#"      <latitude_deg>{}</latitude_deg>"#,
+        params.latitude
+    );
+    emit!(
+        sdf,
+        r#"      <longitude_deg>{}</longitude_deg>"#,
+        params.longitude
+    );
     emit!(sdf, r#"      <elevation>{}</elevation>"#, params.elevation);
     emit!(sdf, r#"    </spherical_coordinates>"#);
     sdf.push('\n');
@@ -191,7 +209,10 @@ fn write_spherical_coords(sdf: &mut String, params: &WorldParams) {
 fn write_environment(sdf: &mut String) {
     // Magnetic field (Zurich, Switzerland)
     emit!(sdf, r#"    <!-- Magnetic field for magnetometer -->"#);
-    emit!(sdf, r#"    <magnetic_field>6.0e-6 2.3e-5 -4.2e-5</magnetic_field>"#);
+    emit!(
+        sdf,
+        r#"    <magnetic_field>6.0e-6 2.3e-5 -4.2e-5</magnetic_field>"#
+    );
     sdf.push('\n');
 
     // Sunlight
@@ -256,14 +277,29 @@ fn write_vehicle(sdf: &mut String, vehicle: &VehicleTestConfig) {
     emit!(sdf, r#"    <include>"#);
     emit!(sdf, r#"      <uri>model://{}</uri>"#, vehicle.model);
     emit!(sdf, r#"      <name>{}</name>"#, vehicle.id);
-    emit!(sdf, r#"      <pose>{} {} {} 0 0 {}</pose>"#,
-        x, y, z, heading);
+    emit!(
+        sdf,
+        r#"      <pose>{} {} {} 0 0 {}</pose>"#,
+        x,
+        y,
+        z,
+        heading
+    );
     sdf.push('\n');
     emit!(sdf, r#"      <!-- Odometry publisher -->"#);
-    emit!(sdf, r#"      <plugin filename="gz-sim-odometry-publisher-system""#);
-    emit!(sdf, r#"              name="gz::sim::systems::OdometryPublisher">"#);
+    emit!(
+        sdf,
+        r#"      <plugin filename="gz-sim-odometry-publisher-system""#
+    );
+    emit!(
+        sdf,
+        r#"              name="gz::sim::systems::OdometryPublisher">"#
+    );
     emit!(sdf, r#"        <dimensions>3</dimensions>"#);
-    emit!(sdf, r#"        <odom_publish_frequency>250</odom_publish_frequency>"#);
+    emit!(
+        sdf,
+        r#"        <odom_publish_frequency>250</odom_publish_frequency>"#
+    );
     emit!(sdf, r#"      </plugin>"#);
     emit!(sdf, r#"    </include>"#);
     sdf.push('\n');

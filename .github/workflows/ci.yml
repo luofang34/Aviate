@@ -225,6 +225,13 @@ jobs:
       - name: cargo evidence doctor
         run: cargo evidence doctor
 
+      # Blocking: structural validation of every trace TOML — dangling
+      # uids, missing covers, malformed entries, broken uid/id pairs.
+      # A trace that points to a non-existent LLR is a silent
+      # cert-evidence rot path; fail fast in CI.
+      - name: cargo evidence trace --validate
+        run: cargo evidence trace --validate
+
       # Blocking: fails if any committed floor dimension drops below
       # its recorded value. Lowering a floor requires a `Lower-Floor:`
       # justification line in the PR body / squash commit (see

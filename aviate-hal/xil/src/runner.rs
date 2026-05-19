@@ -339,6 +339,11 @@ impl MavClient {
 pub struct MissionRunner<B: SimulatorBackend> {
     backend: B,
     mav: MavClient,
+    /// Per-instance fault command UDP client. Constructed lazily; we
+    /// only need it when a mission contains `Action::InjectFault` or
+    /// `Action::ClearFaults`. Once constructed it owns its own
+    /// ephemeral receive port for ACKs.
+    fault_client: Option<crate::fault_protocol::FaultClient>,
     vehicle_id: String,
     last_step: u64,
     current_state: VehicleState,
@@ -356,6 +361,7 @@ impl<B: SimulatorBackend> MissionRunner<B> {
         Ok(Self {
             backend,
             mav,
+            fault_client: None,
             vehicle_id: vehicle_id.to_string(),
             last_step: 0,
             current_state: VehicleState::default(),
@@ -363,6 +369,28 @@ impl<B: SimulatorBackend> MissionRunner<B> {
             armed: false,
             max_altitude: 0.0,
         })
+    }
+
+    /// Lazily create or return the `FaultClient` for this instance.
+    /// Returns `None` if socket binding fails — the caller logs the
+    /// outcome and continues so a missing FaultController on the FC
+    /// side does not abort the entire mission run.
+    fn fault_client_mut(&mut self) -> Option<&mut crate::fault_protocol::FaultClient> {
+        if self.fault_client.is_none() {
+            let cfg = crate::XilConfig::for_instance(self.backend.instance());
+            match crate::fault_protocol::FaultClient::new(&cfg) {
+                Ok(c) => self.fault_client = Some(c),
+                Err(e) => {
+                    self.log(&format!(
+                        "WARN: FaultClient bind failed for instance {}: {:?}",
+                        self.backend.instance(),
+                        e
+                    ));
+                    return None;
+                }
+            }
+        }
+        self.fault_client.as_mut()
     }
 
     /// Get the vehicle ID
@@ -598,13 +626,35 @@ impl<B: SimulatorBackend> MissionRunner<B> {
                 }
             }
             Action::InjectFault { sensor, fault } => {
-                self.log(&format!(
-                    "INJECT_FAULT {:?} {:?} (not yet implemented)",
-                    sensor, fault
-                ));
+                let target = *sensor;
+                let spec = *fault;
+                if let Some(client) = self.fault_client_mut() {
+                    match client.inject(target, spec) {
+                        Ok(ack) => self.log(&format!(
+                            "INJECT_FAULT {:?} {:?} ack={:?}",
+                            target, spec, ack.status
+                        )),
+                        Err(e) => self.log_error(&format!(
+                            "INJECT_FAULT {:?} {:?} failed: {:?}",
+                            target, spec, e
+                        )),
+                    }
+                } else {
+                    self.log_error(&format!(
+                        "INJECT_FAULT {:?} {:?} skipped: FaultClient unavailable",
+                        target, spec
+                    ));
+                }
             }
             Action::ClearFaults => {
-                self.log("CLEAR_FAULTS (not yet implemented)");
+                if let Some(client) = self.fault_client_mut() {
+                    match client.clear_all() {
+                        Ok(ack) => self.log(&format!("CLEAR_FAULTS ack={:?}", ack.status)),
+                        Err(e) => self.log_error(&format!("CLEAR_FAULTS failed: {:?}", e)),
+                    }
+                } else {
+                    self.log_error("CLEAR_FAULTS skipped: FaultClient unavailable");
+                }
             }
         }
     }

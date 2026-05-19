@@ -143,6 +143,12 @@ pub struct SitlRunner {
     /// Simulator transport (SitlIO for Gazebo)
     pub transport: SitlIO,
 
+    /// Per-instance fault command listener. None when the
+    /// `xil-fault` feature path didn't bind a socket (e.g. port in
+    /// use). When Some, `step()` polls it each cycle and routes
+    /// inbound `FaultCommand`s to the BoardHal's fake sensors.
+    pub fault_ctrl: Option<aviate_hal_xil::FaultController>,
+
     /// Board HAL with fake sensors (same interface as real hardware)
     pub board_hal: SitlBoardHal,
 
@@ -184,8 +190,16 @@ impl SitlRunner {
         kernel: SitlKernel,
         default_command: Command,
     ) -> Self {
+        // Best-effort: bind the per-instance fault command port. If
+        // the bind fails (port in use, instance mismatch), continue
+        // without a fault controller — missions that don't inject
+        // faults are unaffected, and fault-injecting missions log a
+        // visible warning when the ack never arrives.
+        let cfg = transport.config().clone();
+        let fault_ctrl = aviate_hal_xil::FaultController::new(&cfg).ok();
         Self {
             transport,
+            fault_ctrl,
             board_hal,
             kernel,
             last_cmd: default_command,

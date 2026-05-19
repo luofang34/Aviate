@@ -58,7 +58,7 @@ verify = [{ type = "armed", value = true }]
 [[vehicles.mission.phases]]
 name = "inject_gnss_lost"
 duration_ms = 100
-action = { type = "inject_fault", sensor = "gnss", fault = { type = "health_failed" } }
+action = { type = "inject_fault", sensor = "gnss", fault = "health_failed" }
 verify = [{ type = "armed", value = true }]
 
 # Position drift during GNSS loss is expected behavior — the EKF

@@ -32,6 +32,10 @@ pub(super) fn canonical_hash(cfg: &ResolvedKernelConfig) -> u64 {
     for n in &cfg.safe_output {
         h.feed_f32(n.0);
     }
+    h.feed_separator();
+    for n in &cfg.slew_limit_per_cycle {
+        h.feed_f32(n.0);
+    }
     h.finish()
 }
 

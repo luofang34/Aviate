@@ -131,9 +131,9 @@ The SITL runs surface where the current control-gain tuning falls
 short of HLR thresholds. The honest disclosure lives in
 `cert/trace/derived.toml`:
 
-- **DRQ-CTL-001** (already in tree): tunable PID gains belong in
+- **DRQ-CTL-001**: tunable PID gains belong in
   `ResolvedKernelConfig`, not on the controller struct.
-- **DRQ-CTL-002** (added this PR): controller-gain tuning to meet
+- **DRQ-CTL-002**: controller-gain tuning to meet
   HLR-CTL-203's 0.3 m altitude / 0.5 m horizontal hover bounds, and
   the per-attitude min-altitude bounds in `attitude_control` /
   `position_hold` missions. Current thresholds are smoke-level —
@@ -142,15 +142,49 @@ short of HLR thresholds. The honest disclosure lives in
   pattern + cascaded gain refinement, blocked by DRQ-CTL-001
   (centralizing gains in cfg) for byte-equal cross-channel
   verification.
-- **DRQ-FLT-001** (added this PR): command-loss slew limit
-  (HLR-FLT-208) — the kernel currently switches to safe-mode
-  output in one cycle, no slew limiter between previous and new
-  actuator command. Adding the slew limiter requires a new
-  `ResolvedKernelConfig.slew_limit_per_cycle` field threaded into
-  the mixer's per-cycle write.
-- **DRQ-MORPH-001** (added this PR): geometry-state slew limit
-  (HLR-MORPH-202) — same machinery as DRQ-FLT-001 but applied to
-  airframe-morph parameter updates.
+- **DRQ-FLT-001** *(closed by per-cycle slew writer)*:
+  command-loss slew limit (HLR-FLT-208). Realized by
+  `ResolvedKernelConfig.slew_limit_per_cycle` +
+  `aviate-core/src/kernel/slew.rs::apply_slew_limit` invoked
+  between sanitization and result construction in `kernel_update.rs`.
+  Default value zero per channel preserves existing airframe
+  behavior. Witnessed by TST-FLT-208
+  (`aviate-core/tests/slew_limit_tests.rs`).
+- **DRQ-MORPH-001** *(closed by per-cycle slew writer)*:
+  geometry-state slew limit (HLR-MORPH-202). Same writer as
+  DRQ-FLT-001; the cert claim becomes binding when a morphing
+  airframe (tilt-rotor, fold-arm) ships with non-zero
+  slew_limit_per_cycle values.
+
+### Open gaps acknowledged but not yet DRQ'd
+
+The following items remain deferred. They are *not* DRQs yet
+because either the contract surface still needs design work or the
+cert-binding is contingent on an airframe variant the tree does
+not currently ship.
+
+- **Mode-morph SITL scenario** (Hover → Cruise round-trip). The
+  X500 ships with `ConfigMode::Hover` only; a mode-morph mission
+  needs either a VTOL airframe with both Hover and Cruise mode
+  configs, or a stub `Cruise` config tuned for the X500. The
+  unit-tier `LLR-MORPH-201` (ConfigMode swap atomicity) is
+  pinned by `aviate-core/tests/behavioral_tests.rs`; the
+  integrated witness lands once a multi-mode airframe is in tree.
+- **MotorFailurePlugin SITL scenario** (one motor stuck at zero
+  mid-flight). The sanitizer's authority-rebalance LLRs
+  (`LLR-MIX-203`/`LLR-MIX-204`) are pinned at the unit tier; the
+  Gazebo-level witness needs both a C++ plugin that overrides one
+  rotor's commanded speed mid-mission AND a controller whose
+  closed-loop authority can compensate at hover. The second part
+  is blocked by DRQ-CTL-002 (controller tuning) — until the
+  controller can hold steady-state hover, a stuck motor will
+  simply crash the vehicle, masking whether the rebalance fired.
+- **MCDC coverage gate**. The DO-178C decision-coverage tool
+  (cargo-mutants or a custom MCDC walker) is not yet wired into
+  CI. Branch coverage at 100% (the current gate) is a strict
+  subset of MCDC and over-counts compound conditions as covered.
+  This is a DAL-A concern; for the DAL-B target it is a stretch
+  item, not a blocker.
 
 ## What this plan does and does not assert
 

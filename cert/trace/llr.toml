@@ -1860,7 +1860,7 @@ configured per-actuator slew limit. There SHALL NOT be a
 discontinuous step toward the safe pattern.
 """
 verification_methods = ["test"]
-modules = ["aviate-core/src/kernel_update.rs", "aviate-core/src/mixer.rs"]
+modules = ["aviate-core/src/kernel_update.rs", "aviate-core/src/kernel/slew.rs"]
 derived = false
 traces_to = ["48f7c065-7176-44b1-b6e8-77ae93d4f7ef"]
 
@@ -1910,7 +1910,7 @@ present a discontinuous actuator command spike attributable to the
 geometry change alone (input signal changes excluded).
 """
 verification_methods = ["test"]
-modules = ["aviate-core/src/mixer.rs"]
+modules = ["aviate-core/src/kernel_update.rs", "aviate-core/src/kernel/slew.rs"]
 derived = false
 traces_to = ["ef464858-6ca8-452e-959e-089c4e194a69"]
 

@@ -483,6 +483,13 @@ impl SitlIO {
     pub fn gcs_addr(&self) -> Option<std::net::SocketAddr> {
         self.gcs_addr
     }
+
+    /// Borrow the underlying network/instance configuration. Used by
+    /// the SitlRunner to spin up auxiliary listeners (fault command,
+    /// etc.) on the same instance number.
+    pub fn config(&self) -> &XilConfig {
+        &self.config
+    }
 }
 
 // Implement SystemHal - timing and system functions

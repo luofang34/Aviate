@@ -8,8 +8,13 @@ description = "Control loop, task scheduling, and wiring for Aviate apps"
 [features]
 # Exactly ONE of these must be chosen (enforced by compile_error! in lib.rs)
 env-flight = []                                      # Real hardware (DO-178C clean, NO sim code)
-env-sitl = ["dep:aviate-hal-xil", "dep:aviate-config", "aviate-link/config"]  # Software-in-the-loop simulation
-env-hitl = ["dep:aviate-hal-xil", "dep:aviate-config", "aviate-link/config"]  # Hardware-in-the-loop simulation
+# env-sitl/env-hitl chain the `xil-fault` feature on `aviate-hal-xil` so
+# the `FaultController` and `FakeSensor::inject_fault` paths are
+# active. SITL builds with this feature off would still construct the
+# fault controller, but every inbound `FaultCommand` would return
+# `AckStatus::NotEnabled` — useless for fault-injection missions.
+env-sitl = ["dep:aviate-hal-xil", "aviate-hal-xil/xil-fault", "dep:aviate-config", "aviate-link/config"]
+env-hitl = ["dep:aviate-hal-xil", "aviate-hal-xil/xil-fault", "dep:aviate-config", "aviate-link/config"]
 default = []                                         # Force explicit choice
 
 [dependencies]
