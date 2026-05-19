@@ -14,9 +14,8 @@ members = [
     "aviate-security",
     "aviate-boards/*",
     # SITL apps only - flight apps have separate workspaces (different target).
-    # sitl-gazebo-x500 was removed in 0b63a22; the gz-based flow now lives
-    # behind gcs-test's `gazebo` feature + the gz plugin alone.
     "aviate-apps/sitl-jmavsim-generic-quad-x",
+    "aviate-apps/sitl-gazebo-x500",
 
     "tests/lint-verification",
     "tests/gcs-test",

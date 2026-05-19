@@ -57,4 +57,6 @@ aviate-chips/stm32h743/IWDG.md
 
 # App folders (local development)
 aviate-apps/*/
+!aviate-apps/sitl-jmavsim-generic-quad-x/
+!aviate-apps/sitl-gazebo-x500/
 /aviate-hal/xil/backends/gz/plugin/build/

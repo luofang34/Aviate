@@ -226,6 +226,12 @@ void AviateGzPlugin::PostUpdate(
 
 bool AviateGzPlugin::InitSharedMemory()
 {
+    // Always unlink any prior shm segment first. macOS disallows
+    // ftruncate on an existing POSIX shm object — stale state from a
+    // previous run fails the resize below with EINVAL. ENOENT is
+    // benign (no prior segment).
+    (void) shm_unlink(shmName_.c_str());
+
     // Create shared memory object using instance-specific name
     shmFd_ = shm_open(shmName_.c_str(), O_CREAT | O_RDWR, 0666);
     if (shmFd_ == -1) {

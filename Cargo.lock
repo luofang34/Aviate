@@ -115,6 +115,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "aviate-app-sitl-gazebo-x500"
+version = "0.0.0"
+dependencies = [
+ "aviate-airframe-multirotor",
+ "aviate-backend-gz",
+ "aviate-board-sitl-gazebo",
+ "aviate-hal-xil",
+ "env_logger",
+ "log",
+]
+
+[[package]]
 name = "aviate-app-sitl-jmavsim-generic-quad-x"
 version = "0.0.0"
 dependencies = [

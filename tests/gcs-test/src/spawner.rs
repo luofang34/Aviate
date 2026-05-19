@@ -308,30 +308,54 @@ fn launch_gazebo(world_path: &Path, headless: bool) -> Result<Child, std::io::Er
         cmd.env("LD_LIBRARY_PATH", gz_plugin_path);
     }
 
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
+    cmd.stdout(Stdio::inherit());
+    cmd.stderr(Stdio::inherit());
 
     cmd.spawn()
 }
 
-/// Clean up Gazebo processes and shared memory
+/// Clean up Gazebo processes and shared memory. `/dev/shm/...` only
+/// exists on Linux — on macOS `shm_open` is virtual, so there's
+/// nothing to unlink from the filesystem.
 fn cleanup_gazebo() {
     let _ = Command::new("pkill").args(["-9", "-f", "gz sim"]).status();
-    let _ = std::fs::remove_file("/dev/shm/aviate_gz_bridge");
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::fs::remove_file("/dev/shm/aviate_gz_bridge");
+    }
     std::thread::sleep(Duration::from_millis(500));
 }
 
-/// Wait for Gazebo shared memory to be ready
+/// Wait for Gazebo shared memory to be ready.
+///
+/// On Linux POSIX shm is backed by a `/dev/shm/<name>` path, so we
+/// can poll its existence. macOS has no such mirror — `shm_open()`
+/// returns a virtual fd with no filesystem trace — so the only
+/// signal we have is the gz-sim process being alive. Sleep a fixed
+/// startup quantum and let the FC binary handle its own retry loop
+/// (`GzPluginBridge::connect_with_retry`) once it starts.
 fn wait_for_shm(timeout: Duration) -> bool {
-    let shm_path = Path::new("/dev/shm/aviate_gz_bridge");
-    let start = Instant::now();
-
-    while start.elapsed() < timeout {
-        if shm_path.exists() {
-            return true;
+    #[cfg(target_os = "linux")]
+    {
+        let shm_path = Path::new("/dev/shm/aviate_gz_bridge");
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            if shm_path.exists() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(250));
         }
-        std::thread::sleep(Duration::from_millis(250));
+        false
     }
-
-    false
+    #[cfg(not(target_os = "linux"))]
+    {
+        // macOS / non-Linux: no /dev/shm. Cap the wait to the smaller
+        // of the caller's timeout and a 3 s startup quantum, then
+        // return true unconditionally — the FC binary will retry its
+        // shm_open and surface a clearer error if the plugin is
+        // genuinely not running.
+        let warmup = Duration::from_secs(3).min(timeout);
+        std::thread::sleep(warmup);
+        true
+    }
 }

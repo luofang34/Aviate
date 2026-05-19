@@ -4,12 +4,24 @@ project(aviate_gz_plugin VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Force Homebrew's protobuf to win the include race against any other
+# protobuf in the system path (anaconda, /usr/local, ...). gz-msgs10
+# is generated against /opt/homebrew's protobuf 6.33.1; using anyone
+# else's headers fires `PROTOBUF_VERSION != 6033001` and the build
+# tanks early. The `BEFORE SYSTEM` placement makes this the first
+# include path scanned even when anaconda is in PATH.
+if(APPLE)
+    include_directories(BEFORE SYSTEM /opt/homebrew/include)
+endif()
+
 # Find Gazebo Harmonic (gz-sim8)
 find_package(gz-sim8 REQUIRED)
 find_package(gz-plugin2 REQUIRED COMPONENTS register)
 find_package(gz-common5 REQUIRED)
 find_package(gz-transport13 REQUIRED)
 find_package(gz-msgs10 REQUIRED)
+find_package(Protobuf REQUIRED)
+find_package(absl REQUIRED COMPONENTS log_internal_check_op)
 
 # Get GZ include/lib directories
 set(GZ_SIM_VER ${gz-sim8_VERSION_MAJOR})
@@ -27,6 +39,8 @@ target_link_libraries(AviateGzPlugin
     gz-plugin2::register
     gz-transport13::gz-transport13
     gz-msgs10::gz-msgs10
+    protobuf::libprotobuf
+    absl::log_internal_check_op
 )
 
 target_include_directories(AviateGzPlugin PRIVATE
@@ -50,6 +64,8 @@ target_link_libraries(MotorFailurePlugin
     gz-plugin2::register
     gz-transport13::gz-transport13
     gz-msgs10::gz-msgs10
+    protobuf::libprotobuf
+    absl::log_internal_check_op
 )
 
 target_include_directories(MotorFailurePlugin PRIVATE
@@ -71,10 +87,11 @@ target_include_directories(aviate_gz_bridge PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-# Link against rt for shared memory (shm_open)
-target_link_libraries(aviate_gz_bridge
-    rt
-)
+# Link against rt for shared memory (shm_open) — Linux only;
+# macOS folds POSIX RT into libSystem so the linker can't find -lrt.
+if(NOT APPLE)
+    target_link_libraries(aviate_gz_bridge rt)
+endif()
 
 # Also create static library for easier Rust linking
 add_library(aviate_gz_bridge_static STATIC
@@ -85,9 +102,9 @@ target_include_directories(aviate_gz_bridge_static PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(aviate_gz_bridge_static
-    rt
-)
+if(NOT APPLE)
+    target_link_libraries(aviate_gz_bridge_static rt)
+endif()
 
 # Install bridge library and headers
 install(TARGETS aviate_gz_bridge aviate_gz_bridge_static
