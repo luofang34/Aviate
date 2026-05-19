@@ -3,6 +3,13 @@
 //! Generates Gazebo SDF world files from test configuration parameters.
 //! This allows tests to define vehicles and world settings in TOML,
 //! and have the world file generated automatically at runtime.
+//!
+//! `writeln!(&mut s, ...)` where `s: String` returns `fmt::Result`
+//! but cannot fail (the underlying writer is `String::push_str`),
+//! so the file uses an `#[allow(clippy::unwrap_used)]` override
+//! rather than threading `?` through every line of SDF emission.
+
+#![allow(clippy::unwrap_used)]
 
 use std::fmt::Write as FmtWrite;
 use std::fs;

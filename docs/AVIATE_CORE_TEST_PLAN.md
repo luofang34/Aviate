@@ -10,7 +10,7 @@ The plan has three verification tiers:
 |---|---|---|---|
 | **U** — unit / integration | `cargo test -p aviate-core` | Cycle-level kernel behavior with synthetic dynamics. Deterministic, bit-repeatable. | Logical contracts (NaN latch, atomic mode swap, pre-arm gates, encoding stability). |
 | **X** — XIL / SITL mission | `cargo run -p gcs-test --features gazebo -- run --xil tests/missions/<name>.toml` | End-to-end FC ↔ gz-sim loop with real x500 physics, MAVLink over UDP, shared-memory bridge. | Integration health (the kernel actually arms in flight, motors actually drive lift, EKF converges against gz sensor noise). |
-| **DRQ** — derived | `cert/trace/derived.toml` | Documented gap between an HLR's target threshold and what the implementation achieves today. | Honest disclosure when a contract is structurally provable but the *numeric* threshold needs controller-gain tuning to meet. |
+| **DRQ** — derived | `cert/trace/derived.toml` | Documented gap between an HLR's target threshold and what the implementation achieves. | Honest disclosure when a contract is structurally provable but the *numeric* threshold needs controller-gain tuning to meet. |
 
 ## Verification matrix
 
@@ -28,7 +28,7 @@ artifact that witnesses it.
 | `HLR-CTL-201` | Rate-loop steady-state tracking | U | `multirotor_controller_tests` + `control_rate` + `control_attitude` suites | PASS |
 | `HLR-CTL-202` | Attitude step response (overshoot, settle) | U + X (smoke) + DRQ | `control_rate.rs` shape tests + `tests/missions/attitude_control.toml` + DRQ-CTL-002 | PASS smoke; cert-grade DRQ |
 | `HLR-CTL-203` | Hover hold within bounds | X (smoke) + DRQ | `tests/missions/hover_stability.toml` + DRQ-CTL-002 | PASS smoke; cert-grade DRQ |
-| `HLR-CTL-204` | Authority-envelope clamping | U | `control_envelope` suite (~20 tests) | PASS |
+| `HLR-CTL-204` | Authority-envelope clamping | U | `control_envelope` suite | PASS |
 | `HLR-MIX-201` | Bounded actuator outputs [0, 1] | U | `mixer_tests::test_quad_mixer_saturation` | PASS |
 | `HLR-MIX-202` | QuadX bit-symmetric hover | U | `mixer_tests::test_quad_mixer_hover` | PASS |
 | `HLR-MIX-203` | Sanitizer same-cycle fallback substitution | U | `mixer_tests::test_sanitizer_last_good_fallback` + critical-failure test | PASS |
@@ -39,11 +39,11 @@ artifact that witnesses it.
 | `HLR-FLT-205` | NUMERIC_ERROR inhibits update output | U | `behavioral_tests::numeric_fault_latched_inhibits_actuator_output` | PASS |
 | `HLR-FLT-206` | `ground_reset()` is the only clear path | U | 3× `kernel::test_ground_reset_*` | PASS |
 | `HLR-FLT-207` | Command-age clears `COMMAND_RECENT` | U | `kernel::update_command_age_gates_command_recent_flag` | PASS |
-| `HLR-FLT-208` | Command-loss safe slew limit | DRQ | DRQ-FLT-001 (slew-limit not implemented today) | DEFERRED |
+| `HLR-FLT-208` | Command-loss safe slew limit | DRQ | DRQ-FLT-001 (slew-limit unimplemented) | DEFERRED |
 | `HLR-FLT-209` | Command-recovery re-engages active law | U | `update_command_age_gates_command_recent_flag` (boundary case) | PASS |
 | `HLR-MORPH-201` | Atomic ConfigMode swap | U | `behavioral_tests::config_mode_request_atomicity_under_pre_conditions` | PASS |
-| `HLR-MORPH-202` | GeometryState slew-limited delta | DRQ | DRQ-MORPH-001 (geometry slew not implemented today) | DEFERRED |
-| `HLR-INIT-201` | Bit-deterministic cold-start replay | U | `replicable_tests` (20 tests) | PASS |
+| `HLR-MORPH-202` | GeometryState slew-limited delta | DRQ | DRQ-MORPH-001 (geometry slew unimplemented) | DEFERRED |
+| `HLR-INIT-201` | Bit-deterministic cold-start replay | U | `replicable_tests` | PASS |
 | `HLR-INIT-202` | Pre-arm gates individually testable | U | Same 7 `kernel::kernel_arm_fails_*` tests as HLR-FLT-203 | PASS |
 
 ## Tier U — unit / integration tests
@@ -117,11 +117,12 @@ short of HLR thresholds. The honest disclosure lives in
 - **DRQ-CTL-002** (added this PR): controller-gain tuning to meet
   HLR-CTL-203's 0.3 m altitude / 0.5 m horizontal hover bounds, and
   the per-attitude min-altitude bounds in `attitude_control` /
-  `position_hold` missions. Today's bounds are smoke-level — the
-  SITL verifies integration health, not flight quality. Tuning
-  passes target hardware-style hover trim + per-mode safe pattern
-  + cascaded gain refinement, blocked by DRQ-CTL-001 (centralizing
-  gains in cfg) for byte-equal cross-channel verification.
+  `position_hold` missions. Current thresholds are smoke-level —
+  the SITL verifies integration health, not flight quality.
+  Tuning passes target hardware-style hover trim + per-mode safe
+  pattern + cascaded gain refinement, blocked by DRQ-CTL-001
+  (centralizing gains in cfg) for byte-equal cross-channel
+  verification.
 - **DRQ-FLT-001** (added this PR): command-loss slew limit
   (HLR-FLT-208) — the kernel currently switches to safe-mode
   output in one cycle, no slew limiter between previous and new
@@ -145,7 +146,7 @@ short of HLR thresholds. The honest disclosure lives in
 
 **Does not assert:**
 - That the current controller gains meet cert-grade flight quality.
-  Cert-grade thresholds are tracked as DRQs; the SITL passes today
+  Cert-grade thresholds are tracked as DRQs; the SITL passes here
   prove integration health, not control quality.
 - That the kernel meets DO-178C Level B without further evidence
   beyond this trace tree. Coverage analysis, formal review, and

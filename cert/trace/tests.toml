@@ -1045,8 +1045,8 @@ description = """
 Four representative tests in `aviate-core/tests/control_envelope.rs`
 cover envelope clamping across altitude, rate, attitude, and
 multi-axis cases. Witness LLR-CTL-204 (envelope clamp before
-mixer). The full control_envelope.rs suite (~20 tests) cross-
-covers the same LLR through related boundary cases.
+mixer). The full control_envelope.rs suite cross-covers the same
+LLR through related boundary cases.
 """
 traces_to = ["33539bff-8bb8-408e-9e8e-370d8b0fd6a3"]
 

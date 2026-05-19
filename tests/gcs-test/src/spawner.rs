@@ -104,10 +104,12 @@ impl GazeboSpawner {
     pub fn cleanup(&mut self) {
         if let Some(ref mut child) = self.child {
             let _ = child.kill();
+            // Give SIGKILL a moment to land before unlinking shm.
+            std::thread::sleep(Duration::from_millis(200));
         }
         self.child = None;
 
-        cleanup_gazebo();
+        cleanup_gazebo_shm();
     }
 }
 
@@ -316,16 +318,21 @@ fn launch_gazebo(world_path: &Path, headless: bool) -> Result<Child, std::io::Er
     cmd.spawn()
 }
 
-/// Clean up Gazebo processes and shared memory. `/dev/shm/...` only
-/// exists on Linux — on macOS `shm_open` is virtual, so there's
-/// nothing to unlink from the filesystem.
-fn cleanup_gazebo() {
-    let _ = Command::new("pkill").args(["-9", "-f", "gz sim"]).status();
+/// Clean up only the Linux shm mirror file (no broad `pkill`).
+///
+/// `cleanup` already kills the `Child` it spawned by PID; nuking
+/// every `gz sim` on the host was hostile to parallel CI runs and
+/// to developers running a separate Gazebo session. `/dev/shm/...`
+/// only exists on Linux — on macOS POSIX shm is virtual.
+///
+/// If `cleanup` is called on a never-spawned spawner (or
+/// best-effort recovery from a previous run), there's nothing to
+/// kill and the shm mirror file is the only thing worth touching.
+fn cleanup_gazebo_shm() {
     #[cfg(target_os = "linux")]
     {
         let _ = std::fs::remove_file("/dev/shm/aviate_gz_bridge");
     }
-    std::thread::sleep(Duration::from_millis(500));
 }
 
 /// Wait for Gazebo shared memory to be ready.

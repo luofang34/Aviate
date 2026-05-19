@@ -109,19 +109,19 @@ Estimated final count: 40–50 new LLRs.
 
 | HLR cluster | Existing test that likely covers it | Gap to close |
 |---|---|---|
-| Estimation (201, 204) | `aviate-core/tests/ekf_tests.rs` (43 fns) | Confirm NaN-latch test exists; add cold-start convergence assertion |
+| Estimation (201, 204) | `aviate-core/tests/ekf_tests.rs` | Confirm NaN-latch test exists; add cold-start convergence assertion |
 | Estimation (202, 203, 205) | none direct | Needs XIL — Gazebo scenarios |
 | Stabilization (201, 202, 204) | `control_attitude.rs`, `control_rate.rs`, `control_envelope.rs` | Add closed-loop step-response harness with kinematic model |
 | Stabilization (203) | none direct | XIL primary; U via kinematic surrogate optional |
-| Mixing (201–203) | `mixer_tests.rs` (24 fns) | Verify symmetry test exists; otherwise add |
-| Faults (201–204) | `kernel.rs` (114 fns), `fault.rs` | Add command-timeout, NaN-mid-hover, disarm-with-nonzero-cmd tests |
+| Mixing (201–203) | `mixer_tests.rs` | Verify symmetry test exists; otherwise add |
+| Faults (201–204) | `kernel.rs`, `fault.rs` | Add command-timeout, NaN-mid-hover, disarm-with-nonzero-cmd tests |
 | Morph (201, 202) | none obvious | Add atomic-transition + slew-limit tests |
 | Init (201) | none direct | Add bit-replay determinism harness |
 | Init (202) | `kernel.rs` arm path | Verify each pre-arm clause is asserted individually |
 
 ## 5. Gazebo SITL restoration (prerequisite for every X row)
 
-Verified state today:
+State of the gz-sim plugin tree at the time the draft was authored:
 - `external/PX4-gazebo-models` submodule is registered but uninitialized
   (`-947f75b…` in `git submodule status`).
 - C++ plugin source IS present at `aviate-hal/xil/backends/gz/plugin/`

@@ -156,14 +156,15 @@ The current SITL runs (`tests/missions/{hover_stability,position_hold,
 attitude_control}.toml`) use **integration-smoke thresholds** — the
 vehicle takes off (~0.5 m to 6 m, run-dependent), motors fire, EKF
 converges against gz-sim sensor noise, MAVLink command path works
-end-to-end. The cert-grade bounds are not met today.
+end-to-end. The cert-grade bounds are not met by the current
+gain set.
 
 Root cause: `MultirotorController`'s P-only gains are hardcoded
 constants tuned for the historical airframe model, not the X500
 mass/inertia/motor parameters in PX4-gazebo-models. The attitude
 loop saturates two motors in some run-to-run conditions when
 sensor synthesis introduces small frame-convention errors, and the
-position loop drifts because there's no integral-action term.
+position loop drifts because there is no integral-action term.
 
 Closing this DRQ requires:
   1. Reading the actual hover-thrust trim point for the X500
@@ -183,10 +184,10 @@ against deterministic kinematic surrogates.
 """
 rationale = """
 Surfacing the gap explicitly so a downstream auditor reading the
-test plan and seeing "Result: PASS" doesn't conclude the kernel
+test plan and seeing "Result: PASS" does not conclude the kernel
 meets cert-grade flight quality — only smoke-level integration
-health is asserted by the X-tier today. The U-tier unit tests are
-the load-bearing evidence for the LLR-level claims; SITL is the
+health is asserted by the X-tier. The U-tier unit tests are the
+load-bearing evidence for the LLR-level claims; SITL is the
 integrated witness, deliberately loose because cert-grade
 tightening is the next ratchet, not the structural contract.
 """
@@ -202,10 +203,10 @@ HLR-FLT-204 / LLR-FLT-208 require that when the kernel switches
 to the command-loss-safe mode (due to `command_age_ms >=
 command_timeout_ms`), the actuator command delta between the cycle
 before the switch and the cycle of the switch respects a
-configured per-actuator slew limit. The kernel today switches the
-output set point in one cycle without a slew-limited transition;
-the abrupt change is bounded by the safe pattern's own values but
-not by a rate-of-change limiter.
+configured per-actuator slew limit. The kernel currently switches
+the output set point in one cycle without a slew-limited
+transition; the abrupt change is bounded by the safe pattern's
+own values but not by a rate-of-change limiter.
 
 Closing this requires:
   1. A new `ResolvedKernelConfig.slew_limit_per_cycle:
@@ -239,8 +240,8 @@ HLR-MORPH-202 / LLR-MORPH-202 require that when `GeometryState`
 (continuous airframe-morph parameter — tilt-rotor angle,
 fold-arm position) updates by some `dGeom`, the resulting
 per-actuator command delta SHALL respect the configured slew
-limit. The kernel today reads `GeometryState` as a parameter into
-the mixer with no inter-cycle smoothing — a step change in
+limit. The kernel currently reads `GeometryState` as a parameter
+into the mixer with no inter-cycle smoothing — a step change in
 `GeometryState` produces an immediate step in mixer output.
 
 Same closing path as DRQ-FLT-001: a `ResolvedKernelConfig.
@@ -249,13 +250,13 @@ mixer's per-cycle output. Once DRQ-FLT-001 lands, this is a
 parameter-not-event question and can close immediately.
 """
 rationale = """
-Today's airframes (`aviate-airframe-multirotor`,
+Current airframes (`aviate-airframe-multirotor`,
 `aviate-airframe-fixed-wing`) hold a fixed `GeometryState` for the
 duration of flight, so the contract is vacuously satisfied. The
 contract becomes binding for tilt-rotor / fold-arm /
-transformable airframes in a future PR — at which point the slew
-limiter must already be in place. Capturing the DRQ now keeps the
-HLR honest: the property is currently a non-event, not a verified
-event.
+transformable airframes — at which point the slew limiter must
+already be in place. Capturing the DRQ here keeps the HLR honest:
+the property is a non-event under existing airframes, not a
+verified event.
 """
 safety_impact = "low"

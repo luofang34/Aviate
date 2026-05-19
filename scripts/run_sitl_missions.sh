@@ -5,12 +5,17 @@
 # falls below the reliability bar (default: 2/3 minimum).
 #
 # Used by hand for local stability verification, and by CI as
-# the integration-tier gate paired with `cargo test --workspace`.
+# the integration-tier gate paired with
+#   `cargo test --workspace --features test-hooks`.
 #
 # Usage:
 #   ./scripts/run_sitl_missions.sh              # 3 runs each, default
 #   RUNS_PER_MISSION=5 ./scripts/run_sitl_missions.sh
-#   PASS_THRESHOLD=2/5 ./scripts/run_sitl_missions.sh
+#
+# Companion U-tier invocation (run first to surface logic failures
+# before paying the SITL setup cost):
+#   cargo test --workspace
+#   cargo test -p aviate-core --test behavioral_tests --features test-hooks
 
 set -euo pipefail
 
@@ -35,12 +40,16 @@ for mission in "${MISSIONS[@]}"; do
     pass=0
     fail=0
     for ((r = 1; r <= RUNS_PER_MISSION; r++)); do
+        # gcs-test exits non-zero when a mission fails; that's
+        # expected here, so disable `set -e` for the run.
+        set +e
         result=$(
             timeout 60 cargo run --quiet -p gcs-test --features gazebo -- \
                 run --xil "${MISSIONS_DIR}/${mission}.toml" 2>&1 \
                 | grep "^Result:" \
                 | tail -1
         )
+        set -e
         if [[ "${result}" == "Result: PASS" ]]; then
             pass=$((pass + 1))
             echo "  run ${r}: PASS"

@@ -80,9 +80,14 @@ fn main() -> std::io::Result<()> {
             //    world frame, then project gravity through the body
             //    attitude. The kernel sees a "perfect IMU" — no noise,
             //    no bias.
+            //
+            // Capture `time_us` BEFORE `last_state = Some(state)` so
+            // the sequence does not silently break if a future
+            // `AviateModelState` field becomes non-Copy.
             let packet = synthesize_packet(&state, last_state.as_ref(), last_t_us);
+            let state_time_us = state.time_us;
             last_state = Some(state);
-            last_t_us = state.time_us;
+            last_t_us = state_time_us;
 
             board.transport_mut().feed_sensor_packet(&packet);
         }
@@ -212,19 +217,33 @@ fn synthesize_packet(
     }
 }
 
-/// Convert an ENU quaternion `[w, x, y, z]` to NED. ENU↔NED is a
-/// 180° rotation about the (Easting + Northing) bisector — equivalently,
-/// `(roll, pitch, yaw)` in ENU equals `(roll, -pitch, -yaw + π/2)` in
-/// NED. For quaternion math the cleanest equivalent is to apply
-/// `q_ned = q_enu_to_ned * q_enu * q_enu_to_ned⁻¹`, but the constant
-/// rotation simplifies to the swap below.
+/// Convert an ENU attitude quaternion `[w, x, y, z]` to its NED
+/// equivalent. Both encode the rotation from body to world; only the
+/// world frame differs.
+///
+/// The change-of-basis matrix from ENU to NED is `[[0,1,0],[1,0,0],
+/// [0,0,-1]]` (swap X/Y, flip Z). Det = +1, so it is a proper
+/// rotation by 180° about the unit axis `(1, 1, 0)/√2`. The
+/// corresponding rotor is `q_NED_ENU = (0, 1/√2, 1/√2, 0)`.
+///
+/// `q_NED_body = q_NED_ENU · q_ENU_body` — left-multiply the input
+/// quaternion. Closed form derived by expanding the Hamilton
+/// product with `q_NED_ENU` fixed at `(0, s, s, 0)` where
+/// `s = 1/√2`:
+///
+/// ```text
+///   w_out = -s·(x_in + y_in)
+///   x_out =  s·(w_in + z_in)
+///   y_out =  s·(w_in − z_in)
+///   z_out =  s·(y_in − x_in)
+/// ```
+///
+/// See `tests::enu_quat_to_ned_*` for round-trip and brute-force
+/// verification.
 fn enu_quat_to_ned(q_enu: [f32; 4]) -> [f32; 4] {
     let [w, x, y, z] = q_enu;
-    // ENU→NED is roll→roll, pitch→-pitch, yaw→-yaw + π/2. In quaternion
-    // form: pre-multiply by qz=cos(π/4)+ksin(π/4) and conjugate y/z.
-    // Closed-form result:
     let s = core::f32::consts::FRAC_1_SQRT_2;
-    [s * (w + z), s * (x + y), s * (-x + y), s * (w - z)]
+    [-s * (x + y), s * (w + z), s * (w - z), s * (y - x)]
 }
 
 /// Rotate a world-frame vector into body frame via the inverse of `q`.
@@ -255,4 +274,242 @@ fn isa_pressure(altitude_msl_m: f32) -> f32 {
     let l = 0.0065_f32;
     let exponent = 5.2561_f32;
     ISA_P0_PA * (1.0 - l * altitude_msl_m / t0).powf(exponent)
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests for the rotation helpers. The math is load-bearing for
+// every synthesized IMU sample fed into the kernel — a sign error
+// here would produce a vehicle that flies but with a subtly-wrong
+// attitude estimate the kernel can't tell from real physics.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    const TOL: f32 = 1e-5;
+
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() <= TOL
+    }
+    fn vec_close(a: [f32; 3], b: [f32; 3]) -> bool {
+        close(a[0], b[0]) && close(a[1], b[1]) && close(a[2], b[2])
+    }
+    fn quat_close(a: [f32; 4], b: [f32; 4]) -> bool {
+        // Quaternions q and -q represent the same rotation; accept
+        // either sign by checking both.
+        let same = close(a[0], b[0]) && close(a[1], b[1]) && close(a[2], b[2]) && close(a[3], b[3]);
+        let neg = close(a[0], -b[0])
+            && close(a[1], -b[1])
+            && close(a[2], -b[2])
+            && close(a[3], -b[3]);
+        same || neg
+    }
+    fn quat_norm(q: [f32; 4]) -> f32 {
+        (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt()
+    }
+
+    /// Reference brute-force ENU-vector to NED-vector swap, used to
+    /// independently derive the expected quaternion behavior.
+    fn enu_vec_to_ned(v: [f32; 3]) -> [f32; 3] {
+        // E-N-U → N-E-D: swap X/Y, negate Z.
+        [v[1], v[0], -v[2]]
+    }
+
+    /// Brute-force body→world DCM from a quaternion `[w, x, y, z]`,
+    /// computed via the standard formula. Used to cross-check the
+    /// closed-form `rotate_world_to_body` (which applies the
+    /// transpose / conjugate).
+    fn dcm_world_from_body(q: [f32; 4]) -> [[f32; 3]; 3] {
+        let [w, x, y, z] = q;
+        [
+            [
+                1.0 - 2.0 * (y * y + z * z),
+                2.0 * (x * y - w * z),
+                2.0 * (x * z + w * y),
+            ],
+            [
+                2.0 * (x * y + w * z),
+                1.0 - 2.0 * (x * x + z * z),
+                2.0 * (y * z - w * x),
+            ],
+            [
+                2.0 * (x * z - w * y),
+                2.0 * (y * z + w * x),
+                1.0 - 2.0 * (x * x + y * y),
+            ],
+        ]
+    }
+
+    // --- enu_quat_to_ned ----------------------------------------------------
+
+    #[test]
+    fn enu_quat_to_ned_preserves_unit_norm() {
+        // Pick a handful of unit quaternions; converted result must
+        // stay unit-norm (within float tolerance).
+        let cases: &[[f32; 4]] = &[
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+            [0.5, 0.5, 0.5, 0.5],
+            [0.6, 0.0, 0.8, 0.0],
+        ];
+        for &q in cases {
+            let out = enu_quat_to_ned(q);
+            assert!(
+                (quat_norm(out) - 1.0).abs() < 1e-4,
+                "non-unit norm {:?} -> {:?} (|q|={})",
+                q,
+                out,
+                quat_norm(out)
+            );
+        }
+    }
+
+    #[test]
+    fn enu_quat_to_ned_identity_input_matches_closed_form() {
+        // q_enu = identity means body axes are aligned with ENU
+        // axes (body-X = East, body-Y = North, body-Z = Up). In NED,
+        // those body axes point along NED-Y, NED-X, NED-(-Z) — a
+        // 180° rotation about (1, 1, 0)/√2, which is the rotor
+        // `q_NED_ENU = (0, 1/√2, 1/√2, 0)`. The closed form must
+        // return exactly that rotor.
+        let s = core::f32::consts::FRAC_1_SQRT_2;
+        let expected = [0.0, s, s, 0.0];
+        let got = enu_quat_to_ned([1.0, 0.0, 0.0, 0.0]);
+        assert!(quat_close(got, expected), "identity ENU: got {:?}", got);
+    }
+
+    #[test]
+    fn enu_quat_to_ned_rotates_x_into_swap() {
+        // q_enu = [0, 1, 0, 0] is a 180° rotation about ENU-X (East).
+        // Apply the body→world DCM under both q_enu (in ENU world)
+        // and q_ned (in NED world) to a body-frame vector, then
+        // swap-and-flip the ENU result. Both representations should
+        // describe the same physical rotation.
+        let q_enu = [0.0, 1.0, 0.0, 0.0];
+        let q_ned = enu_quat_to_ned(q_enu);
+        assert!(
+            (quat_norm(q_ned) - 1.0).abs() < 1e-4,
+            "non-unit norm {:?}",
+            q_ned
+        );
+
+        let body_vec = [0.7_f32, -0.2, 0.5];
+        // World vector under q_enu rotation (ENU frame).
+        let dcm_enu = dcm_world_from_body(q_enu);
+        let world_enu = [
+            dcm_enu[0][0] * body_vec[0]
+                + dcm_enu[0][1] * body_vec[1]
+                + dcm_enu[0][2] * body_vec[2],
+            dcm_enu[1][0] * body_vec[0]
+                + dcm_enu[1][1] * body_vec[1]
+                + dcm_enu[1][2] * body_vec[2],
+            dcm_enu[2][0] * body_vec[0]
+                + dcm_enu[2][1] * body_vec[1]
+                + dcm_enu[2][2] * body_vec[2],
+        ];
+        // Same body vector under q_ned (NED frame).
+        let dcm_ned = dcm_world_from_body(q_ned);
+        let world_ned = [
+            dcm_ned[0][0] * body_vec[0]
+                + dcm_ned[0][1] * body_vec[1]
+                + dcm_ned[0][2] * body_vec[2],
+            dcm_ned[1][0] * body_vec[0]
+                + dcm_ned[1][1] * body_vec[1]
+                + dcm_ned[1][2] * body_vec[2],
+            dcm_ned[2][0] * body_vec[0]
+                + dcm_ned[2][1] * body_vec[1]
+                + dcm_ned[2][2] * body_vec[2],
+        ];
+        // Reinterpret world_enu as a NED vector via the standard
+        // swap+flip; should equal world_ned.
+        let world_enu_as_ned = enu_vec_to_ned(world_enu);
+        assert!(
+            vec_close(world_enu_as_ned, world_ned),
+            "ENU→NED frame swap mismatch:\n  world_enu(swapped)={:?}\n  world_ned        ={:?}",
+            world_enu_as_ned,
+            world_ned
+        );
+    }
+
+    // --- rotate_world_to_body -----------------------------------------------
+
+    #[test]
+    fn rotate_world_to_body_identity_is_passthrough() {
+        let v = [0.3_f32, -0.7, 1.5];
+        let out = rotate_world_to_body([1.0, 0.0, 0.0, 0.0], v);
+        assert!(vec_close(out, v), "identity rotation changed {:?} -> {:?}", v, out);
+    }
+
+    #[test]
+    fn rotate_world_to_body_90_about_z_swaps_xy() {
+        // q = cos(45°) + k·sin(45°) is a +90° rotation about world-Z.
+        // body→world rotates body-X to world-Y. Therefore world-Y
+        // arrives at body-X, world-X arrives at body-(-Y).
+        let s = core::f32::consts::FRAC_1_SQRT_2;
+        let q = [s, 0.0, 0.0, s];
+        assert!(vec_close(rotate_world_to_body(q, [1.0, 0.0, 0.0]), [0.0, -1.0, 0.0]));
+        assert!(vec_close(rotate_world_to_body(q, [0.0, 1.0, 0.0]), [1.0, 0.0, 0.0]));
+        assert!(vec_close(rotate_world_to_body(q, [0.0, 0.0, 1.0]), [0.0, 0.0, 1.0]));
+    }
+
+    #[test]
+    fn rotate_world_to_body_90_about_x_swaps_yz() {
+        // +90° about world-X: world-Y → world-Z (in body frame, the
+        // body sees world-Y arrive at body-Z).
+        let s = core::f32::consts::FRAC_1_SQRT_2;
+        let q = [s, s, 0.0, 0.0];
+        assert!(vec_close(rotate_world_to_body(q, [1.0, 0.0, 0.0]), [1.0, 0.0, 0.0]));
+        // world-Y body-projection lands on body-(-Z) under the
+        // inverse rotation (body→world rotates body-Y to world-Z,
+        // so the inverse rotates world-Y to body-(-Z)).
+        assert!(vec_close(rotate_world_to_body(q, [0.0, 1.0, 0.0]), [0.0, 0.0, -1.0]));
+        assert!(vec_close(rotate_world_to_body(q, [0.0, 0.0, 1.0]), [0.0, 1.0, 0.0]));
+    }
+
+    #[test]
+    fn rotate_world_to_body_matches_brute_force_dcm() {
+        // Compare against a transposed brute-force DCM for a handful
+        // of representative unit quaternions. The closed-form
+        // `rotate_world_to_body` is `DCM_world_from_body^T · v`;
+        // verify that equality directly.
+        let cases: &[[f32; 4]] = &[
+            [0.7071068, 0.7071068, 0.0, 0.0],
+            [0.7071068, 0.0, 0.7071068, 0.0],
+            [0.7071068, 0.0, 0.0, 0.7071068],
+            [0.5, 0.5, 0.5, 0.5],
+            [0.6532815, 0.2705981, 0.6532815, 0.2705981],
+            [0.4082483, 0.4082483, 0.4082483, 0.7071068],
+        ];
+        let v = [0.3_f32, -0.7, 1.5];
+
+        for &q in cases {
+            let norm = quat_norm(q);
+            assert!((norm - 1.0).abs() < 1e-4, "case {:?} not unit (n={})", q, norm);
+
+            let dcm_bw = dcm_world_from_body(q);
+            // Transpose: brute-force world→body matrix.
+            let dcm_wb = [
+                [dcm_bw[0][0], dcm_bw[1][0], dcm_bw[2][0]],
+                [dcm_bw[0][1], dcm_bw[1][1], dcm_bw[2][1]],
+                [dcm_bw[0][2], dcm_bw[1][2], dcm_bw[2][2]],
+            ];
+            let expected = [
+                dcm_wb[0][0] * v[0] + dcm_wb[0][1] * v[1] + dcm_wb[0][2] * v[2],
+                dcm_wb[1][0] * v[0] + dcm_wb[1][1] * v[1] + dcm_wb[1][2] * v[2],
+                dcm_wb[2][0] * v[0] + dcm_wb[2][1] * v[1] + dcm_wb[2][2] * v[2],
+            ];
+            let got = rotate_world_to_body(q, v);
+            assert!(
+                vec_close(got, expected),
+                "q={:?}: closed-form={:?} brute-force={:?}",
+                q,
+                got,
+                expected
+            );
+        }
+    }
 }

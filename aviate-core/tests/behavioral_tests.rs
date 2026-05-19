@@ -273,12 +273,24 @@ fn disarmed_safe_output_is_independent_of_inputs() {
 
 // --- LLR-FLT-205 ------------------------------------------------------------
 
-/// LLR-FLT-205: NUMERIC_FAULT latched on an armed kernel forces the
-/// update path to emit the safe pattern. Arms the kernel normally, takes
-/// one healthy-input cycle that produces a non-zero command, then sets
-/// NUMERIC_FAULT and asserts the next cycle returns zeros.
+/// LLR-FLT-205: NUMERIC_ERROR latched on an armed kernel forces the
+/// update path to emit the safe pattern. Arms the kernel normally,
+/// takes one healthy-input cycle that produces a non-zero command,
+/// injects `NUMERIC_ERROR` via the spec-§20 `inject_fault` test-hook,
+/// and asserts the next cycle returns zeros.
+///
+/// The fault injection goes through `AviateKernelTrait::inject_fault`
+/// — gated by the workspace's `test-hooks` feature — rather than
+/// touching `KernelState.faults` directly. The trait method is the
+/// cert-evidence-bearing accessor: structural pub-access to
+/// `KernelState` exists for `Replicable` encoding (HLR-STATE-001 /
+/// HLR-STATE-003), but flight code MUST NOT use it for fault
+/// injection. `required-features = ["test-hooks"]` on this test
+/// binary keeps the gate visible at the test-target level.
 #[test]
 fn numeric_fault_latched_inhibits_actuator_output() {
+    use aviate_core::kernel_trait::AviateKernelTrait;
+
     let mut kernel = make_kernel();
     arm_kernel(&mut kernel);
 
@@ -303,15 +315,12 @@ fn numeric_fault_latched_inhibits_actuator_output() {
         "armed hover step must produce non-zero motor commands as a precondition"
     );
 
-    // Latch NUMERIC_FAULT directly into KernelState — same path
-    // `inject_fault(NUMERIC_FAULT)` would take under feature
-    // `test-hooks`, accessible here because `state.faults` is public.
-    kernel.state.faults.insert(FaultFlags::NUMERIC_ERROR);
+    AviateKernelTrait::inject_fault(&mut kernel, FaultFlags::NUMERIC_ERROR);
 
     let after = step(&mut kernel, &live_cmd, &sensors, 0);
     assert!(
         all_motors_zero(&after),
-        "NUMERIC_FAULT must inhibit actuator output: motors {:?}",
+        "NUMERIC_ERROR must inhibit actuator output: motors {:?}",
         after.outputs
     );
 }

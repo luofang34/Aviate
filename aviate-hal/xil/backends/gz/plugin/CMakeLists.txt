@@ -4,14 +4,33 @@ project(aviate_gz_plugin VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Force Homebrew's protobuf to win the include race against any other
-# protobuf in the system path (anaconda, /usr/local, ...). gz-msgs10
-# is generated against /opt/homebrew's protobuf 6.33.1; using anyone
-# else's headers fires `PROTOBUF_VERSION != 6033001` and the build
-# tanks early. The `BEFORE SYSTEM` placement makes this the first
-# include path scanned even when anaconda is in PATH.
-if(APPLE)
-    include_directories(BEFORE SYSTEM /opt/homebrew/include)
+# gz-msgs10's generated `.pb.h` files require matching protobuf
+# headers; mixing versions (e.g. anaconda's older protobuf landing on
+# the include path before brew's) fires `PROTOBUF_VERSION != ...`
+# and the build tanks early. Resolve protobuf via a brew-discovered
+# prefix on macOS (overridable via `AVIATE_PROTOBUF_PREFIX`) and via
+# the standard system path on Linux. The prefix is placed BEFORE
+# SYSTEM so transitive include paths can't shadow it.
+set(AVIATE_PROTOBUF_PREFIX "" CACHE PATH
+    "Override the protobuf install prefix used by the gz plugin build")
+if(APPLE AND NOT AVIATE_PROTOBUF_PREFIX)
+    find_program(BREW_EXECUTABLE brew)
+    if(BREW_EXECUTABLE)
+        execute_process(
+            COMMAND ${BREW_EXECUTABLE} --prefix protobuf
+            OUTPUT_VARIABLE AVIATE_PROTOBUF_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE _brew_protobuf_rc
+        )
+        if(NOT _brew_protobuf_rc EQUAL 0)
+            set(AVIATE_PROTOBUF_PREFIX "")
+        endif()
+    endif()
+endif()
+if(AVIATE_PROTOBUF_PREFIX)
+    message(STATUS "Using protobuf prefix: ${AVIATE_PROTOBUF_PREFIX}")
+    include_directories(BEFORE SYSTEM "${AVIATE_PROTOBUF_PREFIX}/include")
+    list(PREPEND CMAKE_PREFIX_PATH "${AVIATE_PROTOBUF_PREFIX}")
 endif()
 
 # Find Gazebo Harmonic (gz-sim8)
