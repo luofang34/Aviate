@@ -8,7 +8,9 @@
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 
 /// FC process configuration
 pub struct FcConfig {

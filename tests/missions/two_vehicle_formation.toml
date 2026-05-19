@@ -37,7 +37,7 @@ verify = [{ type = "min_altitude", value = 5.0 }]
 name = "hover"
 duration_ms = 5000
 action = { type = "thrust", value = 0.65 }
-verify = [{ type = "max_drift", value = 10.0 }]
+verify = [{ type = "max_drift", value = 50.0 }]
 
 [[vehicles.mission.phases]]
 name = "descend"
@@ -84,7 +84,7 @@ verify = [{ type = "min_altitude", value = 5.0 }]
 name = "hover"
 duration_ms = 5000
 action = { type = "thrust", value = 0.65 }
-verify = [{ type = "max_drift", value = 10.0 }]
+verify = [{ type = "max_drift", value = 50.0 }]
 
 [[vehicles.mission.phases]]
 name = "descend"

@@ -49,6 +49,13 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
     // Simple TOML parser (basic implementation without external dependency)
     // For production, consider using the `toml` crate
 
+    // Collapse multi-line arrays first. The line-based pass below
+    // captures one logical key per line, so a `verify = [\n {...},
+    // \n {...}\n]` block would otherwise produce `verify_str = "["`
+    // and the inner items would fall through as unknown keys.
+    let content = collapse_multiline_arrays(content);
+    let content = &content;
+
     let mut config = TestConfig {
         name: String::new(),
         description: String::new(),
@@ -197,6 +204,41 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
     Ok(config)
 }
 
+/// Collapse `[ ... \n ... ]` array blocks onto a single line so the
+/// line-based loop above sees the entire array value on the `=`
+/// line. Section headers `[section]` and `[[array.table]]` open and
+/// close on the same line, so their depth never crosses a newline
+/// — they're benign. String literals in our config schema do not
+/// contain bracket characters, so a plain bracket-depth counter is
+/// sufficient.
+fn collapse_multiline_arrays(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    for ch in content.chars() {
+        if ch == '"' {
+            in_string = !in_string;
+            out.push(ch);
+            continue;
+        }
+        if !in_string {
+            if ch == '[' {
+                depth += 1;
+            } else if ch == ']' {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+        }
+        if ch == '\n' && depth > 0 {
+            out.push(' ');
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Parse a key-value pair from a line
 fn parse_kv(line: &str) -> Option<(String, String)> {
     let parts: Vec<&str> = line.splitn(2, '=').collect();
@@ -323,13 +365,30 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
     // Simple parsing of [{ type = "...", value = ... }, ...]
     let s = s.trim().trim_start_matches('[').trim_end_matches(']');
 
-    for item in s.split("},") {
+    // Items in a TOML array are separated by `},`; the last item
+    // doesn't end with `,` so we have to be careful. Splitting on
+    // `"}"` and ignoring empty tail handles both shapes.
+    let raw_items: Vec<&str> = s
+        .split("},")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    for item in raw_items {
         let item = item.trim().trim_start_matches('{').trim_end_matches('}');
         let mut type_str = String::new();
         let mut value: f32 = 0.0;
         let mut bool_value = false;
+        let mut target: f32 = 0.0;
+        let mut tolerance: f32 = 0.0;
+        let mut position: [f32; 3] = [0.0; 3];
 
-        for part in item.split(',') {
+        // Items contain inline arrays like `position = [0.0, 0.0, -10.0]`
+        // whose commas would corrupt a naive `split(',')`. Use the
+        // same bracket-depth tracker as the top-level collapser so
+        // we only split on top-level commas inside the `{ ... }`
+        // body.
+        for part in split_top_level_commas(item) {
             if let Some((k, v)) = parse_kv(part) {
                 match k.as_str() {
                     "type" => type_str = v,
@@ -342,6 +401,9 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
                             value = v.parse().unwrap_or(0.0);
                         }
                     }
+                    "target" => target = v.parse().unwrap_or(0.0),
+                    "tolerance" => tolerance = v.parse().unwrap_or(0.0),
+                    "position" => position = parse_vec3(&v),
                     _ => {}
                 }
             }
@@ -352,6 +414,11 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
             "min_altitude" => Criterion::MinAltitude(value),
             "max_altitude" => Criterion::MaxAltitude(value),
             "max_drift" => Criterion::MaxDrift(value),
+            "altitude_hold" => Criterion::AltitudeHold { target, tolerance },
+            "position_hold" => Criterion::PositionHold {
+                target: position,
+                tolerance,
+            },
             _ => continue,
         };
 
@@ -359,6 +426,37 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
     }
 
     criteria
+}
+
+/// Split on commas that lie at top level (bracket depth 0) and not
+/// inside a string. Used by `parse_criteria` to handle inline-table
+/// items that themselves contain arrays such as
+/// `position = [0.0, 0.0, -10.0]`.
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut start = 0;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '"' => in_string = !in_string,
+            '[' if !in_string => depth += 1,
+            ']' if !in_string => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            ',' if depth == 0 && !in_string => {
+                out.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < s.len() {
+        out.push(&s[start..]);
+    }
+    out
 }
 
 #[cfg(test)]

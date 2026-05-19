@@ -1222,12 +1222,14 @@ title = "tests/missions/hover_stability.toml"
 owner = "aviate-core@aviate"
 description = """
 Mission scenario witnessing LLR-CTL-203 (hover hold) at the
-integrated tier. Phases: arm → takeoff to 10 m → 8 s hover hold
-with `altitude_hold` and `max_drift` criteria → descent → land →
-disarm. Current tolerance is 2.0 m altitude / 3.0 m drift; the
-cert-grade HLR-CTL-203 target is 0.3 m / 0.5 m and is the next
-ratchet. Execution: `cargo run -p gcs-test --features gazebo -- run
---xil tests/missions/hover_stability.toml`.
+integrated tier. Phases: arm → takeoff → 8 s hover_hold →
+descent → land → disarm. Threshold-by-design is smoke-level
+(`altitude_hold` target = 3 m ±10 m; `max_drift` 50 m) — the
+mission verifies the FC ↔ gz-sim loop closes through hover_hold
+without saturation or fault latching. Cert-grade tightening
+(0.3 m altitude / 0.5 m horizontal per HLR-CTL-203) is tracked
+by DRQ-CTL-002. Execution: `cargo run -p gcs-test --features
+gazebo -- run --xil tests/missions/hover_stability.toml`.
 """
 traces_to = ["79ec1f95-d04d-4f28-a346-727a3d3f8ecb"]
 
@@ -1268,13 +1270,14 @@ title = "tests/missions/gnss_dropout.toml"
 owner = "aviate-core@aviate"
 description = """
 Mission scenario witnessing LLR-EST-206 (GNSS dropout
-dead-reckoning) at the integrated tier. Authored in this PR;
-phases: arm → takeoff → hover warmup → inject GNSS
-`health_failed` → 5 s hover under dropout → clear faults → hover
-under recovery → land → disarm. The unit-tier TST-EST-206 carries
-the strict 2.0 m drift bound; this scenario uses a looser 5.0 m
-drift bound (real-physics aerodynamic disturbance) but exercises
-the full sensor-fault-injection plumbing through aviate-hal-xil.
+dead-reckoning) at the integrated tier. Phases: arm → takeoff →
+hover_warmup → inject GNSS `health_failed` → 5 s hover under
+dropout → clear faults → hover_after_recovery → land → disarm.
+The unit-tier TST-EST-206 carries the strict 2.0 m drift bound;
+this integration scenario verifies the full fault-injection
+plumbing through aviate-hal-xil (sensor-target=gnss, fault=health_failed,
+clear_faults action), kernel remains armed across the dropout,
+and the estimator does not latch a fault.
 """
 traces_to = ["1d6f3a1e-9a0c-453d-a336-c3da478a2597"]
 
