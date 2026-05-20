@@ -50,7 +50,11 @@ fn main() -> std::io::Result<()> {
     // Connect to the gz-sim system plugin via shared memory. The plugin
     // initializes the shared region as soon as gz-sim loads the SDF, so
     // a short retry loop is plenty.
-    let plugin = GzPluginBridge::connect_with_retry(20, 250)
+    // 240 × 250ms = 60 s. Plugin Configure latency on macOS is
+    // ~15–20 s on a cold cache (gz-sim doing first-time dlopen +
+    // physics init); the previous 5 s window timed out before the
+    // shm region was populated.
+    let plugin = GzPluginBridge::connect_with_retry(240, 250)
         .map_err(|e| std::io::Error::other(format!("gz plugin: {e:?}")))?;
     log::info!("connected to AviateGzPlugin");
 

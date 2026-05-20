@@ -243,11 +243,24 @@ impl Spawner {
         Ok(())
     }
 
-    /// Wait for FC to be ready
+    /// Wait for the FC binary to be ready to fly.
+    ///
+    /// On macOS, gz-sim's first-time plugin Configure can take 15–20 s
+    /// (dlopen cold cache + dartsim physics warm-up). The FC binary
+    /// blocks in `GzPluginBridge::connect_with_retry` during that
+    /// window — it cannot send motor commands or respond to mission
+    /// commands until it has the plugin handle. If the mission
+    /// starts running before the FC is ready, the kernel sees the
+    /// arm/thrust commands but cannot actuate the rotors, and the
+    /// vehicle silently stays on the ground while the mission's
+    /// flight phases tick past.
+    ///
+    /// Until we wire up a real ready-signal channel (FC reports
+    /// "I'm flying" once `plugin.get_model_state()` returns Some),
+    /// the simplest fix is a generous fixed sleep that exceeds the
+    /// observed plugin-Configure latency.
     pub fn wait_for_fc_ready(&self, _timeout: Duration) -> bool {
-        // Minimal wait to allow process to start up.
-        // Connection logic is handled by MavClient checking for heartbeats.
-        std::thread::sleep(Duration::from_secs(2));
+        std::thread::sleep(Duration::from_secs(25));
         true
     }
 
