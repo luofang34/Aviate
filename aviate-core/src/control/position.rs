@@ -22,10 +22,24 @@ impl PositionController {
             z: setpoint.z.0 - current.z.0,
         };
 
+        // Tight per-axis velocity cap: a P-only position controller
+        // (no I-term yet — DRQ-CTL-003) overshoots when it can
+        // command a large velocity, because residual velocity at
+        // the moment the position error hits zero carries the
+        // vehicle past the target. Capping each axis to ±2 m/s
+        // gives the inner loop room to decelerate cleanly.
+        const VEL_CAP_HORIZONTAL: f32 = 2.0;
+        const VEL_CAP_VERTICAL: f32 = 1.5;
         Vector3 {
-            x: MetersPerSecond((error.x * self.gains[0]).clamp(-10.0, 10.0)), // Clamp to some reasonable velocity
-            y: MetersPerSecond((error.y * self.gains[1]).clamp(-10.0, 10.0)),
-            z: MetersPerSecond((error.z * self.gains[2]).clamp(-10.0, 10.0)),
+            x: MetersPerSecond(
+                (error.x * self.gains[0]).clamp(-VEL_CAP_HORIZONTAL, VEL_CAP_HORIZONTAL),
+            ),
+            y: MetersPerSecond(
+                (error.y * self.gains[1]).clamp(-VEL_CAP_HORIZONTAL, VEL_CAP_HORIZONTAL),
+            ),
+            z: MetersPerSecond(
+                (error.z * self.gains[2]).clamp(-VEL_CAP_VERTICAL, VEL_CAP_VERTICAL),
+            ),
         }
     }
 }

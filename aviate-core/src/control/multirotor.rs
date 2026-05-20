@@ -28,18 +28,28 @@ impl MultirotorController {
     /// sinks under closed-loop control. See `ResolvedKernelConfig.
     /// hover_thrust_norm` for the canonical record.
     pub fn with_hover_thrust(hover_thrust_norm: Scalar) -> Self {
-        // Cascaded-control stability rule of thumb: the inner loop
-        // (rate) must be at least ~5× faster than the outer (att).
-        // The previous defaults (att=6, rate=0.15, ratio=40) were
-        // far outside that band — the att stage commanded large
-        // rate setpoints that the rate stage could not track, and
-        // the mismatch saturated the mixer. New defaults respect
-        // the ratio: att=2, rate=0.5 → 4× ratio.
+        // Tuned for X500 + gz + quaternion-derived gyro. Two
+        // properties matter most for closed-loop stability here:
+        //
+        //   1. **Rate inner loop fast vs attitude outer loop.**
+        //      Att gain 0.5 + rate gain 0.5 means a 1 rad
+        //      attitude error commands at most a 0.5 rad/s rate
+        //      setpoint, and the rate loop produces at most a
+        //      0.5 motor command per rad/s of rate error. Both
+        //      are well below saturation.
+        //
+        //   2. **Bounded attitude setpoint from velocity loop.**
+        //      `max_roll_pitch: 0.175 rad` (≈10°) caps how
+        //      aggressively the velocity controller can tilt the
+        //      body in response to a horizontal position error.
+        //      Without this cap, a large drift commanded a 60°
+        //      tilt that the rate loop could not track without
+        //      saturating the mixer.
         Self {
             pos_ctrl: PositionController::new([0.3, 0.3, 0.6]),
-            vel_ctrl: VelocityController::new([0.2, 0.2, 0.3], 0.349, hover_thrust_norm),
+            vel_ctrl: VelocityController::new([0.25, 0.25, 0.3], 0.175, hover_thrust_norm),
             rate_ctrl: RateController::new([0.5, 0.5, 0.3]),
-            att_ctrl: AttitudeController::new([2.0, 2.0, 0.5]),
+            att_ctrl: AttitudeController::new([0.5, 0.5, 0.2]),
         }
     }
 }
@@ -123,7 +133,7 @@ impl VehicleController for MultirotorController {
         // for vertical mission profiles.
         //
         // Lowering this to 0.1 re-engages the cascade.
-        const MIN_THRUST_FOR_AXIS_CONTROL: Scalar = 2.0;
+        const MIN_THRUST_FOR_AXIS_CONTROL: Scalar = 0.1;
         if collective_sp.0 < MIN_THRUST_FOR_AXIS_CONTROL {
             return AxisCommand {
                 roll: crate::types::NormalizedSigned(0.0),

@@ -76,20 +76,21 @@ pub fn synthesize_packet(
         _ => 0.001,
     };
 
-    // gz's `WorldAngularVelocity` component returns the body's
-    // angular velocity expressed in the **ENU world** frame, not
-    // the body frame (`AngularVelocity` would be body, but the
-    // plugin enables WorldAngularVelocity). The kernel's EKF wants
-    // body-frame gyro in FRD.
+    // gz's `WorldAngularVelocity` component reports 0 in our tests
+    // even when the model is actually rotating (visible in the
+    // attitude quaternion changing between cycles). Empirically
+    // the FC reading `state.ang_vel` returned `(0, 0, 0)` while
+    // `state.quat` showed sustained drift in y, so we cannot trust
+    // that component as a gyro source.
     //
-    // Conversion chain:
-    //   ω_ENU_world  ──ENU→NED swap──►  ω_NED_world
-    //   ω_NED_world  ──rotate by q_ned^T (world→body)──►  ω_FRD_body
+    // Instead, compute the body-frame angular velocity from
+    // successive attitudes:
     //
-    // Treating ENU world as FLU body (the previous bug) leaked the
-    // yaw rate into roll/pitch every time the body was not aligned
-    // with world axes, and the closed-loop attitude controller
-    // chased a ghost rotation it had no way to damp.
+    //   q_delta = q_new ⊗ q_old.conjugate
+    //   ω_world ≈ 2 · q_delta.imag / dt    (small-angle approx)
+    //
+    // Then rotate ω_world (in NED+FRD world after the ENU→NED
+    // swap) into the body frame via `q_ned^T`.
     let q_enu = [
         state.quat[0] as f32,
         state.quat[1] as f32,
@@ -97,9 +98,41 @@ pub fn synthesize_packet(
         state.quat[3] as f32,
     ];
     let q_ned = enu_quat_to_ned(q_enu);
-    let ang_vel_ned_world =
-        enu_vel_to_ned_f32([state.ang_vel[0], state.ang_vel[1], state.ang_vel[2]]);
-    let gyro = rotate_world_to_body(q_ned, ang_vel_ned_world);
+    let gyro = match prev {
+        Some(p) if now_us > prev_t_us => {
+            let q_enu_prev = [
+                p.quat[0] as f32,
+                p.quat[1] as f32,
+                p.quat[2] as f32,
+                p.quat[3] as f32,
+            ];
+            let q_ned_prev = enu_quat_to_ned(q_enu_prev);
+            // q_delta = q_ned * q_ned_prev.conjugate
+            let qd_w = q_ned[0] * q_ned_prev[0]
+                + q_ned[1] * q_ned_prev[1]
+                + q_ned[2] * q_ned_prev[2]
+                + q_ned[3] * q_ned_prev[3];
+            let qd_x = -q_ned[0] * q_ned_prev[1] + q_ned[1] * q_ned_prev[0]
+                - q_ned[2] * q_ned_prev[3]
+                + q_ned[3] * q_ned_prev[2];
+            let qd_y =
+                -q_ned[0] * q_ned_prev[2] + q_ned[1] * q_ned_prev[3] + q_ned[2] * q_ned_prev[0]
+                    - q_ned[3] * q_ned_prev[1];
+            let qd_z = -q_ned[0] * q_ned_prev[3] - q_ned[1] * q_ned_prev[2]
+                + q_ned[2] * q_ned_prev[1]
+                + q_ned[3] * q_ned_prev[0];
+            // Force shortest-arc (qd and -qd are the same rotation;
+            // we want the imaginary part in the +w hemisphere).
+            let sign = if qd_w >= 0.0 { 1.0 } else { -1.0 };
+            let omega_world_ned = [
+                2.0 * sign * qd_x / dt,
+                2.0 * sign * qd_y / dt,
+                2.0 * sign * qd_z / dt,
+            ];
+            rotate_world_to_body(q_ned, omega_world_ned)
+        }
+        _ => [0.0; 3],
+    };
 
     // Accelerometer reading: specific force = inertial acceleration −
     // gravity, expressed in body frame. For a multirotor in steady
