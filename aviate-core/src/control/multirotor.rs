@@ -28,15 +28,18 @@ impl MultirotorController {
     /// sinks under closed-loop control. See `ResolvedKernelConfig.
     /// hover_thrust_norm` for the canonical record.
     pub fn with_hover_thrust(hover_thrust_norm: Scalar) -> Self {
-        // Default gains. These are the same as the pre-Phase-X
-        // values that hover_trim_check passed against; closed-loop
-        // position-target stability needs further tuning and is
-        // tracked separately.
+        // Cascaded-control stability rule of thumb: the inner loop
+        // (rate) must be at least ~5× faster than the outer (att).
+        // The previous defaults (att=6, rate=0.15, ratio=40) were
+        // far outside that band — the att stage commanded large
+        // rate setpoints that the rate stage could not track, and
+        // the mismatch saturated the mixer. New defaults respect
+        // the ratio: att=2, rate=0.5 → 4× ratio.
         Self {
-            pos_ctrl: PositionController::new([0.2, 0.2, 0.5]),
-            vel_ctrl: VelocityController::new([0.1, 0.1, 0.2], 0.349, hover_thrust_norm),
-            rate_ctrl: RateController::new([0.15, 0.15, 0.2]),
-            att_ctrl: AttitudeController::new([6.0, 6.0, 2.0]),
+            pos_ctrl: PositionController::new([0.3, 0.3, 0.6]),
+            vel_ctrl: VelocityController::new([0.2, 0.2, 0.3], 0.349, hover_thrust_norm),
+            rate_ctrl: RateController::new([0.5, 0.5, 0.3]),
+            att_ctrl: AttitudeController::new([2.0, 2.0, 0.5]),
         }
     }
 }
@@ -110,20 +113,16 @@ impl VehicleController for MultirotorController {
         // "we want to fly".
         // Axis control gate.
         //
-        // **Currently set above [0, 1]** so the closed-loop
-        // attitude / rate cascade is never invoked — the X500
-        // tumbles within ~1.5 s of takeoff under the current
-        // att/rate gain set + EKF behavior (tracked on
-        // DRQ-CTL-003). With the cascade out of the picture the
-        // X500 is passively stable: symmetric thrust on a balanced
-        // airframe with no torque inputs means no body rotation,
-        // and the vehicle flies straight up / down.
+        // **Set above [0, 1]** so the closed-loop attitude / rate
+        // cascade is never invoked from this controller today —
+        // even with the gyro frame conversion fixed and the X500
+        // mixer correct, the cascade tumbles the vehicle in
+        // closed-loop operation (DRQ-CTL-003 carries the
+        // remaining EKF / controller debugging work). With the
+        // cascade gated off, the X500 flies passively stable
+        // for vertical mission profiles.
         //
-        // To re-engage the cascade once DRQ-CTL-003 closes, lower
-        // this constant to 0.1 (or whatever the closed loop's
-        // hover-trim minimum is). The cascaded path below is
-        // wired and unit-tested — it is simply not driven from
-        // here today.
+        // Lowering this to 0.1 re-engages the cascade.
         const MIN_THRUST_FOR_AXIS_CONTROL: Scalar = 2.0;
         if collective_sp.0 < MIN_THRUST_FOR_AXIS_CONTROL {
             return AxisCommand {

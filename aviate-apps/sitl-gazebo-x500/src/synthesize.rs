@@ -76,14 +76,20 @@ pub fn synthesize_packet(
         _ => 0.001,
     };
 
-    // Gz reports angular velocity in body frame, but with FLU body
-    // convention; aviate-core expects FRD. Flip Y and Z.
-    let gyro = flu_to_frd_body([
-        state.ang_vel[0] as f32,
-        state.ang_vel[1] as f32,
-        state.ang_vel[2] as f32,
-    ]);
-
+    // gz's `WorldAngularVelocity` component returns the body's
+    // angular velocity expressed in the **ENU world** frame, not
+    // the body frame (`AngularVelocity` would be body, but the
+    // plugin enables WorldAngularVelocity). The kernel's EKF wants
+    // body-frame gyro in FRD.
+    //
+    // Conversion chain:
+    //   ω_ENU_world  ──ENU→NED swap──►  ω_NED_world
+    //   ω_NED_world  ──rotate by q_ned^T (world→body)──►  ω_FRD_body
+    //
+    // Treating ENU world as FLU body (the previous bug) leaked the
+    // yaw rate into roll/pitch every time the body was not aligned
+    // with world axes, and the closed-loop attitude controller
+    // chased a ghost rotation it had no way to damp.
     let q_enu = [
         state.quat[0] as f32,
         state.quat[1] as f32,
@@ -91,6 +97,9 @@ pub fn synthesize_packet(
         state.quat[3] as f32,
     ];
     let q_ned = enu_quat_to_ned(q_enu);
+    let ang_vel_ned_world =
+        enu_vel_to_ned_f32([state.ang_vel[0], state.ang_vel[1], state.ang_vel[2]]);
+    let gyro = rotate_world_to_body(q_ned, ang_vel_ned_world);
 
     // Accelerometer reading: specific force = inertial acceleration −
     // gravity, expressed in body frame. For a multirotor in steady
@@ -203,6 +212,14 @@ pub fn enu_quat_to_ned(q_enu_flu: [f32; 4]) -> [f32; 4] {
 /// Convert a body-frame vector from gz-sim's FLU convention
 /// (forward, left, up) to Aviate's FRD (forward, right, down).
 /// `Y` and `Z` flip; `X` (forward) is unchanged.
+///
+/// Currently unused in the production synthesize path — gz's
+/// `WorldAngularVelocity` returns ENU-world ang vel, so the
+/// gyro pipeline goes through the full world→NED→body rotation
+/// rather than a simple body-frame sign swap. Kept for the
+/// rotation unit-test suite and for the day a different gz
+/// component provides body-frame data directly.
+#[allow(dead_code)]
 pub fn flu_to_frd_body(v_flu: [f32; 3]) -> [f32; 3] {
     [v_flu[0], -v_flu[1], -v_flu[2]]
 }
