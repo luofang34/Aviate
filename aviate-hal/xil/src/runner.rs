@@ -342,7 +342,9 @@ impl MavClient {
 pub struct TraceSample {
     pub elapsed: f32,
     pub position: [f32; 3],
+    pub velocity: [f32; 3],
     pub attitude: [f32; 4],
+    pub angular_velocity: [f32; 3],
 }
 
 /// Mission runner state
@@ -527,6 +529,28 @@ impl<B: SimulatorBackend> MissionRunner<B> {
 
         let total_duration = mission_start.elapsed();
 
+        // Dump per-step trace to CSV for post-mortem inspection.
+        // Aircraft-agnostic columns (position, velocity, attitude
+        // quaternion, body-frame angular rate, derived Euler) so the
+        // same writer works for multirotor, fixed-wing, or VTOL —
+        // the CSV reader can plot whichever axes a given vehicle
+        // class cares about. One file per mission, overwritten on
+        // each run, lives next to the world SDF in the OS temp
+        // directory.
+        let csv_path = std::env::temp_dir().join(format!(
+            "aviate_trace_{}.csv",
+            mission.name.replace(['/', ' '], "_")
+        ));
+        if let Err(e) = write_trace_csv(&csv_path, &mission.name, &phase_results) {
+            self.log_error(&format!(
+                "Failed to write trace CSV ({}): {}",
+                csv_path.display(),
+                e
+            ));
+        } else {
+            self.log(&format!("Trace CSV: {}", csv_path.display()));
+        }
+
         if mission_passed {
             self.log(&format!(
                 "==> PASSED | duration={:.2}s max_alt={:.2}m <==",
@@ -579,7 +603,9 @@ impl<B: SimulatorBackend> MissionRunner<B> {
                     trace.push(TraceSample {
                         elapsed,
                         position: self.current_state.position,
+                        velocity: self.current_state.velocity,
                         attitude: self.current_state.orientation,
+                        angular_velocity: self.current_state.angular_velocity,
                     });
                 }
 
@@ -610,6 +636,8 @@ impl<B: SimulatorBackend> MissionRunner<B> {
             max_altitude: phase_max_altitude,
             final_position: self.current_state.position,
             criteria_results,
+            trace,
+            action_tag: format!("{:?}", phase.action),
         }
     }
 
@@ -962,6 +990,79 @@ impl<B: SimulatorBackend> MissionRunner<B> {
                 actual_value: format!("{} steps", self.last_step),
                 expected: "> 0 steps".to_string(),
             },
+            Criterion::TouchdownVelocity {
+                max_descent_mps,
+                ground_tolerance,
+            } => {
+                // Find the index of the first sample within
+                // `ground_tolerance` of the ground. gz's
+                // `WorldLinearVelocity` component returns zero on
+                // macOS — same gap that forced the quaternion-
+                // derived gyro in the synth path — so we derive
+                // the touchdown vertical speed from a finite
+                // difference over the position samples just
+                // before contact instead of reading the velocity
+                // field.
+                let idx = trace
+                    .iter()
+                    .position(|s| s.position[2] >= -ground_tolerance);
+                match idx {
+                    Some(i) if i > 0 => {
+                        // Use the highest-altitude sample within
+                        // the previous 100 ms as the back step so a
+                        // single-sample contact-damping spike does
+                        // not hide the real approach speed.
+                        let s_now = &trace[i];
+                        let lookback = trace[..i]
+                            .iter()
+                            .rev()
+                            .take_while(|s| s_now.elapsed - s.elapsed < 0.1)
+                            .min_by(|a, b| a.position[2].partial_cmp(&b.position[2]).unwrap())
+                            .unwrap_or(&trace[i - 1]);
+                        let dt = (s_now.elapsed - lookback.elapsed).max(1e-3);
+                        let v_down = (s_now.position[2] - lookback.position[2]) / dt;
+                        CriterionResult {
+                            criterion: "touchdown_velocity".to_string(),
+                            passed: v_down <= *max_descent_mps,
+                            actual_value: format!(
+                                "v_down={:.2} m/s at t={:.2}s (alt={:.2}m, derived from Δz/Δt over {:.0}ms)",
+                                v_down,
+                                s_now.elapsed,
+                                -s_now.position[2],
+                                dt * 1000.0,
+                            ),
+                            expected: format!(
+                                "v_down ≤ {:.2} m/s within {:.2}m of ground",
+                                max_descent_mps, ground_tolerance,
+                            ),
+                        }
+                    }
+                    Some(_) => CriterionResult {
+                        criterion: "touchdown_velocity".to_string(),
+                        passed: false,
+                        actual_value: "vehicle already on ground at phase start".to_string(),
+                        expected: format!(
+                            "vehicle reaches within {:.2}m of ground during the phase",
+                            ground_tolerance
+                        ),
+                    },
+                    None => CriterionResult {
+                        criterion: "touchdown_velocity".to_string(),
+                        passed: false,
+                        actual_value: format!(
+                            "no touchdown sample (min alt {:.2}m)",
+                            trace
+                                .iter()
+                                .map(|s| -s.position[2])
+                                .fold(f32::INFINITY, f32::min)
+                        ),
+                        expected: format!(
+                            "vehicle reaches within {:.2}m of ground",
+                            ground_tolerance
+                        ),
+                    },
+                }
+            }
         }
     }
 }
@@ -1094,6 +1195,53 @@ where
         passed: all_passed,
         duration: start.elapsed(),
     }
+}
+
+/// Write the per-step flight trace to a CSV.
+///
+/// Columns are aircraft-agnostic so the same file format works for
+/// multirotor / fixed-wing / VTOL: `t,phase,action` then NED
+/// position, NED velocity, body→world attitude quaternion + derived
+/// Euler angles, body-frame angular rate. Each row is one
+/// gz-physics step (~1 kHz). The file is overwritten per mission.
+fn write_trace_csv(
+    path: &std::path::Path,
+    mission_name: &str,
+    phases: &[PhaseResult],
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)?;
+    writeln!(
+        f,
+        "# mission={}\nt_s,phase,action,x_ned_m,y_ned_m,z_ned_m,vx_mps,vy_mps,vz_mps,qw,qx,qy,qz,roll_deg,pitch_deg,yaw_deg,p_radps,q_radps,r_radps"
+    , mission_name)?;
+    let mut t_offset = 0.0f32;
+    for phase in phases {
+        // CSV `action` column is the TOML action with whitespace
+        // collapsed so the column doesn't break on commas inside
+        // the debug-formatted enum.
+        let action = phase
+            .action_tag
+            .replace([',', '\n', '\r'], ";")
+            .replace("  ", " ");
+        for s in &phase.trace {
+            let (roll, pitch, yaw) = quat_to_rpy(s.attitude);
+            writeln!(
+                f,
+                "{:.4},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.6},{:.6},{:.6},{:.6},{:.3},{:.3},{:.3},{:.4},{:.4},{:.4}",
+                t_offset + s.elapsed,
+                phase.name,
+                action,
+                s.position[0], s.position[1], s.position[2],
+                s.velocity[0], s.velocity[1], s.velocity[2],
+                s.attitude[0], s.attitude[1], s.attitude[2], s.attitude[3],
+                roll.to_degrees(), pitch.to_degrees(), yaw.to_degrees(),
+                s.angular_velocity[0], s.angular_velocity[1], s.angular_velocity[2],
+            )?;
+        }
+        t_offset += phase.duration_actual.as_secs_f32();
+    }
+    Ok(())
 }
 
 #[cfg(test)]

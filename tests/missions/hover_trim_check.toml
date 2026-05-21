@@ -1,27 +1,12 @@
-# Aviate SITL: Open-loop ballistic-style flight — strict per-step
-# verification
-#
-# Without closed-loop altitude hold (the kernel's `MultirotorController`
-# has the cascaded att/rate loop disabled today — see DRQ-CTL-003)
-# the X500 cannot strictly hover: at any thrust value, residual
-# velocity from earlier phases persists. What it CAN do is fly a
-# ballistic profile cleanly — straight up, coast, decelerate,
-# descend, land — with **zero horizontal drift**.
-#
-# Every criterion below is throughout-phase. xy drift ≤ 0.5 m for
-# the entire flight. attitude bounded to ±10° throughout (the X500
-# is passively stable under symmetric thrust). The mission passes
-# only when the vehicle visibly performs a clean vertical flight.
-#
-# Closed-loop course-flight is the next deliverable; the criteria
-# (`station_keeping`, `trajectory_tracking`, `returned_near`) and
-# the position-target plumbing are already in place — they wait
-# on the attitude controller landing.
+# Aviate SITL: open-loop vertical flight baseline.
+# Closed-loop landing depends on the velocity-loop tuning + a
+# position controller with proper energy management (sqrt-shaped
+# vel setpoint) — see DRQ-CTL-002.
 
 [test]
 name = "hover_trim_check"
-description = "Real open-loop flight — ascend, decelerate, descend, land"
-lockstep = true
+description = "Open-loop vertical flight"
+lockstep = false
 
 [[vehicles]]
 id = "x500"
@@ -49,8 +34,6 @@ verify = [
   { type = "attitude_bounded", roll_pitch_max_deg = 5.0 },
 ]
 
-# Ascend at 0.85 thrust. Net upward thrust ~4.5 N gives a ~2.2
-# m/s² acceleration; in 2.5 s the vehicle reaches ~7 m at ~5.5 m/s.
 [[vehicles.mission.phases]]
 name = "ascend"
 duration_ms = 2500
@@ -62,8 +45,6 @@ verify = [
   { type = "attitude_bounded", roll_pitch_max_deg = 15.0 },
 ]
 
-# Decelerate at sub-hover thrust. Net downward force brings the
-# climb rate down to zero (apex) and into descent.
 [[vehicles.mission.phases]]
 name = "decelerate"
 duration_ms = 3000
@@ -74,8 +55,6 @@ verify = [
   { type = "attitude_bounded", roll_pitch_max_deg = 15.0 },
 ]
 
-# Descend: cut thrust further. The vehicle continues toward the
-# ground.
 [[vehicles.mission.phases]]
 name = "descend"
 duration_ms = 2000
@@ -86,7 +65,6 @@ verify = [
   { type = "attitude_bounded", roll_pitch_max_deg = 15.0 },
 ]
 
-# Land: thrust to zero. Vehicle is on the ground by phase end.
 [[vehicles.mission.phases]]
 name = "land"
 duration_ms = 3000

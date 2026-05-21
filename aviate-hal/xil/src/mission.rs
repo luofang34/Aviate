@@ -240,6 +240,18 @@ pub enum Criterion {
     /// the vehicle yaws naturally as the EKF converges. A tumbling
     /// vehicle fails this criterion immediately.
     AttitudeBounded { roll_pitch_max_deg: f32 },
+    /// **End-state**: at the moment the vehicle first touches the
+    /// ground during the phase (z ≥ −`ground_tolerance` in NED),
+    /// the vertical descent rate must not exceed `max_descent_mps`.
+    /// A free-fall landing fails: `thrust=0` from 10 m gives ~14
+    /// m/s impact, well above any safe threshold. The criterion
+    /// makes "soft touchdown" a verifiable property of the
+    /// controller rather than a hopeful side-effect of the
+    /// mission profile.
+    TouchdownVelocity {
+        max_descent_mps: f32,
+        ground_tolerance: f32,
+    },
 }
 
 /// Result of a phase execution
@@ -251,6 +263,16 @@ pub struct PhaseResult {
     pub max_altitude: f32,
     pub final_position: [f32; 3],
     pub criteria_results: Vec<CriterionResult>,
+    /// Per-step trace samples from this phase. Retained on the
+    /// result so the mission runner can write a CSV (or any other
+    /// post-mortem artefact) covering every sample of every phase
+    /// without duplicating the trace into a side channel.
+    pub trace: Vec<crate::runner::TraceSample>,
+    /// String describing the action commanded during this phase
+    /// (e.g. `thrust=0.85`, `goto=[0,0,-5]`). Tagged at phase
+    /// start so the CSV reader can see which input drove each
+    /// sample.
+    pub action_tag: String,
 }
 
 #[derive(Debug)]

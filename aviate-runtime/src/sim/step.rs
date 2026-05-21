@@ -167,47 +167,38 @@ impl SitlRunner {
         // attitude transient that otherwise wrestles with the
         // closed-loop controller during takeoff and saturates
         // motors against an EKF that lags reality.
-        if !self.ekf_initialized && self.sensor_cache.imu.is_some() {
+        if !self.ekf_initialized
+            && self.sensor_cache.imu.is_some()
+            && self.sensor_cache.mag.is_some()
+        {
             info!("Initializing EKF with sensor data");
-            let init_quat = self
-                .sensor_cache
-                .imu
-                .as_ref()
-                .map(|imu| {
-                    use aviate_core::math::Vector3 as V3;
-                    let ax = imu.value.accel[0].0;
-                    let ay = imu.value.accel[1].0;
-                    let az = imu.value.accel[2].0;
-                    let mag = (ax * ax + ay * ay + az * az).sqrt();
-                    if mag < 1.0 {
-                        return Quaternion::IDENTITY;
-                    }
-                    // Body's measured "up" direction (specific
-                    // force points opposite to gravity at rest).
-                    let g_body = V3::new(-ax / mag, -ay / mag, -az / mag);
-                    // NED gravity unit vector points down, so
-                    // body-to-world rotation maps g_body → +Z.
-                    let target = V3::new(0.0, 0.0, 1.0);
-                    let dot = g_body.x * target.x + g_body.y * target.y + g_body.z * target.z;
-                    if dot > 0.9999 {
-                        return Quaternion::IDENTITY;
-                    }
-                    let axis = V3::new(
-                        g_body.y * target.z - g_body.z * target.y,
-                        g_body.z * target.x - g_body.x * target.z,
-                        g_body.x * target.y - g_body.y * target.x,
-                    );
-                    let axis_norm = (axis.x * axis.x + axis.y * axis.y + axis.z * axis.z).sqrt();
-                    if axis_norm < 1e-6 {
-                        return Quaternion::IDENTITY;
-                    }
-                    let angle = dot.clamp(-1.0, 1.0).acos();
-                    Quaternion::from_axis_angle(
-                        V3::new(axis.x / axis_norm, axis.y / axis_norm, axis.z / axis_norm),
-                        angle,
-                    )
-                })
-                .unwrap_or(Quaternion::IDENTITY);
+            // TRIAD-style: roll & pitch come from the gravity
+            // vector (specific force at rest), yaw from the mag
+            // heading after tilt compensation. Seeding yaw to zero
+            // and letting the mag pull it later confuses the
+            // Kalman update — the correction routes through the
+            // attitude/gyro-bias correlation block, builds a
+            // phantom gyro bias, and the predict step then
+            // integrates a phantom yaw rate that physically yaws
+            // the vehicle once the cascade is closed.
+            let init_quat = {
+                let imu = self
+                    .sensor_cache
+                    .imu
+                    .as_ref()
+                    .map(|s| s.value)
+                    .unwrap_or_default();
+                let mag = self
+                    .sensor_cache
+                    .mag
+                    .as_ref()
+                    .map(|s| s.value)
+                    .unwrap_or_default();
+                triad_init_quat(
+                    [imu.accel[0].0, imu.accel[1].0, imu.accel[2].0],
+                    [mag.field_ut[0].0, mag.field_ut[1].0, mag.field_ut[2].0],
+                )
+            };
             self.kernel.state.estimator.init(
                 Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
                 Vector3::new(
@@ -305,4 +296,96 @@ impl SitlRunner {
 
         actuator_cmd
     }
+}
+
+/// Seed the EKF attitude quaternion from a single body-frame
+/// accelerometer + magnetometer sample (TRIAD).
+///
+/// The accel vector at rest points opposite to NED gravity, so it
+/// fixes roll and pitch. The mag vector resolves the remaining
+/// rotation about the gravity axis (yaw). Seeding all three angles
+/// at init avoids the cold-start scenario where a mag update on a
+/// stationary vehicle routes its correction through the
+/// attitude/gyro-bias covariance block and produces a phantom
+/// gyro bias — which the predict step then integrates into real
+/// vehicle motion once the rate loop is closed.
+fn triad_init_quat(accel_body: [f32; 3], mag_body: [f32; 3]) -> Quaternion {
+    use aviate_core::math::Vector3 as V3;
+    let ax = accel_body[0];
+    let ay = accel_body[1];
+    let az = accel_body[2];
+    let a_mag = (ax * ax + ay * ay + az * az).sqrt();
+    if !(a_mag.is_finite()) || a_mag < 1.0 {
+        return Quaternion::IDENTITY;
+    }
+    let mx = mag_body[0];
+    let my = mag_body[1];
+    let mz = mag_body[2];
+    let m_mag = (mx * mx + my * my + mz * mz).sqrt();
+    if !(m_mag.is_finite()) || m_mag < 1.0 {
+        return Quaternion::IDENTITY;
+    }
+
+    // Body axes in world (NED) frame, derived from the two
+    // observed vectors:
+    //   z_world_in_body = direction of NED gravity ≈ -accel/|accel|
+    //   n_world_in_body = horizontal component of mag, orthogonal to z
+    let z_body = V3::new(-ax / a_mag, -ay / a_mag, -az / a_mag);
+    let m_body = V3::new(mx / m_mag, my / m_mag, mz / m_mag);
+    // Project mag onto plane perpendicular to z_body (remove
+    // vertical component). What remains is the horizontal mag
+    // direction = NED north in body frame.
+    let dot_mz = m_body.x * z_body.x + m_body.y * z_body.y + m_body.z * z_body.z;
+    let n_body = V3::new(
+        m_body.x - dot_mz * z_body.x,
+        m_body.y - dot_mz * z_body.y,
+        m_body.z - dot_mz * z_body.z,
+    );
+    let n_norm = (n_body.x * n_body.x + n_body.y * n_body.y + n_body.z * n_body.z).sqrt();
+    if !(n_norm.is_finite()) || n_norm < 1e-6 {
+        return Quaternion::IDENTITY;
+    }
+    let n_body = V3::new(n_body.x / n_norm, n_body.y / n_norm, n_body.z / n_norm);
+    // East in body = D × N (right-hand rule for NED: N × E = D ⇒ E = D × N).
+    let e_body = V3::new(
+        z_body.y * n_body.z - z_body.z * n_body.y,
+        z_body.z * n_body.x - z_body.x * n_body.z,
+        z_body.x * n_body.y - z_body.y * n_body.x,
+    );
+
+    // Rotation matrix R such that v_world = R · v_body. Its
+    // ROWS are the world axes expressed in body frame
+    // (R_ij = projection of e_i_world onto e_j_body).
+    let r00 = n_body.x;
+    let r01 = n_body.y;
+    let r02 = n_body.z;
+    let r10 = e_body.x;
+    let r11 = e_body.y;
+    let r12 = e_body.z;
+    let r20 = z_body.x;
+    let r21 = z_body.y;
+    let r22 = z_body.z;
+
+    // Shepperd's method: pick the most numerically stable branch
+    // by selecting the largest diagonal magnitude. Avoids the
+    // gimbal-pole singularity that the direct trace formula has.
+    let trace = r00 + r11 + r22;
+    let (w, x, y, z) = if trace > 0.0 {
+        let s = (trace + 1.0).sqrt() * 2.0;
+        (0.25 * s, (r21 - r12) / s, (r02 - r20) / s, (r10 - r01) / s)
+    } else if r00 > r11 && r00 > r22 {
+        let s = (1.0 + r00 - r11 - r22).sqrt() * 2.0;
+        ((r21 - r12) / s, 0.25 * s, (r01 + r10) / s, (r02 + r20) / s)
+    } else if r11 > r22 {
+        let s = (1.0 + r11 - r00 - r22).sqrt() * 2.0;
+        ((r02 - r20) / s, (r01 + r10) / s, 0.25 * s, (r12 + r21) / s)
+    } else {
+        let s = (1.0 + r22 - r00 - r11).sqrt() * 2.0;
+        ((r10 - r01) / s, (r02 + r20) / s, (r12 + r21) / s, 0.25 * s)
+    };
+    let n = (w * w + x * x + y * y + z * z).sqrt();
+    if !(n.is_finite()) || n < 1e-9 {
+        return Quaternion::IDENTITY;
+    }
+    Quaternion::new(w / n, x / n, y / n, z / n)
 }

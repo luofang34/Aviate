@@ -148,12 +148,15 @@ void AviateGzPlugin::PreUpdate(
         return;  // Wait for model to be found
     }
 
-    // Check for new motor commands from shared memory
-    uint32_t motorSeq = __atomic_load_n(&sharedState_->motor_seq, __ATOMIC_ACQUIRE);
-    if (motorSeq != lastMotorSeq_) {
-        lastMotorSeq_ = motorSeq;
-
-        // Publish motor velocities via gz-transport
+    // Publish the latest motor command every PreUpdate, not only
+    // when motor_seq changes. gz-transport doesn't replay history,
+    // so if MulticopterMotorModel's subscription lands after the
+    // kernel's first non-zero motor message that message is lost
+    // and the vehicle never lifts. Republishing the current values
+    // each tick is cheap (one Actuators message) and removes the
+    // race.
+    __atomic_load_n(&sharedState_->motor_seq, __ATOMIC_ACQUIRE);
+    {
         gz::msgs::Actuators msg;
         int numMotors = sharedState_->num_motors;
         if (numMotors > 8) numMotors = 8;
@@ -218,10 +221,11 @@ void AviateGzPlugin::PostUpdate(
     __atomic_fetch_add(&sharedState_->seq, 1, __ATOMIC_RELEASE);
     __atomic_store_n(&sharedState_->valid, 1, __ATOMIC_RELEASE);
 
-    // Lockstep: increment sim_step to signal FC that new state is available
-    if (lockstep_) {
-        __atomic_fetch_add(&sharedState_->sim_step, 1, __ATOMIC_RELEASE);
-    }
+    // Increment sim_step so consumers (test runner, FC) can detect
+    // new state regardless of whether lockstep gating is active. The
+    // lockstep_ flag governs only the *blocking* gate in PreUpdate,
+    // not the publication of the step counter.
+    __atomic_fetch_add(&sharedState_->sim_step, 1, __ATOMIC_RELEASE);
 }
 
 bool AviateGzPlugin::InitSharedMemory()

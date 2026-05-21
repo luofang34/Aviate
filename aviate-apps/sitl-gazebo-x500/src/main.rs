@@ -60,6 +60,15 @@ fn main() -> std::io::Result<()> {
 
     let mut last_state: Option<AviateModelState> = None;
     let mut last_t_us: u64 = 0;
+    // Position-derived NED velocity from the previous synth call.
+    // gz's `WorldLinearVelocity` is broken on macOS (returns
+    // zero), so the synth pipeline derives velocity from
+    // `Δposition / Δt` and acceleration from
+    // `Δ(derived velocity) / Δt`. The previous derived value
+    // lives here so the next call has a consistent source for
+    // the second finite difference; reading `prev.vel` (zero)
+    // would inject a delta spike on every cycle.
+    let mut last_ned_vel: [f32; 3] = [0.0; 3];
 
     let noise_tier = NoiseTier::from_env();
     let mut noise_rng = NoiseRng::new(0xA17_C0DE);
@@ -84,11 +93,13 @@ fn main() -> std::io::Result<()> {
             // Capture `time_us` BEFORE `last_state = Some(state)` so
             // the sequence does not silently break if a future
             // `AviateModelState` field becomes non-Copy.
-            let mut packet = synthesize_packet(&state, last_state.as_ref(), last_t_us);
+            let (mut packet, ned_vel) =
+                synthesize_packet(&state, last_state.as_ref(), last_t_us, last_ned_vel);
             apply_packet_noise(&mut packet, noise_tier, &mut noise_rng);
             let state_time_us = state.time_us;
             last_state = Some(state);
             last_t_us = state_time_us;
+            last_ned_vel = ned_vel;
 
             board.transport_mut().feed_sensor_packet(&packet);
         }

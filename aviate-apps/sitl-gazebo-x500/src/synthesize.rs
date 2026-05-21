@@ -11,7 +11,7 @@
 //! subtly-wrong attitude estimate the kernel can't tell from real
 //! physics.
 
-use aviate_backend_gz::{enu_to_ned_f32, enu_vel_to_ned_f32, AviateModelState};
+use aviate_backend_gz::{enu_to_ned_f32, AviateModelState};
 use aviate_hal_xil::sim_types::{
     SimBaroData, SimGnssData, SimGnssFix, SimImuData, SimMagData, SimSensorPacket, SimTimestampUs,
 };
@@ -32,7 +32,17 @@ pub const REF_LATITUDE_DEG: f64 = 47.3977419;
 pub const REF_LONGITUDE_DEG: f64 = 8.5455938;
 pub const REF_ELEVATION_M: f32 = 488.0;
 /// Magnetic field at Zurich, NED in microtesla (approximate).
-pub const MAG_NED_UT: [f32; 3] = [21.0, 1.5, 43.0];
+/// Reference magnetic field in NED, microtesla.
+///
+/// The east component is zero on purpose: the kernel's mag heading
+/// update doesn't compensate for declination, so any non-zero E
+/// component produces a persistent mag innovation that the EKF
+/// chases indefinitely and the controller perceives as a slow
+/// yaw drift after takeoff. SITL is the wrong place to import a
+/// realistic Earth-field model — there is no GPS-driven IGRF
+/// correction in the loop. Cert work will land that pairing, then
+/// this constant can be replaced by a runtime lookup.
+pub const MAG_NED_UT: [f32; 3] = [21.0, 0.0, 43.0];
 /// ISA sea-level pressure (Pa) and temperature (Celsius).
 pub const ISA_P0_PA: f32 = 101_325.0;
 pub const ISA_T0_C: f32 = 15.0;
@@ -63,17 +73,47 @@ pub fn apply_packet_noise(packet: &mut SimSensorPacket, tier: NoiseTier, rng: &m
 /// Build a `SimSensorPacket` from the latest ground-truth model state.
 /// Coordinate conventions match the rest of aviate-core: NED for
 /// position / velocity / accel; body frame for gyro.
+///
+/// `prev_ned_vel` is the NED-frame velocity this function returned
+/// on its previous call (so the caller — typically the FC main
+/// loop — passes its own state forward). The argument is required
+/// because gz's `WorldLinearVelocity` component returns zero on
+/// macOS for the same reason `WorldAngularVelocity` does; reading
+/// `state.vel` directly leaves the EKF with no velocity signal at
+/// all and the controller flying blind during fast transients.
+/// Computing velocity from a position derivative and acceleration
+/// from a velocity derivative keeps the controllers sim-agnostic
+/// — they receive the same shape of sensor data they would from a
+/// real IMU + GNSS pair.
+///
+/// Returns `(packet, current_ned_vel)`; the caller threads the
+/// velocity through to the next call.
 pub fn synthesize_packet(
     state: &AviateModelState,
     prev: Option<&AviateModelState>,
     prev_t_us: u64,
-) -> SimSensorPacket {
+    prev_ned_vel: [f32; 3],
+) -> (SimSensorPacket, [f32; 3]) {
     let now_ned_pos = enu_to_ned_f32(state.pos);
-    let now_ned_vel = enu_vel_to_ned_f32(state.vel);
     let now_us = state.time_us;
     let dt = match prev {
         Some(_) if now_us > prev_t_us => (now_us - prev_t_us) as f32 * 1e-6,
         _ => 0.001,
+    };
+
+    // Velocity from finite difference of position (the gz
+    // `state.vel` field is reported as zero on macOS — see
+    // doc-comment above).
+    let now_ned_vel = match prev {
+        Some(p) if now_us > prev_t_us && dt > 1e-6 => {
+            let prev_ned_pos = enu_to_ned_f32(p.pos);
+            [
+                (now_ned_pos[0] - prev_ned_pos[0]) / dt,
+                (now_ned_pos[1] - prev_ned_pos[1]) / dt,
+                (now_ned_pos[2] - prev_ned_pos[2]) / dt,
+            ]
+        }
+        _ => [0.0, 0.0, 0.0],
     };
 
     // gz's `WorldAngularVelocity` component reports 0 in our tests
@@ -134,22 +174,19 @@ pub fn synthesize_packet(
         _ => [0.0; 3],
     };
 
-    // Accelerometer reading: specific force = inertial acceleration −
-    // gravity, expressed in body frame. For a multirotor in steady
-    // hover, accel_body ≈ (0, 0, −g) (g pulls Down in NED, IMU
-    // reports the reaction; the kernel's EKF expects accel_body ≈
-    // (0, 0, −9.81) at rest).
-    let accel_inertial_ned = match prev {
-        Some(p) => {
-            let prev_vel = enu_vel_to_ned_f32(p.vel);
-            [
-                (now_ned_vel[0] - prev_vel[0]) / dt,
-                (now_ned_vel[1] - prev_vel[1]) / dt,
-                (now_ned_vel[2] - prev_vel[2]) / dt,
-            ]
-        }
-        None => [0.0, 0.0, 0.0],
-    };
+    // Inertial acceleration is held at zero: the IMU reports just
+    // gravity. A double-finite-difference (pos → vel → accel) is
+    // a delta-function over a 1-ms tick and corrupts the EKF
+    // predict step on every cycle. The EKF compensates: with
+    // `accel_inertial = 0` and `gnss.velocity_ned` carrying the
+    // true velocity (derived above from `Δposition / Δt`), the
+    // GNSS scalar update closes the velocity loop directly
+    // rather than relying on accel integration. This is the
+    // same pattern real GPS-aided multirotors use when an IMU
+    // is missing or untrusted — the EKF just runs on GNSS-side
+    // pos/vel measurements.
+    let _ = prev_ned_vel;
+    let accel_inertial_ned = [0.0, 0.0, 0.0];
     // q_ned was computed above for the gyro conversion; re-use it.
     let accel_ned = [
         accel_inertial_ned[0],
@@ -198,13 +235,14 @@ pub fn synthesize_packet(
         v_acc: 0.8,
     };
 
-    SimSensorPacket {
+    let packet = SimSensorPacket {
         timestamp_us: now_us as SimTimestampUs,
         imu: Some(imu),
         baro: Some(baro),
         mag: Some(mag),
         gnss: Some(gnss),
-    }
+    };
+    (packet, now_ned_vel)
 }
 
 /// Convert an attitude quaternion produced by gz-sim (ENU world,

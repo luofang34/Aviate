@@ -17,7 +17,7 @@
 [test]
 name = "square_course"
 description = "Closed-loop 10 m square via position-target"
-lockstep = true
+lockstep = false
 
 [[vehicles]]
 id = "x500"

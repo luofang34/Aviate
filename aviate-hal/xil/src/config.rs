@@ -436,6 +436,8 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
         let mut z_max: f32 = 0.0;
         let mut max_time_s: f32 = 0.0;
         let mut roll_pitch_max_deg: f32 = 0.0;
+        let mut max_descent_mps: f32 = 0.0;
+        let mut ground_tolerance: f32 = 0.0;
         let mut waypoints: Vec<[f32; 3]> = Vec::new();
 
         // Items contain inline arrays like `position = [0.0, 0.0, -10.0]`
@@ -468,6 +470,8 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
                     "z_max" => z_max = v.parse().unwrap_or(0.0),
                     "max_time_s" => max_time_s = v.parse().unwrap_or(0.0),
                     "roll_pitch_max_deg" => roll_pitch_max_deg = v.parse().unwrap_or(0.0),
+                    "max_descent_mps" => max_descent_mps = v.parse().unwrap_or(0.0),
+                    "ground_tolerance" => ground_tolerance = v.parse().unwrap_or(0.0),
                     "waypoints" => waypoints = parse_vec3_list(&v),
                     _ => {}
                 }
@@ -513,6 +517,10 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
                 tolerance,
             },
             "attitude_bounded" => Criterion::AttitudeBounded { roll_pitch_max_deg },
+            "touchdown_velocity" => Criterion::TouchdownVelocity {
+                max_descent_mps,
+                ground_tolerance,
+            },
             _ => continue,
         };
 

@@ -22,12 +22,15 @@ impl PositionController {
             z: setpoint.z.0 - current.z.0,
         };
 
-        // Tight per-axis velocity cap: a P-only position controller
-        // (no I-term yet — DRQ-CTL-003) overshoots when it can
+        // Per-axis velocity cap. A P-only position controller (no
+        // I-term yet — DRQ-CTL-002) overshoots when allowed to
         // command a large velocity, because residual velocity at
         // the moment the position error hits zero carries the
-        // vehicle past the target. Capping each axis to ±2 m/s
-        // gives the inner loop room to decelerate cleanly.
+        // vehicle past the target. The caps below are chosen for
+        // multirotor airframes; switch to a sqrt-shaped velocity
+        // setpoint (PX4 / ArduPilot `sqrt_controller`) for
+        // proper energy management once the velocity feedback
+        // fidelity question is settled.
         const VEL_CAP_HORIZONTAL: f32 = 2.0;
         const VEL_CAP_VERTICAL: f32 = 1.5;
         Vector3 {

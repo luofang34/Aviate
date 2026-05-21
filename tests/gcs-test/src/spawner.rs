@@ -62,6 +62,15 @@ pub struct GazeboSpawner {
 
 impl GazeboSpawner {
     pub fn new() -> Self {
+        // Reclaim orphan FC / gz processes left behind by a prior
+        // run that exited without running `Drop` (a `timeout`-killed
+        // gcs-test, a SIGKILL, etc.). Orphans hold port 20000 and
+        // the gz shared-memory region, so subsequent runs see
+        // "Address already in use" on the FC bind and a polluted
+        // motor-command stream that prevents takeoff. Scoped to
+        // this user's processes by binary name so a parallel
+        // pytest job or another developer's session is untouched.
+        cleanup_orphan_aviate_sitl_processes();
         Self {
             child: None,
             gui_child: None,
@@ -245,23 +254,32 @@ impl Spawner {
 
     /// Wait for the FC binary to be ready to fly.
     ///
-    /// On macOS, gz-sim's first-time plugin Configure can take 15–20 s
-    /// (dlopen cold cache + dartsim physics warm-up). The FC binary
-    /// blocks in `GzPluginBridge::connect_with_retry` during that
-    /// window — it cannot send motor commands or respond to mission
-    /// commands until it has the plugin handle. If the mission
-    /// starts running before the FC is ready, the kernel sees the
-    /// arm/thrust commands but cannot actuate the rotors, and the
-    /// vehicle silently stays on the ground while the mission's
-    /// flight phases tick past.
-    ///
-    /// Until we wire up a real ready-signal channel (FC reports
-    /// "I'm flying" once `plugin.get_model_state()` returns Some),
-    /// the simplest fix is a generous fixed sleep that exceeds the
-    /// observed plugin-Configure latency.
-    pub fn wait_for_fc_ready(&self, _timeout: Duration) -> bool {
-        std::thread::sleep(Duration::from_secs(25));
-        true
+    /// Polls the gz shared-memory region for a valid model state.
+    /// Once the plugin has both found the model and started
+    /// publishing pose, the FC is up and ready to receive mission
+    /// commands. Returns as soon as that signal lands rather than
+    /// burning a fixed sleep — typically 5–15 s on macOS depending
+    /// on whether dlopen is cold-cache or warm.
+    pub fn wait_for_fc_ready(&self, timeout: Duration) -> bool {
+        #[cfg(feature = "gazebo")]
+        {
+            use aviate_backend_gz::GzPluginBridge;
+            let start = std::time::Instant::now();
+            while start.elapsed() < timeout {
+                if let Ok(bridge) = GzPluginBridge::for_instance(0) {
+                    if bridge.get_model_state().is_some() {
+                        return true;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            false
+        }
+        #[cfg(not(feature = "gazebo"))]
+        {
+            std::thread::sleep(Duration::from_secs(10).min(timeout));
+            true
+        }
     }
 
     /// Kill all spawned processes
@@ -374,6 +392,73 @@ fn launch_gazebo_gui() -> Result<Child, std::io::Error> {
     cmd.stdout(Stdio::inherit());
     cmd.stderr(Stdio::inherit());
     cmd.spawn()
+}
+
+/// Reclaim leftover `sitl-gazebo-x500` and `gz sim` processes
+/// owned by the current user. Scoped tighter than a blanket
+/// `pkill -f` — only specific binary names, and only the user's
+/// own pid namespace.
+fn cleanup_orphan_aviate_sitl_processes() {
+    use std::process::Command as PCommand;
+    let user = std::env::var("USER").unwrap_or_default();
+    if user.is_empty() {
+        return;
+    }
+    for binary in ["sitl-gazebo-x500"].iter() {
+        let _ = PCommand::new("pkill")
+            .args(["-9", "-u", &user, "-f", binary])
+            .status();
+    }
+    // gz sim must be matched by command-line so we don't also nuke
+    // a gz GUI client or unrelated gz process. Pattern picks up the
+    // server invocation (`gz sim -s -r --headless-rendering`).
+    let _ = PCommand::new("pkill")
+        .args(["-9", "-u", &user, "-f", "gz sim -s -r"])
+        .status();
+
+    // Wait for the SIGKILL'd processes to actually exit and
+    // release their resources. macOS holds onto UDP port 20000
+    // and the POSIX shm name for ~100-300 ms after SIGKILL —
+    // proceeding too eagerly leaves the next run's FC racing
+    // a partially-dead orphan. Poll for absence with a
+    // bounded retry so we don't pay the full wait when the
+    // host was clean to start with.
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        let any_left = PCommand::new("pgrep")
+            .args(["-u", &user, "-f", "sitl-gazebo-x500"])
+            .output()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false)
+            || PCommand::new("pgrep")
+                .args(["-u", &user, "-f", "gz sim -s -r"])
+                .output()
+                .map(|o| !o.stdout.is_empty())
+                .unwrap_or(false);
+        if !any_left {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // Belt-and-suspenders: explicitly unlink the POSIX shm name
+    // the plugin uses, in case a process exited without running
+    // the plugin's own `shm_unlink` (e.g. SIGKILL during init).
+    // Multi-instance harnesses unlink both base and `_<n>` names.
+    // `shm_unlink` returns ENOENT silently when nothing's there.
+    #[cfg(target_family = "unix")]
+    unsafe {
+        for instance in 0u8..4 {
+            let name = if instance == 0 {
+                std::ffi::CString::new("/aviate_gz_bridge").ok()
+            } else {
+                std::ffi::CString::new(format!("/aviate_gz_bridge_{}", instance)).ok()
+            };
+            if let Some(name) = name {
+                libc::shm_unlink(name.as_ptr());
+            }
+        }
+    }
 }
 
 /// Clean up only the Linux shm mirror file (no broad `pkill`).

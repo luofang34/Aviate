@@ -113,26 +113,19 @@ impl VehicleController for MultirotorController {
             att_sp = att;
         }
 
-        // Below the minimum-thrust gate the axis loops are suppressed.
-        // With near-zero collective the vehicle is on the ground; running
-        // the attitude/rate loop on small EKF-attitude errors with no
-        // lift would yaw the chassis against the ground (one diagonal
-        // of motors firing while the other is idle is a pure torque
-        // pair — no lift, just spin). The closed loop only engages
-        // once the operator has commanded enough thrust to imply
-        // "we want to fly".
-        // Axis control gate.
-        //
-        // **Set above [0, 1]** so the closed-loop attitude / rate
-        // cascade is never invoked from this controller today —
-        // even with the gyro frame conversion fixed and the X500
-        // mixer correct, the cascade tumbles the vehicle in
-        // closed-loop operation (DRQ-CTL-003 carries the
-        // remaining EKF / controller debugging work). With the
-        // cascade gated off, the X500 flies passively stable
-        // for vertical mission profiles.
-        //
-        // Lowering this to 0.1 re-engages the cascade.
+        // Above this collective the cascaded axis controller
+        // engages; below it the kernel falls back to open-loop
+        // thrust with zero axis input. The bar is set just above
+        // the disarmed/on-ground regime: at near-zero collective
+        // the mixer cannot add corrective torque without saturating
+        // individual motors, and running the loop while the
+        // chassis is on the ground spins one diagonal of motors
+        // pure-torque against the surface. Once the operator has
+        // commanded enough thrust to imply "we want to fly",
+        // engage the cascade — including during sub-hover descent,
+        // where active rate damping is what keeps the vehicle from
+        // diverging (passive stability is not a property of a
+        // multirotor in free fall).
         const MIN_THRUST_FOR_AXIS_CONTROL: Scalar = 0.1;
         if collective_sp.0 < MIN_THRUST_FOR_AXIS_CONTROL {
             return AxisCommand {
@@ -149,16 +142,32 @@ impl VehicleController for MultirotorController {
         // 4. Rate Control
         let torque_norm = self.rate_ctrl.step(rate_sp, state.angular_velocity);
 
-        // 5. Output. Yaw is bounded so it cannot overwhelm collective
-        // thrust in the mixer; see DRQ-CTL-003 for the workaround
-        // rationale.
-        const YAW_PRIORITY_CAP: f32 = 0.2;
+        // 5. Output. Roll/pitch bounded by a collective-aware cap
+        // so a saturated cascade cannot drive the mixer into a
+        // pure-torque-pair regime (two motors at zero, two at max
+        // — attitude corrects at the cost of all thrust, then the
+        // vehicle falls). The cap leaves a floor of headroom so
+        // the mixer never asks a motor for negative thrust.
+        //
+        // Yaw gets a separate, larger cap. The yaw axis enters the
+        // mixer with the *same* sign on the two motors of a
+        // diagonal (m0+m1 both gain +y, m2+m3 both lose +y), so
+        // saturation here clips two motors at once and the body
+        // still gets a useful net yaw torque even past the mixer
+        // limit. Constraining yaw to the collective-aware cap
+        // starves it of authority during hover (cap shrinks to
+        // ~0.05 at 0.85 thrust) — the vehicle picks up small yaw
+        // disturbances and rotates without ever catching up.
+        const AXIS_PRIORITY_FLOOR: f32 = 0.1;
+        const YAW_AUTHORITY_CAP: f32 = 0.3;
+        let rp_cap = (collective_sp.0 - AXIS_PRIORITY_FLOOR)
+            .min(1.0 - collective_sp.0 - AXIS_PRIORITY_FLOOR)
+            .max(0.05);
+        let yaw_axis = torque_norm[2].0.clamp(-YAW_AUTHORITY_CAP, YAW_AUTHORITY_CAP);
         AxisCommand {
-            roll: torque_norm[0],
-            pitch: torque_norm[1],
-            yaw: crate::types::NormalizedSigned(
-                torque_norm[2].0.clamp(-YAW_PRIORITY_CAP, YAW_PRIORITY_CAP),
-            ),
+            roll: crate::types::NormalizedSigned(torque_norm[0].0.clamp(-rp_cap, rp_cap)),
+            pitch: crate::types::NormalizedSigned(torque_norm[1].0.clamp(-rp_cap, rp_cap)),
+            yaw: crate::types::NormalizedSigned(yaw_axis),
             collective: collective_sp,
         }
     }

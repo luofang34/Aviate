@@ -20,7 +20,7 @@
 [test]
 name = "static_hover"
 description = "Closed-loop takeoff, station-keeping hover, land"
-lockstep = true
+lockstep = false
 
 [[vehicles]]
 id = "x500"
