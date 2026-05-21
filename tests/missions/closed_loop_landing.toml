@@ -1,0 +1,103 @@
+# Aviate SITL: closed-loop landing with sqrt-shaped velocity
+# setpoint. Verifies the position controller's energy management
+# end-to-end: vehicle must approach the ground gradually under
+# the cascade's brake authority and touch down at ≤ 1 m/s.
+#
+# Phase plan:
+#   1. arm
+#   2. settle
+#   3. takeoff_open_loop  (thrust=0.85, open-loop ascend ~6 m)
+#   4. hover_high         (closed-loop loiter at 6 m alt)
+#   5. descend            (closed-loop GoTo -2 m alt)
+#   6. land               (closed-loop GoTo 0; touchdown_velocity ≤ 1 m/s)
+#   7. disarm
+#
+# This mission exists separately from `hover_trim_check.toml` so
+# the open-loop baseline stays as a controller-agnostic regression
+# guard, and this mission stays as the kinematic-shaping bar.
+
+[test]
+name = "closed_loop_landing"
+description = "Sqrt-shaped position control + soft touchdown"
+lockstep = false
+
+[[vehicles]]
+id = "x500"
+model = "x500"
+instance = 0
+spawn_position = [0.0, 0.0, 0.0]
+spawn_heading = 0.0
+
+[vehicles.mission]
+name = "closed_loop_landing"
+
+[[vehicles.mission.phases]]
+name = "arm"
+duration_ms = 500
+action = { type = "arm" }
+verify = [{ type = "armed", value = true }]
+
+[[vehicles.mission.phases]]
+name = "settle"
+duration_ms = 1000
+action = { type = "thrust", value = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "station_keeping", center = [0.0, 0.0, 0.0], xy_tolerance = 0.2, z_tolerance = 0.2 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 5.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "takeoff_open_loop"
+duration_ms = 2500
+action = { type = "thrust", value = 0.85 }
+verify = [
+  { type = "armed", value = true },
+  { type = "min_altitude", value = 4.0 },
+  { type = "max_excursion", center = [0.0, 0.0, -4.0], xy_max = 0.5, z_max = 10.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 15.0 },
+]
+
+# Loiter at 6 m to let the cascade settle before the descent leg.
+# With sqrt-shaped vel_sp the vehicle decelerates as it approaches
+# the 6 m setpoint and doesn't shoot past, so the descent leg
+# starts with near-zero residual velocity.
+[[vehicles.mission.phases]]
+name = "hover_high"
+duration_ms = 5000
+action = { type = "goto", position = [0.0, 0.0, -6.0], heading = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "max_excursion", center = [0.0, 0.0, -6.0], xy_max = 1.5, z_max = 4.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "descend"
+duration_ms = 6000
+action = { type = "goto", position = [0.0, 0.0, -2.0], heading = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "max_excursion", center = [0.0, 0.0, -4.0], xy_max = 1.5, z_max = 5.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
+]
+
+# The verifier that justifies this mission's existence. The
+# sqrt-controller's claim is "vehicle stops exactly at the
+# setpoint within brake authority". touchdown_velocity makes
+# that claim falsifiable: the moment the trace crosses within
+# 30 cm of ground, downward speed must be ≤ 1 m/s.
+[[vehicles.mission.phases]]
+name = "land"
+duration_ms = 6000
+action = { type = "goto", position = [0.0, 0.0, 0.0], heading = 0.0 }
+verify = [
+  { type = "max_excursion", center = [0.0, 0.0, -1.0], xy_max = 1.5, z_max = 3.0 },
+  { type = "touchdown_velocity", max_descent_mps = 1.0, ground_tolerance = 0.30 },
+]
+
+[[vehicles.mission.phases]]
+name = "disarm"
+duration_ms = 500
+action = { type = "disarm" }
+verify = [{ type = "armed", value = false }]
