@@ -109,7 +109,7 @@ impl CascadeGains {
             // of the setpoint from full descent.
             pos_p: [0.5, 0.5, 0.5],
             pos_accel_limits: [2.0, 2.0, 1.0],
-            pos_vel_caps: [2.0, 2.0, 0.5],
+            pos_vel_caps: [2.0, 2.0, 0.4],
             vel_p: [0.3, 0.3, 0.4],
             // Horizontal I-term stays off until the
             // closed-loop-horizontal regression baseline lands —
