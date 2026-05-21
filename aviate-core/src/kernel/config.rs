@@ -23,6 +23,7 @@
 //!
 //! See `docs/AVIATE_SPEC.md` §19 (Configuration) for the spec contract.
 
+use crate::control::cascade_gains::CascadeGains;
 use crate::control::{ConfigMode, Limits};
 use crate::fault::FaultHandlingTable;
 use crate::kernel_types::DEFAULT_COMMAND_TIMEOUT_MS;
@@ -80,6 +81,15 @@ pub struct ResolvedKernelConfig {
     /// this and emit the safe pattern immediately (LLR-FLT-205).
     pub slew_limit_per_cycle: [Normalized; MAX_ACTUATORS],
 
+    /// Cascade tuning — every PID gain and limit the multirotor
+    /// controller reads. Owned here, not on the controller struct,
+    /// so `canonical_hash` covers tuning (DRQ-CTL-001). Before this
+    /// landed, gains lived as constructor arguments on
+    /// `MultirotorController` and were invisible to lockstep:
+    /// two channels could disagree on tuning silently because
+    /// `algorithm_identity_hash` only sees algorithm classes.
+    pub cascade_gains: CascadeGains,
+
     /// Per-airframe hover-thrust trim, as a Normalized value (0..1).
     ///
     /// The closed-loop velocity controller uses this as the offset
@@ -114,6 +124,7 @@ impl Default for ResolvedKernelConfig {
             command_timeout_ms: DEFAULT_COMMAND_TIMEOUT_MS,
             safe_output: [Normalized(0.0); MAX_ACTUATORS],
             slew_limit_per_cycle: [Normalized(0.0); MAX_ACTUATORS],
+            cascade_gains: CascadeGains::default(),
             hover_thrust_norm: Normalized(0.5),
         }
     }

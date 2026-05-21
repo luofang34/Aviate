@@ -8,6 +8,7 @@
 //! See `kernel/config.rs::ResolvedKernelConfig::canonical_hash` for
 //! the user-facing entry point.
 
+use crate::control::cascade_gains::CascadeGains;
 use crate::control::{ConfigMode, ControlLawV1, Limits};
 use crate::fault::{FaultAction, FaultCategory, FaultHandlingTable, FaultResponse};
 use crate::mixer::{
@@ -36,6 +37,8 @@ pub(super) fn canonical_hash(cfg: &ResolvedKernelConfig) -> u64 {
     for n in &cfg.slew_limit_per_cycle {
         h.feed_f32(n.0);
     }
+    h.feed_separator();
+    feed_cascade_gains(&mut h, &cfg.cascade_gains);
     h.feed_separator();
     h.feed_f32(cfg.hover_thrust_norm.0);
     h.finish()
@@ -254,6 +257,24 @@ fn feed_fault_action(h: &mut Fnv1a64, a: FaultAction) {
         FaultAction::Degrade => 2,
         FaultAction::Emergency => 3,
     });
+}
+
+fn feed_cascade_gains(h: &mut Fnv1a64, g: &CascadeGains) {
+    for v in g.pos_p.iter().chain(&g.pos_accel_limits).chain(&g.pos_vel_caps) {
+        h.feed_f32(*v);
+    }
+    for v in g.vel_p.iter().chain(&g.vel_i) {
+        h.feed_f32(*v);
+    }
+    h.feed_f32(g.vel_max_roll_pitch);
+    h.feed_f32(g.vel_accel_ff);
+    for v in &g.att_p {
+        h.feed_f32(*v);
+    }
+    for v in g.rate_p.iter().chain(&g.rate_d) {
+        h.feed_f32(*v);
+    }
+    h.feed_f32(g.rate_d_lpf_alpha);
 }
 
 fn feed_control_law(h: &mut Fnv1a64, law: ControlLawV1) {

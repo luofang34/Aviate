@@ -1,11 +1,111 @@
+//! Multirotor cascade controller: position → velocity → attitude
+//! → rate, driving the mixer's `AxisCommand`. Tuning lives in
+//! `ResolvedKernelConfig.cascade_gains` (DRQ-CTL-001); persistent
+//! state (integrators, derivative memories) lives in
+//! `KernelState.controller` as a `MultirotorRuntimeState`.
+
 use crate::control::attitude::AttitudeController;
+use crate::control::cascade_gains::CascadeGains;
 use crate::control::position::PositionController;
-use crate::control::rate::RateController;
-use crate::control::runtime::NoControllerState;
-use crate::control::velocity::VelocityController;
+use crate::control::rate::{RateController, RateLoopState};
+use crate::control::velocity::{
+    AccelFeedforward, VelocityController, VelocityLoopState,
+};
 use crate::control::{AxisCommand, Command, ConfigMode, Limits, Scalar, VehicleController};
 use crate::math::{Quaternion, Vector3};
 use crate::state::StateEstimate;
+use crate::types::{MetersPerSecond, MetersPerSecondSquared};
+
+/// Persistent runtime state for the multirotor cascade. Owned by
+/// `KernelState.controller`. Reset on every transition that
+/// invalidates accumulated memory (`disarm`, `ground_reset`,
+/// `check_critical_faults`, control-law degradation).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MultirotorRuntimeState {
+    pub velocity_loop: VelocityLoopState,
+    pub rate_loop: RateLoopState,
+    /// Last velocity setpoint seen by the velocity loop. Used to
+    /// derive an acceleration feedforward via finite difference,
+    /// closing the position-loop time derivative without needing
+    /// an analytical form per axis.
+    pub last_vel_sp_ned: Vector3<MetersPerSecond>,
+    /// Whether `last_vel_sp_ned` carries a real previous sample.
+    /// First cycle outputs zero feedforward instead of
+    /// differentiating against the default (zero) value.
+    pub vel_sp_primed: bool,
+    /// Per-cycle interval used for the velocity-loop integrator
+    /// and rate-loop derivative. The kernel `update` path writes
+    /// it before each `step()` so the controller doesn't need a
+    /// separate trait-signature change for `dt`.
+    pub dt_sec: Scalar,
+}
+
+impl Default for MultirotorRuntimeState {
+    fn default() -> Self {
+        Self {
+            velocity_loop: VelocityLoopState::default(),
+            rate_loop: RateLoopState::default(),
+            last_vel_sp_ned: Vector3::new(
+                MetersPerSecond(0.0),
+                MetersPerSecond(0.0),
+                MetersPerSecond(0.0),
+            ),
+            vel_sp_primed: false,
+            dt_sec: 0.0,
+        }
+    }
+}
+
+impl crate::control::runtime::ControllerRuntimeState for MultirotorRuntimeState {
+    fn reset(&mut self) {
+        self.velocity_loop.reset();
+        self.rate_loop.reset();
+        self.last_vel_sp_ned = Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        );
+        self.vel_sp_primed = false;
+        // dt_sec is overwritten each cycle; resetting to zero
+        // makes the next step a quiet "no time has passed" cycle.
+        self.dt_sec = 0.0;
+    }
+}
+
+impl crate::replicable::Replicable for MultirotorRuntimeState {
+    // 13 f32 fields × 4 bytes = 52 bytes.
+    const ENCODED_LEN: usize = 52;
+
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        let fields: [f32; 13] = [
+            self.velocity_loop.integrator_ned.x.0,
+            self.velocity_loop.integrator_ned.y.0,
+            self.velocity_loop.integrator_ned.z.0,
+            self.rate_loop.meas_filtered_prev.x.0,
+            self.rate_loop.meas_filtered_prev.y.0,
+            self.rate_loop.meas_filtered_prev.z.0,
+            self.last_vel_sp_ned.x.0,
+            self.last_vel_sp_ned.y.0,
+            self.last_vel_sp_ned.z.0,
+            // Booleans serialized as 0.0/1.0 to keep the
+            // encoding all-f32; they're picked back up by the
+            // cross-channel reader by structural shape.
+            if self.vel_sp_primed { 1.0 } else { 0.0 },
+            if self.rate_loop.primed { 1.0 } else { 0.0 },
+            self.dt_sec,
+            // One f32 of padding so the total is a 13×4=52 →
+            // align to 54 with two bool bytes is messy; just
+            // emit 13 f32 = 52 bytes total and leave the 54
+            // constant for future per-cycle flags.
+            0.0,
+        ];
+        for (i, &v) in fields.iter().enumerate() {
+            let bytes = v.to_le_bytes();
+            buf[i * 4..i * 4 + 4].copy_from_slice(&bytes);
+        }
+        fields.len() * 4
+    }
+}
 
 pub struct MultirotorController {
     pub pos_ctrl: PositionController,
@@ -21,41 +121,37 @@ impl Default for MultirotorController {
 }
 
 impl MultirotorController {
-    /// Construct a multirotor controller with the airframe's hover-trim
-    /// value. The vertical velocity loop commands collective-thrust
-    /// corrections around this point; setting it correctly is the
-    /// difference between a vehicle that holds altitude and one that
-    /// sinks under closed-loop control. See `ResolvedKernelConfig.
-    /// hover_thrust_norm` for the canonical record.
-    pub fn with_hover_thrust(hover_thrust_norm: Scalar) -> Self {
-        // Tuned for X500 + gz + quaternion-derived gyro. Two
-        // properties matter most for closed-loop stability here:
-        //
-        //   1. **Rate inner loop fast vs attitude outer loop.**
-        //      Att gain 0.5 + rate gain 0.5 means a 1 rad
-        //      attitude error commands at most a 0.5 rad/s rate
-        //      setpoint, and the rate loop produces at most a
-        //      0.5 motor command per rad/s of rate error. Both
-        //      are well below saturation.
-        //
-        //   2. **Bounded attitude setpoint from velocity loop.**
-        //      `max_roll_pitch: 0.175 rad` (≈10°) caps how
-        //      aggressively the velocity controller can tilt the
-        //      body in response to a horizontal position error.
-        //      Without this cap, a large drift commanded a 60°
-        //      tilt that the rate loop could not track without
-        //      saturating the mixer.
+    /// Construct from explicit tuning. The single authoritative
+    /// source of gains is `CascadeGains` (mirrored from
+    /// `ResolvedKernelConfig`); the four sub-controllers carry
+    /// the same struct by value so a kernel construction step
+    /// that builds both the config and this controller from the
+    /// same `CascadeGains` instance keeps them in lockstep
+    /// by construction.
+    pub fn from_gains(gains: CascadeGains, hover_thrust_norm: Scalar) -> Self {
         Self {
-            pos_ctrl: PositionController::new([0.3, 0.3, 0.6]),
-            vel_ctrl: VelocityController::new([0.25, 0.25, 0.3], 0.175, hover_thrust_norm),
-            rate_ctrl: RateController::new([0.5, 0.5, 0.3]),
-            att_ctrl: AttitudeController::new([0.5, 0.5, 0.2]),
+            pos_ctrl: PositionController::with_limits(
+                gains.pos_p,
+                gains.pos_accel_limits,
+                gains.pos_vel_caps,
+            ),
+            vel_ctrl: VelocityController::new(gains, hover_thrust_norm),
+            rate_ctrl: RateController::new(gains),
+            att_ctrl: AttitudeController::new(gains.att_p),
         }
+    }
+
+    /// Construct with X500 default gains and the supplied hover
+    /// thrust. Convenience for the X500 SITL board; production
+    /// integrators should call `from_gains` with the explicit
+    /// `ResolvedKernelConfig.cascade_gains`.
+    pub fn with_hover_thrust(hover_thrust_norm: Scalar) -> Self {
+        Self::from_gains(CascadeGains::x500_defaults(), hover_thrust_norm)
     }
 }
 
 impl VehicleController for MultirotorController {
-    type RuntimeState = NoControllerState;
+    type RuntimeState = MultirotorRuntimeState;
 
     // Registered in cert/algorithm_id_registry.toml as
     // "controller.multirotor.v1".
@@ -63,21 +159,31 @@ impl VehicleController for MultirotorController {
 
     fn step(
         &self,
-        _runtime: &mut NoControllerState,
+        runtime: &mut MultirotorRuntimeState,
         state: &StateEstimate,
         command: &Command,
         _mode: ConfigMode,
-        _limits: &Limits, // Limits can be applied here for safety or in mixer
+        _limits: &Limits,
     ) -> AxisCommand {
-        // Assume Command priority: Position > Velocity > Attitude (or internal control)
-
+        let dt_sec = runtime.dt_sec;
         let mut collective_sp = command.setpoint.collective_thrust;
-        let mut att_sp = command.setpoint.attitude.unwrap_or(Quaternion::IDENTITY); // Default to level if no attitude commanded
+        let mut att_sp = command.setpoint.attitude.unwrap_or(Quaternion::IDENTITY);
+        let mut accel_ff_ned = Vector3::new(
+            MetersPerSecondSquared(0.0),
+            MetersPerSecondSquared(0.0),
+            MetersPerSecondSquared(0.0),
+        );
 
-        // 1. Position Control (if active)
+        // ---- position → velocity setpoint ----
+        let mut vel_sp_active = false;
+        let mut vel_sp_ned = Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        );
         if let Some(pos_sp_arr) = command.setpoint.position {
             let pos_sp = Vector3::new(pos_sp_arr[0], pos_sp_arr[1], pos_sp_arr[2]);
-            let vel_sp = self.pos_ctrl.step(
+            vel_sp_ned = self.pos_ctrl.step(
                 pos_sp,
                 Vector3 {
                     x: state.position_ned[0],
@@ -85,49 +191,68 @@ impl VehicleController for MultirotorController {
                     z: state.position_ned[2],
                 },
             );
-            // 2. Velocity Control (from position control)
-            let (col, att) = self.vel_ctrl.step(
-                vel_sp,
-                Vector3 {
-                    x: state.velocity_ned[0],
-                    y: state.velocity_ned[1],
-                    z: state.velocity_ned[2],
-                },
-                &state.attitude,
-            );
-            collective_sp = col;
-            att_sp = att;
+            vel_sp_active = true;
         } else if let Some(vel_sp_arr) = command.setpoint.velocity {
-            let vel_sp = Vector3::new(vel_sp_arr[0], vel_sp_arr[1], vel_sp_arr[2]);
-            // 2. Velocity Control (if active)
-            let (col, att) = self.vel_ctrl.step(
-                vel_sp,
-                Vector3 {
-                    x: state.velocity_ned[0],
-                    y: state.velocity_ned[1],
-                    z: state.velocity_ned[2],
-                },
-                &state.attitude,
-            );
-            collective_sp = col;
-            att_sp = att;
+            vel_sp_ned = Vector3::new(vel_sp_arr[0], vel_sp_arr[1], vel_sp_arr[2]);
+            vel_sp_active = true;
         }
 
-        // Above this collective the cascaded axis controller
-        // engages; below it the kernel falls back to open-loop
-        // thrust with zero axis input. The bar is set just above
-        // the disarmed/on-ground regime: at near-zero collective
-        // the mixer cannot add corrective torque without saturating
-        // individual motors, and running the loop while the
-        // chassis is on the ground spins one diagonal of motors
-        // pure-torque against the surface. Once the operator has
-        // commanded enough thrust to imply "we want to fly",
-        // engage the cascade — including during sub-hover descent,
-        // where active rate damping is what keeps the vehicle from
-        // diverging (passive stability is not a property of a
-        // multirotor in free fall).
-        const MIN_THRUST_FOR_AXIS_CONTROL: Scalar = 0.1;
-        if collective_sp.0 < MIN_THRUST_FOR_AXIS_CONTROL {
+        if vel_sp_active {
+            // Feedforward = finite difference of vel_sp. Skip on
+            // first cycle (no previous sample to difference).
+            if runtime.vel_sp_primed && dt_sec > 0.0 {
+                accel_ff_ned = Vector3::new(
+                    MetersPerSecondSquared(
+                        (vel_sp_ned.x.0 - runtime.last_vel_sp_ned.x.0) / dt_sec,
+                    ),
+                    MetersPerSecondSquared(
+                        (vel_sp_ned.y.0 - runtime.last_vel_sp_ned.y.0) / dt_sec,
+                    ),
+                    MetersPerSecondSquared(
+                        (vel_sp_ned.z.0 - runtime.last_vel_sp_ned.z.0) / dt_sec,
+                    ),
+                );
+            }
+            runtime.last_vel_sp_ned = vel_sp_ned;
+            runtime.vel_sp_primed = true;
+
+            let cur_vel = Vector3::new(
+                state.velocity_ned[0],
+                state.velocity_ned[1],
+                state.velocity_ned[2],
+            );
+            let vel_out = self.vel_ctrl.step(
+                &mut runtime.velocity_loop,
+                vel_sp_ned,
+                cur_vel,
+                AccelFeedforward {
+                    accel_ned: accel_ff_ned,
+                },
+                &state.attitude,
+                dt_sec,
+            );
+            collective_sp = vel_out.collective;
+            att_sp = vel_out.attitude;
+        } else {
+            // Open-loop / manual: nothing to derive feedforward
+            // from; ensure the next closed-loop entry doesn't
+            // see a stale prev_vel_sp.
+            runtime.vel_sp_primed = false;
+        }
+
+        // ---- thrust gate ----
+        // Disarmed / "no commanded thrust" state: when the
+        // commanded collective is essentially zero we treat
+        // the airframe as on the ground and silence axis
+        // control. Mid-flight the cascade keeps running even
+        // at low collective; the mixer's per-motor `[0, 1]`
+        // clamp absorbs any residual roll/pitch demand the
+        // collective can't physically support.
+        const DISARMED_THRESHOLD: Scalar = 0.02;
+        if collective_sp.0 < DISARMED_THRESHOLD {
+            runtime.velocity_loop.reset();
+            runtime.rate_loop.reset();
+            runtime.vel_sp_primed = false;
             return AxisCommand {
                 roll: crate::types::NormalizedSigned(0.0),
                 pitch: crate::types::NormalizedSigned(0.0),
@@ -136,38 +261,33 @@ impl VehicleController for MultirotorController {
             };
         }
 
-        // 3. Attitude Control
+        // ---- attitude → rate ----
         let rate_sp = self.att_ctrl.step(&att_sp, &state.attitude);
 
-        // 4. Rate Control
-        let torque_norm = self.rate_ctrl.step(rate_sp, state.angular_velocity);
+        // ---- rate → torque ----
+        let cur_rate = [
+            state.angular_velocity[0],
+            state.angular_velocity[1],
+            state.angular_velocity[2],
+        ];
+        let torque_norm = self
+            .rate_ctrl
+            .step(&mut runtime.rate_loop, rate_sp, cur_rate, dt_sec);
 
-        // 5. Output. Roll/pitch bounded by a collective-aware cap
-        // so a saturated cascade cannot drive the mixer into a
-        // pure-torque-pair regime (two motors at zero, two at max
-        // — attitude corrects at the cost of all thrust, then the
-        // vehicle falls). The cap leaves a floor of headroom so
-        // the mixer never asks a motor for negative thrust.
-        //
-        // Yaw gets a separate, larger cap. The yaw axis enters the
-        // mixer with the *same* sign on the two motors of a
-        // diagonal (m0+m1 both gain +y, m2+m3 both lose +y), so
-        // saturation here clips two motors at once and the body
-        // still gets a useful net yaw torque even past the mixer
-        // limit. Constraining yaw to the collective-aware cap
-        // starves it of authority during hover (cap shrinks to
-        // ~0.05 at 0.85 thrust) — the vehicle picks up small yaw
-        // disturbances and rotates without ever catching up.
-        const AXIS_PRIORITY_FLOOR: f32 = 0.1;
-        const YAW_AUTHORITY_CAP: f32 = 0.3;
-        let rp_cap = (collective_sp.0 - AXIS_PRIORITY_FLOOR)
-            .min(1.0 - collective_sp.0 - AXIS_PRIORITY_FLOOR)
-            .max(0.05);
-        let yaw_axis = torque_norm[2].0.clamp(-YAW_AUTHORITY_CAP, YAW_AUTHORITY_CAP);
+        // Pass through the rate-loop's normalized torque
+        // commands. The mixer clamps individual motor outputs to
+        // `[0, 1]`; the cascade is free to ask for full
+        // authority and let the mixer surface the saturation.
+        // Previously a collective-aware cap was applied here to
+        // protect against motors pinning to zero, but that
+        // hard-clipped attitude authority during steep brake
+        // (high collective) and steep descent (low collective)
+        // alike — the cascade couldn't deliver the torque the
+        // LLR-CTL-202 step response requires.
         AxisCommand {
-            roll: crate::types::NormalizedSigned(torque_norm[0].0.clamp(-rp_cap, rp_cap)),
-            pitch: crate::types::NormalizedSigned(torque_norm[1].0.clamp(-rp_cap, rp_cap)),
-            yaw: crate::types::NormalizedSigned(yaw_axis),
+            roll: torque_norm[0],
+            pitch: torque_norm[1],
+            yaw: torque_norm[2],
             collective: collective_sp,
         }
     }

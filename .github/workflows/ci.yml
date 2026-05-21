@@ -238,3 +238,18 @@ jobs:
       # docs/CERT_OVERRIDES.md).
       - name: cargo evidence floors
         run: cargo evidence floors
+
+      # Blocking end-to-end behavioral gate. `--mode=source` runs the
+      # workspace's tests and validates each requirement claim against
+      # the trace — REQ_PASS for satisfied, REQ_GAP for unsatisfied,
+      # exit 2 on any GAP. Equivalent to the `--mode=bundle` gate the
+      # cert profile documents, with the bundle generation step
+      # collapsed into the same job. Configured per
+      # docs/AVIATE_CORE_BEHAVIORAL_REQUIREMENTS.md §5.
+      #
+      # NB: this re-runs `cargo test --workspace` inside the evidence
+      # check. It overlaps with the dedicated test job but is required
+      # here so a green evidence run is self-contained (auditors don't
+      # have to cross-reference job IDs to know what was verified).
+      - name: cargo evidence check --mode=source
+        run: cargo evidence check --mode=source

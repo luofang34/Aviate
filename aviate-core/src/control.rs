@@ -216,6 +216,9 @@ pub trait VehicleController {
 //   coverage attributions from enums.rs items re-exported via `pub use`.
 //   Includes this COV:EXCL_START line and the blank line separation.)
 pub mod attitude;
+pub mod cascade_gains;
+#[cfg(test)]
+mod cascade_tests;
 pub mod envelope;
 pub mod position;
 pub mod rate;
