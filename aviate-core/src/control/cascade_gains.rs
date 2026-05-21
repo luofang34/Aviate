@@ -140,16 +140,30 @@ impl CascadeGains {
             // field in lockstep so a downstream re-enable can't
             // ship without changing the algorithm-identity hash.
             vel_d: [0.0, 0.0, 0.0],
-            // LLR-CTL-202 requires a 10° step to settle within
-            // 1 s with ≤ 30 % overshoot. For the X500's plant
-            // authority (K ≈ 74 rad/s² per unit normalised
-            // torque), critical damping (ζ = 1) requires
-            // `rate_p = 4·att_p / K`. Picking `att_p = 4.5`,
-            // `rate_p = 0.25` gives `ωn ≈ 9.2 rad/s` (≈ 0.5 s
-            // settle) — well under the 1 s bound with a
-            // safety margin against drift in airframe K.
-            att_p: [4.5, 4.5, 1.5],
-            rate_p: [0.25, 0.25, 0.15],
+            // Joint LLR constraint:
+            //
+            // * LLR-CTL-202: 10° step settles ≤ 1 s with ≤ 30 %
+            //   overshoot. For the X500's plant authority
+            //   (K ≈ 74 rad/s² per unit normalised torque), the
+            //   closed-loop has ωn = √(att_p · K · rate_p) and
+            //   ζ = 0.5 · √(K · rate_p / att_p). Pick gains so
+            //   ωn ≥ 4.5 rad/s (settle ≈ 1 / ωn ≈ 0.7 s, under
+            //   the 1 s bound) and ζ ≥ 0.5 (overshoot ≤ 16 %,
+            //   well under 30 %).
+            // * LLR-CTL-204: cascade time-scale separation
+            //   `K · rate_p / att_p ≥ 5`. Below that the inner
+            //   loop's dynamics intrude on the outer loop and
+            //   the cascade's stability margins are no longer
+            //   classically analyzable.
+            //
+            // Picking `att_p = 3.5`, `rate_p = 0.30` for roll
+            // and pitch gives a separation ratio of
+            // 74 · 0.30 / 3.5 ≈ 6.3× (above the 5× floor with
+            // margin) and ωn ≈ √(3.5 · 74 · 0.30) ≈ 8.8 rad/s,
+            // settle ≈ 0.5 s with ζ ≈ 1.26 (overdamped — no
+            // overshoot).
+            att_p: [3.5, 3.5, 1.5],
+            rate_p: [0.30, 0.30, 0.15],
             rate_d: [0.0, 0.0, 0.0],
             rate_d_lpf_alpha: 0.5,
         }

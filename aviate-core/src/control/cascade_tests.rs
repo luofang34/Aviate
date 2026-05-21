@@ -153,6 +153,49 @@ fn rate_loop_tracks_setpoint_meets_llr_ctl_201() {
     }
 }
 
+/// LLR-CTL-204: cascade time-scale separation. The
+/// inner-loop (rate) bandwidth must be at least 5× the
+/// outer-loop (attitude) bandwidth for the cascade's
+/// stability margins to be analyzable via single-loop
+/// classical-control techniques. Below 5:1, the outer
+/// loop "sees" the inner loop's dynamics directly and
+/// the cascade's pole positions migrate unfavourably
+/// under tuning perturbations.
+///
+/// Sensitivity-analysis derivation (per-axis, roll example):
+/// closing the rate loop around the plant `K / s` gives a
+/// closed-loop transfer of `1 / (1 + s/(K · rate_p))`. Its
+/// 3 dB bandwidth is `ω_inner = K · rate_p`. The outer
+/// (attitude) loop sees the closed inner loop in series
+/// with an integrator (gyro → angle), and its open-loop
+/// crossover sits at `ω_outer ≈ att_p`. The separation
+/// ratio is therefore `(K · rate_p) / att_p`.
+///
+/// Per-axis assertion: ratio ≥ 5. Yaw is skipped where
+/// `rate_p[2] = 0` (some airframes ride on aerodynamic
+/// stability), since the inner loop is then unmodelled.
+#[test]
+fn cascade_time_scale_separation_at_least_five_to_one() {
+    let gains = CascadeGains::x500_defaults();
+    gains.validate().unwrap();
+    let min_ratio: f32 = 5.0;
+    for axis in 0..3 {
+        if gains.rate_p[axis] == 0.0 {
+            continue; // open-loop yaw, no inner-loop pole to separate.
+        }
+        let ratio = (K_PLANT_RAD_S2 * gains.rate_p[axis]) / gains.att_p[axis];
+        assert!(
+            ratio >= min_ratio,
+            "LLR-CTL-204 violation: axis {axis} time-scale separation ratio \
+             (K·rate_p/att_p) = {ratio:.2}× — must be ≥ {min_ratio}× for the \
+             cascade to be classically analyzable. K = {K_PLANT_RAD_S2}, \
+             rate_p[{axis}] = {}, att_p[{axis}] = {}",
+            gains.rate_p[axis],
+            gains.att_p[axis]
+        );
+    }
+}
+
 /// Sanity test that the simulation harness itself behaves
 /// physically: with zero controller gains everywhere, the
 /// vehicle never moves. Guards against the more elaborate
