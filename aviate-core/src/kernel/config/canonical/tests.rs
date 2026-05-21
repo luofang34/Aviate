@@ -70,6 +70,7 @@ fn canonical_hash_distinguishes_each_cascade_gain() {
     probe!(pos_vel_caps, 0, 0.1);
     probe!(vel_p, 2, 0.1);
     probe!(vel_i, 0, 0.1);
+    probe!(vel_d, 2, 0.05);
     probe!(vel_max_roll_pitch, 0.05);
     probe!(vel_accel_ff, -0.3);
     probe!(att_p, 1, 0.05);

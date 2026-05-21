@@ -56,6 +56,15 @@ pub struct CascadeGains {
     /// for the velocity-error feedback path to react). `0.0` =
     /// no feedforward, pure feedback.
     pub vel_accel_ff: Scalar,
+    /// Velocity-loop D gains (derivative-on-measurement),
+    /// per axis. Damps velocity oscillation that the P-only
+    /// loop cannot absorb when the cascade is operating near
+    /// its actuator authority. Filtered by `rate_d_lpf_alpha`
+    /// (re-used to keep the parameter surface narrow). Yaw /
+    /// horizontal D usually stays at zero on small
+    /// multirotors; the vertical axis benefits from a small
+    /// non-zero value to damp the descent-overshoot pathology.
+    pub vel_d: [Scalar; 3],
 
     /// Attitude loop P gains (rad/s per rad of attitude error),
     /// per roll/pitch/yaw.
@@ -121,6 +130,16 @@ impl CascadeGains {
             // an analytic accel_ff lands the cascade is stabler
             // with pure feedback.
             vel_accel_ff: 0.0,
+            // Velocity D term wired but disabled (vel_d = 0)
+            // — empirically the un-filtered Δvel/dt at 1 ms
+            // amplified gz position-derivative noise instead
+            // of damping it. The hook stays so a future LPF
+            // tuning or analytic-derivative source can land
+            // without re-plumbing the loop. The canonical-hash
+            // probe in canonical/tests.rs still locks the
+            // field in lockstep so a downstream re-enable can't
+            // ship without changing the algorithm-identity hash.
+            vel_d: [0.0, 0.0, 0.0],
             // LLR-CTL-202 requires a 10° step to settle within
             // 1 s with ≤ 30 % overshoot. For the X500's plant
             // authority (K ≈ 74 rad/s² per unit normalised
@@ -147,6 +166,7 @@ impl CascadeGains {
                 ("pos_vel_caps", self.pos_vel_caps[i]),
                 ("vel_p", self.vel_p[i]),
                 ("vel_i", self.vel_i[i]),
+                ("vel_d", self.vel_d[i]),
                 ("att_p", self.att_p[i]),
                 ("rate_p", self.rate_p[i]),
                 ("rate_d", self.rate_d[i]),

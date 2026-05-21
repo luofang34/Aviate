@@ -33,6 +33,16 @@ pub struct VelocityLoopState {
     /// contribution to the corresponding actuator (thrust for Z,
     /// tilt angle for X/Y).
     pub integrator_ned: Vector3<MetersPerSecond>,
+    /// Previous filtered NED velocity sample, used to compute
+    /// the derivative-on-measurement contribution to the
+    /// vertical velocity loop. Filtered to keep the D term from
+    /// amplifying the finite-difference noise inherent in
+    /// position-derived velocity.
+    pub last_vel_filt_ned: Vector3<MetersPerSecond>,
+    /// First-cycle marker. While unset the D term outputs zero
+    /// instead of differentiating against the default sample
+    /// (the same derivative-kick guard the rate loop uses).
+    pub d_primed: bool,
 }
 
 impl Default for VelocityLoopState {
@@ -43,6 +53,12 @@ impl Default for VelocityLoopState {
                 MetersPerSecond(0.0),
                 MetersPerSecond(0.0),
             ),
+            last_vel_filt_ned: Vector3::new(
+                MetersPerSecond(0.0),
+                MetersPerSecond(0.0),
+                MetersPerSecond(0.0),
+            ),
+            d_primed: false,
         }
     }
 }
@@ -54,6 +70,12 @@ impl VelocityLoopState {
             MetersPerSecond(0.0),
             MetersPerSecond(0.0),
         );
+        self.last_vel_filt_ned = Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        );
+        self.d_primed = false;
     }
 }
 
@@ -141,6 +163,26 @@ impl VelocityController {
         let trim = self.hover_thrust_norm;
         let max_up = 1.0 - trim;
         let max_dn = trim;
+        // Filter the vertical velocity measurement (single-pole
+        // LPF) and take its discrete derivative for the D term.
+        // Derivative-on-measurement, not on error: a step in
+        // vel_sp doesn't produce a derivative kick. Skipped on
+        // the first cycle. Sign convention: `p_z` carries a
+        // leading `-`, so for the D term to DAMP (positive d
+        // measurement → more brake collective), the gain
+        // multiplier here is `+gain · d_meas`, not the rate
+        // loop's `-gain · d_meas` — the rate loop's `p_term`
+        // doesn't carry the same negation.
+        let alpha = self.gains.rate_d_lpf_alpha;
+        let raw_z = current.z.0;
+        let filt_z = alpha * state.last_vel_filt_ned.z.0 + (1.0 - alpha) * raw_z;
+        let d_z = if state.d_primed && dt_sec > 0.0 && self.gains.vel_d[2] > 0.0 {
+            let d_meas = (filt_z - state.last_vel_filt_ned.z.0) / dt_sec;
+            d_meas * self.gains.vel_d[2]
+        } else {
+            0.0
+        };
+
         let p_z = -error.z * self.gains.vel_p[2];
         let i_z = -state.integrator_ned.z.0 * self.gains.vel_i[2];
         // Convert NED accel ff to thrust offset. Newton's second
@@ -151,7 +193,7 @@ impl VelocityController {
         // the velocity loop already assumes.
         let g_si: Scalar = 9.81;
         let ff_z = -accel_ff.accel_ned.z.0 * (trim / g_si) * self.gains.vel_accel_ff;
-        let z_correction = (p_z + i_z + ff_z).clamp(-max_dn, max_up);
+        let z_correction = (p_z + i_z + d_z + ff_z).clamp(-max_dn, max_up);
         let z_saturated = z_correction == -max_dn || z_correction == max_up;
         let collective_unscaled = trim + z_correction;
         // Tilt compensation: the body's −z axis (thrust
@@ -204,6 +246,17 @@ impl VelocityController {
         );
         let x_saturated = pitch_sp != pitch_sp_raw;
         let y_saturated = roll_sp != roll_sp_raw;
+
+        // Persist filtered velocity sample for the next cycle's
+        // D-term. Updated unconditionally — the d_primed gate
+        // is on the OUTPUT, so the first sample becomes the
+        // baseline for the second cycle's derivative.
+        state.last_vel_filt_ned = Vector3::new(
+            MetersPerSecond(state.last_vel_filt_ned.x.0),
+            MetersPerSecond(state.last_vel_filt_ned.y.0),
+            MetersPerSecond(filt_z),
+        );
+        state.d_primed = true;
 
         // ---- integrator (conditional anti-windup) ----
         // Only integrate when the corresponding axis is NOT
