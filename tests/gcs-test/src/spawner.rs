@@ -53,7 +53,7 @@ use log::info;
 pub struct GazeboSpawner {
     child: Option<Child>,
     /// Optional GUI client process. macOS `gz sim` cannot host server +
-    /// GUI in one process (https://github.com/gazebosim/gz-sim/issues/44);
+    /// GUI in one process (<https://github.com/gazebosim/gz-sim/issues/44>);
     /// when the caller asks for GUI we spawn the server headless and a
     /// separate `gz sim -g` client that attaches via gz-transport.
     gui_child: Option<Child>,
