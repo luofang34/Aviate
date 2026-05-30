@@ -204,12 +204,10 @@ mod tests {
         // function is C¹. Verify by finite difference.
         let d_lin = A / (P * P);
         let h = 1e-4;
-        let slope_below = (sqrt_shape(d_lin - h * 0.5, P, A, CAP)
-            - sqrt_shape(d_lin - 1.5 * h, P, A, CAP))
-            / h;
-        let slope_above = (sqrt_shape(d_lin + 1.5 * h, P, A, CAP)
-            - sqrt_shape(d_lin + h * 0.5, P, A, CAP))
-            / h;
+        let slope_below =
+            (sqrt_shape(d_lin - h * 0.5, P, A, CAP) - sqrt_shape(d_lin - 1.5 * h, P, A, CAP)) / h;
+        let slope_above =
+            (sqrt_shape(d_lin + 1.5 * h, P, A, CAP) - sqrt_shape(d_lin + h * 0.5, P, A, CAP)) / h;
         assert!(
             (slope_below - slope_above).abs() < 5e-3,
             "slope discontinuity at crossover: below={slope_below}, above={slope_above}"
@@ -240,10 +238,7 @@ mod tests {
         let mut prev = sqrt_shape(0.1, P, A, cap);
         for err in [0.5, 1.0, 2.0, 5.0, 10.0, 50.0_f32] {
             let v = sqrt_shape(err, P, A, cap);
-            assert!(
-                v + 1e-6 >= prev,
-                "non-monotonic at err={err}: {prev} → {v}"
-            );
+            assert!(v + 1e-6 >= prev, "non-monotonic at err={err}: {prev} → {v}");
             prev = v;
             // capped or growing; never decreasing
         }
@@ -276,7 +271,10 @@ mod tests {
         let predicted = cap * cap / (2.0 * a) + d_lin / 2.0;
         assert!(predicted > d_lin, "test params must enter sqrt branch");
         let v = sqrt_shape(predicted, p, a, cap * 10.0);
-        assert!((v - cap).abs() < 1e-3, "brake-distance prediction off: v={v}");
+        assert!(
+            (v - cap).abs() < 1e-3,
+            "brake-distance prediction off: v={v}"
+        );
     }
 
     #[test]

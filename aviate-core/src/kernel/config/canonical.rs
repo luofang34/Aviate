@@ -260,7 +260,12 @@ fn feed_fault_action(h: &mut Fnv1a64, a: FaultAction) {
 }
 
 fn feed_cascade_gains(h: &mut Fnv1a64, g: &CascadeGains) {
-    for v in g.pos_p.iter().chain(&g.pos_accel_limits).chain(&g.pos_vel_caps) {
+    for v in g
+        .pos_p
+        .iter()
+        .chain(&g.pos_accel_limits)
+        .chain(&g.pos_vel_caps)
+    {
         h.feed_f32(*v);
     }
     for v in g.vel_p.iter().chain(&g.vel_i).chain(&g.vel_d) {

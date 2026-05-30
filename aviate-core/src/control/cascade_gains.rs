@@ -215,10 +215,7 @@ impl Default for CascadeGains {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CascadeGainsError {
     /// `gains.<name>[axis]` was negative, infinite, or NaN.
-    NonNegativeGain {
-        name: &'static str,
-        axis: usize,
-    },
+    NonNegativeGain { name: &'static str, axis: usize },
     /// `vel_accel_ff` outside `[0.0, 1.0]`.
     FeedforwardOutOfRange(Scalar),
     /// `rate_d_lpf_alpha` outside `[0.0, 1.0]`.

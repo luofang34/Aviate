@@ -47,8 +47,7 @@ fn attitude_step_response_meets_llr_ctl_202() {
 
     let setpoint_deg = 10.0_f32;
     let setpoint_rad = setpoint_deg.to_radians();
-    let setpoint_quat =
-        Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0), setpoint_rad);
+    let setpoint_quat = Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0), setpoint_rad);
 
     let band = setpoint_deg * 0.05;
     let lo = setpoint_deg - band;
@@ -211,7 +210,8 @@ fn zero_gains_zero_motion() {
     let rate = RateController::new(gains);
     let mut rate_state = RateLoopState::default();
 
-    let setpoint_quat = Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0), 10.0_f32.to_radians());
+    let setpoint_quat =
+        Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0), 10.0_f32.to_radians());
     let mut theta: f32 = 0.0;
     let mut omega: f32 = 0.0;
     let mut max_abs_deg: f32 = 0.0;

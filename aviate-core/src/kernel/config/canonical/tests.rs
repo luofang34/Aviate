@@ -47,7 +47,8 @@ fn canonical_hash_distinguishes_each_cascade_gain() {
             cfg.cascade_gains.$field[$axis] += $delta;
             let h = cfg.canonical_hash();
             assert_ne!(
-                baseline, h,
+                baseline,
+                h,
                 "cascade_gains.{}[{}] mutation produced no change in canonical_hash",
                 stringify!($field),
                 $axis,
@@ -58,7 +59,8 @@ fn canonical_hash_distinguishes_each_cascade_gain() {
             cfg.cascade_gains.$field += $delta;
             let h = cfg.canonical_hash();
             assert_ne!(
-                baseline, h,
+                baseline,
+                h,
                 "cascade_gains.{} mutation produced no change in canonical_hash",
                 stringify!($field),
             );

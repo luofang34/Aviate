@@ -8,9 +8,7 @@ use crate::control::attitude::AttitudeController;
 use crate::control::cascade_gains::CascadeGains;
 use crate::control::position::PositionController;
 use crate::control::rate::{RateController, RateLoopState};
-use crate::control::velocity::{
-    AccelFeedforward, VelocityController, VelocityLoopState,
-};
+use crate::control::velocity::{AccelFeedforward, VelocityController, VelocityLoopState};
 use crate::control::{AxisCommand, Command, ConfigMode, Limits, Scalar, VehicleController};
 use crate::math::{Quaternion, Vector3};
 use crate::state::StateEstimate;
@@ -202,15 +200,9 @@ impl VehicleController for MultirotorController {
             // first cycle (no previous sample to difference).
             if runtime.vel_sp_primed && dt_sec > 0.0 {
                 accel_ff_ned = Vector3::new(
-                    MetersPerSecondSquared(
-                        (vel_sp_ned.x.0 - runtime.last_vel_sp_ned.x.0) / dt_sec,
-                    ),
-                    MetersPerSecondSquared(
-                        (vel_sp_ned.y.0 - runtime.last_vel_sp_ned.y.0) / dt_sec,
-                    ),
-                    MetersPerSecondSquared(
-                        (vel_sp_ned.z.0 - runtime.last_vel_sp_ned.z.0) / dt_sec,
-                    ),
+                    MetersPerSecondSquared((vel_sp_ned.x.0 - runtime.last_vel_sp_ned.x.0) / dt_sec),
+                    MetersPerSecondSquared((vel_sp_ned.y.0 - runtime.last_vel_sp_ned.y.0) / dt_sec),
+                    MetersPerSecondSquared((vel_sp_ned.z.0 - runtime.last_vel_sp_ned.z.0) / dt_sec),
                 );
             }
             runtime.last_vel_sp_ned = vel_sp_ned;

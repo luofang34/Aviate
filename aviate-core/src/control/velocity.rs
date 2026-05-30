@@ -209,8 +209,7 @@ impl VelocityController {
         // unbounded amplification when the vehicle is past 60°
         // tilt and recovering — the mixer's per-motor clamp will
         // handle the residual.
-        let r22 = 1.0
-            - 2.0 * (current_att.x * current_att.x + current_att.y * current_att.y);
+        let r22 = 1.0 - 2.0 * (current_att.x * current_att.x + current_att.y * current_att.y);
         let cos_tilt = r22.max(0.5);
         let collective_cmd = collective_unscaled / cos_tilt;
         let collective = Normalized(collective_cmd.clamp(0.0, 1.0));
@@ -267,19 +266,16 @@ impl VelocityController {
         // returns to authority.
         if dt_sec > 0.0 {
             if !x_saturated {
-                state.integrator_ned.x = MetersPerSecond(
-                    state.integrator_ned.x.0 + error.x * dt_sec,
-                );
+                state.integrator_ned.x =
+                    MetersPerSecond(state.integrator_ned.x.0 + error.x * dt_sec);
             }
             if !y_saturated {
-                state.integrator_ned.y = MetersPerSecond(
-                    state.integrator_ned.y.0 + error.y * dt_sec,
-                );
+                state.integrator_ned.y =
+                    MetersPerSecond(state.integrator_ned.y.0 + error.y * dt_sec);
             }
             if !z_saturated {
-                state.integrator_ned.z = MetersPerSecond(
-                    state.integrator_ned.z.0 + error.z * dt_sec,
-                );
+                state.integrator_ned.z =
+                    MetersPerSecond(state.integrator_ned.z.0 + error.z * dt_sec);
             }
         }
 
@@ -288,13 +284,11 @@ impl VelocityController {
         // roll/pitch. Small-angle composition is fine here: the
         // velocity loop's tilt cap is in tens of degrees, not
         // hundreds.
-        let current_yaw_quat =
-            Quaternion::new(current_att.w, 0.0, 0.0, current_att.z).normalize();
-        let roll_pitch_quat = Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0), roll_sp)
-            .mul(&Quaternion::from_axis_angle(
-                Vector3::new(0.0, 1.0, 0.0),
-                pitch_sp,
-            ));
+        let current_yaw_quat = Quaternion::new(current_att.w, 0.0, 0.0, current_att.z).normalize();
+        let roll_pitch_quat =
+            Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0), roll_sp).mul(
+                &Quaternion::from_axis_angle(Vector3::new(0.0, 1.0, 0.0), pitch_sp),
+            );
         let attitude = current_yaw_quat.mul(&roll_pitch_quat).normalize();
 
         VelocityCommand {
@@ -370,7 +364,10 @@ mod tests {
             &Quaternion::IDENTITY,
             0.01,
         );
-        assert_eq!(s.integrator_ned.z.0, 0.0, "integrator must not grow while saturated");
+        assert_eq!(
+            s.integrator_ned.z.0, 0.0,
+            "integrator must not grow while saturated"
+        );
     }
 
     #[test]
