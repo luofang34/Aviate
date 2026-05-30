@@ -155,10 +155,10 @@ mod tests {
         let d_lin = A / (P * P);
         for err in [-d_lin * 0.5, -0.1, 0.0, 0.1, d_lin * 0.5, d_lin - 1e-6] {
             let v = sqrt_shape(err, P, A, CAP);
+            let want = P * err;
             assert!(
-                (v - P * err).abs() < 1e-6,
-                "linear branch mismatch at err={err}: got {v}, want {}",
-                P * err
+                (v - want).abs() < 1e-6,
+                "linear branch mismatch at err={err}: got {v}, want {want}"
             );
         }
     }
@@ -298,10 +298,10 @@ mod tests {
         // before the sqrt does anything useful.
         let p_z = 0.6_f32;
         let cap_z = 3.0_f32;
+        let min_cap = configured / p_z;
         assert!(
-            cap_z > configured / p_z,
-            "vel_cap_z ({cap_z}) ≤ a/p ({}); sqrt branch never engages",
-            configured / p_z
+            cap_z > min_cap,
+            "vel_cap_z ({cap_z}) ≤ a/p ({min_cap}); sqrt branch never engages"
         );
     }
 

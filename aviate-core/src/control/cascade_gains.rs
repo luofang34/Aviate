@@ -289,4 +289,27 @@ mod tests {
         g.rate_p[2] = 0.0;
         g.validate().unwrap();
     }
+
+    #[test]
+    fn rejects_negative_max_roll_pitch() {
+        let mut g = CascadeGains::x500_defaults();
+        g.vel_max_roll_pitch = -0.1;
+        assert!(matches!(
+            g.validate(),
+            Err(CascadeGainsError::NonNegativeGain {
+                name: "vel_max_roll_pitch",
+                axis: 0,
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_lpf_alpha_out_of_range() {
+        let mut g = CascadeGains::x500_defaults();
+        g.rate_d_lpf_alpha = 1.5;
+        assert!(matches!(
+            g.validate(),
+            Err(CascadeGainsError::LpfAlphaOutOfRange(_))
+        ));
+    }
 }
