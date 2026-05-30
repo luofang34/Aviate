@@ -77,9 +77,8 @@ impl RateController {
         // Update the filtered measurement (single-pole LPF).
         let alpha = self.gains.rate_d_lpf_alpha;
         let mut meas_filtered = state.meas_filtered_prev;
-        for i in 0..3 {
-            let raw = current[i].0;
-            let filtered = alpha * state.meas_filtered_prev.axis_get(i) + (1.0 - alpha) * raw;
+        for (i, c) in current.iter().enumerate() {
+            let filtered = alpha * state.meas_filtered_prev.axis_get(i) + (1.0 - alpha) * c.0;
             meas_filtered.axis_set(i, filtered);
         }
 
@@ -94,9 +93,8 @@ impl RateController {
             // contribution). The first cycle outputs no D term —
             // there's no previous sample to difference against.
             let d_term = if state.primed && dt_sec > 0.0 && self.gains.rate_d[i] > 0.0 {
-                let d_meas = (meas_filtered.axis_get(i)
-                    - state.meas_filtered_prev.axis_get(i))
-                    / dt_sec;
+                let d_meas =
+                    (meas_filtered.axis_get(i) - state.meas_filtered_prev.axis_get(i)) / dt_sec;
                 -d_meas * self.gains.rate_d[i]
             } else {
                 0.0
