@@ -1652,6 +1652,33 @@ derived = false
 traces_to = ["3c1fba89-90d3-4b4d-9f86-357cc2c3d955"]
 
 [[requirements]]
+uid = "221dbc10-8c52-4842-8513-657a0d45810f"
+id = "LLR-CTL-205"
+title = "Cascade time-scale separation keeps the inner loop at least 5x the outer-loop bandwidth"
+owner = "aviate-core@aviate"
+description = """
+The cascade SHALL maintain a rate-loop (inner) bandwidth at least
+5x the attitude-loop (outer) bandwidth on every controlled axis:
+`(K · rate_p) / att_p ≥ 5`, where `K` is the airframe's angular
+acceleration per unit normalised torque. This separation is the
+structural precondition under which the single-loop classical-
+control margins asserted by LLR-CTL-202 hold: below 5:1 the outer
+loop sees the inner loop's dynamics directly and the cascade pole
+positions migrate unfavourably under tuning perturbation. Axes
+configured with `rate_p = 0` (open-loop yaw on aerodynamically-
+stable airframes) are exempt — there is no inner-loop pole to
+separate.
+"""
+verification_methods = ["test"]
+modules = [
+    "aviate-core/src/control/cascade_gains.rs",
+    "aviate-core/src/control/rate.rs",
+    "aviate-core/src/control/attitude.rs",
+]
+derived = false
+traces_to = ["c61d7392-52fa-40ee-ba86-bf3794443555"]
+
+[[requirements]]
 uid = "073c3781-dad2-4983-a04c-f721baa11100"
 id = "LLR-MIX-201"
 title = "QuadXMixer output components stay inside [0.0, 1.0]"

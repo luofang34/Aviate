@@ -152,14 +152,15 @@ fn rate_loop_tracks_setpoint_meets_llr_ctl_201() {
     }
 }
 
-/// LLR-CTL-204: cascade time-scale separation. The
+/// LLR-CTL-205: cascade time-scale separation. The
 /// inner-loop (rate) bandwidth must be at least 5× the
 /// outer-loop (attitude) bandwidth for the cascade's
 /// stability margins to be analyzable via single-loop
-/// classical-control techniques. Below 5:1, the outer
-/// loop "sees" the inner loop's dynamics directly and
-/// the cascade's pole positions migrate unfavourably
-/// under tuning perturbations.
+/// classical-control techniques — the structural
+/// precondition for the LLR-CTL-202 step-response bounds.
+/// Below 5:1, the outer loop "sees" the inner loop's
+/// dynamics directly and the cascade's pole positions
+/// migrate unfavourably under tuning perturbations.
 ///
 /// Sensitivity-analysis derivation (per-axis, roll example):
 /// closing the rate loop around the plant `K / s` gives a
@@ -185,7 +186,7 @@ fn cascade_time_scale_separation_at_least_five_to_one() {
         let ratio = (K_PLANT_RAD_S2 * gains.rate_p[axis]) / gains.att_p[axis];
         assert!(
             ratio >= min_ratio,
-            "LLR-CTL-204 violation: axis {axis} time-scale separation ratio \
+            "LLR-CTL-205 violation: axis {axis} time-scale separation ratio \
              (K·rate_p/att_p) = {ratio:.2}× — must be ≥ {min_ratio}× for the \
              cascade to be classically analyzable. K = {K_PLANT_RAD_S2}, \
              rate_p[{axis}] = {}, att_p[{axis}] = {}",

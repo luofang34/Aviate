@@ -52,7 +52,7 @@ Located in `aviate-core/tests/`:
 - `behavioral_tests.rs` (5) — new behavioral suite from this PR. NUMERIC_ERROR inhibition, disarmed-safe input-independence, atomic mode swap, EKF cold-start convergence, EKF GNSS-dropout bounded drift.
 - `ekf_tests.rs` (43), `kernel.rs` (116), `mixer_tests.rs` (24), `control_*.rs` (~80), `fault.rs` (29), `replicable_tests.rs` (20), `integration_tests.rs` (10), and friends.
 
-Run: `cargo test --workspace`. **Current state: 862 unit tests pass, 0 fail.**
+Run: `cargo test --workspace`. **Current state: 932 tests pass across 57 binaries, 0 fail** (also gated by `cargo test -p aviate-core --features test-hooks`).
 
 ## Tier X — SITL missions
 

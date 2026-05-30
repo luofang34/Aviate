@@ -1082,6 +1082,21 @@ independence. Witnesses LLR-CTL-202 at the synthetic level
 traces_to = ["b6e14a3c-ac9b-4280-8c29-6d8991352b05"]
 
 [[tests]]
+uid = "b7e5ac10-ea4a-4681-b148-76021562d0a8"
+id = "TST-CTL-205"
+title = "cascade_time_scale_separation_at_least_five_to_one"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/src/control/cascade_tests.rs::cascade_time_scale_separation_at_least_five_to_one`
+asserts the per-axis separation ratio `(K · rate_p) / att_p ≥ 5`
+for the X500 default gains against the K = 74 rad/s² plant
+surrogate, skipping axes with `rate_p = 0`. Witnesses LLR-CTL-205
+(cascade time-scale separation) — the structural precondition for
+the LLR-CTL-202 attitude step-response bounds.
+"""
+traces_to = ["221dbc10-8c52-4842-8513-657a0d45810f"]
+
+[[tests]]
 uid = "02b7b707-c4d6-4a66-bc5d-73a623ac86a1"
 id = "TST-INIT-201"
 title = "ekf_state_two_default_clones_encode_byte_equal + ekf_state_mutating_*_changes_encoding"
