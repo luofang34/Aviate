@@ -377,7 +377,7 @@ mod tests {
         );
 
         // Arm
-        kernel.arm().expect("Failed to arm");
+        assert!(kernel.arm().is_ok(), "Failed to arm");
 
         let act_cmd = kernel.step_test(dummy_time_delta(), &cmd, &valid_sensors, 0);
 
@@ -469,7 +469,7 @@ mod tests {
             kernel.state.checks.pre_arm.missing()
         );
 
-        kernel.arm().expect("Failed to arm");
+        assert!(kernel.arm().is_ok(), "Failed to arm");
 
         let act_cmd = kernel.step_test(dummy_time_delta(), &cmd, &valid_sensors, 0);
 

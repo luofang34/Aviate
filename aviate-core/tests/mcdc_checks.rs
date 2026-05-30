@@ -46,23 +46,72 @@ fn dummy_timestamp() -> Timestamp {
 
 /// Create PreArmStatus with all QUAD_MINIMUM flags set
 fn pre_arm_all_quad_minimum() -> PreArmStatus {
-    let mut status = PreArmStatus::default();
-    status.current = PreArmFlags::QUAD_MINIMUM;
-    status
+    pre_arm_with(PreArmFlags::QUAD_MINIMUM)
 }
 
 /// Create InFlightStatus with ATTITUDE_FLIGHT flags set
 fn in_flight_all_attitude_flight() -> InFlightStatus {
-    let mut status = InFlightStatus::default();
-    status.current = InFlightFlags::ATTITUDE_FLIGHT;
-    status
+    in_flight_with(InFlightFlags::ATTITUDE_FLIGHT)
 }
 
 /// Create TransitionStatus with all VTOL_TRANSITION flags set
 fn transition_all_vtol() -> TransitionStatus {
-    let mut status = TransitionStatus::default();
-    status.current = TransitionFlags::VTOL_TRANSITION;
-    status
+    transition_with_current(TransitionFlags::VTOL_TRANSITION)
+}
+
+fn pre_arm_with(current: PreArmFlags) -> PreArmStatus {
+    PreArmStatus {
+        current,
+        ..Default::default()
+    }
+}
+
+fn pre_arm_with_required_current(required: PreArmFlags, current: PreArmFlags) -> PreArmStatus {
+    PreArmStatus {
+        required,
+        current,
+        ..Default::default()
+    }
+}
+
+fn in_flight_with(current: InFlightFlags) -> InFlightStatus {
+    InFlightStatus {
+        current,
+        ..Default::default()
+    }
+}
+
+fn in_flight_with_required_current(
+    required: InFlightFlags,
+    current: InFlightFlags,
+) -> InFlightStatus {
+    InFlightStatus { required, current }
+}
+
+fn transition_with_current(current: TransitionFlags) -> TransitionStatus {
+    TransitionStatus {
+        current,
+        ..Default::default()
+    }
+}
+
+fn transition_with_required(required: TransitionFlags) -> TransitionStatus {
+    TransitionStatus {
+        required,
+        current: TransitionFlags::empty(),
+        ..Default::default()
+    }
+}
+
+fn transition_with_required_current(
+    required: TransitionFlags,
+    current: TransitionFlags,
+) -> TransitionStatus {
+    TransitionStatus {
+        required,
+        current,
+        ..Default::default()
+    }
 }
 
 /// Create ActuatorState with all healthy actuators
@@ -76,16 +125,18 @@ fn actuator_state_all_healthy() -> ActuatorState {
 
 /// Create StateEstimate with valid attitude/position/velocity
 fn state_estimate_valid() -> StateEstimate {
-    let mut state = StateEstimate::default();
-    state.valid_flags =
-        StateValidFlags::ATTITUDE | StateValidFlags::VELOCITY | StateValidFlags::POSITION;
-    state.position_ned = [Meters(0.0), Meters(0.0), Meters(-50.0)]; // 50m altitude
-    state.angular_velocity = [
-        RadiansPerSecond(0.0),
-        RadiansPerSecond(0.0),
-        RadiansPerSecond(0.0),
-    ];
-    state
+    StateEstimate {
+        valid_flags: StateValidFlags::ATTITUDE
+            | StateValidFlags::VELOCITY
+            | StateValidFlags::POSITION,
+        position_ned: [Meters(0.0), Meters(0.0), Meters(-50.0)], // 50m altitude
+        angular_velocity: [
+            RadiansPerSecond(0.0),
+            RadiansPerSecond(0.0),
+            RadiansPerSecond(0.0),
+        ],
+        ..Default::default()
+    }
 }
 
 /// Create SensorSet with healthy IMU and baro
@@ -203,8 +254,8 @@ fn mcdc_pre_arm_quad_gps_superset_of_minimum() {
 
 #[test]
 fn mcdc_pre_arm_gnss_available_false() {
-    let mut status = PreArmStatus::with_required(PreArmFlags::QUAD_WITH_GPS);
-    status.current = PreArmFlags::QUAD_WITH_GPS;
+    let mut status =
+        pre_arm_with_required_current(PreArmFlags::QUAD_WITH_GPS, PreArmFlags::QUAD_WITH_GPS);
     assert!(status.is_satisfied());
 
     status.current.remove(PreArmFlags::GNSS_AVAILABLE);
@@ -213,16 +264,16 @@ fn mcdc_pre_arm_gnss_available_false() {
 
 #[test]
 fn mcdc_pre_arm_mag_healthy_false() {
-    let mut status = PreArmStatus::with_required(PreArmFlags::QUAD_WITH_GPS);
-    status.current = PreArmFlags::QUAD_WITH_GPS;
+    let mut status =
+        pre_arm_with_required_current(PreArmFlags::QUAD_WITH_GPS, PreArmFlags::QUAD_WITH_GPS);
     status.current.remove(PreArmFlags::MAG_HEALTHY);
     assert!(!status.is_satisfied());
 }
 
 #[test]
 fn mcdc_pre_arm_mag_converged_false() {
-    let mut status = PreArmStatus::with_required(PreArmFlags::QUAD_WITH_GPS);
-    status.current = PreArmFlags::QUAD_WITH_GPS;
+    let mut status =
+        pre_arm_with_required_current(PreArmFlags::QUAD_WITH_GPS, PreArmFlags::QUAD_WITH_GPS);
     status.current.remove(PreArmFlags::MAG_CONVERGED);
     assert!(!status.is_satisfied());
 }
@@ -233,8 +284,7 @@ fn mcdc_pre_arm_mag_converged_false() {
 
 #[test]
 fn pre_arm_status_missing_returns_difference() {
-    let mut status = PreArmStatus::default();
-    status.current = PreArmFlags::IMU_HEALTHY | PreArmFlags::BARO_HEALTHY;
+    let status = pre_arm_with(PreArmFlags::IMU_HEALTHY | PreArmFlags::BARO_HEALTHY);
 
     let missing = status.missing();
     assert!(missing.contains(PreArmFlags::THROTTLE_LOW));
@@ -244,12 +294,17 @@ fn pre_arm_status_missing_returns_difference() {
 
 #[test]
 fn pre_arm_status_reset_clears_current_and_samples() {
-    let mut status = PreArmStatus::default();
-    status.current = PreArmFlags::QUAD_MINIMUM;
-    status.samples.imu = 150;
-    status.samples.baro = 150;
-    status.samples.mag = 150;
-    status.samples.gnss = 50;
+    let mut status = PreArmStatus {
+        current: PreArmFlags::QUAD_MINIMUM,
+        samples: SampleCounts {
+            imu: 150,
+            baro: 150,
+            mag: 150,
+            gnss: 50,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
 
     status.reset();
 
@@ -336,16 +391,20 @@ fn mcdc_in_flight_command_recent_false() {
 
 #[test]
 fn mcdc_in_flight_position_valid_false() {
-    let mut status = InFlightStatus::with_required(InFlightFlags::POSITION_FLIGHT);
-    status.current = InFlightFlags::POSITION_FLIGHT;
+    let mut status = in_flight_with_required_current(
+        InFlightFlags::POSITION_FLIGHT,
+        InFlightFlags::POSITION_FLIGHT,
+    );
     status.current.remove(InFlightFlags::POSITION_VALID);
     assert!(!status.is_satisfied());
 }
 
 #[test]
 fn mcdc_in_flight_velocity_valid_false() {
-    let mut status = InFlightStatus::with_required(InFlightFlags::POSITION_FLIGHT);
-    status.current = InFlightFlags::POSITION_FLIGHT;
+    let mut status = in_flight_with_required_current(
+        InFlightFlags::POSITION_FLIGHT,
+        InFlightFlags::POSITION_FLIGHT,
+    );
     status.current.remove(InFlightFlags::VELOCITY_VALID);
     assert!(!status.is_satisfied());
 }
@@ -369,8 +428,7 @@ fn in_flight_status_update_from_state_sets_flags() {
 
 #[test]
 fn in_flight_status_update_from_state_clears_on_invalid() {
-    let mut status = InFlightStatus::default();
-    status.current = InFlightFlags::ATTITUDE_VALID | InFlightFlags::VELOCITY_VALID;
+    let mut status = in_flight_with(InFlightFlags::ATTITUDE_VALID | InFlightFlags::VELOCITY_VALID);
 
     let state = StateEstimate::default(); // No valid flags
     status.update_from_state(&state);
@@ -481,8 +539,7 @@ fn in_flight_status_update_altitude_sets_flag() {
 
 #[test]
 fn in_flight_status_reset_clears_current() {
-    let mut status = InFlightStatus::default();
-    status.current = InFlightFlags::ATTITUDE_FLIGHT | InFlightFlags::POSITION_VALID;
+    let mut status = in_flight_with(InFlightFlags::ATTITUDE_FLIGHT | InFlightFlags::POSITION_VALID);
 
     status.reset();
 
@@ -495,15 +552,19 @@ fn in_flight_status_reset_clears_current() {
 
 #[test]
 fn mcdc_degradation_none_when_satisfied() {
-    let mut status = InFlightStatus::with_required(InFlightFlags::ATTITUDE_FLIGHT);
-    status.current = InFlightFlags::ATTITUDE_FLIGHT;
+    let status = in_flight_with_required_current(
+        InFlightFlags::ATTITUDE_FLIGHT,
+        InFlightFlags::ATTITUDE_FLIGHT,
+    );
     assert_eq!(status.get_degradation_trigger(), None);
 }
 
 #[test]
 fn mcdc_degradation_attitude_lost_highest_priority() {
-    let mut status = InFlightStatus::with_required(InFlightFlags::ATTITUDE_FLIGHT);
-    status.current = InFlightFlags::IMU_OK | InFlightFlags::COMMAND_RECENT;
+    let status = in_flight_with_required_current(
+        InFlightFlags::ATTITUDE_FLIGHT,
+        InFlightFlags::IMU_OK | InFlightFlags::COMMAND_RECENT,
+    );
     assert_eq!(
         status.get_degradation_trigger(),
         Some(DegradationReason::AttitudeLost)
@@ -512,8 +573,10 @@ fn mcdc_degradation_attitude_lost_highest_priority() {
 
 #[test]
 fn mcdc_degradation_imu_degraded_priority_2() {
-    let mut status = InFlightStatus::with_required(InFlightFlags::ATTITUDE_FLIGHT);
-    status.current = InFlightFlags::ATTITUDE_VALID | InFlightFlags::COMMAND_RECENT;
+    let status = in_flight_with_required_current(
+        InFlightFlags::ATTITUDE_FLIGHT,
+        InFlightFlags::ATTITUDE_VALID | InFlightFlags::COMMAND_RECENT,
+    );
     assert_eq!(
         status.get_degradation_trigger(),
         Some(DegradationReason::ImuDegraded)
@@ -522,8 +585,10 @@ fn mcdc_degradation_imu_degraded_priority_2() {
 
 #[test]
 fn mcdc_degradation_position_lost_priority_3() {
-    let mut status = InFlightStatus::with_required(InFlightFlags::POSITION_FLIGHT);
-    status.current = InFlightFlags::ATTITUDE_FLIGHT | InFlightFlags::VELOCITY_VALID;
+    let status = in_flight_with_required_current(
+        InFlightFlags::POSITION_FLIGHT,
+        InFlightFlags::ATTITUDE_FLIGHT | InFlightFlags::VELOCITY_VALID,
+    );
     assert_eq!(
         status.get_degradation_trigger(),
         Some(DegradationReason::PositionLost)
@@ -532,8 +597,10 @@ fn mcdc_degradation_position_lost_priority_3() {
 
 #[test]
 fn mcdc_degradation_velocity_lost_priority_4() {
-    let mut status = InFlightStatus::with_required(InFlightFlags::POSITION_FLIGHT);
-    status.current = InFlightFlags::ATTITUDE_FLIGHT | InFlightFlags::POSITION_VALID;
+    let status = in_flight_with_required_current(
+        InFlightFlags::POSITION_FLIGHT,
+        InFlightFlags::ATTITUDE_FLIGHT | InFlightFlags::POSITION_VALID,
+    );
     assert_eq!(
         status.get_degradation_trigger(),
         Some(DegradationReason::VelocityLost)
@@ -542,8 +609,10 @@ fn mcdc_degradation_velocity_lost_priority_4() {
 
 #[test]
 fn mcdc_degradation_command_timeout_priority_5() {
-    let mut status = InFlightStatus::with_required(InFlightFlags::ATTITUDE_FLIGHT);
-    status.current = InFlightFlags::ATTITUDE_VALID | InFlightFlags::IMU_OK;
+    let status = in_flight_with_required_current(
+        InFlightFlags::ATTITUDE_FLIGHT,
+        InFlightFlags::ATTITUDE_VALID | InFlightFlags::IMU_OK,
+    );
     assert_eq!(
         status.get_degradation_trigger(),
         Some(DegradationReason::CommandTimeout)
@@ -552,10 +621,10 @@ fn mcdc_degradation_command_timeout_priority_5() {
 
 #[test]
 fn mcdc_degradation_envelope_violation_priority_6() {
-    let mut status = InFlightStatus::with_required(
+    let status = in_flight_with_required_current(
         InFlightFlags::ATTITUDE_FLIGHT | InFlightFlags::WITHIN_ENVELOPE,
+        InFlightFlags::ATTITUDE_FLIGHT,
     );
-    status.current = InFlightFlags::ATTITUDE_FLIGHT;
     assert_eq!(
         status.get_degradation_trigger(),
         Some(DegradationReason::EnvelopeViolation)
@@ -564,9 +633,10 @@ fn mcdc_degradation_envelope_violation_priority_6() {
 
 #[test]
 fn mcdc_degradation_baro_degraded_priority_7() {
-    let mut status =
-        InFlightStatus::with_required(InFlightFlags::ATTITUDE_FLIGHT | InFlightFlags::BARO_OK);
-    status.current = InFlightFlags::ATTITUDE_FLIGHT;
+    let status = in_flight_with_required_current(
+        InFlightFlags::ATTITUDE_FLIGHT | InFlightFlags::BARO_OK,
+        InFlightFlags::ATTITUDE_FLIGHT,
+    );
     assert_eq!(
         status.get_degradation_trigger(),
         Some(DegradationReason::BaroDegraded)
@@ -575,9 +645,10 @@ fn mcdc_degradation_baro_degraded_priority_7() {
 
 #[test]
 fn mcdc_degradation_rc_lost_priority_8() {
-    let mut status =
-        InFlightStatus::with_required(InFlightFlags::ATTITUDE_FLIGHT | InFlightFlags::RC_AVAILABLE);
-    status.current = InFlightFlags::ATTITUDE_FLIGHT;
+    let status = in_flight_with_required_current(
+        InFlightFlags::ATTITUDE_FLIGHT | InFlightFlags::RC_AVAILABLE,
+        InFlightFlags::ATTITUDE_FLIGHT,
+    );
     assert_eq!(
         status.get_degradation_trigger(),
         Some(DegradationReason::RcLost)
@@ -633,10 +704,10 @@ fn mcdc_transition_symmetric_false() {
 
 #[test]
 fn mcdc_transition_altitude_ok_false() {
-    let mut status = TransitionStatus::with_required(
+    let status = transition_with_required_current(
         TransitionFlags::VTOL_TRANSITION | TransitionFlags::ALTITUDE_OK,
+        TransitionFlags::VTOL_TRANSITION,
     );
-    status.current = TransitionFlags::VTOL_TRANSITION;
     assert_eq!(
         status.can_transition(),
         Err(TransitionFailure::AltitudeTooLow)
@@ -645,10 +716,10 @@ fn mcdc_transition_altitude_ok_false() {
 
 #[test]
 fn mcdc_transition_airspeed_ok_false() {
-    let mut status = TransitionStatus::with_required(
+    let status = transition_with_required_current(
         TransitionFlags::VTOL_TRANSITION | TransitionFlags::AIRSPEED_OK,
+        TransitionFlags::VTOL_TRANSITION,
     );
-    status.current = TransitionFlags::VTOL_TRANSITION;
     assert_eq!(
         status.can_transition(),
         Err(TransitionFailure::AirspeedTooLow)
@@ -889,8 +960,8 @@ fn transition_status_update_airspeed_none() {
 
 #[test]
 fn transition_status_reset_clears_current() {
-    let mut status = TransitionStatus::default();
-    status.current = TransitionFlags::VTOL_TRANSITION | TransitionFlags::ALTITUDE_OK;
+    let mut status =
+        transition_with_current(TransitionFlags::VTOL_TRANSITION | TransitionFlags::ALTITUDE_OK);
 
     status.reset();
 
@@ -955,7 +1026,8 @@ fn actuator_state_set_actual_valid_channel() {
     state.set_actual(0, Normalized(0.5));
     state.set_actual(3, Normalized(0.8));
 
-    let actual = state.actual.expect("actual should be Some");
+    assert!(state.actual.is_some(), "actual should be Some");
+    let Some(actual) = state.actual else { return };
     assert!((actual[0].0 - 0.5).abs() < 1e-6);
     assert!((actual[3].0 - 0.8).abs() < 1e-6);
 }
@@ -972,8 +1044,10 @@ fn actuator_state_update_commanded() {
     let mut state = ActuatorState::new();
     let ts = dummy_timestamp();
 
-    let mut cmd = ActuatorCmd::default();
-    cmd.timestamp = ts;
+    let mut cmd = ActuatorCmd {
+        timestamp: ts,
+        ..Default::default()
+    };
     // Set first 8 outputs
     for i in 0..8 {
         cmd.outputs[i] = Normalized((i as f32 + 1.0) * 0.1);
@@ -1076,8 +1150,7 @@ fn actuator_state_count_by_health() {
 #[test]
 fn mcdc_inv001_imu_fault_implies_not_healthy() {
     let faults = FaultFlags::ALL_IMU_FAILED;
-    let mut pre_arm = PreArmStatus::default();
-    pre_arm.current = PreArmFlags::empty();
+    let pre_arm = pre_arm_with(PreArmFlags::empty());
 
     assert!(CheckInvariants::check_imu_consistency(faults, &pre_arm));
 }
@@ -1085,8 +1158,7 @@ fn mcdc_inv001_imu_fault_implies_not_healthy() {
 #[test]
 fn mcdc_inv001_imu_fault_with_healthy_flag_inconsistent() {
     let faults = FaultFlags::ALL_IMU_FAILED;
-    let mut pre_arm = PreArmStatus::default();
-    pre_arm.current = PreArmFlags::IMU_HEALTHY;
+    let pre_arm = pre_arm_with(PreArmFlags::IMU_HEALTHY);
 
     assert!(!CheckInvariants::check_imu_consistency(faults, &pre_arm));
 }
@@ -1094,8 +1166,7 @@ fn mcdc_inv001_imu_fault_with_healthy_flag_inconsistent() {
 #[test]
 fn mcdc_inv001_no_fault_always_consistent() {
     let faults = FaultFlags::empty();
-    let mut pre_arm = PreArmStatus::default();
-    pre_arm.current = PreArmFlags::IMU_HEALTHY;
+    let pre_arm = pre_arm_with(PreArmFlags::IMU_HEALTHY);
 
     assert!(CheckInvariants::check_imu_consistency(faults, &pre_arm));
 }
@@ -1103,8 +1174,7 @@ fn mcdc_inv001_no_fault_always_consistent() {
 #[test]
 fn mcdc_inv002_gnss_fault_implies_not_available() {
     let faults = FaultFlags::ALL_GNSS_LOST;
-    let mut pre_arm = PreArmStatus::default();
-    pre_arm.current = PreArmFlags::empty();
+    let pre_arm = pre_arm_with(PreArmFlags::empty());
 
     assert!(CheckInvariants::check_gnss_consistency(faults, &pre_arm));
 }
@@ -1112,8 +1182,7 @@ fn mcdc_inv002_gnss_fault_implies_not_available() {
 #[test]
 fn mcdc_inv002_gnss_fault_with_available_flag_inconsistent() {
     let faults = FaultFlags::ALL_GNSS_LOST;
-    let mut pre_arm = PreArmStatus::default();
-    pre_arm.current = PreArmFlags::GNSS_AVAILABLE;
+    let pre_arm = pre_arm_with(PreArmFlags::GNSS_AVAILABLE);
 
     assert!(!CheckInvariants::check_gnss_consistency(faults, &pre_arm));
 }
@@ -1121,8 +1190,7 @@ fn mcdc_inv002_gnss_fault_with_available_flag_inconsistent() {
 #[test]
 fn mcdc_inv003_no_faults_flag_matches_empty() {
     let faults = FaultFlags::empty();
-    let mut pre_arm = PreArmStatus::default();
-    pre_arm.current = PreArmFlags::NO_FAULTS;
+    let pre_arm = pre_arm_with(PreArmFlags::NO_FAULTS);
 
     assert!(CheckInvariants::check_no_faults_consistency(
         faults, &pre_arm
@@ -1132,8 +1200,7 @@ fn mcdc_inv003_no_faults_flag_matches_empty() {
 #[test]
 fn mcdc_inv003_no_faults_flag_with_faults_inconsistent() {
     let faults = FaultFlags::BARO_FAILED;
-    let mut pre_arm = PreArmStatus::default();
-    pre_arm.current = PreArmFlags::NO_FAULTS;
+    let pre_arm = pre_arm_with(PreArmFlags::NO_FAULTS);
 
     assert!(!CheckInvariants::check_no_faults_consistency(
         faults, &pre_arm
@@ -1143,8 +1210,7 @@ fn mcdc_inv003_no_faults_flag_with_faults_inconsistent() {
 #[test]
 fn mcdc_inv003_faults_without_flag_consistent() {
     let faults = FaultFlags::BARO_FAILED;
-    let mut pre_arm = PreArmStatus::default();
-    pre_arm.current = PreArmFlags::empty();
+    let pre_arm = pre_arm_with(PreArmFlags::empty());
 
     assert!(CheckInvariants::check_no_faults_consistency(
         faults, &pre_arm
@@ -1153,16 +1219,14 @@ fn mcdc_inv003_faults_without_flag_consistent() {
 
 #[test]
 fn mcdc_inv004_ekf_converged_implies_imu_converged() {
-    let mut pre_arm = PreArmStatus::default();
-    pre_arm.current = PreArmFlags::EKF_CONVERGED | PreArmFlags::IMU_CONVERGED;
+    let pre_arm = pre_arm_with(PreArmFlags::EKF_CONVERGED | PreArmFlags::IMU_CONVERGED);
 
     assert!(CheckInvariants::check_ekf_convergence_consistency(&pre_arm));
 }
 
 #[test]
 fn mcdc_inv004_ekf_converged_without_imu_inconsistent() {
-    let mut pre_arm = PreArmStatus::default();
-    pre_arm.current = PreArmFlags::EKF_CONVERGED;
+    let pre_arm = pre_arm_with(PreArmFlags::EKF_CONVERGED);
 
     assert!(!CheckInvariants::check_ekf_convergence_consistency(
         &pre_arm
@@ -1171,16 +1235,14 @@ fn mcdc_inv004_ekf_converged_without_imu_inconsistent() {
 
 #[test]
 fn mcdc_inv004_no_ekf_converged_always_consistent() {
-    let mut pre_arm = PreArmStatus::default();
-    pre_arm.current = PreArmFlags::empty();
+    let pre_arm = pre_arm_with(PreArmFlags::empty());
 
     assert!(CheckInvariants::check_ekf_convergence_consistency(&pre_arm));
 }
 
 #[test]
 fn mcdc_inv005_position_valid_implies_attitude_valid() {
-    let mut in_flight = InFlightStatus::default();
-    in_flight.current = InFlightFlags::POSITION_VALID | InFlightFlags::ATTITUDE_VALID;
+    let in_flight = in_flight_with(InFlightFlags::POSITION_VALID | InFlightFlags::ATTITUDE_VALID);
 
     assert!(CheckInvariants::check_position_attitude_consistency(
         &in_flight
@@ -1189,8 +1251,7 @@ fn mcdc_inv005_position_valid_implies_attitude_valid() {
 
 #[test]
 fn mcdc_inv005_position_valid_without_attitude_inconsistent() {
-    let mut in_flight = InFlightStatus::default();
-    in_flight.current = InFlightFlags::POSITION_VALID;
+    let in_flight = in_flight_with(InFlightFlags::POSITION_VALID);
 
     assert!(!CheckInvariants::check_position_attitude_consistency(
         &in_flight
@@ -1260,12 +1321,11 @@ fn mcdc_inv006_sample_counts_decrease_not_allowed() {
 #[test]
 fn invariants_verify_all_consistent_state() {
     let faults = FaultFlags::empty();
-    let mut pre_arm = PreArmStatus::default();
-    pre_arm.current =
-        PreArmFlags::NO_FAULTS | PreArmFlags::IMU_CONVERGED | PreArmFlags::EKF_CONVERGED;
+    let pre_arm = pre_arm_with(
+        PreArmFlags::NO_FAULTS | PreArmFlags::IMU_CONVERGED | PreArmFlags::EKF_CONVERGED,
+    );
 
-    let mut in_flight = InFlightStatus::default();
-    in_flight.current = InFlightFlags::ATTITUDE_VALID | InFlightFlags::POSITION_VALID;
+    let in_flight = in_flight_with(InFlightFlags::ATTITUDE_VALID | InFlightFlags::POSITION_VALID);
 
     assert!(CheckInvariants::verify_all(faults, &pre_arm, &in_flight));
 }
@@ -1273,9 +1333,9 @@ fn invariants_verify_all_consistent_state() {
 #[test]
 fn invariants_get_violations_bitmask() {
     let faults = FaultFlags::ALL_IMU_FAILED | FaultFlags::ALL_GNSS_LOST;
-    let mut pre_arm = PreArmStatus::default();
-    pre_arm.current =
-        PreArmFlags::IMU_HEALTHY | PreArmFlags::GNSS_AVAILABLE | PreArmFlags::NO_FAULTS;
+    let pre_arm = pre_arm_with(
+        PreArmFlags::IMU_HEALTHY | PreArmFlags::GNSS_AVAILABLE | PreArmFlags::NO_FAULTS,
+    );
 
     let in_flight = InFlightStatus::default();
 
@@ -1430,8 +1490,10 @@ fn boundary_command_age_at_timeout_plus_1_not_recent() {
 #[test]
 fn boundary_altitude_at_limit_minus_epsilon_not_ok() {
     let mut status = TransitionStatus::default(); // min_altitude = 10.0
-    let mut state = StateEstimate::default();
-    state.position_ned[2] = Meters(-9.99); // 9.99m altitude
+    let state = StateEstimate {
+        position_ned: [Meters(0.0), Meters(0.0), Meters(-9.99)], // 9.99m altitude
+        ..Default::default()
+    };
 
     status.update_from_state(&state);
     assert!(!status.current.contains(TransitionFlags::ALTITUDE_OK));
@@ -1440,8 +1502,10 @@ fn boundary_altitude_at_limit_minus_epsilon_not_ok() {
 #[test]
 fn boundary_altitude_at_limit_ok() {
     let mut status = TransitionStatus::default();
-    let mut state = StateEstimate::default();
-    state.position_ned[2] = Meters(-10.0); // Exactly 10m
+    let state = StateEstimate {
+        position_ned: [Meters(0.0), Meters(0.0), Meters(-10.0)], // Exactly 10m
+        ..Default::default()
+    };
 
     status.update_from_state(&state);
     assert!(status.current.contains(TransitionFlags::ALTITUDE_OK));
@@ -1450,8 +1514,10 @@ fn boundary_altitude_at_limit_ok() {
 #[test]
 fn boundary_altitude_at_limit_plus_epsilon_ok() {
     let mut status = TransitionStatus::default();
-    let mut state = StateEstimate::default();
-    state.position_ned[2] = Meters(-10.01); // 10.01m altitude
+    let state = StateEstimate {
+        position_ned: [Meters(0.0), Meters(0.0), Meters(-10.01)], // 10.01m altitude
+        ..Default::default()
+    };
 
     status.update_from_state(&state);
     assert!(status.current.contains(TransitionFlags::ALTITUDE_OK));
@@ -1489,14 +1555,16 @@ fn boundary_airspeed_at_limit_plus_epsilon_ok() {
 #[test]
 fn boundary_attitude_rate_at_limit_minus_epsilon_stable() {
     let mut status = TransitionStatus::default(); // max_attitude_rate = 0.5
-    let mut state = StateEstimate::default();
-    state.position_ned[2] = Meters(-50.0);
-    // Rate magnitude just under 0.5: sqrt(0.28^2 + 0.28^2 + 0.28^2) ≈ 0.485
-    state.angular_velocity = [
-        RadiansPerSecond(0.28),
-        RadiansPerSecond(0.28),
-        RadiansPerSecond(0.28),
-    ];
+                                                  // Rate magnitude just under 0.5: sqrt(0.28^2 + 0.28^2 + 0.28^2) ≈ 0.485
+    let state = StateEstimate {
+        position_ned: [Meters(0.0), Meters(0.0), Meters(-50.0)],
+        angular_velocity: [
+            RadiansPerSecond(0.28),
+            RadiansPerSecond(0.28),
+            RadiansPerSecond(0.28),
+        ],
+        ..Default::default()
+    };
 
     status.update_from_state(&state);
     assert!(status.current.contains(TransitionFlags::STABLE_FLIGHT));
@@ -1505,14 +1573,16 @@ fn boundary_attitude_rate_at_limit_minus_epsilon_stable() {
 #[test]
 fn boundary_attitude_rate_at_limit_not_stable() {
     let mut status = TransitionStatus::default();
-    let mut state = StateEstimate::default();
-    state.position_ned[2] = Meters(-50.0);
     // Rate magnitude at 0.5: sqrt(0.29^2 + 0.29^2 + 0.29^2) ≈ 0.502
-    state.angular_velocity = [
-        RadiansPerSecond(0.29),
-        RadiansPerSecond(0.29),
-        RadiansPerSecond(0.29),
-    ];
+    let state = StateEstimate {
+        position_ned: [Meters(0.0), Meters(0.0), Meters(-50.0)],
+        angular_velocity: [
+            RadiansPerSecond(0.29),
+            RadiansPerSecond(0.29),
+            RadiansPerSecond(0.29),
+        ],
+        ..Default::default()
+    };
 
     status.update_from_state(&state);
     assert!(!status.current.contains(TransitionFlags::STABLE_FLIGHT));
@@ -1524,15 +1594,11 @@ fn boundary_attitude_rate_at_limit_not_stable() {
 
 #[test]
 fn transition_can_transition_multiple_failures_fallback() {
-    let mut status = TransitionStatus::default();
-
-    // Set required to multiple flags
-    status.required = TransitionFlags::STABLE_FLIGHT
-        | TransitionFlags::ACTUATORS_OK
-        | TransitionFlags::WITHIN_ENVELOPE;
-
-    // Set current to empty - all flags missing
-    status.current = TransitionFlags::empty();
+    let status = transition_with_required(
+        TransitionFlags::STABLE_FLIGHT
+            | TransitionFlags::ACTUATORS_OK
+            | TransitionFlags::WITHIN_ENVELOPE,
+    );
 
     // can_transition should return MultipleFailures since multiple conditions fail
     // and none match the specific single-failure cases
@@ -1540,7 +1606,7 @@ fn transition_can_transition_multiple_failures_fallback() {
 
     assert!(result.is_err());
     // The error should be one of the specific failures or MultipleFailures
-    let err = result.unwrap_err();
+    let Err(err) = result else { return };
     // At least verify it's an error
     assert!(matches!(
         err,
@@ -1552,31 +1618,24 @@ fn transition_can_transition_multiple_failures_fallback() {
 
 #[test]
 fn transition_can_transition_stable_flight_returns_unstable() {
-    let mut status = TransitionStatus::default();
-
-    // Only require STABLE_FLIGHT - when missing, returns UnstableFlight
-    status.required = TransitionFlags::STABLE_FLIGHT;
-    status.current = TransitionFlags::empty();
+    let status = transition_with_required(TransitionFlags::STABLE_FLIGHT);
 
     let result = status.can_transition();
 
     assert!(result.is_err());
-    let err = result.unwrap_err();
+    let Err(err) = result else { return };
     assert_eq!(err, TransitionFailure::UnstableFlight);
 }
 
 #[test]
 fn transition_can_transition_two_missing_returns_multiple() {
-    let mut status = TransitionStatus::default();
-
-    // Require two flags, both missing → MultipleFailures (line 687)
-    status.required = TransitionFlags::STABLE_FLIGHT | TransitionFlags::ACTUATORS_OK;
-    status.current = TransitionFlags::empty();
+    let status =
+        transition_with_required(TransitionFlags::STABLE_FLIGHT | TransitionFlags::ACTUATORS_OK);
 
     let result = status.can_transition();
 
     assert!(result.is_err());
-    let err = result.unwrap_err();
+    let Err(err) = result else { return };
     assert_eq!(err, TransitionFailure::MultipleFailures);
 }
 
@@ -1610,18 +1669,15 @@ fn transition_all_flags_have_explicit_error() {
 
     // Verify each flag has a specific error when it alone is missing
     for (flag, expected_error) in all_flags {
-        let mut status = TransitionStatus::default();
-        status.required = flag;
-        status.current = TransitionFlags::empty();
+        let status = transition_with_required(flag);
 
         let result = status.can_transition();
         assert!(result.is_err(), "Flag {:?} should cause error", flag);
+        let Err(actual_error) = result else { return };
         assert_eq!(
-            result.unwrap_err(),
-            expected_error,
+            actual_error, expected_error,
             "Flag {:?} should map to {:?}",
-            flag,
-            expected_error
+            flag, expected_error
         );
     }
 
@@ -1646,10 +1702,7 @@ fn transition_all_flags_have_explicit_error() {
 #[test]
 fn invariant_inv004_ekf_convergence_violation() {
     // INV-004: EKF_CONVERGED implies IMU_CONVERGED
-    let mut pre_arm = PreArmStatus::default();
-
-    // Set EKF_CONVERGED but NOT IMU_CONVERGED - this violates INV-004
-    pre_arm.current = PreArmFlags::EKF_CONVERGED;
+    let pre_arm = pre_arm_with(PreArmFlags::EKF_CONVERGED);
     // IMU_CONVERGED is not set
 
     let in_flight = InFlightStatus::default();
@@ -1663,10 +1716,7 @@ fn invariant_inv004_ekf_convergence_violation() {
 #[test]
 fn invariant_inv005_position_attitude_violation() {
     // INV-005: POSITION_VALID implies ATTITUDE_VALID
-    let mut in_flight = InFlightStatus::default();
-
-    // Set POSITION_VALID but NOT ATTITUDE_VALID - this violates INV-005
-    in_flight.current = InFlightFlags::POSITION_VALID;
+    let in_flight = in_flight_with(InFlightFlags::POSITION_VALID);
     // ATTITUDE_VALID is not set
 
     let pre_arm = PreArmStatus::default();
@@ -1679,13 +1729,9 @@ fn invariant_inv005_position_attitude_violation() {
 
 #[test]
 fn invariant_no_violations_when_consistent() {
-    let mut pre_arm = PreArmStatus::default();
-    // Set both EKF_CONVERGED and IMU_CONVERGED (consistent)
-    pre_arm.current = PreArmFlags::EKF_CONVERGED | PreArmFlags::IMU_CONVERGED;
+    let pre_arm = pre_arm_with(PreArmFlags::EKF_CONVERGED | PreArmFlags::IMU_CONVERGED);
 
-    let mut in_flight = InFlightStatus::default();
-    // Set both POSITION_VALID and ATTITUDE_VALID (consistent)
-    in_flight.current = InFlightFlags::POSITION_VALID | InFlightFlags::ATTITUDE_VALID;
+    let in_flight = in_flight_with(InFlightFlags::POSITION_VALID | InFlightFlags::ATTITUDE_VALID);
 
     let violations = CheckInvariants::get_violations(FaultFlags::empty(), &pre_arm, &in_flight);
 

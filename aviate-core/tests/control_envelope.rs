@@ -46,6 +46,32 @@ fn make_state() -> StateEstimate {
     }
 }
 
+fn altitude_value(setpoint: &Setpoint) -> f32 {
+    assert!(setpoint.altitude.is_some(), "expected altitude setpoint");
+    setpoint.altitude.unwrap_or(Meters(0.0)).0
+}
+
+fn angular_rate_value(setpoint: &Setpoint, axis: usize) -> f32 {
+    assert!(
+        setpoint.angular_rate.is_some(),
+        "expected angular_rate setpoint"
+    );
+    setpoint.angular_rate.unwrap_or([RadiansPerSecond(0.0); 3])[axis].0
+}
+
+fn velocity_value(setpoint: &Setpoint, axis: usize) -> f32 {
+    assert!(setpoint.velocity.is_some(), "expected velocity setpoint");
+    setpoint.velocity.unwrap_or([MetersPerSecond(0.0); 3])[axis].0
+}
+
+fn vertical_speed_value(setpoint: &Setpoint) -> f32 {
+    assert!(
+        setpoint.vertical_speed.is_some(),
+        "expected vertical_speed setpoint"
+    );
+    setpoint.vertical_speed.unwrap_or(MetersPerSecond(0.0)).0
+}
+
 // =============================================================================
 // No Limiting - Within Bounds
 // =============================================================================
@@ -71,7 +97,7 @@ fn within_bounds_not_limited() {
 
     assert!(!status.saturated, "Should not be saturated");
     assert!(status.limited_axes.is_empty(), "No axes should be limited");
-    assert_eq!(constrained.altitude.unwrap().0, 50.0);
+    assert_eq!(altitude_value(&constrained), 50.0);
 }
 
 #[test]
@@ -109,7 +135,7 @@ fn altitude_exceeds_max_clamped() {
 
     assert!(status.saturated);
     assert!(status.limited_axes.contains(AxisLimitFlags::ALTITUDE));
-    assert_eq!(constrained.altitude.unwrap().0, 100.0);
+    assert_eq!(altitude_value(&constrained), 100.0);
 }
 
 #[test]
@@ -128,7 +154,7 @@ fn altitude_below_min_clamped() {
 
     assert!(status.saturated);
     assert!(status.limited_axes.contains(AxisLimitFlags::ALTITUDE));
-    assert_eq!(constrained.altitude.unwrap().0, 5.0);
+    assert_eq!(altitude_value(&constrained), 5.0);
 }
 
 #[test]
@@ -146,7 +172,7 @@ fn altitude_at_boundary_not_limited() {
         protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
 
     assert!(!status.limited_axes.contains(AxisLimitFlags::ALTITUDE));
-    assert_eq!(constrained.altitude.unwrap().0, 100.0);
+    assert_eq!(altitude_value(&constrained), 100.0);
 }
 
 // =============================================================================
@@ -173,7 +199,7 @@ fn roll_rate_exceeds_max_clamped() {
 
     assert!(status.saturated);
     assert!(status.limited_axes.contains(AxisLimitFlags::ROLL));
-    assert_eq!(constrained.angular_rate.unwrap()[0].0, 2.0);
+    assert_eq!(angular_rate_value(&constrained, 0), 2.0);
 }
 
 #[test]
@@ -196,7 +222,7 @@ fn negative_pitch_rate_exceeds_max_clamped() {
 
     assert!(status.saturated);
     assert!(status.limited_axes.contains(AxisLimitFlags::PITCH));
-    assert_eq!(constrained.angular_rate.unwrap()[1].0, -2.0);
+    assert_eq!(angular_rate_value(&constrained, 1), -2.0);
 }
 
 #[test]
@@ -219,7 +245,7 @@ fn yaw_rate_exceeds_max_clamped() {
 
     assert!(status.saturated);
     assert!(status.limited_axes.contains(AxisLimitFlags::YAW));
-    assert_eq!(constrained.angular_rate.unwrap()[2].0, 1.5);
+    assert_eq!(angular_rate_value(&constrained, 2), 1.5);
 }
 
 // =============================================================================
@@ -247,7 +273,7 @@ fn horizontal_speed_exceeds_max_scaled() {
     assert!(status.saturated);
     assert!(status.limited_axes.contains(AxisLimitFlags::SPEED));
     // Should scale down to 10 m/s
-    assert!((constrained.velocity.unwrap()[0].0 - 10.0).abs() < 0.1);
+    assert!((velocity_value(&constrained, 0) - 10.0).abs() < 0.1);
 }
 
 #[test]
@@ -271,8 +297,8 @@ fn diagonal_horizontal_speed_scaled_proportionally() {
 
     assert!(status.saturated);
     // Scaled to magnitude 10, direction preserved
-    let vx = constrained.velocity.unwrap()[0].0;
-    let vy = constrained.velocity.unwrap()[1].0;
+    let vx = velocity_value(&constrained, 0);
+    let vy = velocity_value(&constrained, 1);
     let mag = (vx * vx + vy * vy).sqrt();
     assert!(
         (mag - 10.0).abs() < 0.1,
@@ -301,7 +327,7 @@ fn vertical_speed_climb_clamped() {
 
     assert!(status.saturated);
     // max_climb_rate = 3.0, so min vertical_speed = -3.0
-    assert_eq!(constrained.vertical_speed.unwrap().0, -3.0);
+    assert_eq!(vertical_speed_value(&constrained), -3.0);
 }
 
 #[test]
@@ -320,7 +346,7 @@ fn vertical_speed_descent_clamped() {
 
     assert!(status.saturated);
     // max_descent_rate = 2.0
-    assert_eq!(constrained.vertical_speed.unwrap().0, 2.0);
+    assert_eq!(vertical_speed_value(&constrained), 2.0);
 }
 
 // =============================================================================
@@ -372,7 +398,7 @@ fn very_small_exceedance() {
         protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
 
     assert!(status.saturated);
-    assert_eq!(constrained.altitude.unwrap().0, 100.0);
+    assert_eq!(altitude_value(&constrained), 100.0);
 }
 
 #[test]
@@ -390,7 +416,7 @@ fn negative_altitude_clamped_to_min() {
         protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
 
     assert!(status.saturated);
-    assert_eq!(constrained.altitude.unwrap().0, 5.0); // Clamped to min
+    assert_eq!(altitude_value(&constrained), 5.0); // Clamped to min
 }
 
 // =============================================================================
@@ -601,7 +627,7 @@ fn roll_rate_negative_exceeds_limit() {
         protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
 
     assert!(status.limited_axes.contains(AxisLimitFlags::ROLL));
-    assert_eq!(constrained.angular_rate.unwrap()[0].0, -2.0);
+    assert_eq!(angular_rate_value(&constrained, 0), -2.0);
 }
 
 #[test]
@@ -623,7 +649,7 @@ fn pitch_rate_positive_exceeds_limit() {
         protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
 
     assert!(status.limited_axes.contains(AxisLimitFlags::PITCH));
-    assert_eq!(constrained.angular_rate.unwrap()[1].0, 2.0);
+    assert_eq!(angular_rate_value(&constrained, 1), 2.0);
 }
 
 #[test]
@@ -645,7 +671,7 @@ fn yaw_rate_negative_exceeds_limit() {
         protector.constrain(&setpoint, &state, &limits, AuthorityProfile::HardEnvelope);
 
     assert!(status.limited_axes.contains(AxisLimitFlags::YAW));
-    assert_eq!(constrained.angular_rate.unwrap()[2].0, -1.5);
+    assert_eq!(angular_rate_value(&constrained, 2), -1.5);
 }
 
 // =============================================================================

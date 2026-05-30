@@ -492,7 +492,11 @@ mod tests {
 
         let mut hal = BoardHal::new(imu, baro, mag, gnss, MockTime(1000), actuator);
 
-        let reading = hal.read_imu().unwrap();
+        let reading = hal.read_imu();
+        assert!(reading.is_some());
+        let Some(reading) = reading else {
+            return;
+        };
         assert!(reading.valid);
         assert!((reading.value.accel[2].0 - (-9.81)).abs() < 0.01);
     }

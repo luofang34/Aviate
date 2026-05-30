@@ -518,7 +518,11 @@ mod tests {
             id: 0,
         };
         let bytes = sensor.to_bytes();
-        let parsed = HilSensor::from_bytes(&bytes).expect("parse failed");
+        let parsed = HilSensor::from_bytes(&bytes);
+        assert!(parsed.is_some());
+        let Some(parsed) = parsed else {
+            return;
+        };
         assert_eq!(sensor.time_usec, parsed.time_usec);
         assert!((sensor.xacc - parsed.xacc).abs() < 1e-6);
         assert!((sensor.zacc - parsed.zacc).abs() < 1e-6);
@@ -545,7 +549,11 @@ mod tests {
             yaw: 0,
         };
         let bytes = gps.to_bytes();
-        let parsed = HilGps::from_bytes(&bytes).expect("parse failed");
+        let parsed = HilGps::from_bytes(&bytes);
+        assert!(parsed.is_some());
+        let Some(parsed) = parsed else {
+            return;
+        };
         assert_eq!(gps.time_usec, parsed.time_usec);
         assert_eq!(gps.lat, parsed.lat);
         assert_eq!(gps.lon, parsed.lon);
@@ -554,8 +562,10 @@ mod tests {
 
     #[test]
     fn test_hil_actuator_controls_roundtrip() {
-        let mut controls = HilActuatorControls::default();
-        controls.time_usec = 1234567890;
+        let mut controls = HilActuatorControls {
+            time_usec: 1234567890,
+            ..Default::default()
+        };
         controls.controls[0] = 0.5;
         controls.controls[1] = 0.6;
         controls.controls[2] = 0.7;
@@ -564,7 +574,11 @@ mod tests {
         controls.flags = 0x1234;
 
         let bytes = controls.to_bytes();
-        let parsed = HilActuatorControls::from_bytes(&bytes).expect("parse failed");
+        let parsed = HilActuatorControls::from_bytes(&bytes);
+        assert!(parsed.is_some());
+        let Some(parsed) = parsed else {
+            return;
+        };
         assert_eq!(controls.time_usec, parsed.time_usec);
         assert!((controls.controls[0] - parsed.controls[0]).abs() < 1e-6);
         assert!(parsed.is_armed());
@@ -607,7 +621,11 @@ mod tests {
             zacc: -1000, // ~1g down in mG
         };
         let bytes = state.to_bytes();
-        let parsed = HilStateQuaternion::from_bytes(&bytes).expect("parse failed");
+        let parsed = HilStateQuaternion::from_bytes(&bytes);
+        assert!(parsed.is_some());
+        let Some(parsed) = parsed else {
+            return;
+        };
         assert_eq!(state.time_usec, parsed.time_usec);
         assert!((state.attitude_quaternion[0] - parsed.attitude_quaternion[0]).abs() < 1e-6);
         assert_eq!(state.lat, parsed.lat);
@@ -626,7 +644,11 @@ mod tests {
     fn test_heartbeat_roundtrip() {
         let heartbeat = Heartbeat::new_quadrotor_hil(true);
         let bytes = heartbeat.to_bytes();
-        let parsed = Heartbeat::from_bytes(&bytes).expect("parse failed");
+        let parsed = Heartbeat::from_bytes(&bytes);
+        assert!(parsed.is_some());
+        let Some(parsed) = parsed else {
+            return;
+        };
         assert_eq!(heartbeat.mav_type, parsed.mav_type);
         assert_eq!(heartbeat.autopilot, parsed.autopilot);
         assert_eq!(heartbeat.base_mode, parsed.base_mode);

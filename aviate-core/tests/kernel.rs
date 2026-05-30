@@ -87,7 +87,9 @@ fn dummy_time_delta() -> aviate_core::time::TimeDelta {
     } // 100Hz update
 }
 
-fn make_kernel() -> aviate_core::DefaultAviateKernel<MultirotorController, QuadXMixer> {
+type TestKernel = aviate_core::DefaultAviateKernel<MultirotorController, QuadXMixer>;
+
+fn make_kernel() -> TestKernel {
     let mixer = QuadXMixer {
         timestamp_source: dummy_timestamp,
     };
@@ -112,6 +114,17 @@ fn make_kernel() -> aviate_core::DefaultAviateKernel<MultirotorController, QuadX
     // Set throttle low for tests
     kernel.state.checks.pre_arm.update_throttle(true);
     kernel
+}
+
+fn assert_arm_ok(kernel: &mut TestKernel) {
+    assert!(kernel.arm().is_ok(), "kernel should arm");
+}
+
+fn assert_reset_from_fault_ok(kernel: &mut TestKernel) {
+    assert!(
+        kernel.reset_from_fault().is_ok(),
+        "kernel should reset from fault"
+    );
 }
 
 /// Create valid sensor data for testing
@@ -393,7 +406,7 @@ fn kernel_arm_fails_when_already_armed() {
         kernel.init_step(&sensors, dummy_timestamp());
     }
 
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
 
     let result = kernel.arm();
     assert_eq!(result, Err(ArmError::AlreadyArmed));
@@ -448,7 +461,7 @@ fn kernel_disarm_transitions_to_disarmed() {
         kernel.init_step(&sensors, dummy_timestamp());
     }
 
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
     kernel.disarm();
 
     assert_eq!(kernel.state.init_state, InitState::Disarmed);
@@ -505,7 +518,7 @@ fn kernel_outputs_control_when_armed() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
 
     let cmd = Command {
         mode: ControlMode::Attitude,
@@ -662,12 +675,11 @@ fn degradation_reason_all_variants() {
 #[test]
 fn config_transition_default_stable_hover() {
     let state = ConfigTransitionState::default();
-    match state {
-        ConfigTransitionState::Stable(mode) => {
-            assert_eq!(mode, ConfigMode::Hover);
-        }
-        _ => panic!("Default should be Stable(Hover)"),
-    }
+    assert!(matches!(state, ConfigTransitionState::Stable(_)));
+    let ConfigTransitionState::Stable(mode) = state else {
+        return;
+    };
+    assert_eq!(mode, ConfigMode::Hover);
 }
 
 #[test]
@@ -678,14 +690,13 @@ fn config_transition_switching_state() {
         progress: 0.5,
     };
 
-    match state {
-        ConfigTransitionState::Switching { from, to, progress } => {
-            assert_eq!(from, ConfigMode::Hover);
-            assert_eq!(to, ConfigMode::Cruise);
-            assert!((progress - 0.5).abs() < 1e-6);
-        }
-        _ => panic!("Should be Switching"),
-    }
+    assert!(matches!(state, ConfigTransitionState::Switching { .. }));
+    let ConfigTransitionState::Switching { from, to, progress } = state else {
+        return;
+    };
+    assert_eq!(from, ConfigMode::Hover);
+    assert_eq!(to, ConfigMode::Cruise);
+    assert!((progress - 0.5).abs() < 1e-6);
 }
 
 #[test]
@@ -696,18 +707,18 @@ fn config_transition_failed_state() {
         reason: TransitionFailure::ActuatorStuck,
     };
 
-    match state {
-        ConfigTransitionState::Failed {
-            intended,
-            actual,
-            reason,
-        } => {
-            assert_eq!(intended, ConfigMode::Cruise);
-            assert_eq!(actual, ConfigMode::Hover);
-            assert_eq!(reason, TransitionFailure::ActuatorStuck);
-        }
-        _ => panic!("Should be Failed"),
-    }
+    assert!(matches!(state, ConfigTransitionState::Failed { .. }));
+    let ConfigTransitionState::Failed {
+        intended,
+        actual,
+        reason,
+    } = state
+    else {
+        return;
+    };
+    assert_eq!(intended, ConfigMode::Cruise);
+    assert_eq!(actual, ConfigMode::Hover);
+    assert_eq!(reason, TransitionFailure::ActuatorStuck);
 }
 
 // =============================================================================
@@ -1020,7 +1031,7 @@ fn kernel_disarm_resets_sample_counts() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
 
     // Check sample counts before disarm
     let samples_before = kernel.state.checks.pre_arm.samples.imu;
@@ -1500,7 +1511,7 @@ fn fault_state_entered_on_critical_imu_failure_while_armed() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
     assert_eq!(kernel.state.init_state, InitState::Armed);
 
     // Inject critical ALL_IMU_FAILED fault
@@ -1677,7 +1688,7 @@ fn fault_state_reset_clears_convergence() {
     // Enter fault state and reset
     kernel.state.init_state = InitState::Fault;
     kernel.state.faults = FaultFlags::empty();
-    kernel.reset_from_fault().unwrap();
+    assert_reset_from_fault_ok(&mut kernel);
 
     // Sample counts should be reset
     assert_eq!(
@@ -1711,7 +1722,7 @@ fn fault_state_full_recovery_cycle() {
     assert_eq!(kernel.state.init_state, InitState::Ready);
 
     // Phase 2: Arm
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
     assert_eq!(kernel.state.init_state, InitState::Armed);
 
     // Phase 3: Enter Fault (simulate critical failure)
@@ -1721,7 +1732,7 @@ fn fault_state_full_recovery_cycle() {
 
     // Phase 4: Clear fault and reset
     kernel.state.faults.remove(FaultFlags::ALL_IMU_FAILED);
-    kernel.reset_from_fault().unwrap();
+    assert_reset_from_fault_ok(&mut kernel);
     assert_eq!(kernel.state.init_state, InitState::PreArm);
 
     // Phase 5: Re-converge to Ready
@@ -1825,7 +1836,7 @@ fn request_config_mode_fails_in_fault_state() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().expect("Should arm");
+    assert_arm_ok(&mut kernel);
 
     // Inject critical fault
     kernel.state.faults.insert(FaultFlags::ALL_IMU_FAILED);
@@ -1855,7 +1866,7 @@ fn request_config_mode_fails_already_in_mode() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().expect("Should arm");
+    assert_arm_ok(&mut kernel);
 
     // Try to request same mode
     let result = kernel.request_config_mode(ConfigMode::Hover);
@@ -1882,7 +1893,7 @@ fn request_config_mode_fails_already_transitioning() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().expect("Should arm");
+    assert_arm_ok(&mut kernel);
 
     // Force into Transition mode
     kernel.state.mode = ConfigMode::Transition;
@@ -2130,7 +2141,7 @@ fn init_state_disarmed_to_prearm() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
     kernel.disarm();
     assert_eq!(kernel.state.init_state, InitState::Disarmed);
 
@@ -2219,7 +2230,7 @@ fn step_returns_safe_on_critical_fault() {
     for _ in 0..150 {
         kernel.init_step(&valid_sensors, dummy_timestamp());
     }
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
 
     // Use failed sensors to trigger fault detection in step()
     let failed_sensors = make_failed_imu_sensors();
@@ -2263,7 +2274,7 @@ fn step_with_frozen_control_law() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
 
     // Set frozen control law
     kernel.state.control_law = ControlLawV1::Backup;
@@ -2304,7 +2315,7 @@ fn step_performs_control_when_armed() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
 
     let cmd = Command {
         mode: ControlMode::Attitude,
@@ -2344,7 +2355,7 @@ fn step_handles_degradation_trigger() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
 
     // Clear attitude valid to trigger degradation
     kernel
@@ -2405,7 +2416,9 @@ fn handle_degradation_all_reasons() {
             "Expected degradation event for {:?}",
             reason
         );
-        let event = event.unwrap();
+        let Some(event) = event else {
+            continue;
+        };
         assert_eq!(event.to, expected_law, "Wrong law for {:?}", reason);
         assert_eq!(kernel.state.control_law, expected_law);
     }
@@ -2461,7 +2474,7 @@ fn test_sensor_overrides_gnss_force_state() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
 
     kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
@@ -2544,7 +2557,7 @@ fn test_init_state_forced_control_law_coverage() {
 #[test]
 fn test_check_critical_faults_returns_false() {
     let mut kernel = make_kernel();
-    assert_eq!(kernel.check_critical_faults(), false);
+    assert!(!kernel.check_critical_faults());
 }
 
 // =============================================================================
@@ -2571,7 +2584,7 @@ fn request_config_mode_succeeds() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
 
     // Set up transition checks
     kernel.state.checks.transition.current = aviate_core::checks::TransitionFlags::all();
@@ -2602,7 +2615,7 @@ fn request_config_mode_fails_checks() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
 
     // Set required flags but don't meet them
     kernel.state.checks.transition.required = aviate_core::checks::TransitionFlags::all();
@@ -2848,7 +2861,7 @@ fn test_ground_reset_ignored_when_armed() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
     assert_eq!(kernel.state.init_state, InitState::Armed);
 
     // Attempt ground reset
@@ -2963,7 +2976,7 @@ fn step_with_sensor_overrides_no_gnss_force() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
 
     // Provide sensor_overrides but with gnss_force_state = None
     let cmd = Command {
@@ -3177,9 +3190,13 @@ fn update_degrades_on_in_flight_trigger() {
         None,
     );
 
-    let event = result
-        .degradation
-        .expect("uninitialized EKF + armed should trigger an in-flight degradation");
+    assert!(
+        result.degradation.is_some(),
+        "uninitialized EKF + armed should trigger an in-flight degradation"
+    );
+    let Some(event) = result.degradation else {
+        return;
+    };
     assert_eq!(event.reason, DegradationReason::AttitudeLost);
     // AttitudeLost maps to Backup.
     assert_eq!(event.to, ControlLawV1::Backup);
@@ -3216,7 +3233,7 @@ fn update_command_age_gates_command_recent_flag() {
         kernel.init_step(&sensors, dummy_timestamp());
     }
     assert_eq!(kernel.state.init_state, InitState::Ready);
-    kernel.arm().expect("kernel should arm after init");
+    assert_arm_ok(&mut kernel);
 
     let cmd = Command {
         mode: ControlMode::Attitude,
@@ -3291,7 +3308,7 @@ fn update_degrades_on_persistent_timing_violation() {
     for _ in 0..150 {
         kernel.init_step(&sensors, dummy_timestamp());
     }
-    kernel.arm().unwrap();
+    assert_arm_ok(&mut kernel);
 
     // Record 3 consecutive violations — the threshold.
     for _ in 0..aviate_core::TIMING_VIOLATION_THRESHOLD {
@@ -3317,9 +3334,13 @@ fn update_degrades_on_persistent_timing_violation() {
         None,
     );
 
-    let event = result
-        .degradation
-        .expect("threshold-crossing call should emit a degradation event");
+    assert!(
+        result.degradation.is_some(),
+        "threshold-crossing call should emit a degradation event"
+    );
+    let Some(event) = result.degradation else {
+        return;
+    };
     assert_eq!(event.reason, DegradationReason::TimingViolation);
     assert_eq!(event.to, ControlLawV1::Alternate);
     assert_eq!(kernel.state.control_law, ControlLawV1::Alternate);

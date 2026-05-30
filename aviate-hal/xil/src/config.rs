@@ -392,7 +392,11 @@ action = { type = "arm" }
 verify = [{ type = "armed", value = true }]
 "#;
 
-        let config = parse_test_config_str(config_str).unwrap();
+        let config = parse_test_config_str(config_str);
+        assert!(config.is_ok());
+        let Ok(config) = config else {
+            return;
+        };
         assert_eq!(config.name, "basic_test");
         assert_eq!(config.vehicles.len(), 1);
         assert_eq!(config.vehicles[0].id, "x500_0");
@@ -477,7 +481,11 @@ verify = [{ type = "min_altitude", value = 5.0 }]
 min_separation = 4.0
 "#;
 
-        let config = parse_test_config_str(config_str).unwrap();
+        let config = parse_test_config_str(config_str);
+        assert!(config.is_ok());
+        let Ok(config) = config else {
+            return;
+        };
         assert_eq!(config.name, "two_vehicle_formation");
         assert!(config.lockstep);
         assert_eq!(config.world_file, "worlds/x500_two_vehicle_lockstep.sdf");
@@ -501,9 +509,9 @@ min_separation = 4.0
 
         // Global verification
         assert!(config.global_verification.is_some());
-        assert_eq!(
-            config.global_verification.unwrap().min_separation,
-            Some(4.0)
-        );
+        let Some(global_verification) = config.global_verification else {
+            return;
+        };
+        assert_eq!(global_verification.min_separation, Some(4.0));
     }
 }

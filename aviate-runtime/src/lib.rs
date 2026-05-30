@@ -24,10 +24,12 @@
 
 // Flight builds are no_std (embedded targets)
 #![cfg_attr(feature = "env-flight", no_std)]
+#![cfg_attr(
+    feature = "env-flight",
+    forbid(unsafe_code, clippy::panic, clippy::unwrap_used, clippy::expect_used)
+)]
 
-// ============================================================================
 // Environment Feature Guards (DO-178C Safety)
-// ============================================================================
 
 // Guard 1: Exactly one environment feature required
 #[cfg(not(any(feature = "env-flight", feature = "env-sitl", feature = "env-hitl")))]
@@ -44,9 +46,7 @@ compile_error!("env-flight cannot be combined with env-sitl/env-hitl");
 #[cfg(all(feature = "env-sitl", feature = "env-hitl"))]
 compile_error!("env-sitl and env-hitl are mutually exclusive");
 
-// ============================================================================
 // Module Structure
-// ============================================================================
 
 // Core modules (always available)
 pub mod flight;

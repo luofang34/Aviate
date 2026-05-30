@@ -209,8 +209,7 @@ fn control_law_max_degradation() {
         ControlLawV1::Backup,
     ];
 
-    let max_law = laws.iter().max().unwrap();
-    assert_eq!(*max_law, ControlLawV1::Backup);
+    assert_eq!(laws.iter().max(), Some(&ControlLawV1::Backup));
 }
 
 #[test]
@@ -239,7 +238,7 @@ fn fault_table_imu_all_failed_emergency() {
         .find(|e| e.fault == FaultCategory::ImuAllFailed);
 
     assert!(entry.is_some(), "ImuAllFailed should have an entry");
-    let e = entry.unwrap();
+    let Some(e) = entry else { return };
     assert_eq!(e.action, FaultAction::Emergency);
     assert_eq!(e.degrade_to, Some(ControlLawV1::Backup));
     assert_eq!(e.max_response_time_ms, 0);
@@ -254,8 +253,8 @@ fn fault_table_gnss_all_lost_degrade() {
         .iter()
         .find(|e| e.fault == FaultCategory::GnssAllLost);
 
-    assert!(entry.is_some());
-    let e = entry.unwrap();
+    assert!(entry.is_some(), "GnssAllLost should have an entry");
+    let Some(e) = entry else { return };
     assert_eq!(e.action, FaultAction::Degrade);
     assert_eq!(e.degrade_to, Some(ControlLawV1::Alternate));
 }
@@ -269,8 +268,8 @@ fn fault_table_numeric_error_emergency() {
         .iter()
         .find(|e| e.fault == FaultCategory::NumericError);
 
-    assert!(entry.is_some());
-    let e = entry.unwrap();
+    assert!(entry.is_some(), "NumericError should have an entry");
+    let Some(e) = entry else { return };
     assert_eq!(e.action, FaultAction::Emergency);
     assert_eq!(e.degrade_to, Some(ControlLawV1::Backup));
 }
@@ -284,8 +283,8 @@ fn fault_table_imu_single_isolate() {
         .iter()
         .find(|e| e.fault == FaultCategory::ImuFailed);
 
-    assert!(entry.is_some());
-    let e = entry.unwrap();
+    assert!(entry.is_some(), "ImuFailed should have an entry");
+    let Some(e) = entry else { return };
     assert_eq!(e.action, FaultAction::Isolate);
     assert!(e.degrade_to.is_none()); // Just isolate, don't degrade
 }
@@ -299,8 +298,8 @@ fn fault_table_command_timeout_degrade() {
         .iter()
         .find(|e| e.fault == FaultCategory::CommandTimeout);
 
-    assert!(entry.is_some());
-    let e = entry.unwrap();
+    assert!(entry.is_some(), "CommandTimeout should have an entry");
+    let Some(e) = entry else { return };
     assert_eq!(e.action, FaultAction::Degrade);
 }
 
@@ -313,8 +312,8 @@ fn fault_table_actuator_numeric_monitor() {
         .iter()
         .find(|e| e.fault == FaultCategory::ActuatorNumericError);
 
-    assert!(entry.is_some());
-    let e = entry.unwrap();
+    assert!(entry.is_some(), "ActuatorNumericError should have an entry");
+    let Some(e) = entry else { return };
     assert_eq!(e.action, FaultAction::Monitor);
 }
 

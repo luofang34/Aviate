@@ -458,12 +458,26 @@ impl FaultClient {
 mod tests {
     use super::*;
 
+    fn parse_fault_command(bytes: &[u8]) -> Option<FaultCommand> {
+        let parsed = FaultCommand::from_bytes(bytes);
+        assert!(parsed.is_some());
+        parsed
+    }
+
+    fn parse_fault_ack(bytes: &[u8]) -> Option<FaultAck> {
+        let parsed = FaultAck::from_bytes(bytes);
+        assert!(parsed.is_some());
+        parsed
+    }
+
     #[test]
     fn test_fault_command_roundtrip_degraded() {
         let cmd = FaultCommand::new(SensorTarget::Imu, FaultSpec::HealthDegraded).with_sequence(42);
 
         let bytes = cmd.to_bytes();
-        let parsed = FaultCommand::from_bytes(&bytes).expect("should parse");
+        let Some(parsed) = parse_fault_command(&bytes) else {
+            return;
+        };
 
         assert_eq!(parsed.sequence, 42);
         assert_eq!(parsed.target, Some(SensorTarget::Imu));
@@ -475,7 +489,9 @@ mod tests {
         let cmd = FaultCommand::new(SensorTarget::Gnss, FaultSpec::Dropout { cycles: 100 });
 
         let bytes = cmd.to_bytes();
-        let parsed = FaultCommand::from_bytes(&bytes).expect("should parse");
+        let Some(parsed) = parse_fault_command(&bytes) else {
+            return;
+        };
 
         assert_eq!(parsed.target, Some(SensorTarget::Gnss));
         assert_eq!(parsed.fault, Some(FaultSpec::Dropout { cycles: 100 }));
@@ -491,15 +507,17 @@ mod tests {
         );
 
         let bytes = cmd.to_bytes();
-        let parsed = FaultCommand::from_bytes(&bytes).expect("should parse");
+        let Some(parsed) = parse_fault_command(&bytes) else {
+            return;
+        };
 
-        if let Some(FaultSpec::BiasShift { offset }) = parsed.fault {
-            assert!((offset[0] - 1.5).abs() < 0.01);
-            assert!((offset[1] - (-2.25)).abs() < 0.01);
-            assert!((offset[2] - 0.5).abs() < 0.01);
-        } else {
-            panic!("Expected BiasShift");
-        }
+        assert!(matches!(parsed.fault, Some(FaultSpec::BiasShift { .. })));
+        let Some(FaultSpec::BiasShift { offset }) = parsed.fault else {
+            return;
+        };
+        assert!((offset[0] - 1.5).abs() < 0.01);
+        assert!((offset[1] - (-2.25)).abs() < 0.01);
+        assert!((offset[2] - 0.5).abs() < 0.01);
     }
 
     #[test]
@@ -507,13 +525,15 @@ mod tests {
         let cmd = FaultCommand::new(SensorTarget::Baro, FaultSpec::BiasScalar { offset: 150.5 });
 
         let bytes = cmd.to_bytes();
-        let parsed = FaultCommand::from_bytes(&bytes).expect("should parse");
+        let Some(parsed) = parse_fault_command(&bytes) else {
+            return;
+        };
 
-        if let Some(FaultSpec::BiasScalar { offset }) = parsed.fault {
-            assert!((offset - 150.5).abs() < 0.01);
-        } else {
-            panic!("Expected BiasScalar");
-        }
+        assert!(matches!(parsed.fault, Some(FaultSpec::BiasScalar { .. })));
+        let Some(FaultSpec::BiasScalar { offset }) = parsed.fault else {
+            return;
+        };
+        assert!((offset - 150.5).abs() < 0.01);
     }
 
     #[test]
@@ -521,7 +541,9 @@ mod tests {
         let cmd = FaultCommand::clear(SensorTarget::Mag);
 
         let bytes = cmd.to_bytes();
-        let parsed = FaultCommand::from_bytes(&bytes).expect("should parse");
+        let Some(parsed) = parse_fault_command(&bytes) else {
+            return;
+        };
 
         assert_eq!(parsed.target, Some(SensorTarget::Mag));
         assert_eq!(parsed.fault, None);
@@ -532,7 +554,9 @@ mod tests {
         let cmd = FaultCommand::clear_all();
 
         let bytes = cmd.to_bytes();
-        let parsed = FaultCommand::from_bytes(&bytes).expect("should parse");
+        let Some(parsed) = parse_fault_command(&bytes) else {
+            return;
+        };
 
         assert_eq!(parsed.target, None);
         assert_eq!(parsed.fault, None);
@@ -544,7 +568,9 @@ mod tests {
         let ack = FaultAck::ok(&cmd);
 
         let bytes = ack.to_bytes();
-        let parsed = FaultAck::from_bytes(&bytes).expect("should parse");
+        let Some(parsed) = parse_fault_ack(&bytes) else {
+            return;
+        };
 
         assert_eq!(parsed.sequence, 123);
         assert_eq!(parsed.status, AckStatus::Ok);
@@ -625,7 +651,9 @@ mod tests {
         ] {
             let cmd = FaultCommand::clear(target);
             let bytes = cmd.to_bytes();
-            let parsed = FaultCommand::from_bytes(&bytes).expect("should parse");
+            let Some(parsed) = parse_fault_command(&bytes) else {
+                return;
+            };
             assert_eq!(parsed.target, Some(target));
         }
     }
@@ -644,9 +672,11 @@ mod tests {
         ];
 
         for fault in faults {
-            let cmd = FaultCommand::new(SensorTarget::Imu, fault.clone());
+            let cmd = FaultCommand::new(SensorTarget::Imu, fault);
             let bytes = cmd.to_bytes();
-            let parsed = FaultCommand::from_bytes(&bytes).expect("should parse");
+            let Some(parsed) = parse_fault_command(&bytes) else {
+                return;
+            };
 
             match (&fault, &parsed.fault) {
                 (

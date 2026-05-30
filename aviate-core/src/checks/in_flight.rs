@@ -267,3 +267,18 @@ impl InFlightStatus {
         self.current = InFlightFlags::empty();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_required_sets_required_flags_and_starts_empty() {
+        let required = InFlightFlags::ATTITUDE_VALID | InFlightFlags::COMMAND_RECENT;
+        let status = InFlightStatus::with_required(required);
+
+        assert_eq!(status.required, required);
+        assert!(status.current.is_empty());
+        assert_eq!(status.missing(), required);
+    }
+}
