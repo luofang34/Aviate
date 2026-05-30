@@ -436,3 +436,52 @@ fn matching_velocities_at_non_zero() {
         cmd.collective.0
     );
 }
+
+#[test]
+fn vertical_d_term_adds_brake_on_rising_descent() {
+    // With the vertical D gain enabled, the SECOND cycle (filter primed)
+    // takes the derivative-on-measurement path: a descent rate that rose
+    // between cycles adds brake collective on top of the P term. The
+    // first cycle only primes the filter. (Lives here rather than in the
+    // in-source unit tests because it needs two cycles sharing one loop
+    // state, which the public API exposes via VelocityLoopState.)
+    let mut gains = CascadeGains::x500_defaults();
+    gains.vel_d = [0.0, 0.0, 0.5];
+    let ctrl = VelocityController::new(gains, 0.5);
+    let mut state = VelocityLoopState::default();
+    let at_rest = Vector3::new(
+        MetersPerSecond(0.0),
+        MetersPerSecond(0.0),
+        MetersPerSecond(0.0),
+    );
+    // Cycle 1 primes the LPF (d_primed becomes true).
+    let _ = ctrl.step(
+        &mut state,
+        at_rest,
+        at_rest,
+        AccelFeedforward::default(),
+        &Quaternion::IDENTITY,
+        0.01,
+    );
+    // Cycle 2: vertical velocity has risen to +0.5 m/s (descending). Both
+    // the P term (arresting descent) and the D term (rising measurement)
+    // push collective above hover trim.
+    let descending = Vector3::new(
+        MetersPerSecond(0.0),
+        MetersPerSecond(0.0),
+        MetersPerSecond(0.5),
+    );
+    let cmd = ctrl.step(
+        &mut state,
+        at_rest,
+        descending,
+        AccelFeedforward::default(),
+        &Quaternion::IDENTITY,
+        0.01,
+    );
+    assert!(
+        cmd.collective.0 > 0.5,
+        "rising descent must brake above hover trim, got {}",
+        cmd.collective.0
+    );
+}
