@@ -104,6 +104,15 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+      # The `behavioral_tests` binary is gated behind `test-hooks`
+      # (inject_state / inject_fault), so a plain `cargo test
+      # --workspace` never builds or runs it. Run the aviate-core
+      # suite with the feature explicitly so the in-flight fault/
+      # injection behavioral evidence is exercised on every push and
+      # a controller-signature change cannot silently rot it.
+      - name: Run aviate-core behavioral suite (test-hooks)
+        run: cargo test -p aviate-core --features test-hooks
+
   coverage:
     name: Coverage (DO-178C LLVM)
     runs-on: ubuntu-latest

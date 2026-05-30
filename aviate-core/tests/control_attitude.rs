@@ -141,10 +141,15 @@ fn inverted_roll_produces_large_correction() {
 
     let rate_sp = ctrl.step(&setpoint, &current);
 
-    // Maximum error: 2 * 1.0 * 6.0 = -12.0
+    // Unclamped demand would be 2 * 1.0 * 6.0 = 12 rad/s, but the
+    // attitude loop caps each axis at MAX_ATTITUDE_RATE_CMD = 3 rad/s
+    // so the rate loop is never asked to servo a physically
+    // unattainable rate. The correction is at the negative authority
+    // limit.
     assert!(
-        (rate_sp[0].0 - (-12.0)).abs() < 1e-5,
-        "Roll rate should be -12 rad/s"
+        (rate_sp[0].0 - (-3.0)).abs() < 1e-5,
+        "Roll rate should saturate at -3 rad/s, got {}",
+        rate_sp[0].0
     );
     assert!((rate_sp[1].0).abs() < 1e-5);
     assert!((rate_sp[2].0).abs() < 1e-5);
@@ -159,9 +164,14 @@ fn ninety_degree_pitch() {
 
     let rate_sp = ctrl.step(&setpoint, &current);
 
-    // sin(45deg) ≈ 0.707, error ≈ 2 * 0.707 ≈ 1.414
-    // rate = 1.414 * 6.0 ≈ 8.5
-    assert!(rate_sp[1].0 < -5.0, "Pitch rate should be large negative");
+    // Unclamped demand: error ≈ 2 * sin(45°) ≈ 1.414, rate ≈ 1.414 *
+    // 6.0 ≈ 8.5 rad/s — well past the 3 rad/s attitude-rate cap, so
+    // the pitch command saturates at the negative authority limit.
+    assert!(
+        (rate_sp[1].0 - (-3.0)).abs() < 1e-5,
+        "Pitch rate should saturate at -3 rad/s, got {}",
+        rate_sp[1].0
+    );
 }
 
 // =============================================================================
