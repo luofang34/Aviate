@@ -404,11 +404,9 @@ fn cleanup_orphan_aviate_sitl_processes() {
     if user.is_empty() {
         return;
     }
-    for binary in ["sitl-gazebo-x500"].iter() {
-        let _ = PCommand::new("pkill")
-            .args(["-9", "-u", &user, "-f", binary])
-            .status();
-    }
+    let _ = PCommand::new("pkill")
+        .args(["-9", "-u", &user, "-f", "sitl-gazebo-x500"])
+        .status();
     // gz sim must be matched by command-line so we don't also nuke
     // a gz GUI client or unrelated gz process. Pattern picks up the
     // server invocation (`gz sim -s -r --headless-rendering`).

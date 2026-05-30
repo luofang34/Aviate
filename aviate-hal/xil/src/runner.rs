@@ -1017,7 +1017,11 @@ impl<B: SimulatorBackend> MissionRunner<B> {
                             .iter()
                             .rev()
                             .take_while(|s| s_now.elapsed - s.elapsed < 0.1)
-                            .min_by(|a, b| a.position[2].partial_cmp(&b.position[2]).unwrap())
+                            .min_by(|a, b| {
+                                a.position[2]
+                                    .partial_cmp(&b.position[2])
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            })
                             .unwrap_or(&trace[i - 1]);
                         let dt = (s_now.elapsed - lookback.elapsed).max(1e-3);
                         let v_down = (s_now.position[2] - lookback.position[2]) / dt;
