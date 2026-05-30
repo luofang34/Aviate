@@ -205,6 +205,12 @@ jobs:
           # complaints.
           fetch-depth: 0
 
+      # `cargo evidence check --mode=source` runs `cargo test --workspace`,
+      # which builds the serial/udev-backed crates; without libudev the
+      # build script panics in pkg-config before any evidence runs.
+      - name: Install system libudev
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
