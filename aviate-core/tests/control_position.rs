@@ -251,10 +251,19 @@ fn sqrt_region_undershoots_linear_extrapolation() {
     let vel_sp = ctrl.step(pos(err, 0.0, 0.0), ORIGIN);
 
     let linear_extrapolation = p * err; // 15 m/s
+                                        // Exact sqrt-shaper value: sign·√(2·a·(|err|−d_lin/2)) with
+                                        // d_lin = a/p² = 1.5/0.25 = 6, i.e. √(2·1.5·(30−3)) = √81 = 9.0.
+                                        // Pin the magnitude, not just the bound — a bound-only check would
+                                        // pass for any value in (0, 15) and miss a sign/scale error.
+    let expected = 9.0_f32;
     assert!(
-        vel_sp.x.0 > 0.0 && vel_sp.x.0 < linear_extrapolation,
-        "sqrt branch must undershoot p·err ({linear_extrapolation}), got {}",
+        (vel_sp.x.0 - expected).abs() < 1e-3,
+        "sqrt branch should command exactly {expected} m/s, got {}",
         vel_sp.x.0
+    );
+    assert!(
+        vel_sp.x.0 < linear_extrapolation,
+        "and must undershoot the linear extrapolation p·err = {linear_extrapolation}"
     );
 }
 

@@ -150,7 +150,7 @@ impl CascadeGains {
             //   ωn ≥ 4.5 rad/s (settle ≈ 1 / ωn ≈ 0.7 s, under
             //   the 1 s bound) and ζ ≥ 0.5 (overshoot ≤ 16 %,
             //   well under 30 %).
-            // * LLR-CTL-204: cascade time-scale separation
+            // * LLR-CTL-205: cascade time-scale separation
             //   `K · rate_p / att_p ≥ 5`. Below that the inner
             //   loop's dynamics intrude on the outer loop and
             //   the cascade's stability margins are no longer

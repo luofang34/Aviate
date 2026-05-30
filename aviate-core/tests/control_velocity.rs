@@ -78,10 +78,14 @@ fn zero_velocity_error_produces_hover_thrust() {
 
     let cmd = p_step(&ctrl, setpoint, current, &Quaternion::IDENTITY);
 
-    // Hover thrust is nominally 0.5
+    // Zero error, P-only, frozen integrator, level attitude → the
+    // collective is exactly the hover trim (every correction term is
+    // zero and tilt compensation is unity). Pin it tightly so a sign
+    // or initialisation bug in the vertical loop can't hide in slack.
     assert!(
-        (cmd.collective.0 - 0.5).abs() < 0.1,
-        "Collective should be ~0.5 at hover"
+        (cmd.collective.0 - 0.5).abs() < 1e-6,
+        "Collective should equal hover trim 0.5, got {}",
+        cmd.collective.0
     );
 }
 
@@ -101,10 +105,12 @@ fn zero_horizontal_error_produces_level_attitude() {
 
     let cmd = p_step(&ctrl, setpoint, current, &Quaternion::IDENTITY);
 
-    // Attitude setpoint should be close to level (identity)
+    // Zero horizontal error and level current attitude → the
+    // setpoint is exactly identity (roll_sp = pitch_sp = 0, yaw held).
     assert!(
-        (cmd.attitude.w - 1.0).abs() < 0.1,
-        "Attitude should be near level"
+        (cmd.attitude.w - 1.0).abs() < 1e-6,
+        "Attitude setpoint should be identity (w=1), got w={}",
+        cmd.attitude.w
     );
 }
 
@@ -301,35 +307,49 @@ fn collective_clamps_at_one() {
 
 #[test]
 fn roll_pitch_limited_to_max() {
+    // Drive each axis on its own: a single-axis tilt setpoint has no
+    // roll/pitch cross-coupling, so `to_euler` returns the clamped
+    // angle exactly. (A simultaneous roll+pitch command couples the
+    // two during euler extraction — ~0.057 rad here — and could only
+    // be checked against a loose upper bound; the single-axis form
+    // pins the clamp tightly instead.)
     let max_angle = 0.5; // ~28 degrees
     let ctrl = p_only([1.0, 1.0, 0.2], max_angle, 0.5);
-    // Large velocity error
-    let setpoint = Vector3::new(
-        MetersPerSecond(50.0),
-        MetersPerSecond(50.0),
-        MetersPerSecond(0.0),
-    );
-    let current = Vector3::new(
+    let zero = Vector3::new(
         MetersPerSecond(0.0),
         MetersPerSecond(0.0),
         MetersPerSecond(0.0),
     );
 
-    let cmd = p_step(&ctrl, setpoint, current, &Quaternion::IDENTITY);
+    // Large +East velocity error → roll saturates at +max_angle, pitch 0.
+    let east = Vector3::new(
+        MetersPerSecond(0.0),
+        MetersPerSecond(50.0),
+        MetersPerSecond(0.0),
+    );
+    let (roll, pitch, _) = p_step(&ctrl, east, zero, &Quaternion::IDENTITY)
+        .attitude
+        .to_euler();
+    assert!(
+        (roll - max_angle).abs() < 1e-3,
+        "Roll should clamp to +{max_angle}, got {roll}"
+    );
+    assert!(pitch.abs() < 1e-3, "no X error → no pitch, got {pitch}");
 
-    let (roll, pitch, _) = cmd.attitude.to_euler();
-    assert!(
-        roll.abs() <= max_angle + 0.1,
-        "Roll {} should be limited to {}",
-        roll,
-        max_angle
+    // Large +North velocity error → pitch saturates at -max_angle, roll 0.
+    let north = Vector3::new(
+        MetersPerSecond(50.0),
+        MetersPerSecond(0.0),
+        MetersPerSecond(0.0),
     );
+    let (roll, pitch, _) = p_step(&ctrl, north, zero, &Quaternion::IDENTITY)
+        .attitude
+        .to_euler();
     assert!(
-        pitch.abs() <= max_angle + 0.1,
-        "Pitch {} should be limited to {}",
-        pitch,
-        max_angle
+        (pitch + max_angle).abs() < 1e-3,
+        "Pitch should clamp to -{max_angle}, got {pitch}"
     );
+    assert!(roll.abs() < 1e-3, "no Y error → no roll, got {roll}");
 }
 
 // =============================================================================
@@ -386,11 +406,16 @@ fn small_velocity_error() {
 
     let cmd = p_step(&ctrl, setpoint, current, &Quaternion::IDENTITY);
 
-    // Should produce small adjustments
-    assert!((cmd.collective.0 - 0.5).abs() < 0.1);
+    // Vertical error is zero → collective is exactly the hover trim;
+    // the small +North velocity error tilts the nose down a little
+    // (pitch ≈ -atan2(0.1·0.1, g) ≈ -0.001 rad) with no roll.
+    assert!((cmd.collective.0 - 0.5).abs() < 1e-6);
     let (roll, pitch, _) = cmd.attitude.to_euler();
-    assert!(roll.abs() < 0.1);
-    assert!(pitch.abs() < 0.1);
+    assert!(roll.abs() < 1e-6, "no Y error → no roll, got {roll}");
+    assert!(
+        pitch < 0.0 && pitch.abs() < 0.01,
+        "small nose-down pitch, got {pitch}"
+    );
 }
 
 #[test]
@@ -404,6 +429,10 @@ fn matching_velocities_at_non_zero() {
 
     let cmd = p_step(&ctrl, velocity, velocity, &Quaternion::IDENTITY);
 
-    // No error -> hover thrust
-    assert!((cmd.collective.0 - 0.5).abs() < 0.1);
+    // setpoint == current on every axis → zero error → exactly hover.
+    assert!(
+        (cmd.collective.0 - 0.5).abs() < 1e-6,
+        "matched velocity → hover trim 0.5, got {}",
+        cmd.collective.0
+    );
 }
