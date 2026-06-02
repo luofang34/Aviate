@@ -9,6 +9,7 @@ revision = "1"
 uid = "ae4d81e9-aa4d-4372-a2fa-1b105e5d8ea8"
 id = "TST-EST-001"
 title = "ekf_default_creates_valid_instance"
+test_selector = "ekf_default_creates_valid_instance"
 owner = "aviate-core@aviate"
 description = """
 Verifies that Ekf::default() produces a filter with
@@ -22,6 +23,7 @@ traces_to = ["6c867ca0-174d-4271-bb69-988d38164f1e", "809792b4-cbed-4107-bbdf-df
 uid = "f9736124-d32c-4274-b04e-772d2ecac8e8"
 id = "TST-EST-002"
 title = "ekf_predict_on_uninitialized_returns_early"
+test_selector = "ekf_predict_on_uninitialized_returns_early"
 owner = "aviate-core@aviate"
 description = """
 Calls predict() on an Ekf that has never had init() invoked and
@@ -34,6 +36,7 @@ traces_to = ["d9fa9931-db32-4965-afb0-c7d80d31f57c"]
 uid = "baba7fec-d84e-4bdb-b81d-13d1934091c7"
 id = "TST-EST-003"
 title = "ekf_predict_with_zero_dt_returns_early"
+test_selector = "ekf_predict_with_zero_dt_returns_early"
 owner = "aviate-core@aviate"
 description = """
 Verifies LLR-EST-102 clause (b): predict() with dt == 0 leaves
@@ -46,6 +49,7 @@ traces_to = ["d9fa9931-db32-4965-afb0-c7d80d31f57c"]
 uid = "5f4a0427-e67f-4826-b485-ba10177379d4"
 id = "TST-EST-004"
 title = "ekf_predict_with_nan_dt_returns_early"
+test_selector = "ekf_predict_with_nan_dt_returns_early"
 owner = "aviate-core@aviate"
 description = """
 Verifies LLR-EST-102 clause (b): non-finite dt is rejected by
@@ -58,6 +62,7 @@ traces_to = ["d9fa9931-db32-4965-afb0-c7d80d31f57c"]
 uid = "ebf3b04f-c0c5-426d-9bbe-d7492c9d3dbc"
 id = "TST-EST-005"
 title = "ekf_predict_with_nan_imu_gyro_returns_early"
+test_selector = "ekf_predict_with_nan_imu_gyro_returns_early"
 owner = "aviate-core@aviate"
 description = """
 Verifies LLR-EST-102 clause (c): NaN in any IMU gyro component
@@ -71,6 +76,7 @@ traces_to = ["d9fa9931-db32-4965-afb0-c7d80d31f57c"]
 uid = "f143411d-7551-4e31-9dc6-37c395363643"
 id = "TST-EST-006"
 title = "ekf_predict_integrates_velocity_to_position"
+test_selector = "ekf_predict_integrates_velocity_to_position"
 owner = "aviate-core@aviate"
 description = """
 Verifies LLR-EST-102 clause (d): with a healthy IMU and dt > 0,
@@ -83,6 +89,7 @@ traces_to = ["d9fa9931-db32-4965-afb0-c7d80d31f57c"]
 uid = "f6d00ffa-381a-406e-b24a-f7cf51a91360"
 id = "TST-EST-007"
 title = "ekf_update_gnss_with_good_health"
+test_selector = "ekf_update_gnss_with_good_health"
 owner = "aviate-core@aviate"
 description = """
 Verifies LLR-EST-103: a SensorHealth::Good GNSS reading with a
@@ -95,6 +102,7 @@ traces_to = ["b8339d64-9b99-4109-a9da-8e1a547fbf49"]
 uid = "209f70cc-3a19-4097-9c28-89257bcbf8da"
 id = "TST-EST-008"
 title = "ekf_update_gnss_rejects_degraded_sensor_health"
+test_selector = "ekf_update_gnss_rejects_degraded_sensor_health"
 owner = "aviate-core@aviate"
 description = """
 Verifies LLR-EST-103 health gate: when SensorReading.health is not
@@ -108,6 +116,7 @@ traces_to = ["b8339d64-9b99-4109-a9da-8e1a547fbf49"]
 uid = "89b5a74f-aa44-4c7d-819e-cc84f25edf8a"
 id = "TST-EST-009"
 title = "ekf_get_estimate_uninitialized_returns_unusable"
+test_selector = "ekf_get_estimate_uninitialized_returns_unusable"
 owner = "aviate-core@aviate"
 description = """
 Verifies LLR-EST-106 quality contract and LLR-EST-107 accessor
@@ -123,6 +132,7 @@ traces_to = [
 uid = "849316a6-0dab-4077-9a18-8c5783bcd8db"
 id = "TST-EST-010"
 title = "ekf_innovation_gating_rejects_outlier"
+test_selector = "ekf_innovation_gating_rejects_outlier"
 owner = "aviate-core@aviate"
 description = """
 Anchors LLR-EST-103's implicit innovation-gating safeguard inside
@@ -135,6 +145,7 @@ traces_to = ["b8339d64-9b99-4109-a9da-8e1a547fbf49"]
 uid = "dc2d0aeb-93e2-415e-942b-7932300cf16e"
 id = "TST-CFG-001"
 title = "test_ground_reset_success_unit"
+test_selector = "test_ground_reset_success_unit"
 owner = "aviate-core@aviate"
 description = """
 The `kernel.rs::tests::test_ground_reset_success_unit` test
@@ -153,6 +164,7 @@ traces_to = [
 uid = "9504383a-352e-4626-8f0b-6d566ccd0ff6"
 id = "TST-CFG-002"
 title = "test_aviate_kernel_trait_surface (load_config + get_config)"
+test_selector = "aviate_kernel_trait_surface_covered"
 owner = "aviate-core@aviate"
 description = """
 The `tests/kernel.rs::test_aviate_kernel_trait_surface` test
@@ -167,6 +179,7 @@ traces_to = ["434a64f5-be78-46ca-bc0f-de1eaffb297d"]
 uid = "ecb25a28-1580-43e8-be51-d873f6f6151b"
 id = "TST-STATE-009"
 title = "test_ground_reset_clears_fallback_and_actuator_state"
+test_selector = "test_ground_reset_clears_fallback_and_actuator_state"
 owner = "aviate-core@aviate"
 description = """
 The `tests/kernel.rs::test_ground_reset_clears_fallback_and_actuator_state`
@@ -184,6 +197,7 @@ traces_to = ["57835534-5fc0-45a2-92b9-6920328193e5"]
 uid = "9b022da0-7802-4f28-a233-d6342f00d40d"
 id = "TST-CMD-101"
 title = "update_command_age_gates_command_recent_flag"
+test_selector = "update_command_age_gates_command_recent_flag"
 owner = "aviate-core@aviate"
 description = """
 The `tests/kernel.rs::update_command_age_gates_command_recent_flag`
@@ -204,6 +218,7 @@ traces_to = ["3601601c-808b-453d-ae41-d6493409fd5e"]
 uid = "df421f16-968c-4fa7-a49d-8c0daa94d851"
 id = "TST-STATE-006"
 title = "ekf_tests.rs full suite (43 tests, EstimatorState pattern)"
+test_selector = "ekf_update_gnss_with_good_health"
 owner = "aviate-core@aviate"
 description = """
 The `tests/ekf_tests.rs` suite (43 tests) was rewritten in Phase 4
@@ -223,6 +238,7 @@ traces_to = ["edbab6c9-f097-45ed-8c5a-10f3e2d4fce1"]
 uid = "4ebf52dc-fc28-49e1-b0e4-3dc4360d218b"
 id = "TST-STATE-007"
 title = "mixer_tests.rs full suite (24 tests, ActuatorFallbackState pattern)"
+test_selector = "test_sanitizer_all_valid"
 owner = "aviate-core@aviate"
 description = """
 The `tests/mixer_tests.rs` suite (24 tests) was rewritten in Phase
@@ -241,6 +257,7 @@ traces_to = ["62a6ae4d-f6b4-4460-a447-5b753e432e85"]
 uid = "0a64e7b5-c351-4788-bac8-01f27c820d22"
 id = "TST-STATE-008"
 title = "tests/kernel.rs full suite + integration_tests.rs (state.estimator path)"
+test_selector = "init_state_only_armed_allows_control"
 owner = "aviate-core@aviate"
 description = """
 The `tests/kernel.rs` (114 tests) and `tests/integration_tests.rs`
@@ -261,6 +278,7 @@ traces_to = [
 uid = "aed53b30-6ddc-4520-a9f8-ba062744ae3c"
 id = "TST-STATE-001"
 title = "test_ground_reset_success_unit (lifecycle through state)"
+test_selector = "test_ground_reset_success_unit"
 owner = "aviate-core@aviate"
 description = """
 The `kernel.rs::tests::test_ground_reset_success_unit` test sets
@@ -280,6 +298,7 @@ traces_to = [
 uid = "95b3373d-374e-4b0f-aafc-2ea5ac640bb8"
 id = "TST-STATE-002"
 title = "tests/kernel.rs full suite (114 tests, KernelState path)"
+test_selector = "init_state_forces_frozen_when_not_armed"
 owner = "aviate-core@aviate"
 description = """
 The `tests/kernel.rs` integration suite (~114 tests) exercises
@@ -296,6 +315,7 @@ traces_to = ["ae04c2c8-8628-49f1-b037-14bafafe2067"]
 uid = "58b55590-3c26-4bd9-930e-3a08cc15fd4c"
 id = "TST-STATE-003"
 title = "tests/integration_tests.rs (~20 tests, KernelState path)"
+test_selector = "test_kernel_mc"
 owner = "aviate-core@aviate"
 description = """
 The `tests/integration_tests.rs` suite (20 tests) covers full
@@ -311,6 +331,7 @@ traces_to = ["ae04c2c8-8628-49f1-b037-14bafafe2067"]
 uid = "86d4123f-6951-4d2a-91fe-9adeae77a1f8"
 id = "TST-STATE-004"
 title = "Builder produces kernel with KernelState::default fields"
+test_selector = "full_chain_builds_kernel_with_default_cfg"
 owner = "aviate-core@aviate"
 description = """
 The `kernel/builder.rs::tests::full_chain_builds_kernel_with_default_cfg`
@@ -329,6 +350,7 @@ traces_to = [
 uid = "61d59a58-2690-4670-86ac-91e92a8d550b"
 id = "TST-STATE-005"
 title = "Builder pre_arm_required propagates into KernelState.checks"
+test_selector = "pre_arm_required_propagates_to_checks"
 owner = "aviate-core@aviate"
 description = """
 The `kernel/builder.rs::tests::pre_arm_required_propagates_to_checks`
@@ -347,6 +369,7 @@ traces_to = [
 uid = "6bcdce55-17b4-4d55-86a7-f3e7655d0441"
 id = "TST-PIPE-001"
 title = "test_ground_reset_success_unit (pipeline.mixer.mix path)"
+test_selector = "test_ground_reset_success_unit"
 owner = "aviate-core@aviate"
 description = """
 The `kernel.rs::tests::test_ground_reset_success_unit` test
@@ -362,6 +385,7 @@ traces_to = ["7bf0feea-fd1f-48ae-aa1f-50c59f35621a"]
 uid = "e4e933ff-41f0-4860-8e57-800fb67cae15"
 id = "TST-PIPE-002"
 title = "full_chain_kernel_mixer_invokes_timestamp_source (builder via pipeline)"
+test_selector = "full_chain_kernel_mixer_invokes_timestamp_source"
 owner = "aviate-core@aviate"
 description = """
 The `kernel/builder.rs::tests::full_chain_kernel_mixer_invokes_timestamp_source`
@@ -381,6 +405,7 @@ traces_to = [
 uid = "ee170b84-4a02-4b23-90d3-bb77bffa433e"
 id = "TST-CFG-003"
 title = "test_make_kernel_with_pre_arm_required"
+test_selector = "kernel_requires_all_pre_arm_flags"
 owner = "aviate-core@aviate"
 description = """
 The `tests/kernel.rs::make_kernel` helper constructs a kernel via
@@ -396,6 +421,7 @@ traces_to = ["471d6bcb-8845-4bbe-9c8a-6d69bee67794"]
 uid = "1b11b826-5a33-46f8-b044-8ff16e61e960"
 id = "TST-MOD-001"
 title = "comm::tests::comm_surface_lives_in_aviate_hal_io"
+test_selector = "comm::tests::comm_surface_lives_in_aviate_hal_io"
 owner = "aviate-core@aviate"
 description = """
 The `aviate_hal_io::comm::tests::comm_surface_lives_in_aviate_hal_io`
@@ -415,6 +441,7 @@ traces_to = ["d1c33829-df40-4bb2-ac7c-6645e6dce817"]
 uid = "6f997ee4-d91d-40dc-896c-16cf8a179ddc"
 id = "TST-PIPE-103"
 title = "kernel::pipeline::tests::identity_hash_*"
+test_selectors = ["identity_hash_is_stable_across_builds", "identity_hash_is_deterministic_within_build", "identity_hash_is_nonzero", "identity_hash_differs_across_algorithm_bundles"]
 owner = "aviate-core@aviate"
 description = """
 The unit-test family in `aviate-core/src/kernel/pipeline.rs::tests`
@@ -439,6 +466,7 @@ traces_to = ["421bab25-b06e-4804-9beb-ea939ae5b79a"]
 uid = "67dab32f-7e1e-46cc-9d50-8f4d5b78e52f"
 id = "TST-PIPE-105"
 title = "kernel::pipeline::tests::identity_hash_is_stable_across_builds"
+test_selector = "kernel::pipeline::tests::identity_hash_is_stable_across_builds"
 owner = "aviate-core@aviate"
 description = """
 `identity_hash_is_stable_across_builds` pins the production
@@ -466,6 +494,7 @@ traces_to = [
 uid = "fbf2b8c0-3cde-4bed-982b-532979bd3bb8"
 id = "TST-CTL-102"
 title = "controller_runtime_state_tests — stateful regression suite"
+test_selector = "step_increments_runtime_counter"
 owner = "aviate-core@aviate"
 description = """
 The integration test
@@ -502,6 +531,7 @@ traces_to = ["ad5ab2d7-0dd4-48d0-83ae-dea20934c119"]
 uid = "85cb803c-508a-4d78-8eb6-83e716a09663"
 id = "TST-CTL-101"
 title = "controller_tests exercise VehicleController via &mut RuntimeState"
+test_selectors = ["multirotor_controller_tests::", "vtol_controller_tests::"]
 owner = "aviate-core@aviate"
 description = """
 The unit-test families in
@@ -527,6 +557,7 @@ traces_to = ["11de1ff8-495b-40ff-8428-d5f851fc5099"]
 uid = "216a7a30-cfa6-4844-b68c-c1b044a83cf0"
 id = "TST-STATE-109"
 title = "kernel::state::tests::clone_* + implements_debug_trait"
+test_selectors = ["kernel::state::tests::clone_", "implements_debug_trait"]
 owner = "aviate-core@aviate"
 description = """
 Two unit tests in `aviate-core/src/kernel/state.rs::tests` lock
@@ -550,6 +581,7 @@ traces_to = ["d6e0121d-38ec-42bd-a872-8469100e433b"]
 uid = "37bbf94f-18cd-4705-ac2a-85df1674e44d"
 id = "TST-CFG-104"
 title = "kernel::config::tests::canonical_hash_*"
+test_selectors = ["canonical_hash_is_deterministic", "canonical_hash_is_nonzero", "canonical_hash_distinguishes_limits"]
 owner = "aviate-core@aviate"
 description = """
 Eight unit tests in `aviate-core/src/kernel/config.rs::tests`
@@ -585,6 +617,7 @@ traces_to = ["4bfb0a51-2c8a-4780-baec-8962197ce503"]
 uid = "06c44c75-b8b4-46e1-adfa-a6eced280bf3"
 id = "TST-PIPE-MOCK-001"
 title = "mock_pipeline_tests — every trait surface exercised end-to-end"
+test_selector = "mock_pipeline_drives_full_update_cycle_without_panic"
 owner = "aviate-core@aviate"
 description = """
 The integration test
@@ -621,6 +654,7 @@ traces_to = ["4dd0a1f2-9e1e-4ec6-9871-a72567281069"]
 uid = "08cae7a2-a8f7-40ee-80ad-a57b5a636207"
 id = "TST-REPL-101"
 title = "replicable_tests — Replicable contract for EkfState + NoControllerState"
+test_selector = "copy_into_full_slice_when_buffer_fits"
 owner = "aviate-core@aviate"
 description = """
 The integration test
@@ -660,6 +694,7 @@ traces_to = ["60b75d78-b9b1-4842-b964-41d031e0500e"]
 uid = "d0b63000-3d43-4495-b0f6-288136e932c7"
 id = "TST-REPL-104"
 title = "replicable_tests — KernelState::encode_canonical contract"
+test_selector = "kernel_state_two_default_clones_encode_byte_equal"
 owner = "aviate-core@aviate"
 description = """
 Five `kernel_state_*` tests in
@@ -721,6 +756,7 @@ traces_to = [
 uid = "31a8c2e7-9f4d-4b6e-8a1c-7d3f5e2b8a04"
 id = "TST-CCS-101"
 title = "channel_snapshot_tests::project_byte_stable_across_two_default_kernels"
+test_selector = "channel_snapshot_tests::project_byte_stable_across_two_default_kernels"
 owner = "aviate-core@aviate"
 description = """
 The integration test
@@ -746,6 +782,7 @@ traces_to = [
 uid = "9c2e7f4d-3a8b-4e1d-b6f7-2a8d5c1e9f43"
 id = "TST-CCS-102"
 title = "channel_snapshot_tests::project_changes_when_state_mutates"
+test_selector = "channel_snapshot_tests::project_changes_when_state_mutates"
 owner = "aviate-core@aviate"
 description = """
 `project_changes_when_state_mutates` constructs two kernels;
@@ -769,6 +806,7 @@ traces_to = [
 uid = "8d4f2e7a-1b9c-4e3d-a7f5-2c8e1d4f9a06"
 id = "TST-CCS-103"
 title = "channel_snapshot_tests::algorithm_hash_matches_pipeline"
+test_selector = "channel_snapshot_tests::algorithm_hash_matches_pipeline"
 owner = "aviate-core@aviate"
 description = """
 `algorithm_hash_matches_pipeline` projects a kernel snapshot and
@@ -785,6 +823,7 @@ traces_to = ["4e8a2b1f-7c3d-4e9a-b5f2-8d1a7c4e3b25"]
 uid = "5d3a8e1f-7c2b-4e9d-a4f6-1b8e3d7c5a09"
 id = "TST-CCS-104"
 title = "kernel::snapshot::tests::decide_lockstep_*"
+test_selectors = ["decide_enter_when_all_peers_agree", "decide_refuse_hash_mismatch_takes_priority_over_state", "decide_refuse_config_mismatch_when_algorithm_agrees", "decide_refuse_state_mismatch_when_hash_and_config_agree"]
 owner = "aviate-core@aviate"
 description = """
 The unit-test family in
@@ -825,6 +864,7 @@ traces_to = ["8e1a4d7c-3f9b-4e2d-a5c7-1b8f3d6e9c41"]
 uid = "3e7a2c8d-4f1b-4e9a-b6d3-1c5e8a4d9f02"
 id = "TST-CCS-106"
 title = "channel_snapshot_tests::check_lockstep_agreement_refuses_when_peer_config_diverges"
+test_selector = "channel_snapshot_tests::check_lockstep_agreement_refuses_when_peer_config_diverges"
 owner = "aviate-core@aviate"
 description = """
 `check_lockstep_agreement_refuses_when_peer_config_diverges`
@@ -849,6 +889,7 @@ traces_to = ["9b2c4f1d-7a3e-4d8b-a6f5-1c3e8d4b9a07"]
 uid = "7a4e2d8b-9c1f-4e3d-b5a7-2f8d1e4c9b03"
 id = "TST-CCS-105"
 title = "channel_snapshot_tests::check_lockstep_agreement_*"
+test_selectors = ["check_lockstep_agreement_enters_when_three_kernels_agree", "check_lockstep_agreement_refuses_when_peer_config_diverges", "check_lockstep_agreement_refuses_when_peer_state_diverges"]
 owner = "aviate-core@aviate"
 description = """
 Two integration tests in
@@ -885,6 +926,7 @@ traces_to = ["9b2c4f1d-7a3e-4d8b-a6f5-1c3e8d4b9a07"]
 uid = "fb539a31-d366-464a-8d33-b31fe62c55e0"
 id = "TST-EST-204"
 title = "ekf_predict_with_nan_dt_returns_early + ekf_predict_with_nan_imu_gyro_returns_early + ekf_predict_with_inf_imu_accel_returns_early"
+test_selectors = ["ekf_predict_with_nan_dt_returns_early", "ekf_predict_with_nan_imu_gyro_returns_early", "ekf_predict_with_inf_imu_accel_returns_early"]
 owner = "aviate-core@aviate"
 description = """
 Three sibling tests in `aviate-core/tests/ekf_tests.rs` cover the
@@ -901,6 +943,7 @@ traces_to = ["a8a37317-dd7c-4218-b891-58066c2affb5"]
 uid = "5adbb9cb-0014-435b-9110-3568dd26bddd"
 id = "TST-EST-205"
 title = "ekf_has_numeric_fault_false_initially + ekf_init_clears_quat_fault + ekf_reinit_clears_fault_state + ekf_normal_operation_no_fault"
+test_selectors = ["ekf_has_numeric_fault_false_initially", "ekf_init_clears_quat_fault", "ekf_reinit_clears_fault_state", "ekf_normal_operation_no_fault"]
 owner = "aviate-core@aviate"
 description = """
 Four tests in `aviate-core/tests/ekf_tests.rs` witness LLR-EST-205:
@@ -916,6 +959,7 @@ traces_to = ["7b2330c0-b6fa-4874-9716-5adc566b637c"]
 uid = "62289c53-7e8f-4ef4-b488-302626edb84a"
 id = "TST-MIX-201"
 title = "test_quad_mixer_saturation"
+test_selector = "test_quad_mixer_saturation"
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/tests/mixer_tests.rs::test_quad_mixer_saturation`
@@ -929,6 +973,7 @@ traces_to = ["073c3781-dad2-4983-a04c-f721baa11100"]
 uid = "4ddf5547-e942-4200-91a0-b3e6a5ed09f1"
 id = "TST-MIX-202"
 title = "test_quad_mixer_hover"
+test_selector = "test_quad_mixer_hover"
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/tests/mixer_tests.rs::test_quad_mixer_hover` invokes
@@ -942,6 +987,7 @@ traces_to = ["05e74b39-5688-4f3b-a359-adb0ecad97a5"]
 uid = "ee6e4699-ad57-4071-a26a-2c93960c961e"
 id = "TST-MIX-203"
 title = "test_sanitizer_last_good_fallback + test_sanitizer_critical_failure_zero_output"
+test_selectors = ["test_sanitizer_last_good_fallback", "test_sanitizer_critical_failure_zero_output"]
 owner = "aviate-core@aviate"
 description = """
 Two tests in `aviate-core/tests/mixer_tests.rs` witness LLR-MIX-203:
@@ -956,6 +1002,7 @@ traces_to = ["7645870e-d505-4c5c-b4e2-a2496eb6128c"]
 uid = "04447fc9-e1cc-42bb-811a-09515d567cd5"
 id = "TST-MIX-204"
 title = "test_consecutive_fallback_counter_increments + test_consecutive_fallback_resets_on_valid + test_consecutive_fallback_per_group_independence + test_consecutive_fallback_clamped_does_not_increment"
+test_selectors = ["test_consecutive_fallback_counter_increments", "test_consecutive_fallback_resets_on_valid", "test_consecutive_fallback_per_group_independence", "test_consecutive_fallback_clamped_does_not_increment"]
 owner = "aviate-core@aviate"
 description = """
 Four tests in `aviate-core/tests/mixer_tests.rs` witness LLR-MIX-204:
@@ -970,6 +1017,7 @@ traces_to = ["c3b739d2-2cd3-471c-8c52-e0a0f26fc74e"]
 uid = "56933a67-5050-4eb7-b54f-1fca44decfdc"
 id = "TST-FLT-201"
 title = "kernel_outputs_safe_when_not_armed"
+test_selector = "kernel_outputs_safe_when_not_armed"
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/tests/kernel.rs::kernel_outputs_safe_when_not_armed`
@@ -983,6 +1031,7 @@ traces_to = ["afc40ab1-44eb-412b-b6e3-519018bd93dd"]
 uid = "3e7bd854-8ccd-492b-aba3-f24e2ed52923"
 id = "TST-FLT-203"
 title = "kernel_arm_fails_when_not_ready + kernel_arm_fails_when_faulted + kernel_arm_fails_when_already_armed + kernel_arm_fails_with_missing_convergence + kernel_arm_fails_when_throttle_not_low + kernel_requires_all_pre_arm_flags + kernel_pre_arm_missing_flags_reported"
+test_selectors = ["kernel_arm_fails_when_not_ready", "kernel_arm_fails_when_faulted", "kernel_arm_fails_when_already_armed", "kernel_arm_fails_with_missing_convergence", "kernel_arm_fails_when_throttle_not_low", "kernel_requires_all_pre_arm_flags", "kernel_pre_arm_missing_flags_reported"]
 owner = "aviate-core@aviate"
 description = """
 Seven tests in `aviate-core/tests/kernel.rs` cover the pre-arm
@@ -998,6 +1047,7 @@ traces_to = ["98620e8c-14dc-410a-bee7-6e9c29c6bdb4", "69824cad-4c2f-4c71-8188-51
 uid = "af21011c-3b68-48a7-85a4-c62e56808174"
 id = "TST-FLT-204"
 title = "arm_error_all_variants_distinct + arm_error_not_ready"
+test_selectors = ["arm_error_all_variants_distinct", "arm_error_not_ready"]
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/tests/kernel.rs::arm_error_all_variants_distinct`
@@ -1012,6 +1062,7 @@ traces_to = ["384e2fb5-1264-4870-854d-f6a1e89a1117"]
 uid = "8d22c280-e215-4c9d-9f4d-12302a4db129"
 id = "TST-FLT-206"
 title = "test_ground_reset_clears_state + test_ground_reset_clears_fallback_and_actuator_state + test_ground_reset_ignored_when_armed"
+test_selectors = ["test_ground_reset_clears_state", "test_ground_reset_clears_fallback_and_actuator_state", "test_ground_reset_ignored_when_armed"]
 owner = "aviate-core@aviate"
 description = """
 Three tests in `aviate-core/tests/kernel.rs` witness LLR-FLT-206:
@@ -1026,6 +1077,7 @@ traces_to = ["a1ebe76a-37a3-4c67-9eea-e4676184fc74"]
 uid = "9ed879b4-5b98-44c2-9c2d-12498db803cd"
 id = "TST-FLT-207"
 title = "fault_table_command_timeout_degrade"
+test_selector = "fault_table_command_timeout_degrade"
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/tests/fault.rs::fault_table_command_timeout_degrade`
@@ -1040,6 +1092,7 @@ traces_to = ["80d33847-106a-46c5-9c98-c6e4eb330103"]
 uid = "63e3ebaf-eea1-4eec-bfd8-ab0c2c5c5c6d"
 id = "TST-CTL-204"
 title = "altitude_exceeds_max_clamped + roll_rate_exceeds_max_clamped + attitude_roll_exceeds_positive_limit + multiple_limits_exceeded_all_flagged"
+test_selectors = ["altitude_exceeds_max_clamped", "roll_rate_exceeds_max_clamped", "attitude_roll_exceeds_positive_limit", "multiple_limits_exceeded_all_flagged"]
 owner = "aviate-core@aviate"
 description = """
 Four representative tests in `aviate-core/tests/control_envelope.rs`
@@ -1054,6 +1107,7 @@ traces_to = ["33539bff-8bb8-408e-9e8e-370d8b0fd6a3"]
 uid = "9dca3221-9ecf-48fb-bf53-9dc28c4d990a"
 id = "TST-CTL-201"
 title = "mc_controller_attitude_only_path + roll_error_produces_roll_rate_correction + zero_error_produces_zero_output"
+test_selectors = ["mc_controller_attitude_only_path", "roll_error_produces_roll_rate_correction", "zero_error_produces_zero_output"]
 owner = "aviate-core@aviate"
 description = """
 Tests covering the rate-loop closure: `mc_controller_attitude_only_path`
@@ -1071,6 +1125,7 @@ traces_to = ["bc09f708-fcc2-4ad4-95ca-1a133eee3d83"]
 uid = "237f2a02-cf8b-4e3d-96ba-3b90905fc4ea"
 id = "TST-CTL-202"
 title = "positive_roll_error_produces_positive_output + positive_error_scales_with_gain + output_saturates_at_positive_one + axes_are_independent"
+test_selectors = ["positive_roll_error_produces_positive_output", "positive_error_scales_with_gain", "output_saturates_at_positive_one", "axes_are_independent"]
 owner = "aviate-core@aviate"
 description = """
 Four tests in `aviate-core/tests/control_rate.rs` cover the
@@ -1085,6 +1140,7 @@ traces_to = ["b6e14a3c-ac9b-4280-8c29-6d8991352b05"]
 uid = "b7e5ac10-ea4a-4681-b148-76021562d0a8"
 id = "TST-CTL-205"
 title = "cascade_time_scale_separation_at_least_five_to_one"
+test_selector = "cascade_time_scale_separation_at_least_five_to_one"
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/src/control/cascade_tests.rs::cascade_time_scale_separation_at_least_five_to_one`
@@ -1100,6 +1156,7 @@ traces_to = ["221dbc10-8c52-4842-8513-657a0d45810f"]
 uid = "02b7b707-c4d6-4a66-bc5d-73a623ac86a1"
 id = "TST-INIT-201"
 title = "ekf_state_two_default_clones_encode_byte_equal + ekf_state_mutating_*_changes_encoding"
+test_selectors = ["ekf_state_two_default_clones_encode_byte_equal", "ekf_state_mutating_"]
 owner = "aviate-core@aviate"
 description = """
 Suite in `aviate-core/tests/replicable_tests.rs`:
@@ -1118,6 +1175,7 @@ traces_to = ["6000dd0e-0d29-4626-8a4f-21f0e5be9273"]
 uid = "e6db0968-01ca-4bc9-ba5a-e108e2a0dd0f"
 id = "TST-FLT-202"
 title = "disarmed_safe_output_is_independent_of_inputs"
+test_selector = "disarmed_safe_output_is_independent_of_inputs"
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/tests/behavioral_tests.rs::disarmed_safe_output_is_independent_of_inputs`
@@ -1134,6 +1192,7 @@ traces_to = ["ec484ea9-adda-4ad2-8b95-a0e82edcfd54"]
 uid = "ae6e3349-ba72-4b51-b955-7dc47ed3d702"
 id = "TST-FLT-205"
 title = "numeric_fault_latched_inhibits_actuator_output"
+test_selector = "numeric_fault_latched_inhibits_actuator_output"
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/tests/behavioral_tests.rs::numeric_fault_latched_inhibits_actuator_output`
@@ -1150,6 +1209,7 @@ traces_to = ["ef751b33-00fb-4598-892d-2f4682b95b91"]
 uid = "17ff2a74-0496-4453-806c-249d63b51d71"
 id = "TST-MORPH-201"
 title = "config_mode_request_atomicity_under_pre_conditions"
+test_selector = "config_mode_request_atomicity_under_pre_conditions"
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/tests/behavioral_tests.rs::config_mode_request_atomicity_under_pre_conditions`
@@ -1165,6 +1225,7 @@ traces_to = ["394c7c2b-ea23-4bad-bb84-5e2deb55e7cb"]
 uid = "465c4b91-3bc5-42cd-ae1e-352c66c0d7ea"
 id = "TST-EST-201"
 title = "ekf_cold_start_converges_under_static_imu"
+test_selector = "ekf_cold_start_converges_under_static_imu"
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/tests/behavioral_tests.rs::ekf_cold_start_converges_under_static_imu`
@@ -1179,6 +1240,7 @@ traces_to = ["b224509a-6d91-490b-921d-1f20618525fd"]
 uid = "284a1c15-d500-458b-b791-4be0b6403f51"
 id = "TST-EST-202"
 title = "ekf_predict_integrates_angular_velocity"
+test_selector = "ekf_predict_integrates_angular_velocity"
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/tests/ekf_tests.rs::ekf_predict_integrates_angular_velocity`
@@ -1194,6 +1256,7 @@ traces_to = ["8b33176d-4e43-413d-a750-7380a6f4ca45"]
 uid = "3ba510f1-4976-404b-8702-250094c47f56"
 id = "TST-EST-207"
 title = "ekf_innovation_gating_rejects_outlier + ekf_innovation_gate_boundary_{accepts,rejects}_below/above_threshold"
+test_selectors = ["ekf_innovation_gating_rejects_outlier", "ekf_innovation_gate_boundary_"]
 owner = "aviate-core@aviate"
 description = """
 Three tests in `aviate-core/tests/ekf_tests.rs` cover the
@@ -1211,6 +1274,7 @@ traces_to = ["7639c50e-8d68-4f92-afac-bbb3b8382095"]
 uid = "466b7be7-1cf3-4cd2-a2db-8842173d8622"
 id = "TST-FLT-209"
 title = "update_command_age_gates_command_recent_flag (recovery boundary)"
+test_selector = "update_command_age_gates_command_recent_flag"
 owner = "aviate-core@aviate"
 description = """
 The third sub-assertion in
@@ -1335,6 +1399,7 @@ traces_to = ["afc40ab1-44eb-412b-b6e3-519018bd93dd"]
 uid = "bb9f1fbe-8425-4d86-bd76-dd07ff252e89"
 id = "TST-FLT-208"
 title = "slew_limit_tests::{positive_limit_caps_first_cycle_delta, slew_limited_output_converges_over_cycles, zero_limit_preserves_baseline_outputs}"
+test_selectors = ["slew_limit_tests::positive_limit_caps_first_cycle_delta", "slew_limit_tests::slew_limited_output_converges_over_cycles", "slew_limit_tests::zero_limit_preserves_baseline_outputs"]
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/tests/slew_limit_tests.rs` drives the slew limiter
@@ -1380,6 +1445,7 @@ traces_to = ["a8a37317-dd7c-4218-b891-58066c2affb5", "ef751b33-00fb-4598-892d-2f
 uid = "583ba64f-e716-4258-a452-0daef5a8135f"
 id = "TST-EST-206"
 title = "ekf_gnss_dropout_bounded_dead_reckoning_drift"
+test_selector = "ekf_gnss_dropout_bounded_dead_reckoning_drift"
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/tests/behavioral_tests.rs::ekf_gnss_dropout_bounded_dead_reckoning_drift`
