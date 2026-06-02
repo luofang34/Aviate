@@ -29,6 +29,30 @@ fn copy_into_full_slice_when_buffer_fits() {
 }
 
 #[test]
+fn multirotor_runtime_state_encodes_full_length_and_is_deterministic() {
+    // The controller runtime state participates in cross-channel
+    // replication too; witness its `Replicable::encode_canonical`
+    // writes exactly ENCODED_LEN bytes and is byte-stable for two
+    // default clones (same contract as EkfState / KernelState).
+    use aviate_core::control::multirotor::MultirotorRuntimeState;
+    let len = <MultirotorRuntimeState as Replicable>::ENCODED_LEN;
+    let mut buf_a = [0u8; 64];
+    let mut buf_b = [0u8; 64];
+    let na = MultirotorRuntimeState::default().encode_canonical(&mut buf_a);
+    let nb = MultirotorRuntimeState::default().encode_canonical(&mut buf_b);
+    assert_eq!(
+        na, len,
+        "encode_canonical must write exactly ENCODED_LEN bytes"
+    );
+    assert_eq!(na, nb);
+    assert_eq!(
+        buf_a[..na],
+        buf_b[..nb],
+        "two default clones must encode byte-equal"
+    );
+}
+
+#[test]
 fn copy_into_truncates_when_buffer_runs_out() {
     let mut buf = [0u8; 3];
     let n = copy_into(&mut buf, 0, &[1, 2, 3, 4, 5]);

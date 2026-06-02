@@ -149,15 +149,15 @@ mod tests {
 
         apply_slew_limit(&mut cmd, &prev, &limits);
 
+        let ch0 = cmd.outputs[0].0;
         assert!(
-            (cmd.outputs[0].0 - 0.1).abs() < 1e-6,
-            "ch0: 0.3 → -0.5 clamped to 0.3-0.2=0.1, got {}",
-            cmd.outputs[0].0
+            (ch0 - 0.1).abs() < 1e-6,
+            "ch0: 0.3 → -0.5 clamped to 0.3-0.2=0.1, got {ch0}"
         );
+        let ch1 = cmd.outputs[1].0;
         assert!(
-            (cmd.outputs[1].0 + 0.1).abs() < 1e-6,
-            "ch1: -0.3 → 0.5 clamped to -0.3+0.2=-0.1, got {}",
-            cmd.outputs[1].0
+            (ch1 + 0.1).abs() < 1e-6,
+            "ch1: -0.3 → 0.5 clamped to -0.3+0.2=-0.1, got {ch1}"
         );
     }
 
@@ -204,15 +204,15 @@ mod tests {
 
         apply_slew_limit(&mut cmd, &prev, &limits);
 
+        let ch0 = cmd.outputs[0].0;
         assert!(
-            (cmd.outputs[0].0 - 1.0).abs() < 1e-6,
-            "NaN limit should leave channel unconstrained, got {}",
-            cmd.outputs[0].0
+            (ch0 - 1.0).abs() < 1e-6,
+            "NaN limit should leave channel unconstrained, got {ch0}"
         );
+        let ch1 = cmd.outputs[1].0;
         assert!(
-            (cmd.outputs[1].0 - 0.5).abs() < 1e-6,
-            "Inf limit should leave channel unconstrained, got {}",
-            cmd.outputs[1].0
+            (ch1 - 0.5).abs() < 1e-6,
+            "Inf limit should leave channel unconstrained, got {ch1}"
         );
         for n in cmd.outputs.iter().skip(2) {
             assert!((n.0 - 0.1).abs() < 1e-6, "expected 0.1, got {}", n.0);
