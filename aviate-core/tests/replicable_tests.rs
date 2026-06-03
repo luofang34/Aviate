@@ -132,8 +132,10 @@ fn ekf_state_two_default_clones_encode_byte_equal() {
 #[test]
 fn ekf_state_mutating_position_changes_encoding() {
     let baseline = EkfState::default();
-    let mut mutated = EkfState::default();
-    mutated.pos = Vector3::new(Meters(1.0), Meters(2.0), Meters(3.0));
+    let mutated = EkfState {
+        pos: Vector3::new(Meters(1.0), Meters(2.0), Meters(3.0)),
+        ..Default::default()
+    };
 
     let mut buf_a = [0u8; EkfState::ENCODED_LEN];
     let mut buf_b = [0u8; EkfState::ENCODED_LEN];
@@ -150,8 +152,10 @@ fn ekf_state_mutating_position_changes_encoding() {
 #[test]
 fn ekf_state_mutating_quat_changes_encoding() {
     let baseline = EkfState::default();
-    let mut mutated = EkfState::default();
-    mutated.quat = Quaternion::new(0.5, 0.5, 0.5, 0.5);
+    let mutated = EkfState {
+        quat: Quaternion::new(0.5, 0.5, 0.5, 0.5),
+        ..Default::default()
+    };
 
     let mut buf_a = [0u8; EkfState::ENCODED_LEN];
     let mut buf_b = [0u8; EkfState::ENCODED_LEN];
@@ -163,8 +167,10 @@ fn ekf_state_mutating_quat_changes_encoding() {
 #[test]
 fn ekf_state_mutating_initialized_flag_changes_encoding() {
     let baseline = EkfState::default();
-    let mut mutated = EkfState::default();
-    mutated.initialized = true;
+    let mutated = EkfState {
+        initialized: true,
+        ..Default::default()
+    };
 
     let mut buf_a = [0u8; EkfState::ENCODED_LEN];
     let mut buf_b = [0u8; EkfState::ENCODED_LEN];
@@ -179,8 +185,10 @@ fn ekf_state_mutating_initialized_flag_changes_encoding() {
 #[test]
 fn ekf_state_mutating_quat_fault_flag_changes_encoding() {
     let baseline = EkfState::default();
-    let mut mutated = EkfState::default();
-    mutated.quat_fault = true;
+    let mutated = EkfState {
+        quat_fault: true,
+        ..Default::default()
+    };
 
     let mut buf_a = [0u8; EkfState::ENCODED_LEN];
     let mut buf_b = [0u8; EkfState::ENCODED_LEN];
@@ -195,12 +203,14 @@ fn ekf_state_mutating_quat_fault_flag_changes_encoding() {
 #[test]
 fn ekf_state_mutating_velocity_changes_encoding() {
     let baseline = EkfState::default();
-    let mut mutated = EkfState::default();
-    mutated.vel = Vector3::new(
-        MetersPerSecond(0.0),
-        MetersPerSecond(0.0),
-        MetersPerSecond(7.5),
-    );
+    let mutated = EkfState {
+        vel: Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(7.5),
+        ),
+        ..Default::default()
+    };
 
     let mut buf_a = [0u8; EkfState::ENCODED_LEN];
     let mut buf_b = [0u8; EkfState::ENCODED_LEN];
@@ -212,12 +222,14 @@ fn ekf_state_mutating_velocity_changes_encoding() {
 #[test]
 fn ekf_state_mutating_gyro_bias_changes_encoding() {
     let baseline = EkfState::default();
-    let mut mutated = EkfState::default();
-    mutated.gyro_bias = Vector3::new(
-        RadiansPerSecond(0.01),
-        RadiansPerSecond(-0.01),
-        RadiansPerSecond(0.0),
-    );
+    let mutated = EkfState {
+        gyro_bias: Vector3::new(
+            RadiansPerSecond(0.01),
+            RadiansPerSecond(-0.01),
+            RadiansPerSecond(0.0),
+        ),
+        ..Default::default()
+    };
 
     let mut buf_a = [0u8; EkfState::ENCODED_LEN];
     let mut buf_b = [0u8; EkfState::ENCODED_LEN];
@@ -316,8 +328,10 @@ fn kernel_state_mutating_init_state_changes_encoding() {
     use aviate_core::kernel_types::InitState;
 
     let baseline: KernelState = KernelState::default();
-    let mut mutated: KernelState = KernelState::default();
-    mutated.init_state = InitState::Armed;
+    let mutated: KernelState = KernelState {
+        init_state: InitState::Armed,
+        ..Default::default()
+    };
 
     let mut buf_a = [0u8; <KernelState as Replicable>::ENCODED_LEN];
     let mut buf_b = [0u8; <KernelState as Replicable>::ENCODED_LEN];
@@ -387,8 +401,10 @@ fn actuator_state_some_actual_changes_encoding_vs_none() {
     use aviate_core::types::Normalized;
 
     let baseline = ActuatorState::default(); // actual = None
-    let mut with_actual = ActuatorState::default();
-    with_actual.actual = Some([Normalized(0.5); aviate_core::mixer::MAX_ACTUATORS]);
+    let with_actual = ActuatorState {
+        actual: Some([Normalized(0.5); aviate_core::mixer::MAX_ACTUATORS]),
+        ..Default::default()
+    };
 
     let mut buf_a = [0u8; <ActuatorState as Replicable>::ENCODED_LEN];
     let mut buf_b = [0u8; <ActuatorState as Replicable>::ENCODED_LEN];
@@ -409,20 +425,26 @@ fn actuator_state_timestamp_source_each_variant_changes_encoding() {
     use aviate_core::mixer::ActuatorState;
     use aviate_core::time::{TimeSource, Timestamp};
 
-    let mut internal = ActuatorState::default();
-    internal.timestamp = Timestamp {
-        ticks: 0,
-        source: TimeSource::Internal,
+    let internal = ActuatorState {
+        timestamp: Timestamp {
+            ticks: 0,
+            source: TimeSource::Internal,
+        },
+        ..Default::default()
     };
-    let mut gps = ActuatorState::default();
-    gps.timestamp = Timestamp {
-        ticks: 0,
-        source: TimeSource::Gps,
+    let gps = ActuatorState {
+        timestamp: Timestamp {
+            ticks: 0,
+            source: TimeSource::Gps,
+        },
+        ..Default::default()
     };
-    let mut ptp = ActuatorState::default();
-    ptp.timestamp = Timestamp {
-        ticks: 0,
-        source: TimeSource::Ptp,
+    let ptp = ActuatorState {
+        timestamp: Timestamp {
+            ticks: 0,
+            source: TimeSource::Ptp,
+        },
+        ..Default::default()
     };
 
     let mut bi = [0u8; <ActuatorState as Replicable>::ENCODED_LEN];

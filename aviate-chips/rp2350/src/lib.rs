@@ -2,9 +2,9 @@
 
 #![no_std]
 // Production-grade lints (when software-dfu is disabled)
-#![cfg_attr(not(feature = "software-dfu"), deny(clippy::panic))]
-#![cfg_attr(not(feature = "software-dfu"), deny(clippy::unwrap_used))]
-#![cfg_attr(not(feature = "software-dfu"), deny(clippy::expect_used))]
+#![cfg_attr(not(feature = "software-dfu"), forbid(clippy::panic))]
+#![cfg_attr(not(feature = "software-dfu"), forbid(clippy::unwrap_used))]
+#![cfg_attr(not(feature = "software-dfu"), forbid(clippy::expect_used))]
 
 use aviate_boot_core::{
     AppBackend, BootFlags, BootReason, CombinedBackend, CrashBackend, Delay, StatusLeds,

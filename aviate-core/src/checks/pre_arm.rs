@@ -290,8 +290,10 @@ mod tests {
 
     #[test]
     fn test_pre_arm_status_missing() {
-        let mut status = PreArmStatus::default();
-        status.current = PreArmFlags::IMU_HEALTHY | PreArmFlags::BARO_HEALTHY;
+        let status = PreArmStatus {
+            current: PreArmFlags::IMU_HEALTHY | PreArmFlags::BARO_HEALTHY,
+            ..Default::default()
+        };
 
         let missing = status.missing();
         assert!(missing.contains(PreArmFlags::THROTTLE_LOW));

@@ -305,16 +305,13 @@ mod tests {
     }
 
     #[test]
-    fn decide_skips_absent_peer_slot() {
-        // A `None` slot is an absent / not-yet-received peer frame.
-        // With quorum already met by the present peers, the gate skips
-        // the empty slot and still enters lockstep when every present
-        // peer agrees.
+    fn decide_enter_skips_absent_peer_slots_after_quorum_is_met() {
         let bytes = [1u8, 2, 3, 4];
         let local = make(ChannelId::PRIMARY, 10, 0xABCD, &bytes);
         let p1 = make(ChannelId::SECONDARY, 11, 0xABCD, &bytes);
         let p2 = make(ChannelId::TERTIARY, 12, 0xABCD, &bytes);
         let peers = [Some(p1), None, Some(p2)];
+
         assert_eq!(decide_lockstep(&local, &peers, 2), LockstepDecision::Enter);
     }
 

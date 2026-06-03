@@ -1655,10 +1655,28 @@ mod tests {
     {
         let msg = create_msg();
         let mut buf = [0u8; 256];
-        let len = serialize_mavlink(&msg, 0, 1, 1, &mut buf).expect("Serialize failed");
-        let (parsed, _sig, consumed) = parse_mavlink(&buf[..len]).expect("Parse failed");
+        let len = serialize_mavlink(&msg, 0, 1, 1, &mut buf);
+        assert!(len.is_some());
+        let Some(len) = len else {
+            return;
+        };
+
+        let parsed = parse_mavlink(&buf[..len]);
+        assert!(parsed.is_ok());
+        let Ok((parsed, _sig, consumed)) = parsed else {
+            return;
+        };
         assert_eq!(consumed, len, "Consumed length mismatch");
         verify_msg(parsed);
+    }
+
+    fn parse_test_message(input: &[u8]) -> Option<(MavMessage, usize)> {
+        let parsed = parse_mavlink(input);
+        assert!(parsed.is_ok(), "Parse failed: {:?}", parsed.err());
+        let Ok((msg, _sig, consumed)) = parsed else {
+            return None;
+        };
+        Some((msg, consumed))
     }
 
     #[test]
@@ -1675,12 +1693,12 @@ mod tests {
                 })
             },
             |m| {
-                if let MavMessage::Heartbeat(h) = m {
-                    assert_eq!(h.mav_type, 2);
-                    assert_eq!(h.autopilot, 18);
-                } else {
-                    panic!("Wrong message type")
-                }
+                assert!(matches!(&m, MavMessage::Heartbeat(_)));
+                let MavMessage::Heartbeat(h) = m else {
+                    return;
+                };
+                assert_eq!(h.mav_type, 2);
+                assert_eq!(h.autopilot, 18);
             },
         );
     }
@@ -1702,13 +1720,13 @@ mod tests {
                 })
             },
             |m| {
-                if let MavMessage::AttitudeQuaternion(h) = m {
-                    assert_eq!(h.time_boot_ms, 1000);
-                    assert!((h.q1 - 1.0).abs() < 1e-5);
-                    assert!((h.rollspeed - 0.1).abs() < 1e-5);
-                } else {
-                    panic!("Wrong message type")
-                }
+                assert!(matches!(&m, MavMessage::AttitudeQuaternion(_)));
+                let MavMessage::AttitudeQuaternion(h) = m else {
+                    return;
+                };
+                assert_eq!(h.time_boot_ms, 1000);
+                assert!((h.q1 - 1.0).abs() < 1e-5);
+                assert!((h.rollspeed - 0.1).abs() < 1e-5);
             },
         );
     }
@@ -1728,12 +1746,12 @@ mod tests {
                 })
             },
             |m| {
-                if let MavMessage::LocalPositionNed(h) = m {
-                    assert_eq!(h.time_boot_ms, 2000);
-                    assert!((h.x - 10.0).abs() < 1e-5);
-                } else {
-                    panic!("Wrong message type")
-                }
+                assert!(matches!(&m, MavMessage::LocalPositionNed(_)));
+                let MavMessage::LocalPositionNed(h) = m else {
+                    return;
+                };
+                assert_eq!(h.time_boot_ms, 2000);
+                assert!((h.x - 10.0).abs() < 1e-5);
             },
         );
     }
@@ -1756,12 +1774,12 @@ mod tests {
                 })
             },
             |m| {
-                if let MavMessage::SetAttitudeTarget(h) = m {
-                    assert_eq!(h.time_boot_ms, 3000);
-                    assert!((h.thrust - 0.5).abs() < 1e-5);
-                } else {
-                    panic!("Wrong message type")
-                }
+                assert!(matches!(&m, MavMessage::SetAttitudeTarget(_)));
+                let MavMessage::SetAttitudeTarget(h) = m else {
+                    return;
+                };
+                assert_eq!(h.time_boot_ms, 3000);
+                assert!((h.thrust - 0.5).abs() < 1e-5);
             },
         );
     }
@@ -1785,12 +1803,12 @@ mod tests {
                 })
             },
             |m| {
-                if let MavMessage::CommandLong(h) = m {
-                    assert_eq!(h.command, 400);
-                    assert!((h.param1 - 1.0).abs() < 1e-5);
-                } else {
-                    panic!("Wrong message type")
-                }
+                assert!(matches!(&m, MavMessage::CommandLong(_)));
+                let MavMessage::CommandLong(h) = m else {
+                    return;
+                };
+                assert_eq!(h.command, 400);
+                assert!((h.param1 - 1.0).abs() < 1e-5);
             },
         );
     }
@@ -1809,13 +1827,13 @@ mod tests {
                 })
             },
             |m| {
-                if let MavMessage::CommandAck(h) = m {
-                    assert_eq!(h.command, 400);
-                    assert_eq!(h.result, 0);
-                    assert_eq!(h.progress, 100);
-                } else {
-                    panic!("Wrong message type")
-                }
+                assert!(matches!(&m, MavMessage::CommandAck(_)));
+                let MavMessage::CommandAck(h) = m else {
+                    return;
+                };
+                assert_eq!(h.command, 400);
+                assert_eq!(h.result, 0);
+                assert_eq!(h.progress, 100);
             },
         );
     }
@@ -1848,12 +1866,12 @@ mod tests {
                 })
             },
             |m| {
-                if let MavMessage::RcChannelsOverride(h) = m {
-                    assert_eq!(h.chan3_raw, 1000);
-                    assert_eq!(h.target_system, 1);
-                } else {
-                    panic!("Wrong message type")
-                }
+                assert!(matches!(&m, MavMessage::RcChannelsOverride(_)));
+                let MavMessage::RcChannelsOverride(h) = m else {
+                    return;
+                };
+                assert_eq!(h.chan3_raw, 1000);
+                assert_eq!(h.target_system, 1);
             },
         );
     }
@@ -1880,13 +1898,13 @@ mod tests {
                 })
             },
             |m| {
-                if let MavMessage::ManualControl(h) = m {
-                    assert_eq!(h.x, 100);
-                    assert_eq!(h.z, 500);
-                    assert_eq!(h.target, 1);
-                } else {
-                    panic!("Wrong message type")
-                }
+                assert!(matches!(&m, MavMessage::ManualControl(_)));
+                let MavMessage::ManualControl(h) = m else {
+                    return;
+                };
+                assert_eq!(h.x, 100);
+                assert_eq!(h.z, 500);
+                assert_eq!(h.target, 1);
             },
         );
     }
@@ -1915,12 +1933,12 @@ mod tests {
                 })
             },
             |m| {
-                if let MavMessage::SysStatus(h) = m {
-                    assert_eq!(h.voltage_battery, 12000);
-                    assert_eq!(h.battery_remaining, 50);
-                } else {
-                    panic!("Wrong message type")
-                }
+                assert!(matches!(&m, MavMessage::SysStatus(_)));
+                let MavMessage::SysStatus(h) = m else {
+                    return;
+                };
+                assert_eq!(h.voltage_battery, 12000);
+                assert_eq!(h.battery_remaining, 50);
             },
         );
     }
@@ -1943,12 +1961,12 @@ mod tests {
                 })
             },
             |m| {
-                if let MavMessage::Statustext(h) = m {
-                    assert_eq!(h.severity, 6);
-                    assert_eq!(h.text[0], b'H');
-                } else {
-                    panic!("Wrong message type")
-                }
+                assert!(matches!(&m, MavMessage::Statustext(_)));
+                let MavMessage::Statustext(h) = m else {
+                    return;
+                };
+                assert_eq!(h.severity, 6);
+                assert_eq!(h.text[0], b'H');
             },
         );
     }
@@ -1977,15 +1995,15 @@ mod tests {
                 })
             },
             |m| {
-                if let MavMessage::SetPositionTargetLocalNed(p) = m {
-                    assert_eq!(p.time_boot_ms, 5000);
-                    assert!((p.x - 10.0).abs() < 1e-5);
-                    assert!((p.y - 20.0).abs() < 1e-5);
-                    assert!((p.z - (-5.0)).abs() < 1e-5);
-                    assert_eq!(p.coordinate_frame, 1);
-                } else {
-                    panic!("Wrong message type")
-                }
+                assert!(matches!(&m, MavMessage::SetPositionTargetLocalNed(_)));
+                let MavMessage::SetPositionTargetLocalNed(p) = m else {
+                    return;
+                };
+                assert_eq!(p.time_boot_ms, 5000);
+                assert!((p.x - 10.0).abs() < 1e-5);
+                assert!((p.y - 20.0).abs() < 1e-5);
+                assert!((p.z - (-5.0)).abs() < 1e-5);
+                assert_eq!(p.coordinate_frame, 1);
             },
         );
     }
@@ -2017,74 +2035,84 @@ mod tests {
 
     #[test]
     fn test_pymavlink_heartbeat() {
-        let (msg, _sig, consumed) = parse_mavlink(PYMAVLINK_HEARTBEAT).expect("Parse failed");
+        let Some((msg, consumed)) = parse_test_message(PYMAVLINK_HEARTBEAT) else {
+            return;
+        };
         assert_eq!(consumed, PYMAVLINK_HEARTBEAT.len());
-        if let MavMessage::Heartbeat(h) = msg {
-            assert_eq!(h.mav_type, 2); // MAV_TYPE_QUADROTOR
-            assert_eq!(h.autopilot, 0); // MAV_AUTOPILOT_GENERIC
-            assert_eq!(h.base_mode, 128); // SAFETY_ARMED
-            assert_eq!(h.system_status, 4); // MAV_STATE_ACTIVE
-        } else {
-            panic!("Wrong message type");
-        }
+        assert!(matches!(&msg, MavMessage::Heartbeat(_)));
+        let MavMessage::Heartbeat(h) = msg else {
+            return;
+        };
+        assert_eq!(h.mav_type, 2); // MAV_TYPE_QUADROTOR
+        assert_eq!(h.autopilot, 0); // MAV_AUTOPILOT_GENERIC
+        assert_eq!(h.base_mode, 128); // SAFETY_ARMED
+        assert_eq!(h.system_status, 4); // MAV_STATE_ACTIVE
     }
 
     #[test]
     fn test_pymavlink_command_arm() {
-        let (msg, _sig, consumed) = parse_mavlink(PYMAVLINK_COMMAND_ARM).expect("Parse failed");
+        let Some((msg, consumed)) = parse_test_message(PYMAVLINK_COMMAND_ARM) else {
+            return;
+        };
         assert_eq!(consumed, PYMAVLINK_COMMAND_ARM.len());
-        if let MavMessage::CommandLong(c) = msg {
-            assert_eq!(c.command, 400); // MAV_CMD_COMPONENT_ARM_DISARM
-            assert!((c.param1 - 1.0).abs() < 1e-5); // ARM
-            assert_eq!(c.target_system, 1);
-            assert_eq!(c.target_component, 1);
-        } else {
-            panic!("Wrong message type");
-        }
+        assert!(matches!(&msg, MavMessage::CommandLong(_)));
+        let MavMessage::CommandLong(c) = msg else {
+            return;
+        };
+        assert_eq!(c.command, 400); // MAV_CMD_COMPONENT_ARM_DISARM
+        assert!((c.param1 - 1.0).abs() < 1e-5); // ARM
+        assert_eq!(c.target_system, 1);
+        assert_eq!(c.target_component, 1);
     }
 
     #[test]
     fn test_pymavlink_set_attitude_target() {
-        let (msg, _sig, consumed) = parse_mavlink(PYMAVLINK_SET_ATTITUDE).expect("Parse failed");
+        let Some((msg, consumed)) = parse_test_message(PYMAVLINK_SET_ATTITUDE) else {
+            return;
+        };
         assert_eq!(consumed, PYMAVLINK_SET_ATTITUDE.len());
-        if let MavMessage::SetAttitudeTarget(a) = msg {
-            assert_eq!(a.time_boot_ms, 1000);
-            assert!((a.q[0] - 1.0).abs() < 1e-5); // w = 1
-            assert!((a.q[1]).abs() < 1e-5); // x = 0
-            assert!((a.thrust - 0.5).abs() < 1e-5);
-            assert_eq!(a.type_mask, 7);
-        } else {
-            panic!("Wrong message type");
-        }
+        assert!(matches!(&msg, MavMessage::SetAttitudeTarget(_)));
+        let MavMessage::SetAttitudeTarget(a) = msg else {
+            return;
+        };
+        assert_eq!(a.time_boot_ms, 1000);
+        assert!((a.q[0] - 1.0).abs() < 1e-5); // w = 1
+        assert!((a.q[1]).abs() < 1e-5); // x = 0
+        assert!((a.thrust - 0.5).abs() < 1e-5);
+        assert_eq!(a.type_mask, 7);
     }
 
     #[test]
     fn test_pymavlink_manual_control() {
-        let (msg, _sig, consumed) = parse_mavlink(PYMAVLINK_MANUAL_CONTROL).expect("Parse failed");
+        let Some((msg, consumed)) = parse_test_message(PYMAVLINK_MANUAL_CONTROL) else {
+            return;
+        };
         assert_eq!(consumed, PYMAVLINK_MANUAL_CONTROL.len());
-        if let MavMessage::ManualControl(m) = msg {
-            assert_eq!(m.x, 100);
-            assert_eq!(m.y, -100);
-            assert_eq!(m.z, 500);
-            assert_eq!(m.target, 1);
-        } else {
-            panic!("Wrong message type");
-        }
+        assert!(matches!(&msg, MavMessage::ManualControl(_)));
+        let MavMessage::ManualControl(m) = msg else {
+            return;
+        };
+        assert_eq!(m.x, 100);
+        assert_eq!(m.y, -100);
+        assert_eq!(m.z, 500);
+        assert_eq!(m.target, 1);
     }
 
     #[test]
     fn test_pymavlink_rc_channels_override() {
-        let (msg, _sig, consumed) = parse_mavlink(PYMAVLINK_RC_OVERRIDE).expect("Parse failed");
+        let Some((msg, consumed)) = parse_test_message(PYMAVLINK_RC_OVERRIDE) else {
+            return;
+        };
         assert_eq!(consumed, PYMAVLINK_RC_OVERRIDE.len());
-        if let MavMessage::RcChannelsOverride(r) = msg {
-            assert_eq!(r.chan1_raw, 1500);
-            assert_eq!(r.chan2_raw, 1500);
-            assert_eq!(r.chan3_raw, 1000);
-            assert_eq!(r.chan4_raw, 1500);
-            assert_eq!(r.target_system, 1);
-        } else {
-            panic!("Wrong message type");
-        }
+        assert!(matches!(&msg, MavMessage::RcChannelsOverride(_)));
+        let MavMessage::RcChannelsOverride(r) = msg else {
+            return;
+        };
+        assert_eq!(r.chan1_raw, 1500);
+        assert_eq!(r.chan2_raw, 1500);
+        assert_eq!(r.chan3_raw, 1000);
+        assert_eq!(r.chan4_raw, 1500);
+        assert_eq!(r.target_system, 1);
     }
 
     // ==========================================================================
@@ -2106,15 +2134,17 @@ mod tests {
     fn test_python_test_arm_cmd_interop() {
         let result = parse_mavlink(PYTHON_TEST_COMMAND_LONG_ARM);
         assert!(result.is_ok(), "Parse failed: {:?}", result.err());
-        let (msg, _sig, consumed) = result.unwrap();
+        let Ok((msg, _sig, consumed)) = result else {
+            return;
+        };
         assert_eq!(consumed, PYTHON_TEST_COMMAND_LONG_ARM.len());
-        if let MavMessage::CommandLong(c) = msg {
-            assert_eq!(c.command, 400); // MAV_CMD_COMPONENT_ARM_DISARM
-            assert!((c.param1 - 1.0).abs() < 1e-5); // ARM
-            assert_eq!(c.target_system, 1);
-            assert_eq!(c.target_component, 1);
-        } else {
-            panic!("Wrong message type: expected CommandLong");
-        }
+        assert!(matches!(&msg, MavMessage::CommandLong(_)));
+        let MavMessage::CommandLong(c) = msg else {
+            return;
+        };
+        assert_eq!(c.command, 400); // MAV_CMD_COMPONENT_ARM_DISARM
+        assert!((c.param1 - 1.0).abs() < 1e-5); // ARM
+        assert_eq!(c.target_system, 1);
+        assert_eq!(c.target_component, 1);
     }
 }

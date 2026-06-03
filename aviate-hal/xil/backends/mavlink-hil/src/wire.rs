@@ -301,6 +301,20 @@ pub fn serialize_frame(
 mod tests {
     use super::*;
 
+    fn serialize_parse(msg: &HilMessage) -> Option<(MavFrame, usize)> {
+        let mut buf = [0u8; 256];
+        let len = serialize_frame(msg, 1, 1, 1, &mut buf);
+        assert!(len.is_some());
+        let len = len?;
+
+        let frame = parse_frame(&buf[..len]);
+        assert!(frame.is_ok());
+        let Ok((frame, consumed)) = frame else {
+            return None;
+        };
+        Some((frame, consumed))
+    }
+
     #[test]
     fn test_crc_accumulate() {
         // Test known CRC calculation
@@ -335,20 +349,28 @@ mod tests {
 
         let msg = HilMessage::Sensor(sensor);
         let mut buf = [0u8; 256];
-        let len = serialize_frame(&msg, 42, 1, 1, &mut buf).expect("serialize failed");
+        let len = serialize_frame(&msg, 42, 1, 1, &mut buf);
+        assert!(len.is_some());
+        let Some(len) = len else {
+            return;
+        };
 
-        let (frame, consumed) = parse_frame(&buf[..len]).expect("parse failed");
+        let frame = parse_frame(&buf[..len]);
+        assert!(frame.is_ok());
+        let Ok((frame, consumed)) = frame else {
+            return;
+        };
         assert_eq!(consumed, len);
         assert_eq!(frame.seq, 42);
         assert_eq!(frame.sys_id, 1);
         assert_eq!(frame.comp_id, 1);
 
-        if let HilMessage::Sensor(parsed) = frame.message {
-            assert_eq!(sensor.time_usec, parsed.time_usec);
-            assert!((sensor.zacc - parsed.zacc).abs() < 1e-6);
-        } else {
-            panic!("Wrong message type");
-        }
+        assert!(matches!(&frame.message, HilMessage::Sensor(_)));
+        let HilMessage::Sensor(parsed) = frame.message else {
+            return;
+        };
+        assert_eq!(sensor.time_usec, parsed.time_usec);
+        assert!((sensor.zacc - parsed.zacc).abs() < 1e-6);
     }
 
     #[test]
@@ -384,37 +406,37 @@ mod tests {
         };
 
         let msg = HilMessage::Gps(gps);
-        let mut buf = [0u8; 256];
-        let len = serialize_frame(&msg, 1, 1, 1, &mut buf).expect("serialize failed");
-
-        let (frame, _) = parse_frame(&buf[..len]).expect("parse failed");
-        if let HilMessage::Gps(parsed) = frame.message {
-            assert_eq!(gps.lat, parsed.lat);
-            assert_eq!(gps.lon, parsed.lon);
-        } else {
-            panic!("Wrong message type");
-        }
+        let Some((frame, _)) = serialize_parse(&msg) else {
+            return;
+        };
+        assert!(matches!(&frame.message, HilMessage::Gps(_)));
+        let HilMessage::Gps(parsed) = frame.message else {
+            return;
+        };
+        assert_eq!(gps.lat, parsed.lat);
+        assert_eq!(gps.lon, parsed.lon);
     }
 
     #[test]
     fn test_actuator_controls_roundtrip() {
-        let mut controls = HilActuatorControls::default();
-        controls.time_usec = 1234567890;
+        let mut controls = HilActuatorControls {
+            time_usec: 1234567890,
+            ..Default::default()
+        };
         controls.controls[0] = 0.5;
         controls.controls[1] = 0.6;
         controls.mode = HilActuatorControls::MODE_FLAG_ARMED;
 
         let msg = HilMessage::ActuatorControls(controls);
-        let mut buf = [0u8; 256];
-        let len = serialize_frame(&msg, 1, 1, 1, &mut buf).expect("serialize failed");
-
-        let (frame, _) = parse_frame(&buf[..len]).expect("parse failed");
-        if let HilMessage::ActuatorControls(parsed) = frame.message {
-            assert!(parsed.is_armed());
-            assert!((controls.controls[0] - parsed.controls[0]).abs() < 1e-6);
-        } else {
-            panic!("Wrong message type");
-        }
+        let Some((frame, _)) = serialize_parse(&msg) else {
+            return;
+        };
+        assert!(matches!(&frame.message, HilMessage::ActuatorControls(_)));
+        let HilMessage::ActuatorControls(parsed) = frame.message else {
+            return;
+        };
+        assert!(parsed.is_armed());
+        assert!((controls.controls[0] - parsed.controls[0]).abs() < 1e-6);
     }
 
     #[test]
@@ -439,20 +461,19 @@ mod tests {
         };
 
         let msg = HilMessage::StateQuaternion(state);
-        let mut buf = [0u8; 256];
-        let len = serialize_frame(&msg, 1, 1, 1, &mut buf).expect("serialize failed");
-
-        let (frame, _) = parse_frame(&buf[..len]).expect("parse failed");
-        if let HilMessage::StateQuaternion(parsed) = frame.message {
-            assert_eq!(state.time_usec, parsed.time_usec);
-            assert!((state.attitude_quaternion[0] - parsed.attitude_quaternion[0]).abs() < 1e-6);
-            assert!((state.attitude_quaternion[2] - parsed.attitude_quaternion[2]).abs() < 1e-6);
-            assert_eq!(state.lat, parsed.lat);
-            assert_eq!(state.lon, parsed.lon);
-            assert_eq!(state.zacc, parsed.zacc);
-        } else {
-            panic!("Wrong message type");
-        }
+        let Some((frame, _)) = serialize_parse(&msg) else {
+            return;
+        };
+        assert!(matches!(&frame.message, HilMessage::StateQuaternion(_)));
+        let HilMessage::StateQuaternion(parsed) = frame.message else {
+            return;
+        };
+        assert_eq!(state.time_usec, parsed.time_usec);
+        assert!((state.attitude_quaternion[0] - parsed.attitude_quaternion[0]).abs() < 1e-6);
+        assert!((state.attitude_quaternion[2] - parsed.attitude_quaternion[2]).abs() < 1e-6);
+        assert_eq!(state.lat, parsed.lat);
+        assert_eq!(state.lon, parsed.lon);
+        assert_eq!(state.zacc, parsed.zacc);
     }
 
     #[test]
@@ -460,17 +481,16 @@ mod tests {
         let heartbeat = Heartbeat::new_quadrotor_hil(true);
 
         let msg = HilMessage::Heartbeat(heartbeat);
-        let mut buf = [0u8; 256];
-        let len = serialize_frame(&msg, 1, 1, 1, &mut buf).expect("serialize failed");
-
-        let (frame, _) = parse_frame(&buf[..len]).expect("parse failed");
-        if let HilMessage::Heartbeat(parsed) = frame.message {
-            assert_eq!(heartbeat.mav_type, parsed.mav_type);
-            assert_eq!(heartbeat.autopilot, parsed.autopilot);
-            assert_eq!(heartbeat.base_mode, parsed.base_mode);
-        } else {
-            panic!("Wrong message type");
-        }
+        let Some((frame, _)) = serialize_parse(&msg) else {
+            return;
+        };
+        assert!(matches!(&frame.message, HilMessage::Heartbeat(_)));
+        let HilMessage::Heartbeat(parsed) = frame.message else {
+            return;
+        };
+        assert_eq!(heartbeat.mav_type, parsed.mav_type);
+        assert_eq!(heartbeat.autopilot, parsed.autopilot);
+        assert_eq!(heartbeat.base_mode, parsed.base_mode);
     }
 
     #[test]
@@ -496,15 +516,19 @@ mod tests {
         buf[crc_offset..crc_offset + 2].copy_from_slice(&crc.to_le_bytes());
 
         let frame_len = 6 + Heartbeat::SIZE + 2;
-        let (frame, consumed) = parse_frame(&buf[..frame_len]).expect("parse v1 failed");
+        let frame = parse_frame(&buf[..frame_len]);
+        assert!(frame.is_ok());
+        let Ok((frame, consumed)) = frame else {
+            return;
+        };
         assert_eq!(consumed, frame_len);
         assert_eq!(frame.seq, 42);
         assert_eq!(frame.sys_id, 1);
 
-        if let HilMessage::Heartbeat(parsed) = frame.message {
-            assert_eq!(parsed.mav_type, heartbeat.mav_type);
-        } else {
-            panic!("Wrong message type");
-        }
+        assert!(matches!(&frame.message, HilMessage::Heartbeat(_)));
+        let HilMessage::Heartbeat(parsed) = frame.message else {
+            return;
+        };
+        assert_eq!(parsed.mav_type, heartbeat.mav_type);
     }
 }
