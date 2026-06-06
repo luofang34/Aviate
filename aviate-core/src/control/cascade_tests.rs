@@ -181,17 +181,18 @@ fn cascade_time_scale_separation_at_least_five_to_one() {
     let min_ratio: f32 = 5.0;
     for axis in 0..3 {
         if gains.rate_p[axis] == 0.0 {
-            continue; // open-loop yaw, no inner-loop pole to separate.
+            // open-loop yaw, no inner-loop pole to separate.
+            continue; // COV:EXCL(X500 default has no zero rate_p axis; exercised only by open-loop-yaw airframes)
         }
-        let ratio = (K_PLANT_RAD_S2 * gains.rate_p[axis]) / gains.att_p[axis];
+        let rate_p = gains.rate_p[axis];
+        let att_p = gains.att_p[axis];
+        let ratio = (K_PLANT_RAD_S2 * rate_p) / att_p;
         assert!(
             ratio >= min_ratio,
             "LLR-CTL-205 violation: axis {axis} time-scale separation ratio \
              (K·rate_p/att_p) = {ratio:.2}× — must be ≥ {min_ratio}× for the \
              cascade to be classically analyzable. K = {K_PLANT_RAD_S2}, \
-             rate_p[{axis}] = {}, att_p[{axis}] = {}",
-            gains.rate_p[axis],
-            gains.att_p[axis]
+             rate_p[{axis}] = {rate_p}, att_p[{axis}] = {att_p}"
         );
     }
 }
@@ -231,7 +232,7 @@ fn zero_gains_zero_motion() {
         theta += omega * DT_SEC;
         let d = theta.to_degrees().abs();
         if d > max_abs_deg {
-            max_abs_deg = d;
+            max_abs_deg = d; // COV:EXCL(zero-gains test proves no motion, so this max-tracking branch never fires)
         }
     }
     assert!(

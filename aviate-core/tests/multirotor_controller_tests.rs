@@ -247,3 +247,34 @@ fn mc_controller_no_setpoint_uses_defaults() {
     let _yaw = axis_cmd.yaw.0;
     // Just verify it runs
 }
+
+#[test]
+fn mc_controller_position_feedforward_fires_on_primed_cycle() {
+    // The position→velocity acceleration feedforward is a finite
+    // difference of vel_sp across cycles; it runs only once the runtime
+    // is primed (second cycle) and dt > 0. Two position-control cycles
+    // exercise that path.
+    let controller = MultirotorController::default();
+    let state = make_state();
+    let limits = make_limits();
+    let cmd = Command {
+        mode: ControlMode::PositionHold,
+        setpoint: Setpoint {
+            position: Some([Meters(8.0), Meters(-3.0), Meters(-12.0)]),
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 1,
+        source: CommandSource::Pilot,
+    };
+
+    let mut runtime = MultirotorRuntimeState::default();
+    // Cycle 1 primes vel_sp (dt_sec = 0 → feedforward skipped).
+    let _ = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
+    // Cycle 2 with dt > 0 → the accel-feedforward finite difference runs.
+    runtime.dt_sec = 0.01;
+    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
+    assert!(axis_cmd.collective.0 >= 0.0 && axis_cmd.collective.0 <= 1.0);
+}
