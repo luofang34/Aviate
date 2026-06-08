@@ -268,3 +268,67 @@ jobs:
       # have to cross-reference job IDs to know what was verified).
       - name: cargo evidence check --mode=source
         run: cargo evidence check --mode=source
+
+  sitl-missions:
+    name: SITL Missions (Gazebo XIL)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Gazebo Harmonic (gz-sim8 / gz-transport13 / gz-msgs10 / gz-plugin2)
+      # from the OSRF apt repo, plus the toolchain the C++ plugin and the
+      # serialport-backed gcs-test need. The plugin links protobuf via
+      # gz-msgs10; libudev is a transitive serialport build dependency.
+      # mesa + xvfb give the gz sensors system a software GL context on the
+      # GPU-less runner.
+      - name: Install Gazebo Harmonic + build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl lsb-release gnupg cmake build-essential \
+            libudev-dev libprotobuf-dev protobuf-compiler \
+            xvfb libgl1-mesa-dri mesa-utils
+          sudo curl https://packages.osrfoundation.org/gazebo.gpg \
+            --output /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
+            | sudo tee /etc/apt/sources.list.d/gazebo-stable.list
+          sudo apt-get update
+          sudo apt-get install -y gz-harmonic
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-sitl-${{ hashFiles('**/Cargo.lock') }}
+
+      # Builds AviateGzPlugin.so + MotorFailurePlugin.so into
+      # aviate-hal/xil/backends/gz/plugin/build/, where gcs-test's spawner
+      # points GZ_SIM_SYSTEM_PLUGIN_PATH.
+      - name: Build the Aviate Gazebo plugin
+        run: ./scripts/build_gz_plugin.sh
+
+      - name: Build gcs-test (gazebo feature)
+        run: cargo build -p gcs-test --features gazebo
+
+      # Each of the 7 XIL missions runs 3× behind a 2/3 reliability bar
+      # (run_sitl_missions.sh exits non-zero if any mission misses it).
+      # These are the XIL-tier witnesses for TST-XIL-{FLT-201, CTL-202,
+      # CTL-203, EST-203, EST-206, FLT-204, EST-204}: arm/takeoff/hover/
+      # land, attitude + hover-position stability, GNSS dropout dead
+      # reckoning, command timeout failsafe, and IMU-NaN numeric-fault
+      # isolation, end-to-end through the FC↔Gazebo control loop.
+      - name: Run SITL missions (3 runs each, 2/3 reliability bar)
+        env:
+          RUNS_PER_MISSION: 3
+          LIBGL_ALWAYS_SOFTWARE: 1
+        run: |
+          xvfb-run -a ./scripts/run_sitl_missions.sh \
+            basic_flight hover_stability attitude_control \
+            position_hold gnss_dropout command_timeout numeric_fault_inject
