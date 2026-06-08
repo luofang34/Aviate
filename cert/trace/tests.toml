@@ -531,7 +531,17 @@ traces_to = ["ad5ab2d7-0dd4-48d0-83ae-dea20934c119"]
 uid = "85cb803c-508a-4d78-8eb6-83e716a09663"
 id = "TST-CTL-101"
 title = "controller_tests exercise VehicleController via &mut RuntimeState"
-test_selectors = ["multirotor_controller_tests::", "vtol_controller_tests::"]
+test_selectors = [
+  "mc_controller_attitude_only_path",
+  "mc_controller_no_setpoint_uses_defaults",
+  "mc_controller_position_control_path",
+  "mc_controller_position_control_with_offset",
+  "mc_controller_position_feedforward_fires_on_primed_cycle",
+  "mc_controller_velocity_control_path",
+  "mc_controller_velocity_control_vertical",
+  "vtol_controller_step_in_transition_mode",
+  "vtol_controller_step_returns_collective",
+]
 owner = "aviate-core@aviate"
 description = """
 The unit-test families in
@@ -557,7 +567,7 @@ traces_to = ["11de1ff8-495b-40ff-8428-d5f851fc5099"]
 uid = "216a7a30-cfa6-4844-b68c-c1b044a83cf0"
 id = "TST-STATE-109"
 title = "kernel::state::tests::clone_* + implements_debug_trait"
-test_selectors = ["kernel::state::tests::clone_", "implements_debug_trait"]
+test_selectors = ["clone_yields_independent_state", "implements_debug_trait"]
 owner = "aviate-core@aviate"
 description = """
 Two unit tests in `aviate-core/src/kernel/state.rs::tests` lock
@@ -1156,7 +1166,15 @@ traces_to = ["221dbc10-8c52-4842-8513-657a0d45810f"]
 uid = "02b7b707-c4d6-4a66-bc5d-73a623ac86a1"
 id = "TST-INIT-201"
 title = "ekf_state_two_default_clones_encode_byte_equal + ekf_state_mutating_*_changes_encoding"
-test_selectors = ["ekf_state_two_default_clones_encode_byte_equal", "ekf_state_mutating_"]
+test_selectors = [
+  "ekf_state_two_default_clones_encode_byte_equal",
+  "ekf_state_mutating_gyro_bias_changes_encoding",
+  "ekf_state_mutating_initialized_flag_changes_encoding",
+  "ekf_state_mutating_position_changes_encoding",
+  "ekf_state_mutating_quat_changes_encoding",
+  "ekf_state_mutating_quat_fault_flag_changes_encoding",
+  "ekf_state_mutating_velocity_changes_encoding",
+]
 owner = "aviate-core@aviate"
 description = """
 Suite in `aviate-core/tests/replicable_tests.rs`:
@@ -1256,7 +1274,11 @@ traces_to = ["8b33176d-4e43-413d-a750-7380a6f4ca45"]
 uid = "3ba510f1-4976-404b-8702-250094c47f56"
 id = "TST-EST-207"
 title = "ekf_innovation_gating_rejects_outlier + ekf_innovation_gate_boundary_{accepts,rejects}_below/above_threshold"
-test_selectors = ["ekf_innovation_gating_rejects_outlier", "ekf_innovation_gate_boundary_"]
+test_selectors = [
+  "ekf_innovation_gating_rejects_outlier",
+  "ekf_innovation_gate_boundary_accepts_below_threshold",
+  "ekf_innovation_gate_boundary_rejects_above_threshold",
+]
 owner = "aviate-core@aviate"
 description = """
 Three tests in `aviate-core/tests/ekf_tests.rs` cover the
