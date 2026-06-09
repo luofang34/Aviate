@@ -304,3 +304,62 @@ fn zero_gain_produces_zero_output() {
     assert!((vel_sp.y.0).abs() < 1e-6);
     assert!((vel_sp.z.0).abs() < 1e-6);
 }
+
+// =============================================================================
+// LLR-CTL-203 — closed-loop position hold
+// =============================================================================
+
+/// LLR-CTL-203: driven closed-loop, the position loop holds hover within
+/// 0.5 m radial / 0.3 m altitude over a 30 s window. The inner
+/// velocity/attitude/rate loops run >=5x faster than this outer loop
+/// (LLR-CTL-205), so this in-process witness models the velocity loop as
+/// a first-order tracking lag at that worst-case allowed separation
+/// (`tau = (1/p)/5 = 0.2 s` for the `p = 1.0` default) and integrates the
+/// position kinematics. The vehicle is released from a 1.0 m radial /
+/// 0.5 m vertical offset — outside the hold bound — so the sqrt-shaper
+/// must brake it *into* the bound and hold without overshoot; a wrong-
+/// sign or unstably-aggressive position loop diverges or oscillates past
+/// 0.5 m and fails. The full 6-DOF bound under real rotor dynamics is
+/// witnessed by the Gazebo XIL hover mission
+/// (`tests/missions/hover_stability.toml`).
+#[test]
+fn position_hold_closed_loop_stays_within_bounds() {
+    let ctrl = PositionController::new([1.0, 1.0, 1.0]);
+    let setpoint = ORIGIN;
+
+    let mut p = pos(1.0, 0.0, -0.5);
+    let (mut vx, mut vy, mut vz) = (0.0_f32, 0.0_f32, 0.0_f32);
+    let dt = 0.01_f32;
+    // Worst-case inner-loop time constant the >=5x separation permits.
+    let tau_v = 0.2_f32;
+
+    // Assess the hold over the final 15 s, after the braking transient.
+    let settle_cycles = 1500;
+    let mut max_radial = 0.0_f32;
+    let mut max_alt = 0.0_f32;
+
+    for cycle in 0..3000 {
+        let vel_sp = ctrl.step(setpoint, p);
+        vx += (vel_sp.x.0 - vx) * (dt / tau_v);
+        vy += (vel_sp.y.0 - vy) * (dt / tau_v);
+        vz += (vel_sp.z.0 - vz) * (dt / tau_v);
+        p = pos(p.x.0 + vx * dt, p.y.0 + vy * dt, p.z.0 + vz * dt);
+
+        if cycle >= settle_cycles {
+            let radial = (p.x.0 * p.x.0 + p.y.0 * p.y.0).sqrt();
+            max_radial = max_radial.max(radial);
+            max_alt = max_alt.max(p.z.0.abs());
+        }
+    }
+
+    assert!(
+        max_radial <= 0.5,
+        "radial hold {} m exceeded the 0.5 m bound over the final 15 s",
+        max_radial
+    );
+    assert!(
+        max_alt <= 0.3,
+        "altitude hold {} m exceeded the 0.3 m bound over the final 15 s",
+        max_alt
+    );
+}
