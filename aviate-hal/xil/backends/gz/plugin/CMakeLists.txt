@@ -40,7 +40,16 @@ find_package(gz-common5 REQUIRED)
 find_package(gz-transport13 REQUIRED)
 find_package(gz-msgs10 REQUIRED)
 find_package(Protobuf REQUIRED)
-find_package(absl REQUIRED COMPONENTS log_internal_check_op)
+find_package(absl REQUIRED)
+
+# Some protobuf builds (e.g. Homebrew's) require linking the internal
+# Abseil check-op target explicitly; older Abseil (e.g. Ubuntu's
+# libabsl-dev) neither defines nor needs it — protobuf pulls Abseil in
+# transitively there. Link it only where the target exists.
+set(AVIATE_ABSL_CHECK_OP "")
+if(TARGET absl::log_internal_check_op)
+    set(AVIATE_ABSL_CHECK_OP absl::log_internal_check_op)
+endif()
 
 # Get GZ include/lib directories
 set(GZ_SIM_VER ${gz-sim8_VERSION_MAJOR})
@@ -59,7 +68,7 @@ target_link_libraries(AviateGzPlugin
     gz-transport13::gz-transport13
     gz-msgs10::gz-msgs10
     protobuf::libprotobuf
-    absl::log_internal_check_op
+    ${AVIATE_ABSL_CHECK_OP}
 )
 
 target_include_directories(AviateGzPlugin PRIVATE
@@ -84,7 +93,7 @@ target_link_libraries(MotorFailurePlugin
     gz-transport13::gz-transport13
     gz-msgs10::gz-msgs10
     protobuf::libprotobuf
-    absl::log_internal_check_op
+    ${AVIATE_ABSL_CHECK_OP}
 )
 
 target_include_directories(MotorFailurePlugin PRIVATE
