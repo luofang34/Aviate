@@ -29,7 +29,14 @@
 trace_sys = 13
 trace_hlr = 38
 trace_llr = 75
-trace_test = 74
+# Lowered 74 -> 68: the shell-boundary row (TST-RTM-101) and the 7
+# Gazebo SITL mission rows (TST-XIL-*) moved out of the in-process
+# source trace into dedicated CI gates (the `runtime-boundary` job and
+# the `sitl-missions` lane); two in-process witnesses (TST-EST-203,
+# TST-CTL-203) were added in their place. `cargo evidence check
+# --mode=source` can execute neither Gazebo missions nor shell scripts,
+# so those rows only ever GAPped it.
+trace_test = 68
 
 [delta_ceilings]
 # Reserved by the tool for new-additions-in-diff checks. Parsed today,

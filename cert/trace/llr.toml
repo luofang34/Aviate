@@ -1143,8 +1143,14 @@ feature = "env-hitl"))` such that `env-flight` builds compile
 none of them. This is the structural witness that the boundary's
 `in_scope` listing of `aviate-runtime` is closed under cargo's
 dependency resolution for the env-flight feature combination.
+
+Verified by review of the source guards plus the automated
+dependency analysis in `scripts/check_runtime_boundary.sh` (the
+`runtime-boundary` CI job) — there is no in-process unit test,
+since a compile-time guard cannot be exercised by a runtime
+`#[test]`.
 """
-verification_methods = ["review", "test"]
+verification_methods = ["review"]
 modules = ["aviate-runtime/src/lib.rs", "aviate-runtime/Cargo.toml"]
 derived = false
 traces_to = ["fa9b3c0e-7d54-4e1f-b9b2-43c5d8a1f723"]
@@ -1164,9 +1170,12 @@ activations. The `env-flight` feature SHALL NOT list
 Verification: `cargo tree -p aviate-runtime --no-default-features
 --features env-flight` SHALL contain only crates that are
 listed in `cert/boundary.toml`'s `in_scope` set (or are external
-DAL-D base crates such as `log`).
+DAL-D base crates such as `log`). This dependency-closure check is
+automated in `scripts/check_runtime_boundary.sh` (the
+`runtime-boundary` CI job) and reviewed against the manifest;
+it is an analysis artifact, not a runtime `#[test]`.
 """
-verification_methods = ["review", "test"]
+verification_methods = ["review"]
 modules = ["aviate-runtime/Cargo.toml"]
 derived = false
 traces_to = ["fa9b3c0e-7d54-4e1f-b9b2-43c5d8a1f723"]

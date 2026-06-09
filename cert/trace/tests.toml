@@ -736,33 +736,6 @@ and recursive over its field set.
 traces_to = ["6801bdd2-3f0d-43cb-895e-be48b82cf098"]
 
 [[tests]]
-uid = "9f7d3e5a-1b8c-4f60-a9d2-7e4f8d3c1a09"
-id = "TST-RTM-101"
-title = "scripts/check_runtime_boundary.sh"
-owner = "aviate-runtime@aviate"
-description = """
-Shell script run in CI that asserts
-`cargo tree -p aviate-runtime --no-default-features
---features env-flight` contains no out-of-scope crates. The
-allowlist is the set of `in_scope` crates from
-`cert/boundary.toml` plus a small fixed set of approved external
-DAL-D dependencies (currently `log`, `bitflags`, `embedded-hal`,
-plus their transitive base crates).
-
-Failure mode: any new dependency added to `aviate-runtime` —
-direct or transitive — that is not on the allowlist fails CI.
-This is the runtime equivalent of the boundary `in_scope` rule:
-the source-level mutual-exclusion guards (LLR-RTM-101) prevent
-the sandbox transports from being COMPILED into a flight image,
-and this test prevents new sandbox-class dependencies from being
-LINKED in via a non-feature-gated path.
-"""
-traces_to = [
-  "c2e17d4f-3b8a-49ee-9f42-86a14f0bd8a1",
-  "5b94a106-d8e7-4bff-bef5-c2e5fa3d2ac4",
-]
-
-[[tests]]
 uid = "31a8c2e7-9f4d-4b6e-8a1c-7d3f5e2b8a04"
 id = "TST-CCS-101"
 title = "channel_snapshot_tests::project_byte_stable_across_two_default_kernels"
@@ -1317,107 +1290,6 @@ traces_to = ["d20185a8-dd10-45f4-a1b6-f5b31e25cd40"]
 # task #12 description).
 
 [[tests]]
-uid = "dbe3b08e-3bfb-4732-96e9-3e2e7c8d5170"
-id = "TST-XIL-CTL-203"
-title = "tests/missions/hover_stability.toml"
-owner = "aviate-core@aviate"
-description = """
-Mission scenario witnessing LLR-CTL-203 (hover hold) at the
-integrated tier. Phases: arm → takeoff → 8 s hover_hold →
-descent → land → disarm. Threshold-by-design is smoke-level
-(`altitude_hold` target = 3 m ±10 m; `max_drift` 50 m) — the
-mission verifies the FC ↔ gz-sim loop closes through hover_hold
-without saturation or fault latching. Cert-grade tightening
-(0.3 m altitude / 0.5 m horizontal per HLR-CTL-203) is tracked
-by DRQ-CTL-002. Execution: `cargo run -p gcs-test --features
-gazebo -- run --xil tests/missions/hover_stability.toml`.
-"""
-traces_to = ["79ec1f95-d04d-4f28-a346-727a3d3f8ecb"]
-
-[[tests]]
-uid = "2bb6332f-1adc-4720-91e0-d65ac4aff3f4"
-id = "TST-XIL-CTL-202"
-title = "tests/missions/attitude_control.toml"
-owner = "aviate-core@aviate"
-description = """
-Mission scenario witnessing LLR-CTL-202 (attitude loop step
-response) at the integrated tier. Sends attitude-target commands
-and verifies the vehicle holds the commanded attitude inside the
-configured tolerance. Synthetic unit-level evidence lives in
-TST-CTL-202 (`control_rate.rs` shape suite); this scenario
-augments with real-physics overshoot/settle measurements.
-"""
-traces_to = ["b6e14a3c-ac9b-4280-8c29-6d8991352b05"]
-
-[[tests]]
-uid = "2b07e571-bf42-40ed-805a-6204418d9ba6"
-id = "TST-XIL-EST-203"
-title = "tests/missions/position_hold.toml"
-owner = "aviate-core@aviate"
-description = """
-Mission scenario witnessing LLR-EST-203 (position estimate tracks
-ground truth) at the integrated tier. The kernel commanded to hold
-position; ground-truth horizontal/vertical position is sampled from
-Gazebo via the bridge plugin and compared to the kernel's reported
-estimate. No synthetic-tier surrogate exists for this LLR — Gazebo
-is the primary evidence.
-"""
-traces_to = ["52248c34-20bf-418d-9ac2-93dff2689c92"]
-
-[[tests]]
-uid = "68039c04-e233-4bc1-a969-9a999f81df01"
-id = "TST-XIL-EST-206"
-title = "tests/missions/gnss_dropout.toml"
-owner = "aviate-core@aviate"
-description = """
-Mission scenario witnessing LLR-EST-206 (GNSS dropout
-dead-reckoning) at the integrated tier. Phases: arm → takeoff →
-hover_warmup → inject GNSS `health_failed` → 5 s hover under
-dropout → clear faults → hover_after_recovery → land → disarm.
-The unit-tier TST-EST-206 carries the strict 2.0 m drift bound;
-this integration scenario verifies the full fault-injection
-plumbing through aviate-hal-xil (sensor-target=gnss, fault=health_failed,
-clear_faults action), kernel remains armed across the dropout,
-and the estimator does not latch a fault.
-"""
-traces_to = ["1d6f3a1e-9a0c-453d-a336-c3da478a2597"]
-
-[[tests]]
-uid = "8106d80d-53fb-496e-9ed1-d1e7ff61caa6"
-id = "TST-XIL-FLT-204"
-title = "tests/missions/command_timeout.toml"
-owner = "aviate-core@aviate"
-description = """
-Mission scenario witnessing LLR-FLT-207 (command_age_ms clears
-COMMAND_RECENT) and LLR-FLT-209 (re-engagement on recovery) at
-the integration tier. Phases: arm → 3 s takeoff → 4 s
-`Action::Wait` (only heartbeats — no SetAttitudeTarget, so
-command_age_ms accumulates) → 2 s `Action::Thrust` (fresh
-commands resume) → land → disarm. The mission asserts the kernel
-remains armed across the staleness window; the cycle-level
-COMMAND_RECENT clear and re-set are pinned by TST-CMD-101
-(`update_command_age_gates_command_recent_flag` at the U-tier).
-Execution: `cargo run -p gcs-test --features gazebo -- run --xil
-tests/missions/command_timeout.toml`.
-"""
-traces_to = ["80d33847-106a-46c5-9c98-c6e4eb330103", "d20185a8-dd10-45f4-a1b6-f5b31e25cd40"]
-
-[[tests]]
-uid = "f4cc160c-f093-47b2-9f10-dd2b573fae46"
-id = "TST-XIL-FLT-201"
-title = "tests/missions/basic_flight.toml"
-owner = "aviate-core@aviate"
-description = """
-Mission scenario witnessing LLR-FLT-201 (disarmed safe output) and
-the integrated arm-disarm cycle at the system tier. Smoke test that
-exercises the full FC↔Gazebo control loop end-to-end: spawn world,
-spawn vehicle, run arm-takeoff-hover-land-disarm sequence, verify
-no fault was triggered and the disarm transition produced safe
-output. Anchor scenario for the X-tagged verification tier.
-"""
-traces_to = ["afc40ab1-44eb-412b-b6e3-519018bd93dd"]
-
-[[tests]]
 uid = "bb9f1fbe-8425-4d86-bd76-dd07ff252e89"
 id = "TST-FLT-208"
 title = "slew_limit_tests::{positive_limit_caps_first_cycle_delta, slew_limited_output_converges_over_cycles, zero_limit_preserves_baseline_outputs}"
@@ -1439,31 +1311,6 @@ update path that LLR-FLT-208 and LLR-MORPH-202 require.
 traces_to = ["176bf48d-1f99-4769-9dd5-c501719f71ec", "6de143ed-43fb-4011-81a9-3ccbd89b410f"]
 
 [[tests]]
-uid = "4bf83d05-581a-4573-bc52-6852efe44ed1"
-id = "TST-XIL-EST-204"
-title = "tests/missions/numeric_fault_inject.toml"
-owner = "aviate-core@aviate"
-description = """
-Mission scenario witnessing LLR-EST-204 (non-finite sample latches
-NUMERIC_ERROR) and LLR-FLT-205 (NUMERIC_ERROR latched → safe
-actuator pattern) at the integration tier. Phases: arm → takeoff →
-hover_warmup → inject IMU `nan` → hold under NaN for 3 s → clear
-faults → hover_after_recovery → land → disarm. The integration
-property is that altitude stays bounded (≤ 25 m) during the NaN
-window — if the kernel propagated NaN into position state, the
-estimator would emit NaN/garbage well outside this envelope. The
-strict unit-tier latched-flag property is verified by
-`aviate-core/tests/behavioral_tests.rs::ekf_imu_nan_isolation`;
-this scenario verifies the full fault-injection plumbing through
-aviate-hal-xil (sensor-target=imu, fault=nan, clear_faults) and
-that the kernel survives + recovers (re-arm not required —
-remains armed across the fault window).
-Execution: `cargo run -p gcs-test --features gazebo -- run --xil
-tests/missions/numeric_fault_inject.toml`.
-"""
-traces_to = ["a8a37317-dd7c-4218-b891-58066c2affb5", "ef751b33-00fb-4598-892d-2f4682b95b91"]
-
-[[tests]]
 uid = "583ba64f-e716-4258-a452-0daef5a8135f"
 id = "TST-EST-206"
 title = "ekf_gnss_dropout_bounded_dead_reckoning_drift"
@@ -1478,3 +1325,40 @@ horizontal position drift over the dropout window is ≤ 2.0 m and
 no numeric fault latches. Witnesses LLR-EST-206.
 """
 traces_to = ["1d6f3a1e-9a0c-453d-a336-c3da478a2597"]
+
+[[tests]]
+uid = "281e2df0-97b3-46a3-a705-97ea7dc8f212"
+id = "TST-EST-203"
+title = "ekf_gnss_baro_fusion_converges_position_within_bounds"
+test_selector = "ekf_gnss_baro_fusion_converges_position_within_bounds"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/behavioral_tests.rs::ekf_gnss_baro_fusion_converges_position_within_bounds`
+seeds `EkfState` 2 m off-truth in every axis and runs `Ekf::observe`
+at 100 Hz for 30.0 s against stationary origin-truth GNSS + baro,
+both `Good`. Asserts the fused position estimate converges to within
+0.5 m horizontal / 0.3 m vertical of ground truth and latches no
+numeric fault. In-process witness for LLR-EST-203; the Gazebo XIL
+`position_hold` mission adds the real-physics confirmation under the
+`sitl-missions` CI lane.
+"""
+traces_to = ["52248c34-20bf-418d-9ac2-93dff2689c92"]
+
+[[tests]]
+uid = "4fda0c55-49f9-4b75-88a0-5bae64375d38"
+id = "TST-CTL-203"
+title = "position_hold_closed_loop_stays_within_bounds"
+test_selector = "position_hold_closed_loop_stays_within_bounds"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/control_position.rs::position_hold_closed_loop_stays_within_bounds`
+closes the position loop against a first-order inner-loop tracking
+model at the worst-case time-scale separation LLR-CTL-205 permits
+(`tau = (1/p)/5 = 0.2 s`). Released from a 1.0 m radial / 0.5 m
+vertical offset (outside the hold bound) with zero disturbance, the
+sqrt-shaper must brake the vehicle into the bound and hold within
+0.5 m radial / 0.3 m altitude over the final 15 s. In-process witness
+for LLR-CTL-203; the Gazebo XIL `hover_stability` mission carries the
+full 6-DOF physical bound under the `sitl-missions` CI lane.
+"""
+traces_to = ["79ec1f95-d04d-4f28-a346-727a3d3f8ecb"]
