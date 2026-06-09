@@ -13,25 +13,14 @@ default = ["mc", "fw", "vtol"]
 mc = []
 fw = []
 vtol = []
-# Enable test hooks for inject_state/inject_fault (spec §20)
+# `inject_state` / `inject_fault` hooks (spec §20) for out-of-tree SITL
+# fault injection. Gated so a flight build never compiles the injector;
+# the in-tree behavioral suite stages faults through the public
+# `state.faults` surface instead, so it runs in the default `cargo test`.
 test-hooks = []
 
 [lib]
 path = "src/lib.rs"
-
-# `behavioral_tests` exercises `AviateKernelTrait::inject_fault`, which
-# is gated by the `test-hooks` feature so flight builds cannot call
-# the test-only fault injector by accident. The test binary therefore
-# requires the feature at compile time; production tests (everything
-# else) build and run without it.
-#
-#   cargo test -p aviate-core --features test-hooks
-#
-# `scripts/run_sitl_missions.sh` enables the feature automatically.
-[[test]]
-name = "behavioral_tests"
-path = "tests/behavioral_tests.rs"
-required-features = ["test-hooks"]
 
 [lints]
 workspace = true

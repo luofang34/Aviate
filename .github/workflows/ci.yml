@@ -104,14 +104,14 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
-      # The `behavioral_tests` binary is gated behind `test-hooks`
-      # (inject_state / inject_fault), so a plain `cargo test
-      # --workspace` never builds or runs it. Run the aviate-core
-      # suite with the feature explicitly so the in-flight fault/
-      # injection behavioral evidence is exercised on every push and
-      # a controller-signature change cannot silently rot it.
-      - name: Run aviate-core behavioral suite (test-hooks)
-        run: cargo test -p aviate-core --features test-hooks
+      # The behavioral suite now stages faults through the public
+      # `state.faults` surface, so it runs under the plain `cargo test
+      # --workspace` above (and is witnessed by `cargo evidence check
+      # --mode=source`). The `test-hooks` feature still gates the
+      # out-of-tree `inject_state` / `inject_fault` hooks (spec §20);
+      # compile-check it so the injector cannot silently rot.
+      - name: Compile-check test-hooks feature (spec §20 injector)
+        run: cargo check -p aviate-core --features test-hooks --all-targets
 
   coverage:
     name: Coverage (DO-178C LLVM)

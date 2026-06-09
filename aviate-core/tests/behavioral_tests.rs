@@ -276,21 +276,18 @@ fn disarmed_safe_output_is_independent_of_inputs() {
 /// LLR-FLT-205: NUMERIC_ERROR latched on an armed kernel forces the
 /// update path to emit the safe pattern. Arms the kernel normally,
 /// takes one healthy-input cycle that produces a non-zero command,
-/// injects `NUMERIC_ERROR` via the spec-§20 `inject_fault` test-hook,
-/// and asserts the next cycle returns zeros.
+/// latches `NUMERIC_ERROR` into `KernelState.faults`, and asserts the
+/// next cycle returns zeros.
 ///
-/// The fault injection goes through `AviateKernelTrait::inject_fault`
-/// — gated by the workspace's `test-hooks` feature — rather than
-/// touching `KernelState.faults` directly. The trait method is the
-/// cert-evidence-bearing accessor: structural pub-access to
-/// `KernelState` exists for `Replicable` encoding (HLR-STATE-001 /
-/// HLR-STATE-003), but flight code MUST NOT use it for fault
-/// injection. `required-features = ["test-hooks"]` on this test
-/// binary keeps the gate visible at the test-target level.
+/// The fault is staged through the public `state.faults` surface — the
+/// same path the disarmed-output and mode-atomicity tests use, and
+/// exactly what `AviateKernelTrait::inject_fault` does under the
+/// `test-hooks` feature (`state.faults.insert(fault)`). Witnessing the
+/// inhibition contract this way keeps the test in the default
+/// `cargo test` surface, so the source-mode evidence check exercises it
+/// without a `test-hooks` build.
 #[test]
 fn numeric_fault_latched_inhibits_actuator_output() {
-    use aviate_core::kernel_trait::AviateKernelTrait;
-
     let mut kernel = make_kernel();
     arm_kernel(&mut kernel);
 
@@ -315,7 +312,7 @@ fn numeric_fault_latched_inhibits_actuator_output() {
         "armed hover step must produce non-zero motor commands as a precondition"
     );
 
-    AviateKernelTrait::inject_fault(&mut kernel, FaultFlags::NUMERIC_ERROR);
+    kernel.state.faults.insert(FaultFlags::NUMERIC_ERROR);
 
     let after = step(&mut kernel, &live_cmd, &sensors, 0);
     assert!(
@@ -488,5 +485,58 @@ fn ekf_gnss_dropout_bounded_dead_reckoning_drift() {
     assert!(
         !state.has_numeric_fault(),
         "predict-only over dropout window must not produce numeric faults"
+    );
+}
+
+// --- LLR-EST-203 ------------------------------------------------------------
+
+/// LLR-EST-203: with GNSS and baro both `Good`, the fused position
+/// estimate converges to within 0.5 m horizontal / 0.3 m vertical of
+/// ground truth over a 30 s window. Seeds the filter 2 m off-truth in
+/// every axis and runs `observe()` at 100 Hz against stationary
+/// origin-truth sensors (GNSS at `[0,0,0]`, baro altitude 0); the GNSS
+/// position/velocity and baro-altitude fusion must pull the estimate
+/// back inside the bound.
+#[test]
+fn ekf_gnss_baro_fusion_converges_position_within_bounds() {
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = EkfState::default();
+
+    // Seed 2 m north, 2 m east, 2 m up of the origin ground truth.
+    state.init(
+        Vector3::new(Meters(2.0), Meters(2.0), Meters(-2.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
+        Quaternion::IDENTITY,
+    );
+    assert!(state.is_initialized());
+
+    let sensors = make_valid_sensors();
+    let dt = 0.01_f32;
+
+    // 30.0 s of healthy GNSS + baro fusion (the window from HLR-EST-203).
+    for _ in 0..3000 {
+        ekf.observe(&mut state, &sensors, None, dt as Scalar);
+    }
+
+    let pos = state.get_estimate().position_ned;
+    let horizontal = (pos[0].0 * pos[0].0 + pos[1].0 * pos[1].0).sqrt();
+    let vertical = pos[2].0.abs();
+    assert!(
+        horizontal <= 0.5,
+        "horizontal position error {} m exceeds the 0.5 m bound after 30 s fusion",
+        horizontal
+    );
+    assert!(
+        vertical <= 0.3,
+        "vertical position error {} m exceeds the 0.3 m bound after 30 s fusion",
+        vertical
+    );
+    assert!(
+        !state.has_numeric_fault(),
+        "healthy GNSS + baro fusion must not produce numeric faults"
     );
 }
