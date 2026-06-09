@@ -41,22 +41,33 @@ for mission in "${MISSIONS[@]}"; do
     pass=0
     fail=0
     for ((r = 1; r <= RUNS_PER_MISSION; r++)); do
+        # Reclaim orphaned gz / FC processes + shared memory left by a
+        # prior run (or an earlier CI step) before starting, so a crash
+        # cannot poison its successors. gcs-test does this on a clean
+        # exit; this covers timeouts and hard kills.
+        pkill -9 -f 'gz sim' 2>/dev/null || true
+        pkill -9 -f 'sitl-gazebo-x500' 2>/dev/null || true
+        rm -f /dev/shm/aviate_gz_bridge* 2>/dev/null || true
+        sleep 1
+
         # gcs-test exits non-zero when a mission fails; that's
         # expected here, so disable `set -e` for the run.
         set +e
-        result=$(
+        run_log=$(
             timeout 60 cargo run --quiet -p gcs-test --features gazebo -- \
-                run --xil --headless "${MISSIONS_DIR}/${mission}.toml" 2>&1 \
-                | grep "^Result:" \
-                | tail -1
+                run --xil --headless "${MISSIONS_DIR}/${mission}.toml" 2>&1
         )
         set -e
+        result=$(printf '%s\n' "${run_log}" | grep "^Result:" | tail -1)
         if [[ "${result}" == "Result: PASS" ]]; then
             pass=$((pass + 1))
             echo "  run ${r}: PASS"
         else
             fail=$((fail + 1))
             echo "  run ${r}: ${result:-Result: TIMEOUT}"
+            # Surface the failing phase / launch error that the
+            # `^Result:` filter would otherwise hide.
+            printf '%s\n' "${run_log}" | tail -40 | sed 's/^/    | /'
         fi
     done
     echo "  -> ${pass}/${RUNS_PER_MISSION} PASS"
