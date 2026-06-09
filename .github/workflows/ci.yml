@@ -314,8 +314,25 @@ jobs:
       - name: Build the Aviate Gazebo plugin
         run: ./scripts/build_gz_plugin.sh
 
-      - name: Build gcs-test (gazebo feature)
-        run: cargo build -p gcs-test --features gazebo
+      # gcs-test drives the missions; it spawns the SITL FC binary
+      # `./target/debug/sitl-gazebo-x500` (aviate-app-sitl-gazebo-x500),
+      # which must be built too or every mission aborts at spawn.
+      - name: Build gcs-test + the SITL FC binary
+        run: |
+          cargo build -p gcs-test --features gazebo
+          cargo build -p aviate-app-sitl-gazebo-x500
+
+      # Verbose single-mission smoke: run_sitl_missions.sh filters to
+      # `^Result:` lines, so a launch failure shows only as TIMEOUT. This
+      # non-gating step surfaces the full FC+gz output (gz binary, model
+      # resolution, EGL/rendering, shared memory) for the first mission so
+      # any Linux-specific breakage is diagnosable in one run.
+      - name: SITL smoke (verbose, non-gating)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: 1
+        run: |
+          xvfb-run -a timeout 120 cargo run --quiet -p gcs-test --features gazebo -- \
+            run --xil --headless tests/missions/basic_flight.toml 2>&1 | tail -80 || true
 
       # Each of the 7 XIL missions runs 3× behind a 2/3 reliability bar
       # (run_sitl_missions.sh exits non-zero if any mission misses it).
