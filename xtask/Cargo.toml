@@ -18,4 +18,4 @@ cargo_metadata = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Optional: Only needed for hardware flash commands (provides chip flash geometry)
-probe-rs = { version = "0.30", default-features = false, features = ["builtin-targets"], optional = true }
+probe-rs = { version = "0.31", default-features = false, features = ["builtin-targets"], optional = true }
