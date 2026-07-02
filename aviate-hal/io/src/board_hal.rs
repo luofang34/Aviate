@@ -133,6 +133,16 @@ where
         &mut self.gnss
     }
 
+    /// Disjoint mutable borrow of all four sensor drivers at once.
+    /// Rust's borrow checker rejects four sequential `.imu_mut()`
+    /// `.baro_mut()` etc. calls because each takes `&mut self`; this
+    /// method splits the borrow through a single call so the caller
+    /// can hand the refs to a sensor-bundle struct (e.g.
+    /// `FaultSensors`).
+    pub fn sensors_mut(&mut self) -> (&mut I, &mut B, &mut M, &mut G) {
+        (&mut self.imu, &mut self.baro, &mut self.mag, &mut self.gnss)
+    }
+
     /// Get a reference to the actuator driver
     pub fn actuator(&self) -> &A {
         &self.actuator
@@ -302,8 +312,18 @@ where
 
                 Some(SensorReading {
                     value: GnssData {
-                        // Convert lat/lon to local NED (simplified - just use altitude for now)
-                        position_ned: [Meters(0.0), Meters(0.0), Meters(-raw.alt_m)],
+                        // Lat/lon → local NED projection is not yet wired
+                        // in this layer (no reference point lives here).
+                        // The XIL pipeline puts the local NED position
+                        // directly into the `position_ned` field of the
+                        // raw GNSS reading; flight builds that have a
+                        // real GNSS receiver must do the WGS84 projection
+                        // upstream. See `RawGnssReading::position_ned`.
+                        position_ned: [
+                            Meters(raw.position_ned[0]),
+                            Meters(raw.position_ned[1]),
+                            Meters(raw.position_ned[2]),
+                        ],
                         velocity_ned: [
                             MetersPerSecond(raw.vel_ned[0]),
                             MetersPerSecond(raw.vel_ned[1]),

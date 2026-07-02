@@ -1,0 +1,18 @@
+[package]
+name = "aviate-app-sitl-gazebo-x500"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "X500 quadcopter FC binary for the Gazebo SITL board"
+
+[[bin]]
+name = "sitl-gazebo-x500"
+path = "src/main.rs"
+
+[dependencies]
+aviate-board-sitl-gazebo = { path = "../../aviate-boards/sitl-gazebo", features = ["gz-plugin"] }
+aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor", features = ["x500"] }
+aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", features = ["gz-plugin"] }
+aviate-hal-xil = { path = "../../aviate-hal/xil" }
+log = "0.4"
+env_logger = "0.11"

@@ -1,0 +1,76 @@
+# Aviate SITL Test: Command Timeout (HLR-FLT-204 / LLR-FLT-207)
+#
+# Tests the integrated path for the command-staleness check: when
+# the FC stops receiving fresh FlightControl setpoints (only
+# heartbeats), the kernel's `command_age_ms` accumulates and the
+# `COMMAND_RECENT` in-flight check clears. The vehicle should
+# remain armed (command staleness is recoverable, not a fault) and
+# the kernel should continue to emit a defined actuator pattern.
+#
+# Unit-tier coverage: TST-FLT-207 (kernel.rs::update_command_age_
+# gates_command_recent_flag) verifies the cycle-level clear and the
+# boundary case. This scenario exercises the same logic through
+# MAVLink over real UDP, against gz-sim physics.
+
+[test]
+name = "command_timeout"
+description = "Vehicle stays armed when commands stop arriving"
+lockstep = true
+
+[[vehicles]]
+id = "x500"
+model = "x500"
+instance = 0
+spawn_position = [0.0, 0.0, 0.0]
+spawn_heading = 0.0
+
+[vehicles.mission]
+name = "command_timeout_test"
+
+# Phase 1: Arm.
+[[vehicles.mission.phases]]
+name = "arm"
+duration_ms = 500
+action = { type = "arm" }
+verify = [{ type = "armed", value = true }]
+
+# Phase 2: Brief takeoff so the vehicle is in flight when commands
+# stop. Smoke-level altitude floor.
+[[vehicles.mission.phases]]
+name = "takeoff"
+duration_ms = 3000
+action = { type = "thrust", value = 0.8 }
+verify = [{ type = "min_altitude", value = 0.1 }]
+
+# Phase 3: Wait. `Action::Wait` only sends heartbeat — no
+# SetAttitudeTarget — so the FC's `command_age_ms` rises. Per
+# HLR-FLT-204 the kernel must transition to its configured
+# command-loss-safe mode but stay armed. Mission-level criterion:
+# kernel still reports armed at the end of the wait window.
+[[vehicles.mission.phases]]
+name = "wait_no_command"
+duration_ms = 4000
+action = { type = "wait" }
+verify = [{ type = "armed", value = true }]
+
+# Phase 4: Resume sending thrust. Per HLR-FLT-209 the kernel
+# re-engages the active control law within one cycle. Still smoke
+# level — the cert-grade tracking-error bound is unit-tier.
+[[vehicles.mission.phases]]
+name = "resume_command"
+duration_ms = 2000
+action = { type = "thrust", value = 0.65 }
+verify = [{ type = "armed", value = true }]
+
+# Phase 5: Land + disarm.
+[[vehicles.mission.phases]]
+name = "land"
+duration_ms = 3000
+action = { type = "thrust", value = 0.0 }
+verify = []
+
+[[vehicles.mission.phases]]
+name = "disarm"
+duration_ms = 500
+action = { type = "disarm" }
+verify = [{ type = "armed", value = false }]

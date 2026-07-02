@@ -146,23 +146,112 @@ pub enum FaultSpec {
     BiasScalar { offset: f32 },
 }
 
-/// Verification criteria for a phase
+/// Verification criteria for a phase.
+///
+/// Three semantic shapes, in increasing strictness:
+///
+///   - **End-state**: one sample at phase end. (`Armed`,
+///     `AltitudeHold`, `PositionHold`, `MaxAltitude`, `MaxDrift`,
+///     `ReturnedNear`, `YawDriftBounded`, `SensorDataReceived`.)
+///   - **At-some-point**: any sample in the trace must match.
+///     (`MinAltitude`, `ReachedWaypoint`, `StableHover`.)
+///   - **Throughout-phase**: every sample in the trace must
+///     match. (`StationKeeping`, `MaxExcursion`, `AttitudeBounded`,
+///     `AttitudeRateBounded`, `TelemetryAgreesWithTruth`.)
+///
+/// The "throughout-phase" shape is what enforces real flight —
+/// a vehicle that briefly hit a target and then jumped 20 m
+/// sideways fails a `StationKeeping` criterion even though it
+/// would pass `MinAltitude` or `ReachedWaypoint`. New tests
+/// should use the throughout-phase shape by default.
 #[derive(Debug, Clone)]
 pub enum Criterion {
-    /// Vehicle must be armed
+    /// Vehicle must be armed at end of phase
     Armed(bool),
-    /// Minimum altitude reached (meters, positive up)
+    /// Vehicle reached at least this altitude at some point during
+    /// the phase (meters, positive up).
     MinAltitude(f32),
-    /// Maximum altitude (for landing verification)
+    /// Vehicle altitude at end of phase is at most this value
     MaxAltitude(f32),
-    /// Altitude hold within tolerance
+    /// End-of-phase altitude is within `tolerance` of `target`
     AltitudeHold { target: f32, tolerance: f32 },
-    /// Position hold within tolerance (NED)
+    /// End-of-phase 3D position is within `tolerance` of `target` (NED)
     PositionHold { target: [f32; 3], tolerance: f32 },
-    /// Maximum horizontal drift from start
+    /// End-of-phase horizontal drift from `start_position` ≤ `max`
     MaxDrift(f32),
-    /// Received sensor data
+    /// Sensor data received at least once
     SensorDataReceived,
+    /// Vehicle was within `tolerance` metres of `target` at some
+    /// point during the phase (NED). Pins "the FC actually reached
+    /// the commanded waypoint", not "the FC ended where commanded".
+    /// Useful when the next phase commands the vehicle to move on
+    /// before this phase strictly ends.
+    ReachedWaypoint { target: [f32; 3], tolerance: f32 },
+    /// Vehicle held altitude within `[altitude-tolerance,
+    /// altitude+tolerance]` continuously for at least `hold_secs`
+    /// of the phase. Sliding window — the run can include
+    /// transients before/after the held interval, but the
+    /// interval must be contiguous.
+    StableHover {
+        altitude: f32,
+        tolerance: f32,
+        hold_secs: f32,
+    },
+    /// **Throughout phase**: every trace sample must be inside the
+    /// box centred at `center_ned` with half-extents `xy_tolerance`
+    /// (horizontal) and `z_tolerance` (vertical). A single sample
+    /// outside the box FAILS the criterion. This is the canonical
+    /// "the vehicle held position" check — strictly stricter than
+    /// `StableHover` because it constrains XY as well as Z, and
+    /// every sample as opposed to a sliding window.
+    StationKeeping {
+        center_ned: [f32; 3],
+        xy_tolerance: f32,
+        z_tolerance: f32,
+    },
+    /// **Throughout phase**: every trace sample's deviation from
+    /// `center_ned` is bounded. Looser than `StationKeeping`
+    /// (does not assert holding still); use to bound "runaway
+    /// flight" while a transition or maneuver is in progress.
+    MaxExcursion {
+        center_ned: [f32; 3],
+        xy_max: f32,
+        z_max: f32,
+    },
+    /// **Trace-walking**: the vehicle visits each of `waypoints`
+    /// in order, each within `tolerance` of its target NED point,
+    /// completing the sequence within `max_time_s`. A waypoint is
+    /// "visited" the first time a sample lands inside its
+    /// tolerance ball; visits must occur in declaration order.
+    TrajectoryTracking {
+        waypoints: Vec<[f32; 3]>,
+        tolerance: f32,
+        max_time_s: f32,
+    },
+    /// **End-state**: end-of-phase 3D position within `tolerance`
+    /// of `target_ned`. Used for "return to home" checks.
+    ReturnedNear {
+        target_ned: [f32; 3],
+        tolerance: f32,
+    },
+    /// **Throughout phase**: every trace sample's roll and pitch
+    /// (extracted from the body attitude quaternion) are below
+    /// `roll_pitch_max_deg`. Yaw is unbounded — at low altitudes
+    /// the vehicle yaws naturally as the EKF converges. A tumbling
+    /// vehicle fails this criterion immediately.
+    AttitudeBounded { roll_pitch_max_deg: f32 },
+    /// **End-state**: at the moment the vehicle first touches the
+    /// ground during the phase (z ≥ −`ground_tolerance` in NED),
+    /// the vertical descent rate must not exceed `max_descent_mps`.
+    /// A free-fall landing fails: `thrust=0` from 10 m gives ~14
+    /// m/s impact, well above any safe threshold. The criterion
+    /// makes "soft touchdown" a verifiable property of the
+    /// controller rather than a hopeful side-effect of the
+    /// mission profile.
+    TouchdownVelocity {
+        max_descent_mps: f32,
+        ground_tolerance: f32,
+    },
 }
 
 /// Result of a phase execution
@@ -174,6 +263,16 @@ pub struct PhaseResult {
     pub max_altitude: f32,
     pub final_position: [f32; 3],
     pub criteria_results: Vec<CriterionResult>,
+    /// Per-step trace samples from this phase. Retained on the
+    /// result so the mission runner can write a CSV (or any other
+    /// post-mortem artefact) covering every sample of every phase
+    /// without duplicating the trace into a side channel.
+    pub trace: Vec<crate::runner::TraceSample>,
+    /// String describing the action commanded during this phase
+    /// (e.g. `thrust=0.85`, `goto=[0,0,-5]`). Tagged at phase
+    /// start so the CSV reader can see which input drove each
+    /// sample.
+    pub action_tag: String,
 }
 
 #[derive(Debug)]

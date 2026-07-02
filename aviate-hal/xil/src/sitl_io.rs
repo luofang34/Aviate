@@ -257,6 +257,7 @@ impl SitlIO {
                     lat_deg: gnss.lat_deg,
                     lon_deg: gnss.lon_deg,
                     alt_m: gnss.alt_m,
+                    position_ned: gnss.position_ned,
                     vel_ned: gnss.vel_ned,
                     fix,
                     h_acc: gnss.h_acc,
@@ -482,6 +483,13 @@ impl SitlIO {
     /// Get the connected GCS address (if any)
     pub fn gcs_addr(&self) -> Option<std::net::SocketAddr> {
         self.gcs_addr
+    }
+
+    /// Borrow the underlying network/instance configuration. Used by
+    /// the SitlRunner to spin up auxiliary listeners (fault command,
+    /// etc.) on the same instance number.
+    pub fn config(&self) -> &XilConfig {
+        &self.config
     }
 }
 

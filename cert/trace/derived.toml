@@ -142,3 +142,193 @@ no_std-friendly. A follow-up PR introduces
 controller's `step` to read gains from cfg rather than `&self`.
 """
 safety_impact = "medium"
+
+[[requirements]]
+uid = "c6c38eb8-20ec-45b3-93b3-a24a89be8bf6"
+id = "DRQ-CTL-002"
+title = "Controller gain tuning to meet cert-grade hover and position bounds"
+owner = "aviate-core@aviate"
+description = """
+HLR-CTL-203 (hover hold) targets ≤ 0.3 m altitude and ≤ 0.5 m
+horizontal in still air over a 30 s window. HLR-EST-203 targets
+≤ 0.5 m horizontal / ≤ 0.3 m vertical position estimate error.
+The current SITL runs (`tests/missions/{hover_stability,position_hold,
+attitude_control}.toml`) use **integration-smoke thresholds** — the
+vehicle takes off (~0.5 m to 6 m, run-dependent), motors fire, EKF
+converges against gz-sim sensor noise, MAVLink command path works
+end-to-end. The cert-grade bounds are not met by the current
+gain set.
+
+Root cause: `MultirotorController`'s P-only gains are hardcoded
+constants tuned for the historical airframe model, not the X500
+mass/inertia/motor parameters in PX4-gazebo-models. The attitude
+loop occasionally saturates two motors out of four in run-to-run
+conditions (typical on first run after a cold-start of the sim),
+and the position loop drifts because there is no integral-action
+term. Sensor-synthesis frame-convention errors (gz FLU body vs
+aviate-core FRD body) compounded the issue earlier — the
+sitl-gazebo-x500 binary now applies the FLU→FRD conversion
+correctly (see its unit tests), but the residual controller
+oscillation is the still-open gap.
+
+Closing this DRQ requires:
+  1. Reading the actual hover-thrust trim point for the X500
+     (motorConstant=8.55e-6 × 1000² × 4 = 34 N max vs 20.25 N
+     weight → hover ≈ 0.77 normalized, not 0.65).
+  2. Tightening attitude-loop gains so the motor command stays
+     symmetric at level setpoint (no [0, 1, 1, 0] saturation
+     pattern under perfect sensors).
+  3. Adding integral action to the position loop or moving to a
+     LQR/cascade controller per HLR-CFG-002's cfg-resident gain
+     model (which itself is blocked by DRQ-CTL-001).
+
+Until closed, the SITL missions verify integration health, not
+flight quality. The synthetic-tier unit tests (TST-EST-201,
+TST-EST-206, TST-CTL-201, TST-CTL-202) pin the corresponding LLRs
+against deterministic kinematic surrogates.
+"""
+rationale = """
+Surfacing the gap explicitly so a downstream auditor reading the
+test plan and seeing "Result: PASS" does not conclude the kernel
+meets cert-grade flight quality — only smoke-level integration
+health is asserted by the X-tier. The U-tier unit tests are the
+load-bearing evidence for the LLR-level claims; SITL is the
+integrated witness, deliberately loose because cert-grade
+tightening is the next ratchet, not the structural contract.
+"""
+safety_impact = "medium"
+
+[[requirements]]
+uid = "8e9c67e1-91bd-4183-94fd-304e49b40689"
+id = "DRQ-CTL-003"
+title = "Closed-loop position control end-to-end"
+owner = "aviate-core@aviate"
+description = """
+The kernel accepts `SET_POSITION_TARGET_LOCAL_NED` and routes it
+through `MultirotorController::step` (pos_ctrl → vel_ctrl →
+att_ctrl → rate_ctrl). The mission DSL carries the criteria
+needed to verify closed-loop flight (`Waypoint`, `StableHover`).
+**End-to-end the loop does not yet hold position.** Two failure
+modes:
+
+  1. **EKF position divergence.** Under closed-loop control the
+     attitude controller commands non-trivial roll/pitch rates;
+     the IMU integration in `Ekf::predict_state` accumulates
+     position error faster than the GNSS update can correct,
+     even with the now-correctly-plumbed `position_ned` field on
+     `RawGnssReading`. Within a few seconds the EKF reports the
+     vehicle 50–100 m away from ground truth, the position loop
+     responds to the (false) error, and the vehicle either flies
+     in the wrong direction or saturates the mixer.
+
+  2. **Mixer thrust loss under saturated yaw.** With a non-zero
+     EKF yaw error and a near-saturated collective thrust, the
+     mixer adds yaw-axis corrections that drive two of four
+     motor commands to zero, dropping the realized lift to ~50 %
+     of commanded. The closed-loop altitude path then commands
+     even more thrust to compensate, which only deepens the
+     saturation.
+
+Closing this DRQ requires (at least): tighter EKF tuning under
+high-disturbance IMU input, an integral term on the position
+loop to drive out steady-state error, and a thrust-priority
+mixer that scales yaw correction when it would push any motor
+below zero. None of these is gated by a missing API or trace
+row — they are control-engineering work on top of the existing
+structural surface.
+
+Witnessed (negative) by `tests/missions/square_course.toml`,
+which executes the full position-target path but does not
+reliably pass its `ReachedWaypoint` criteria today. Open-loop
+flight is witnessed by `tests/missions/hover_trim_check.toml`
+(climb → hover at trim → descend → land) which passes 5/5.
+"""
+rationale = """
+Honest scope: this PR delivers the harness, the criteria, and
+the controller calibration to **support** closed-loop missions
+(hover_thrust trim, linear motor mapping, min-thrust gate, EKF
+TRIAD seed, GNSS local-NED plumbing). The remaining work — make
+the closed loop actually hold position to within a 1 m bound —
+is a separate engineering iteration with its own verification
+budget, not a one-line tuning fix.
+"""
+safety_impact = "medium"
+
+[[requirements]]
+uid = "a6c98ab3-41d3-4947-8361-250ace2adb69"
+id = "DRQ-FLT-001"
+title = "Command-loss safe-mode slew limit"
+owner = "aviate-core@aviate"
+description = """
+HLR-FLT-204 / LLR-FLT-208 require that when the kernel switches
+to the command-loss-safe mode (due to `command_age_ms >=
+command_timeout_ms`), the actuator command delta between the cycle
+before the switch and the cycle of the switch respects a
+configured per-actuator slew limit. The kernel currently switches
+the output set point in one cycle without a slew-limited
+transition; the abrupt change is bounded by the safe pattern's
+own values but not by a rate-of-change limiter.
+
+Closing this requires:
+  1. A new `ResolvedKernelConfig.slew_limit_per_cycle:
+     [Normalized; MAX_ACTUATORS]` field.
+  2. A slew-limited writer at the end of `update_step` that clamps
+     the per-actuator output to within `slew_limit` of the previous
+     cycle's commanded output, with sign-aware behavior on direction
+     reversal.
+  3. The same machinery is needed for HLR-MORPH-202 / LLR-MORPH-202
+     (geometry-state delta) — see DRQ-MORPH-001.
+
+Items 1 and 2 are realized by `ResolvedKernelConfig.
+slew_limit_per_cycle` and `aviate-core/src/kernel/slew.rs::
+apply_slew_limit` (invoked between sanitization and result
+construction in `kernel_update.rs`). Witnessed by TST-FLT-208.
+Default value `[0.0; MAX_ACTUATORS]` disables the limiter per
+channel — existing airframes that don't opt in see no behavior
+change. Severe-fault early-return paths bypass the limiter so
+LLR-FLT-205 (NUMERIC_ERROR → immediate safe pattern) is
+preserved.
+"""
+rationale = """
+The contract is real and matters for airframe protection
+(suddenly clamping a saturated motor to zero can shed lift faster
+than the body can rotate to compensate). The previous abrupt
+switch was "safe in expectation" — the safe pattern is itself a
+low-thrust idle — but didn't formally satisfy the slew-limit
+clause. The writer now closes the gap on the kernel side;
+per-airframe slew_limit values remain a tuning concern (deferred
+to the airframe-specific config PRs, since the cert-binding
+contract is the writer itself, not the chosen values).
+"""
+safety_impact = "low"
+
+[[requirements]]
+uid = "addb460b-bd61-4944-a073-d9d253b20f2c"
+id = "DRQ-MORPH-001"
+title = "GeometryState mid-flight slew limit"
+owner = "aviate-core@aviate"
+description = """
+HLR-MORPH-202 / LLR-MORPH-202 require that when `GeometryState`
+(continuous airframe-morph parameter — tilt-rotor angle,
+fold-arm position) updates by some `dGeom`, the resulting
+per-actuator command delta SHALL respect the configured slew
+limit. The kernel currently reads `GeometryState` as a parameter
+into the mixer with no inter-cycle smoothing — a step change in
+`GeometryState` produces an immediate step in mixer output.
+
+Same closing path as DRQ-FLT-001: a `ResolvedKernelConfig.
+slew_limit_per_cycle` field and a slew-limited writer at the
+mixer's per-cycle output. Once DRQ-FLT-001 lands, this is a
+parameter-not-event question and can close immediately.
+"""
+rationale = """
+Current airframes (`aviate-airframe-multirotor`,
+`aviate-airframe-fixed-wing`) hold a fixed `GeometryState` for the
+duration of flight, so the contract is vacuously satisfied. The
+contract becomes binding for tilt-rotor / fold-arm /
+transformable airframes — at which point the slew limiter must
+already be in place. Capturing the DRQ here keeps the HLR honest:
+the property is a non-event under existing airframes, not a
+verified event.
+"""
+safety_impact = "low"

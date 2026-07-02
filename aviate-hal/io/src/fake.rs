@@ -578,6 +578,7 @@ impl GnssDriver for FakeGnss {
                         lat_deg: f64::NAN,
                         lon_deg: f64::NAN,
                         alt_m: f32::NAN,
+                        position_ned: [f32::NAN, f32::NAN, f32::NAN],
                         vel_ned: [f32::NAN, f32::NAN, f32::NAN],
                         fix: GnssFix::None,
                         h_acc: f32::NAN,
@@ -836,6 +837,12 @@ impl FakeSensorSet {
             lat_deg: (lat as f64) / 1e7,
             lon_deg: (lon as f64) / 1e7,
             alt_m: (alt as f32) / 1000.0,
+            // HIL_GPS does not carry projected NED; downstream consumers
+            // that need it must do the WGS84→NED projection from
+            // (lat, lon, alt). For now leave it zero — only the SITL
+            // pipeline (which populates `position_ned` directly) drives
+            // the EKF in our tests.
+            position_ned: [0.0; 3],
             vel_ned: [
                 (vn as f32) / 100.0,
                 (ve as f32) / 100.0,
@@ -1177,6 +1184,7 @@ mod tests {
                 lat_deg: 47.0,
                 lon_deg: 8.0,
                 alt_m: 500.0,
+                position_ned: [0.0, 0.0, 0.0],
                 vel_ned: [0.0, 0.0, 0.0],
                 fix: GnssFix::ThreeD,
                 h_acc: 1.0,

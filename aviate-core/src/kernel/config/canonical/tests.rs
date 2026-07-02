@@ -32,6 +32,56 @@ fn canonical_hash_distinguishes_limits() {
 }
 
 #[test]
+fn canonical_hash_distinguishes_each_cascade_gain() {
+    // DRQ-CTL-001: cascade gains must participate in canonical_hash
+    // — otherwise lockstep peers can disagree on tuning silently.
+    // Mutate one field at a time and assert each mutation breaks
+    // the hash, so a regression in `feed_cascade_gains` is
+    // caught at the field that stops contributing rather than
+    // folded into a "something changed somewhere" failure.
+    let baseline = ResolvedKernelConfig::default().canonical_hash();
+
+    macro_rules! probe {
+        ($field:ident, $axis:tt, $delta:expr) => {{
+            let mut cfg = ResolvedKernelConfig::default();
+            cfg.cascade_gains.$field[$axis] += $delta;
+            let h = cfg.canonical_hash();
+            assert_ne!(
+                baseline,
+                h,
+                "cascade_gains.{}[{}] mutation produced no change in canonical_hash",
+                stringify!($field),
+                $axis,
+            );
+        }};
+        ($field:ident, $delta:expr) => {{
+            let mut cfg = ResolvedKernelConfig::default();
+            cfg.cascade_gains.$field += $delta;
+            let h = cfg.canonical_hash();
+            assert_ne!(
+                baseline,
+                h,
+                "cascade_gains.{} mutation produced no change in canonical_hash",
+                stringify!($field),
+            );
+        }};
+    }
+    probe!(pos_p, 0, 0.1);
+    probe!(pos_p, 2, 0.1);
+    probe!(pos_accel_limits, 1, 0.1);
+    probe!(pos_vel_caps, 0, 0.1);
+    probe!(vel_p, 2, 0.1);
+    probe!(vel_i, 0, 0.1);
+    probe!(vel_d, 2, 0.05);
+    probe!(vel_max_roll_pitch, 0.05);
+    probe!(vel_accel_ff, -0.3);
+    probe!(att_p, 1, 0.05);
+    probe!(rate_p, 0, 0.5);
+    probe!(rate_d, 2, 0.01);
+    probe!(rate_d_lpf_alpha, 0.1);
+}
+
+#[test]
 fn canonical_hash_distinguishes_safe_output() {
     let mut cfg = ResolvedKernelConfig::default();
     let baseline = cfg.canonical_hash();

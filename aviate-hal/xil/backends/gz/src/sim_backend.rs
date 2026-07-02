@@ -5,7 +5,9 @@
 //! mission execution with Gazebo.
 
 #[cfg(feature = "gz-plugin")]
-use crate::plugin::{enu_to_ned_f32, GzPluginBridge, GzPluginError};
+use crate::plugin::{
+    enu_quat_to_ned_f32, enu_to_ned_f32, flu_to_frd_f32, GzPluginBridge, GzPluginError,
+};
 
 #[cfg(feature = "gz-plugin")]
 use aviate_hal_xil::{SimulatorBackend, SimulatorError, VehicleState};
@@ -68,24 +70,23 @@ impl SimulatorBackend for GazeboSimBackend {
         let bridge = self.bridge.as_ref()?;
         let state = bridge.get_model_state()?;
 
-        // Convert ENU to NED
+        // Convert from gz's ENU-world / FLU-body convention to
+        // NED-world / FRD-body, the convention every aviate
+        // consumer (FC kernel, test harness criteria, MAVLink
+        // bridge) operates in. Without the orientation conversion
+        // here the vehicle state surfaces gz's raw quaternion —
+        // mixed-frame data that silently breaks attitude
+        // criteria and any post-mortem trace.
         let ned_pos = enu_to_ned_f32(state.pos);
         let ned_vel = enu_to_ned_f32(state.vel);
+        let ned_quat = enu_quat_to_ned_f32(state.quat);
+        let body_ang_vel_frd = flu_to_frd_f32(state.ang_vel);
 
         Some(VehicleState {
             position: ned_pos,
             velocity: ned_vel,
-            orientation: [
-                state.quat[0] as f32,
-                state.quat[1] as f32,
-                state.quat[2] as f32,
-                state.quat[3] as f32,
-            ],
-            angular_velocity: [
-                state.ang_vel[0] as f32,
-                state.ang_vel[1] as f32,
-                state.ang_vel[2] as f32,
-            ],
+            orientation: ned_quat,
+            angular_velocity: body_ang_vel_frd,
             time_us: state.time_us,
             valid: state.valid != 0,
         })

@@ -229,3 +229,14 @@ fn degradation_to_alternate_keeps_runtime_counter() {
         "handle_degradation to Alternate must preserve controller runtime state (LLR-CTL-101)"
     );
 }
+
+#[test]
+fn no_controller_state_reset_is_noop() {
+    // NoControllerState is the zero-state sentinel for controllers that
+    // carry no per-instance runtime state; its reset() is a documented
+    // no-op. Exercise it so the trait impl is witnessed.
+    use aviate_core::control::runtime::NoControllerState;
+    let mut s = NoControllerState;
+    s.reset();
+    assert_eq!(s, NoControllerState);
+}

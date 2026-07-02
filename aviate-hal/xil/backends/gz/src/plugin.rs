@@ -346,6 +346,38 @@ pub fn enu_vel_to_ned_f32(enu_vel: [f64; 3]) -> [f32; 3] {
     [enu_vel[1] as f32, enu_vel[0] as f32, -enu_vel[2] as f32]
 }
 
+/// Convert a body→world orientation quaternion from gz's
+/// ENU-world / FLU-body convention to NED-world / FRD-body
+/// (the convention every aviate consumer expects).
+///
+/// Composition:
+/// * **World ENU → NED**: rotation by 180° about the East-North
+///   bisector (`q_ENU→NED = (0, √½, √½, 0)`). Equivalent to
+///   negating Z and swapping X/Y.
+/// * **Body FRD → FLU**: 180° rotation about the forward (X)
+///   axis, `q_FRD→FLU = (0, 1, 0, 0)`.
+///
+/// For the same physical attitude:
+/// `q_NED_FRD = q_ENU→NED · q_ENU_FLU · q_FRD→FLU`
+#[inline]
+pub fn enu_quat_to_ned_f32(q_enu_flu: [f64; 4]) -> [f32; 4] {
+    let s = core::f32::consts::FRAC_1_SQRT_2;
+    let w = q_enu_flu[0] as f32;
+    let x = q_enu_flu[1] as f32;
+    let y = q_enu_flu[2] as f32;
+    let z = q_enu_flu[3] as f32;
+    [s * (w + z), s * (x + y), s * (x - y), s * (w - z)]
+}
+
+/// Body-frame vector ENU/FLU → NED/FRD.
+///
+/// FLU body = (forward, left, up); FRD body = (forward, right,
+/// down). Flip Y and Z; X is forward in both.
+#[inline]
+pub fn flu_to_frd_f32(v_flu: [f64; 3]) -> [f32; 3] {
+    [v_flu[0] as f32, -v_flu[1] as f32, -v_flu[2] as f32]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

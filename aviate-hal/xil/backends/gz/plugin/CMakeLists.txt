@@ -4,12 +4,52 @@ project(aviate_gz_plugin VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# gz-msgs10's generated `.pb.h` files require matching protobuf
+# headers; mixing versions (e.g. anaconda's older protobuf landing on
+# the include path before brew's) fires `PROTOBUF_VERSION != ...`
+# and the build tanks early. Resolve protobuf via a brew-discovered
+# prefix on macOS (overridable via `AVIATE_PROTOBUF_PREFIX`) and via
+# the standard system path on Linux. The prefix is placed BEFORE
+# SYSTEM so transitive include paths can't shadow it.
+set(AVIATE_PROTOBUF_PREFIX "" CACHE PATH
+    "Override the protobuf install prefix used by the gz plugin build")
+if(APPLE AND NOT AVIATE_PROTOBUF_PREFIX)
+    find_program(BREW_EXECUTABLE brew)
+    if(BREW_EXECUTABLE)
+        execute_process(
+            COMMAND ${BREW_EXECUTABLE} --prefix protobuf
+            OUTPUT_VARIABLE AVIATE_PROTOBUF_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE _brew_protobuf_rc
+        )
+        if(NOT _brew_protobuf_rc EQUAL 0)
+            set(AVIATE_PROTOBUF_PREFIX "")
+        endif()
+    endif()
+endif()
+if(AVIATE_PROTOBUF_PREFIX)
+    message(STATUS "Using protobuf prefix: ${AVIATE_PROTOBUF_PREFIX}")
+    include_directories(BEFORE SYSTEM "${AVIATE_PROTOBUF_PREFIX}/include")
+    list(PREPEND CMAKE_PREFIX_PATH "${AVIATE_PROTOBUF_PREFIX}")
+endif()
+
 # Find Gazebo Harmonic (gz-sim8)
 find_package(gz-sim8 REQUIRED)
 find_package(gz-plugin2 REQUIRED COMPONENTS register)
 find_package(gz-common5 REQUIRED)
 find_package(gz-transport13 REQUIRED)
 find_package(gz-msgs10 REQUIRED)
+find_package(Protobuf REQUIRED)
+find_package(absl REQUIRED)
+
+# Some protobuf builds (e.g. Homebrew's) require linking the internal
+# Abseil check-op target explicitly; older Abseil (e.g. Ubuntu's
+# libabsl-dev) neither defines nor needs it — protobuf pulls Abseil in
+# transitively there. Link it only where the target exists.
+set(AVIATE_ABSL_CHECK_OP "")
+if(TARGET absl::log_internal_check_op)
+    set(AVIATE_ABSL_CHECK_OP absl::log_internal_check_op)
+endif()
 
 # Get GZ include/lib directories
 set(GZ_SIM_VER ${gz-sim8_VERSION_MAJOR})
@@ -27,6 +67,8 @@ target_link_libraries(AviateGzPlugin
     gz-plugin2::register
     gz-transport13::gz-transport13
     gz-msgs10::gz-msgs10
+    protobuf::libprotobuf
+    ${AVIATE_ABSL_CHECK_OP}
 )
 
 target_include_directories(AviateGzPlugin PRIVATE
@@ -50,6 +92,8 @@ target_link_libraries(MotorFailurePlugin
     gz-plugin2::register
     gz-transport13::gz-transport13
     gz-msgs10::gz-msgs10
+    protobuf::libprotobuf
+    ${AVIATE_ABSL_CHECK_OP}
 )
 
 target_include_directories(MotorFailurePlugin PRIVATE
@@ -71,10 +115,11 @@ target_include_directories(aviate_gz_bridge PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-# Link against rt for shared memory (shm_open)
-target_link_libraries(aviate_gz_bridge
-    rt
-)
+# Link against rt for shared memory (shm_open) — Linux only;
+# macOS folds POSIX RT into libSystem so the linker can't find -lrt.
+if(NOT APPLE)
+    target_link_libraries(aviate_gz_bridge rt)
+endif()
 
 # Also create static library for easier Rust linking
 add_library(aviate_gz_bridge_static STATIC
@@ -85,9 +130,9 @@ target_include_directories(aviate_gz_bridge_static PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(aviate_gz_bridge_static
-    rt
-)
+if(NOT APPLE)
+    target_link_libraries(aviate_gz_bridge_static rt)
+endif()
 
 # Install bridge library and headers
 install(TARGETS aviate_gz_bridge aviate_gz_bridge_static

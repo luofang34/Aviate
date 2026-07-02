@@ -64,10 +64,17 @@ impl Ekf {
         let new_quat = state.quat.mul(&dq_small);
         state.quat = state.sanitize_quat(new_quat);
 
-        // Update gyro bias
-        state.gyro_bias.x = RadiansPerSecond(state.gyro_bias.x.0 + k_vector[IDX_GB] * innov);
-        state.gyro_bias.y = RadiansPerSecond(state.gyro_bias.y.0 + k_vector[IDX_GB + 1] * innov);
-        state.gyro_bias.z = RadiansPerSecond(state.gyro_bias.z.0 + k_vector[IDX_GB + 2] * innov);
+        // Gyro bias is NOT updated from the heading (mag) scalar
+        // measurement. The Kalman correlation between yaw attitude
+        // error and gyro-bias-Z is non-zero after a few predict
+        // ticks, so without this exclusion a stationary vehicle's
+        // first big mag innovation (the cold-start yaw mismatch)
+        // routes part of itself into the gyro-bias-Z state; the
+        // very next predict step then integrates that phantom bias
+        // as a real angular rate and the vehicle spins after
+        // takeoff. The mag observation only constrains yaw — gyro
+        // bias should be observed by motion, not heading.
+        let _ = (k_vector[IDX_GB], k_vector[IDX_GB + 1], k_vector[IDX_GB + 2]);
 
         // Update accel bias
         state.accel_bias.x =

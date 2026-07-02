@@ -147,3 +147,165 @@ Inclusion in the boundary closes the long-standing gap where the
 """
 verification_methods = ["review"]
 traces_to = []
+
+[[requirements]]
+uid = "af89dde4-4c9a-4e6d-a7a9-5bb2447a58d1"
+id = "SYS-EST-002"
+title = "Estimator delivers bounded state error in nominal flight"
+owner = "aviate-core@aviate"
+description = """
+When sensors are reporting `Healthy` and the vehicle is operating
+inside the configured flight envelope (spec §13), the kernel's
+state estimator SHALL produce attitude, angular rate, position, and
+velocity estimates whose error against ground truth stays inside
+implementation-defined bounds for the duration of the flight. The
+bounds are recorded at the HLR layer (see HLR-EST-201..203) and
+become test pass/fail thresholds.
+
+This is the behavioral complement to SYS-EST-001 (replaceability):
+SYS-EST-001 says the kernel does not care which algorithm produces
+the estimate; SYS-EST-002 says whichever algorithm is loaded must
+meet the numerical accuracy contract or be rejected at integration
+time.
+"""
+verification_methods = ["test"]
+traces_to = []
+
+[[requirements]]
+uid = "6f3eb555-3636-48b4-90f2-5d11abfcaa54"
+id = "SYS-CTL-001"
+title = "Stabilization closes the control loop within authority and time bounds"
+owner = "aviate-core@aviate"
+description = """
+The kernel's vehicle controller SHALL track rate setpoints,
+attitude setpoints, and (when the active control law commands it)
+position setpoints with steady-state error and transient response
+inside implementation-defined bounds, while never producing axis
+commands that exceed the configured authority envelope (max tilt,
+max angular rate, max vertical acceleration; spec §13). Numeric
+thresholds for steady-state error, overshoot, and settle time are
+recorded at the HLR layer (HLR-CTL-201..204).
+
+This requirement is the behavioral statement of stabilization; the
+structural counterparts (HLR-CTL-002: algorithm/state split, the
+substitutable `VehicleController` trait) are SYS-PIPE-001 / HLR-CTL-002
+already in scope.
+"""
+verification_methods = ["test"]
+traces_to = []
+
+[[requirements]]
+uid = "aa8459c8-585e-402c-9de0-7daba25a575b"
+id = "SYS-MIX-001"
+title = "Mixer maps axis commands to bounded, geometrically valid actuator commands"
+owner = "aviate-core@aviate"
+description = """
+For every axis command whose components lie inside the configured
+authority envelope, the kernel's mixer SHALL produce actuator
+commands whose components lie inside `[0.0, 1.0]` (`Normalized`)
+and whose geometric relationship preserves the airframe's mixing
+matrix. Specifically: for the zero axis command at hover throttle T,
+all motors of a symmetric airframe (e.g. QuadX) SHALL receive T.
+
+This is the behavioral statement of "the mixer is correct"; SYS-MOD-001
+and the structural mixer LLRs (LLR-PIPE-104, LLR-STATE-106) cover
+type/state plumbing but not numerical correctness.
+"""
+verification_methods = ["test"]
+traces_to = []
+
+[[requirements]]
+uid = "86aeb60c-68a1-45a3-b452-aef33a0f4df0"
+id = "SYS-FLT-001"
+title = "Faults produce defined, latched, safe responses"
+owner = "aviate-core@aviate"
+description = """
+The kernel SHALL detect the fault conditions listed in spec §15
+(numeric instability of the estimator, all-IMU-failed, command
+staleness beyond `command_timeout_ms`, watchdog deadline missed)
+and respond per the configured `FaultHandlingTable`:
+
+  - Faults of category `Algorithm` (e.g. `NUMERIC_ERROR`,
+    `ESTIMATOR_DIVERGED`) SHALL latch on first occurrence and clear
+    only via `ground_reset()`.
+  - Latched faults inhibiting control SHALL cause the kernel to emit
+    the configured safe actuator pattern instead of computed mixer
+    output.
+  - Detection SHALL occur within one control cycle of the fault
+    condition becoming true.
+
+This requirement is the behavioral spine of spec §15 fault handling;
+existing SYS rows cover none of it.
+"""
+verification_methods = ["test"]
+traces_to = []
+
+[[requirements]]
+uid = "5dedb209-3aec-452a-ab28-4b959a596fff"
+id = "SYS-MORPH-001"
+title = "Mode and geometry transitions do not break the control loop"
+owner = "aviate-core@aviate"
+description = """
+The kernel SHALL support runtime transitions of `ConfigMode` (e.g.
+multirotor Hover ↔ Cruise, VTOL transition) and incremental updates
+of `GeometryState` (continuous airframe-morph parameters) while in
+flight. During a transition:
+
+  - The actuator command emitted in cycle N SHALL reflect exactly
+    one consistent (mode, geometry) pair, never a partial mix.
+  - The delta between cycle N and cycle N+1 actuator commands SHALL
+    be bounded by the configured slew limit so the airframe does
+    not see a discontinuous step.
+
+The behavioral guarantee here is necessary for airframes whose
+mission profile crosses mode boundaries (eVTOL transition, fixed-
+wing-to-hover capture). The structural prerequisites (SYS-STATE-001
+single-owner, SYS-CFG-001 immutable resolved config) are already in
+scope.
+"""
+verification_methods = ["test"]
+traces_to = []
+
+[[requirements]]
+uid = "78a41dd0-c754-439f-a2a1-325111713954"
+id = "SYS-INIT-001"
+title = "Kernel cold-start and arm sequence is deterministic"
+owner = "aviate-core@aviate"
+description = """
+Given identical input sensor traces and identical resolved
+configuration, the kernel SHALL produce a bit-identical `KernelState`
+at every cycle N ≥ 0 across runs and across redundant channels of
+the same build. The arm sequence SHALL satisfy a published list of
+pre-arm gates (estimator initialized + numerically clean, config
+loaded + canonical-hash matches, watchdog kicked within deadline,
+all sensor channels `Healthy` within the last second), and SHALL
+reject `arm()` with a typed `ArmError` when any gate fails.
+
+Determinism is a precondition for spec §16 lockstep (cross-channel
+byte equality); the existing HLR-CFG-001 / HLR-STATE-* rows cover
+the structural side of state ownership and config immutability, but
+not the end-to-end "identical input ⇒ identical state at cycle N"
+claim.
+"""
+verification_methods = ["test"]
+traces_to = []
+
+[[requirements]]
+uid = "c925725e-29bf-40e1-b0d5-2e257ed02819"
+id = "SYS-ARM-001"
+title = "Disarmed kernel produces safe actuator output"
+owner = "aviate-core@aviate"
+description = """
+While `init_state` is anything other than `Armed`, the kernel SHALL
+emit only the configured safe (zero-or-idle) actuator pattern,
+independent of estimator state, latched faults, commanded setpoint,
+or watchdog health. This is the most fundamental ground-safety
+invariant: a vehicle on the bench with rotors spinning because the
+estimator briefly produced a non-zero setpoint is unacceptable
+regardless of what else the kernel was doing.
+
+The companion to SYS-FLT-001: faults force the same safe pattern
+*after* arm; SYS-ARM-001 forces it *before* (and after disarm).
+"""
+verification_methods = ["test"]
+traces_to = []

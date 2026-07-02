@@ -64,6 +64,7 @@ ALLOWLIST=(
     "aviate-hal/xil/src/fault_ctrl.rs|${MAX_RS_LINES}|XIL fault injection controller; follow-up split"
     "aviate-hal/xil/src/fault_protocol.rs|${MAX_RS_LINES}|XIL fault-injection wire protocol"
     "aviate-hal/xil/src/sitl_io.rs|${MAX_RS_LINES}|SITL I/O transport; follow-up split"
+    "aviate-apps/sitl-gazebo-x500/src/synthesize.rs|${MAX_RS_LINES}|X500 Gazebo SITL ground-truth->sensor synthesis + frame-conversion unit tests; out-of-scope app, split candidate"
 )
 
 VERBOSE=0

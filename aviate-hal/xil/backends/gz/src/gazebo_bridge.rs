@@ -292,6 +292,10 @@ pub extern "C" fn aviate_gz_bridge_feed_sensors(data: *const GzSensorData) -> c_
             lat_deg: data.lat_deg,
             lon_deg: data.lon_deg,
             alt_m: data.alt_m,
+            // This backend hands over plain GNSS-shaped fields; the
+            // SITL FC binary populates `position_ned` itself when it
+            // synthesizes a packet from ground truth.
+            position_ned: [0.0; 3],
             vel_ned: data.vel_ned,
             fix,
             h_acc: data.h_acc,

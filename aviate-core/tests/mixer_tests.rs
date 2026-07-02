@@ -200,6 +200,47 @@ mod tests {
     }
 
     #[test]
+    fn test_quad_mixer_x500_per_motor_formula() {
+        use aviate_core::mixer::QuadXMixerX500;
+        // The X500 rotor numbering flips the yaw sign on the CCW corners
+        // vs the standard QuadX mixer:
+        //   m0 = t - r + p + y,  m1 = t + r - p + y,
+        //   m2 = t + r + p - y,  m3 = t - r - p - y.
+        let mixer = QuadXMixerX500 {
+            timestamp_source: dummy_timestamp,
+        };
+        let axis = AxisCommand {
+            roll: NormalizedSigned(0.1),
+            pitch: NormalizedSigned(0.05),
+            yaw: NormalizedSigned(0.02),
+            collective: Normalized(0.5),
+        };
+        let cmd = mixer.mix(&axis);
+        // t=0.5,r=0.1,p=0.05,y=0.02 → [0.47, 0.57, 0.63, 0.33], all in range.
+        assert!(
+            (cmd.outputs[0].0 - 0.47).abs() < 1e-5,
+            "m0={}",
+            cmd.outputs[0].0
+        );
+        assert!(
+            (cmd.outputs[1].0 - 0.57).abs() < 1e-5,
+            "m1={}",
+            cmd.outputs[1].0
+        );
+        assert!(
+            (cmd.outputs[2].0 - 0.63).abs() < 1e-5,
+            "m2={}",
+            cmd.outputs[2].0
+        );
+        assert!(
+            (cmd.outputs[3].0 - 0.33).abs() < 1e-5,
+            "m3={}",
+            cmd.outputs[3].0
+        );
+        assert_eq!(cmd.active_mask, 0b1111);
+    }
+
+    #[test]
     fn test_quad_mixer_saturation() {
         let mixer = QuadXMixer {
             timestamp_source: dummy_timestamp,

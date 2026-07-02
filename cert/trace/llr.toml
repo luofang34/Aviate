@@ -1143,8 +1143,14 @@ feature = "env-hitl"))` such that `env-flight` builds compile
 none of them. This is the structural witness that the boundary's
 `in_scope` listing of `aviate-runtime` is closed under cargo's
 dependency resolution for the env-flight feature combination.
+
+Verified by review of the source guards plus the automated
+dependency analysis in `scripts/check_runtime_boundary.sh` (the
+`runtime-boundary` CI job) — there is no in-process unit test,
+since a compile-time guard cannot be exercised by a runtime
+`#[test]`.
 """
-verification_methods = ["review", "test"]
+verification_methods = ["review"]
 modules = ["aviate-runtime/src/lib.rs", "aviate-runtime/Cargo.toml"]
 derived = false
 traces_to = ["fa9b3c0e-7d54-4e1f-b9b2-43c5d8a1f723"]
@@ -1164,9 +1170,12 @@ activations. The `env-flight` feature SHALL NOT list
 Verification: `cargo tree -p aviate-runtime --no-default-features
 --features env-flight` SHALL contain only crates that are
 listed in `cert/boundary.toml`'s `in_scope` set (or are external
-DAL-D base crates such as `log`).
+DAL-D base crates such as `log`). This dependency-closure check is
+automated in `scripts/check_runtime_boundary.sh` (the
+`runtime-boundary` CI job) and reviewed against the manifest;
+it is an analysis artifact, not a runtime `#[test]`.
 """
-verification_methods = ["review", "test"]
+verification_methods = ["review"]
 modules = ["aviate-runtime/Cargo.toml"]
 derived = false
 traces_to = ["fa9b3c0e-7d54-4e1f-b9b2-43c5d8a1f723"]
@@ -1438,3 +1447,541 @@ verification_methods = ["review", "test"]
 modules = ["aviate-runtime/src/sim.rs", "aviate-runtime/src/sim/step.rs"]
 derived = false
 traces_to = ["5d8a3f1c-7e2b-4e9d-a4f6-3b8c1d5e9a07"]
+
+# -------------------------------------------------------------------
+# Behavioral LLRs (200-series). These decompose the behavioral HLRs
+# (200-series in hlr.toml) into code-pointing implementation
+# requirements. Numeric thresholds are inherited from the HLR layer;
+# this layer pins which module/symbol implements each clause.
+# -------------------------------------------------------------------
+
+[[requirements]]
+uid = "b224509a-6d91-490b-921d-1f20618525fd"
+id = "LLR-EST-201"
+title = "Static cold-start convergence path is observable in EkfState"
+owner = "aviate-core@aviate"
+description = """
+`EkfState::is_initialized()` SHALL transition from false to true
+within 1.0 s of simulated time after the first call to
+`Ekf::observe()` where the IMU + magnetometer SensorReadings all
+report `Good` health and represent a stationary attitude. Within
+10.0 s, `Ekf::estimate(state).attitude` SHALL be within 2.0° (roll/
+pitch) and 5.0° (yaw) of the simulated ground-truth attitude.
+
+The implementation path is: `Ekf::observe` → seed branch on
+`!is_initialized()` → accel-magnetometer attitude seed →
+mark-initialized. Subsequent cycles run the normal predict + update
+fusion path against the seeded state.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf.rs", "aviate-core/src/ekf/predict.rs", "aviate-core/src/ekf/update.rs"]
+derived = false
+traces_to = ["35c5ea78-f62b-46c3-aea2-8cc5404122fe"]
+
+[[requirements]]
+uid = "8b33176d-4e43-413d-a750-7380a6f4ca45"
+id = "LLR-EST-202"
+title = "predict_state tracks body rate under maneuvering input"
+owner = "aviate-core@aviate"
+description = """
+For each cycle in which the IMU SensorReading reports `Good` health
+and `dt > 0` is finite, the EKF predict step (`predict_state`)
+SHALL: (a) subtract `gyro_bias` from the raw gyro sample; (b)
+integrate quaternion forward by the bias-corrected body rate over
+`dt`; (c) propagate covariance P = F·P·Fᵀ + Q. The cumulative
+result over a ±30 °/s smooth maneuver SHALL track ground-truth
+attitude with finite-difference rate error ≤ 1.0 °/s.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf/predict.rs"]
+derived = false
+traces_to = ["fdd76262-2577-49d8-8dd8-700bf6829968"]
+
+[[requirements]]
+uid = "52248c34-20bf-418d-9ac2-93dff2689c92"
+id = "LLR-EST-203"
+title = "GNSS+baro fusion converges position estimate under healthy input"
+owner = "aviate-core@aviate"
+description = """
+`Ekf::update_gnss_state` SHALL fuse position-NED and velocity-NED
+scalars under per-axis innovation gating; `Ekf::update_baro_state`
+SHALL fuse barometric-altitude-derived NED-Z scalar measurements.
+Run together at the configured rates over a 30 s window with both
+sensors `Good`, the estimator's position estimate SHALL satisfy
+horizontal error ≤ 0.5 m and vertical error ≤ 0.3 m against ground
+truth.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf/update.rs", "aviate-core/src/ekf/scalar.rs"]
+derived = false
+traces_to = ["80d94e93-b4a8-4f69-8426-31395eabb89c"]
+
+[[requirements]]
+uid = "a8a37317-dd7c-4218-b891-58066c2affb5"
+id = "LLR-EST-204"
+title = "Non-finite IMU sample or dt latches NUMERIC_ERROR"
+owner = "aviate-core@aviate"
+description = """
+When `Ekf::observe()` is invoked with a SensorSet whose IMU sample
+contains any non-finite (NaN, +Inf, -Inf) gyro or accelerometer
+component, or with non-finite `dt`, the call SHALL: (a) set
+`EkfState::has_numeric_fault() == true` before any state mutation;
+(b) return without mutating position, velocity, attitude, biases,
+or covariance.
+
+The same gate applies recursively to any sensor channel whose
+contents would propagate non-finite values into the fusion path.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf.rs", "aviate-core/src/ekf/predict.rs"]
+derived = false
+traces_to = ["a75ad122-2e13-4268-b388-f821d1bea6e3"]
+
+[[requirements]]
+uid = "7b2330c0-b6fa-4874-9716-5adc566b637c"
+id = "LLR-EST-205"
+title = "NUMERIC_ERROR latch persists across clean inputs until reset"
+owner = "aviate-core@aviate"
+description = """
+Once `EkfState::has_numeric_fault() == true` is latched, subsequent
+`Ekf::observe()` invocations with fully-Healthy sensors and finite
+`dt` SHALL NOT clear the latch and SHALL NOT advance the
+estimator state. `EkfState::reset()` (driven by the kernel's
+`ground_reset()` path) SHALL be the only mechanism that clears the
+latch.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf.rs"]
+derived = false
+traces_to = ["a75ad122-2e13-4268-b388-f821d1bea6e3"]
+
+[[requirements]]
+uid = "1d6f3a1e-9a0c-453d-a336-c3da478a2597"
+id = "LLR-EST-206"
+title = "GNSS dropout enters dead-reckoning with bounded drift"
+owner = "aviate-core@aviate"
+description = """
+When `GnssData.health` is not `Good` (or `SensorReading.health` for
+the GNSS channel is not `Good`), `update_gnss_state` SHALL no-op
+per LLR-EST-103. With the GNSS-fusion path inactive, predict-only
+integration over IMU samples SHALL keep horizontal position drift
+≤ 2.0 m over a 5.0 s dropout window when the vehicle is in
+steady-state flight.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf/predict.rs", "aviate-core/src/ekf/update.rs"]
+derived = false
+traces_to = ["1a16d9c8-7632-4aee-9b23-3bcbfe74036d"]
+
+[[requirements]]
+uid = "7639c50e-8d68-4f92-afac-bbb3b8382095"
+id = "LLR-EST-207"
+title = "GNSS-return fusion is innovation-gated to suppress position jumps"
+owner = "aviate-core@aviate"
+description = """
+On the first GNSS sample after a dropout, `update_gnss_state` SHALL
+apply per-axis innovation gating (the configured threshold) so a
+single large-innovation sample cannot step the state by more than
+the gate width. Subsequent samples re-converge through normal
+scalar updates.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf/update.rs", "aviate-core/src/ekf/scalar.rs"]
+derived = false
+traces_to = ["1a16d9c8-7632-4aee-9b23-3bcbfe74036d"]
+
+[[requirements]]
+uid = "bc09f708-fcc2-4ad4-95ca-1a133eee3d83"
+id = "LLR-CTL-201"
+title = "MultirotorController rate loop tracks setpoint within bound"
+owner = "aviate-core@aviate"
+description = """
+The rate loop in `MultirotorController::step()` SHALL compute the
+axis torque command as a function of the rate setpoint and the
+estimator's reported angular velocity, with the closed-loop
+steady-state error ≤ 0.5 °/s on each body axis under a ±60 °/s
+smooth command profile (verified through a kinematic-surrogate
+unit harness, and through Gazebo XIL with the X500 model).
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/control/rate.rs", "aviate-core/src/control/multirotor.rs"]
+derived = false
+traces_to = ["363a9170-26ab-425e-b074-126b63a90cea"]
+
+[[requirements]]
+uid = "b6e14a3c-ac9b-4280-8c29-6d8991352b05"
+id = "LLR-CTL-202"
+title = "Attitude loop step response is bounded in overshoot and settle time"
+owner = "aviate-core@aviate"
+description = """
+The attitude loop in `MultirotorController::step()` SHALL produce a
+rate setpoint such that, given an instantaneous 10° roll-setpoint
+step from steady hover, the closed-loop attitude response satisfies
+overshoot ≤ 30 % and settle (±5 %) ≤ 1.0 s, with no axis command
+exceeding the configured authority envelope.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/control/attitude.rs", "aviate-core/src/control/multirotor.rs"]
+derived = false
+traces_to = ["c61d7392-52fa-40ee-ba86-bf3794443555"]
+
+[[requirements]]
+uid = "79ec1f95-d04d-4f28-a346-727a3d3f8ecb"
+id = "LLR-CTL-203"
+title = "Position loop holds hover within radial and altitude bounds"
+owner = "aviate-core@aviate"
+description = """
+The position loop in `MultirotorController::step()` SHALL produce
+an attitude setpoint such that, given a healthy position estimate
+and zero ambient disturbance, the closed-loop position holds within
+0.5 m radial and 0.3 m altitude over a 30 s observation window
+(verified via Gazebo XIL).
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/control/position.rs", "aviate-core/src/control/multirotor.rs"]
+derived = false
+traces_to = ["7c75fe16-1a65-4362-8983-41dcf844e587"]
+
+[[requirements]]
+uid = "33539bff-8bb8-408e-9e8e-370d8b0fd6a3"
+id = "LLR-CTL-204"
+title = "Envelope clamp enforces authority limits before mixer"
+owner = "aviate-core@aviate"
+description = """
+Before any `AxisCommand` reaches the mixer, the controller SHALL
+clamp each component to the corresponding authority envelope
+(`max_tilt_rad`, `max_rate_rad_s`, `max_vertical_accel_mss`). When
+a clamp activates, the resulting cycle-to-cycle axis-command delta
+SHALL respect the configured slew limit (no instantaneous jump to
+the envelope edge if the previous cycle was far below).
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/control/envelope.rs"]
+derived = false
+traces_to = ["3c1fba89-90d3-4b4d-9f86-357cc2c3d955"]
+
+[[requirements]]
+uid = "221dbc10-8c52-4842-8513-657a0d45810f"
+id = "LLR-CTL-205"
+title = "Cascade time-scale separation keeps the inner loop at least 5x the outer-loop bandwidth"
+owner = "aviate-core@aviate"
+description = """
+The cascade SHALL maintain a rate-loop (inner) bandwidth at least
+5x the attitude-loop (outer) bandwidth on every controlled axis:
+`(K · rate_p) / att_p ≥ 5`, where `K` is the airframe's angular
+acceleration per unit normalised torque. This separation is the
+structural precondition under which the single-loop classical-
+control margins asserted by LLR-CTL-202 hold: below 5:1 the outer
+loop sees the inner loop's dynamics directly and the cascade pole
+positions migrate unfavourably under tuning perturbation. Axes
+configured with `rate_p = 0` (open-loop yaw on aerodynamically-
+stable airframes) are exempt — there is no inner-loop pole to
+separate.
+"""
+verification_methods = ["test"]
+modules = [
+    "aviate-core/src/control/cascade_gains.rs",
+    "aviate-core/src/control/rate.rs",
+    "aviate-core/src/control/attitude.rs",
+]
+derived = false
+traces_to = ["c61d7392-52fa-40ee-ba86-bf3794443555"]
+
+[[requirements]]
+uid = "073c3781-dad2-4983-a04c-f721baa11100"
+id = "LLR-MIX-201"
+title = "QuadXMixer output components stay inside [0.0, 1.0]"
+owner = "aviate-core@aviate"
+description = """
+For every `AxisCommand` whose components lie inside the configured
+authority envelope, `QuadXMixer::mix()` SHALL produce an
+`ActuatorCmd` whose every used slot is `Normalized` in `[0.0, 1.0]`.
+Unused slots SHALL carry the airframe's configured idle value, not
+non-finite or out-of-range values.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/mixer.rs"]
+derived = false
+traces_to = ["f706ab12-12a2-4567-9258-aeab939f4bf7"]
+
+[[requirements]]
+uid = "05e74b39-5688-4f3b-a359-adb0ecad97a5"
+id = "LLR-MIX-202"
+title = "QuadXMixer is bit-symmetric for zero axis command"
+owner = "aviate-core@aviate"
+description = """
+For `QuadXMixer::mix(AxisCommand { roll: 0.0, pitch: 0.0, yaw: 0.0,
+throttle: T })` with any `T` in `[0.0, 1.0]`, the four motor slots
+in the resulting `ActuatorCmd` SHALL all equal `T` exactly
+(bit-equal Scalar). Any non-zero asymmetry indicates an incorrect
+sign or row-permutation in the mixing matrix.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/mixer.rs"]
+derived = false
+traces_to = ["d71b37a4-6022-4e2b-8ddd-625b4a2e17de"]
+
+[[requirements]]
+uid = "7645870e-d505-4c5c-b4e2-a2496eb6128c"
+id = "LLR-MIX-203"
+title = "Sanitizer substitutes safe pattern for unhealthy group in current cycle"
+owner = "aviate-core@aviate"
+description = """
+When `Sanitizer::sanitize()` observes `ActuatorHealth::Unhealthy`
+for an actuator group in the input `ActuatorState`, it SHALL
+overwrite that group's commanded outputs in the output
+`ActuatorCmd` with the group's configured safe pattern within the
+same call. The substitution SHALL NOT depend on the previous
+cycle's sanitizer state.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/mixer/sanitizer_impl.rs"]
+derived = false
+traces_to = ["ebf6171c-dbae-41cf-9e3c-d5b625a8348f"]
+
+[[requirements]]
+uid = "c3b739d2-2cd3-471c-8c52-e0a0f26fc74e"
+id = "LLR-MIX-204"
+title = "consecutive_fallback counter is monotonic per group"
+owner = "aviate-core@aviate"
+description = """
+For every cycle in which `Sanitizer::sanitize()` activates fallback
+for an actuator group, `ActuatorFallbackState.consecutive_fallback`
+for that group SHALL increment by 1, saturating at
+`MAX_CONSECUTIVE_FALLBACK`. On the first cycle the group reports
+`Healthy`, the counter SHALL reset to 0. The counter SHALL NOT
+decrement under any other condition.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/mixer/sanitizer_impl.rs", "aviate-core/src/mixer.rs"]
+derived = false
+traces_to = ["ebf6171c-dbae-41cf-9e3c-d5b625a8348f"]
+
+[[requirements]]
+uid = "afc40ab1-44eb-412b-b6e3-519018bd93dd"
+id = "LLR-FLT-201"
+title = "Disarmed update path emits safe actuator pattern"
+owner = "aviate-core@aviate"
+description = """
+When `AviateKernelImpl::update()` is invoked while
+`KernelState.init_state != InitState::Armed`, the emitted
+`UpdateResult.actuator_cmd` SHALL be the configured safe pattern
+for the active `ConfigMode`. The mixer SHALL NOT be invoked, or
+its output SHALL be discarded and replaced — either implementation
+choice is acceptable as long as the externally-observable command
+is the safe pattern.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel_update.rs", "aviate-core/src/kernel_logic.rs"]
+derived = false
+traces_to = ["cde83b23-7574-4b9f-af99-624918000900"]
+
+[[requirements]]
+uid = "ec484ea9-adda-4ad2-8b95-a0e82edcfd54"
+id = "LLR-FLT-202"
+title = "Disarmed output is independent of estimator and command input"
+owner = "aviate-core@aviate"
+description = """
+The safe-pattern output of LLR-FLT-201 SHALL be byte-identical
+across calls that supply: a stationary healthy estimator vs an
+arbitrary unhealthy estimator state; a zero `Command` vs a
+saturating non-finite `Command`; healthy actuator state vs all-
+unhealthy actuator state. The disarmed safe pattern is a pure
+function of `cfg` and `mode`, never of the inputs.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel_update.rs"]
+derived = false
+traces_to = ["cde83b23-7574-4b9f-af99-624918000900"]
+
+[[requirements]]
+uid = "98620e8c-14dc-410a-bee7-6e9c29c6bdb4"
+id = "LLR-FLT-203"
+title = "arm() enumerates pre-arm gates exactly as listed in HLR-FLT-202"
+owner = "aviate-core@aviate"
+description = """
+`AviateKernelImpl::arm()` SHALL check every gate listed in
+HLR-FLT-202 (estimator-initialized, estimator-numerically-clean,
+sensor-channels-fresh, watchdog-kicked, config-canonical-hash-
+matches, no-latched-priority-fault), in that order or with
+order-independent semantics. If any gate fails, `arm()` SHALL
+return `Err(ArmError::<gate-discriminant>)` and SHALL NOT mutate
+`init_state`.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel_logic.rs"]
+derived = false
+traces_to = ["30f749c3-82ee-4ca3-9c0b-91413894c385", "3fcf8206-d100-4323-a7ea-67187012d42a"]
+
+[[requirements]]
+uid = "384e2fb5-1264-4870-854d-f6a1e89a1117"
+id = "LLR-FLT-204"
+title = "ArmError discriminants map one-to-one to pre-arm gates"
+owner = "aviate-core@aviate"
+description = """
+Each gate enumerated in LLR-FLT-203 SHALL have a unique
+`ArmError::*` discriminant. The error returned by `arm()` SHALL
+identify which gate failed; reviewers SHALL be able to walk the
+gate list and find a one-to-one mapping to `ArmError` variants.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel_types.rs"]
+derived = false
+traces_to = ["30f749c3-82ee-4ca3-9c0b-91413894c385"]
+
+[[requirements]]
+uid = "ef751b33-00fb-4598-892d-2f4682b95b91"
+id = "LLR-FLT-205"
+title = "NUMERIC_ERROR latched → update emits safe actuator pattern"
+owner = "aviate-core@aviate"
+description = """
+When `KernelState.faults.contains(NUMERIC_ERROR)`, the
+`update_step` body SHALL emit the safe actuator pattern for the
+active mode regardless of estimator state, controller output, or
+mixer output for that cycle. The fault check SHALL precede any
+mixer invocation in the cycle.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel_update.rs"]
+derived = false
+traces_to = ["6a9be893-efec-4a80-99c0-885dbe19808e"]
+
+[[requirements]]
+uid = "a1ebe76a-37a3-4c67-9eea-e4676184fc74"
+id = "LLR-FLT-206"
+title = "ground_reset() clears NUMERIC_ERROR and re-initializes estimator"
+owner = "aviate-core@aviate"
+description = """
+`AviateKernelImpl::ground_reset()` SHALL clear `NUMERIC_ERROR` (and
+the other Algorithm-category latched faults listed in spec §15)
+from `KernelState.faults`, invoke `EkfState::reset()` to clear the
+estimator's internal numeric-fault latch, and return the kernel to
+a state where re-arming via `arm()` becomes possible provided the
+other pre-arm gates also pass.
+
+`disarm()` SHALL NOT have this effect.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel_logic.rs"]
+derived = false
+traces_to = ["6a9be893-efec-4a80-99c0-885dbe19808e"]
+
+[[requirements]]
+uid = "80d33847-106a-46c5-9c98-c6e4eb330103"
+id = "LLR-FLT-207"
+title = "command_age_ms threshold clears COMMAND_RECENT in cycle"
+owner = "aviate-core@aviate"
+description = """
+Within `update_step`, the in-flight check flag `COMMAND_RECENT`
+SHALL be cleared in the cycle for which `command_age_ms >=
+self.cfg.command_timeout_ms` is observed (`update_command_status`
+logic). The clear SHALL take effect in the same cycle, not the
+next.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel_update.rs", "aviate-core/src/kernel_logic.rs"]
+derived = false
+traces_to = ["48f7c065-7176-44b1-b6e8-77ae93d4f7ef"]
+
+[[requirements]]
+uid = "176bf48d-1f99-4769-9dd5-c501719f71ec"
+id = "LLR-FLT-208"
+title = "Command-loss safe output respects per-actuator slew limit"
+owner = "aviate-core@aviate"
+description = """
+When the kernel switches to the command-loss-safe mode due to
+LLR-FLT-207, the actuator-command delta between the cycle before
+the switch and the cycle of the switch SHALL respect the
+configured per-actuator slew limit. There SHALL NOT be a
+discontinuous step toward the safe pattern.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel_update.rs", "aviate-core/src/kernel/slew.rs"]
+derived = false
+traces_to = ["48f7c065-7176-44b1-b6e8-77ae93d4f7ef"]
+
+[[requirements]]
+uid = "d20185a8-dd10-45f4-a1b6-f5b31e25cd40"
+id = "LLR-FLT-209"
+title = "Command-recency recovery re-engages active control law"
+owner = "aviate-core@aviate"
+description = """
+When `command_age_ms` falls back below `command_timeout_ms` after
+having been over, the `COMMAND_RECENT` flag SHALL re-engage in the
+same cycle, and the active control law SHALL resume. Command-
+staleness is recoverable and SHALL NOT be latched.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel_update.rs", "aviate-core/src/kernel_logic.rs"]
+derived = false
+traces_to = ["48f7c065-7176-44b1-b6e8-77ae93d4f7ef"]
+
+[[requirements]]
+uid = "394c7c2b-ea23-4bad-bb84-5e2deb55e7cb"
+id = "LLR-MORPH-201"
+title = "ConfigMode swap is atomic across the cycle output"
+owner = "aviate-core@aviate"
+description = """
+When `request_config_mode(to)` is accepted, the cycle in which the
+swap takes effect SHALL select `mode_config` for the mixer, the
+authority envelope, the safe pattern, and the active controller
+from the same `ModeConfig` (either before or after). Cycle output
+SHALL NOT mix parameters from `mode_before` and `mode_after`.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel_logic.rs", "aviate-core/src/kernel_update.rs"]
+derived = false
+traces_to = ["aa59b8a5-8f1e-4a0b-8da6-bfc202364e69"]
+
+[[requirements]]
+uid = "6de143ed-43fb-4011-81a9-3ccbd89b410f"
+id = "LLR-MORPH-202"
+title = "GeometryState update produces slew-limited actuator delta"
+owner = "aviate-core@aviate"
+description = """
+When the mixer reads a `GeometryState` that differs from the
+previous cycle's `GeometryState`, the resulting per-actuator delta
+SHALL respect the configured slew limit. The mixer SHALL NOT
+present a discontinuous actuator command spike attributable to the
+geometry change alone (input signal changes excluded).
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel_update.rs", "aviate-core/src/kernel/slew.rs"]
+derived = false
+traces_to = ["ef464858-6ca8-452e-959e-089c4e194a69"]
+
+[[requirements]]
+uid = "6000dd0e-0d29-4626-8a4f-21f0e5be9273"
+id = "LLR-INIT-201"
+title = "KernelState replay is bit-identical given identical input streams"
+owner = "aviate-core@aviate"
+description = """
+Two `AviateKernelImpl` instances of the same build, constructed
+with the same `ResolvedKernelConfig`, fed bit-identical sequences
+of cycle inputs, SHALL satisfy
+`KernelState::encode_canonical(a) == KernelState::encode_canonical(b)`
+at every cycle N. The `Replicable` encoding of `KernelState`
+(LLR-REPL-101..104) is the witness for this equality.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel/state.rs", "aviate-core/src/replicable.rs"]
+derived = false
+traces_to = ["30d12e11-bdb6-4a0a-b078-fef3e81181df"]
+
+[[requirements]]
+uid = "69824cad-4c2f-4c71-8188-51f5bab374a7"
+id = "LLR-INIT-202"
+title = "Each pre-arm gate has a dedicated failing-case test"
+owner = "aviate-core@aviate"
+description = """
+For every gate enumerated in LLR-FLT-203, the test suite SHALL
+contain at least one `#[test]` function that constructs a kernel
+with every other gate satisfied, fails the single gate under test,
+and asserts that `arm()` returns the specific `ArmError`
+discriminant. This makes the pre-arm contract individually
+falsifiable; a reviewer can grep for the gate and find its test.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/tests/kernel.rs"]
+derived = false
+traces_to = ["3fcf8206-d100-4323-a7ea-67187012d42a"]

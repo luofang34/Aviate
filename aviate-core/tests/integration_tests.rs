@@ -3,7 +3,8 @@
 #[cfg(test)]
 mod tests {
     use aviate_core::control::attitude::AttitudeController;
-    use aviate_core::control::rate::RateController;
+    use aviate_core::control::cascade_gains::CascadeGains;
+    use aviate_core::control::rate::{RateController, RateLoopState};
     use aviate_core::control::{Command, VehicleController};
     use aviate_core::ekf::{Ekf, EkfState};
     use aviate_core::math::{Quaternion, Vector3};
@@ -817,9 +818,20 @@ mod tests {
     }
 
     // --- Rate Controller Tests ---
+
+    // P-only rate controller: `rate_d = 0` collapses the loop to a
+    // plain proportional law so these integration checks assert an
+    // exact `error · gain` response from a single fresh-state step.
+    fn p_only_rate(rate_p: [f32; 3]) -> RateController {
+        let mut g = CascadeGains::x500_defaults();
+        g.rate_p = rate_p;
+        g.rate_d = [0.0; 3];
+        RateController::new(g)
+    }
+
     #[test]
     fn test_rate_controller_zero_error() {
-        let ctrl = RateController::new([1.0, 1.0, 1.0]);
+        let ctrl = p_only_rate([1.0, 1.0, 1.0]);
         let sp = [
             RadiansPerSecond(1.0),
             RadiansPerSecond(0.5),
@@ -830,7 +842,8 @@ mod tests {
             RadiansPerSecond(0.5),
             RadiansPerSecond(-0.5),
         ];
-        let out = ctrl.step(sp, cur);
+        let mut rate_state = RateLoopState::default();
+        let out = ctrl.step(&mut rate_state, sp, cur, 0.001);
         assert!((out[0].0).abs() < 1e-5);
         assert!((out[1].0).abs() < 1e-5);
         assert!((out[2].0).abs() < 1e-5);
@@ -838,14 +851,15 @@ mod tests {
 
     #[test]
     fn test_rate_controller_positive_error() {
-        let ctrl = RateController::new([1.0, 1.0, 1.0]);
+        let ctrl = p_only_rate([1.0, 1.0, 1.0]);
         let sp = [
             RadiansPerSecond(1.0),
             RadiansPerSecond(0.0),
             RadiansPerSecond(0.0),
         ];
         let cur = [RadiansPerSecond(0.0); 3];
-        let out = ctrl.step(sp, cur);
+        let mut rate_state = RateLoopState::default();
+        let out = ctrl.step(&mut rate_state, sp, cur, 0.001);
         assert!(out[0].0 > 0.0); // Positive error → positive output
         assert!((out[0].0 - 1.0).abs() < 1e-5);
         assert!((out[1].0).abs() < 1e-5);
@@ -854,14 +868,15 @@ mod tests {
 
     #[test]
     fn test_rate_controller_negative_error() {
-        let ctrl = RateController::new([1.0, 1.0, 1.0]);
+        let ctrl = p_only_rate([1.0, 1.0, 1.0]);
         let sp = [RadiansPerSecond(0.0); 3];
         let cur = [
             RadiansPerSecond(1.0),
             RadiansPerSecond(0.0),
             RadiansPerSecond(0.0),
         ];
-        let out = ctrl.step(sp, cur);
+        let mut rate_state = RateLoopState::default();
+        let out = ctrl.step(&mut rate_state, sp, cur, 0.001);
         assert!(out[0].0 < 0.0); // Negative error → negative output
         assert!((out[0].0 - (-1.0)).abs() < 1e-5);
         assert!((out[1].0).abs() < 1e-5);
@@ -870,14 +885,15 @@ mod tests {
 
     #[test]
     fn test_rate_controller_saturation() {
-        let ctrl = RateController::new([0.5, 0.5, 0.5]); // Smaller gain to test saturation
+        let ctrl = p_only_rate([0.5, 0.5, 0.5]); // Smaller gain to test saturation
         let sp = [
             RadiansPerSecond(3.0),
             RadiansPerSecond(0.0),
             RadiansPerSecond(0.0),
         ]; // Large error
         let cur = [RadiansPerSecond(0.0); 3];
-        let out = ctrl.step(sp, cur);
+        let mut rate_state = RateLoopState::default();
+        let out = ctrl.step(&mut rate_state, sp, cur, 0.001);
         assert!((out[0].0 - 1.0).abs() < 1e-5); // Should clamp to 1.0
     }
 
@@ -919,13 +935,15 @@ mod tests {
 
         let rate_sp = ctrl.step(&setpoint, &current);
 
-        // For 180 deg roll error, the shortest path is 180 deg roll.
-        // The quaternion error from identity to current is [0, -1, 0, 0].
-        // roll_err = 2 * x = 2 * (-1) = -2.0. (because q_err = [0, -1, 0, 0])
-        // rate_sp[0] = roll_err * gain[0] = -2.0 * 6.0 = -12.0.
+        // For 180 deg roll error, q_err = [0, -1, 0, 0], so
+        // roll_err = 2 * x = -2.0 and the unclamped demand would be
+        // -2.0 * 6.0 = -12 rad/s. The attitude loop caps each axis at
+        // MAX_ATTITUDE_RATE_CMD = 3 rad/s, so the roll command
+        // saturates at the negative authority limit.
         assert!(
-            (rate_sp[0].0 - (-12.0)).abs() < 1e-5,
-            "Expected -12 rad/s roll rate setpoint"
+            (rate_sp[0].0 - (-3.0)).abs() < 1e-5,
+            "Expected roll rate to saturate at -3 rad/s, got {}",
+            rate_sp[0].0
         );
         assert!(
             (rate_sp[1].0).abs() < 1e-5,

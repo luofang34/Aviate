@@ -176,6 +176,9 @@ impl HilBackend {
                 lat_deg: (gps.lat as f64) / 1e7,
                 lon_deg: (gps.lon as f64) / 1e7,
                 alt_m: (gps.alt as f32) / 1000.0, // mm to m
+                // HIL_GPS carries WGS84 lat/lon/alt only; consumers
+                // that need local NED do the projection themselves.
+                position_ned: [0.0; 3],
                 vel_ned: [
                     (gps.vn as f32) / 100.0, // cm/s to m/s
                     (gps.ve as f32) / 100.0,

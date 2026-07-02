@@ -23,6 +23,7 @@
 //!
 //! See `docs/AVIATE_SPEC.md` §19 (Configuration) for the spec contract.
 
+use crate::control::cascade_gains::CascadeGains;
 use crate::control::{ConfigMode, Limits};
 use crate::fault::FaultHandlingTable;
 use crate::kernel_types::DEFAULT_COMMAND_TIMEOUT_MS;
@@ -67,6 +68,47 @@ pub struct ResolvedKernelConfig {
     /// inside `mode_config` and supersede this for normal sanitization.
     /// See DRQ-MIX-001 for the full per-mode migration.
     pub safe_output: [Normalized; MAX_ACTUATORS],
+
+    /// Per-actuator per-cycle slew limit (DRQ-FLT-001 / DRQ-MORPH-001).
+    ///
+    /// `slew_limit_per_cycle[i] > 0`: the per-cycle delta on channel
+    /// `i` is clamped to `±slew_limit_per_cycle[i]` of the previous
+    /// cycle's output. `<= 0` or non-finite: channel unconstrained
+    /// (default — preserves existing airframe behavior).
+    ///
+    /// Applies only in the normal control path; severe-fault
+    /// early-return paths (numeric error, enum corruption) bypass
+    /// this and emit the safe pattern immediately (LLR-FLT-205).
+    pub slew_limit_per_cycle: [Normalized; MAX_ACTUATORS],
+
+    /// Cascade tuning — every PID gain and limit the multirotor
+    /// controller reads. Owned here, not on the controller struct,
+    /// so `canonical_hash` covers tuning (DRQ-CTL-001). Before this
+    /// landed, gains lived as constructor arguments on
+    /// `MultirotorController` and were invisible to lockstep:
+    /// two channels could disagree on tuning silently because
+    /// `algorithm_identity_hash` only sees algorithm classes.
+    pub cascade_gains: CascadeGains,
+
+    /// Per-airframe hover-thrust trim, as a Normalized value (0..1).
+    ///
+    /// The closed-loop velocity controller uses this as the offset
+    /// around which it commands collective-thrust corrections — for
+    /// a hovering multirotor at this commanded value, motor thrust
+    /// equals airframe weight. Wrong value here means the closed
+    /// loop saturates trying to hold altitude.
+    ///
+    /// Quadratic-rotor airframes (most multirotors) need
+    /// `hover_thrust_norm = sqrt(weight / max_thrust)` because the
+    /// rotor maps `thrust = motorConstant * omega^2` and the FC
+    /// pipeline maps `omega = sqrt(cmd) * MAX_RPS`. For the X500
+    /// with 2.06 kg mass and 34.2 N max thrust, this is √(20.3/34.2)
+    /// ≈ 0.77.
+    ///
+    /// Default 0.5: safe for builds whose airframe has not yet been
+    /// calibrated — the closed loop will be sluggish but will not
+    /// destabilize at full saturation.
+    pub hover_thrust_norm: Normalized,
 }
 // COV:EXCL_STOP
 
@@ -81,6 +123,9 @@ impl Default for ResolvedKernelConfig {
             fault_table: FaultHandlingTable::DEFAULT,
             command_timeout_ms: DEFAULT_COMMAND_TIMEOUT_MS,
             safe_output: [Normalized(0.0); MAX_ACTUATORS],
+            slew_limit_per_cycle: [Normalized(0.0); MAX_ACTUATORS],
+            cascade_gains: CascadeGains::default(),
+            hover_thrust_norm: Normalized(0.5),
         }
     }
 }

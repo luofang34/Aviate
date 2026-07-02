@@ -253,10 +253,11 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             self.pipeline.mixer.mix(&axis_cmd)
         };
 
-        // 7. Update actuator state
-        self.state
-            .actuator_state
-            .update_commanded(&actuator_cmd, timestamp);
+        // 7. Snapshot previous-cycle commanded outputs for the slew
+        //    limiter (DRQ-FLT-001 / DRQ-MORPH-001). Capture BEFORE
+        //    update_commanded — `state.actuator_state.commanded` still
+        //    holds last cycle's value at this point.
+        let previous_outputs = self.state.actuator_state.commanded;
 
         // 8. Sanitization. Pipeline holds the algorithm (`&self`);
         //    KernelState owns the per-group fallback memory
@@ -271,7 +272,24 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             )
         };
 
-        // 9. Construct Result
+        // 9. Slew limit (DRQ-FLT-001 / DRQ-MORPH-001). Applied after
+        //    sanitization so both controller-bumps and sanitizer-
+        //    induced bumps respect the per-cycle delta limit. Disabled
+        //    per-channel when `slew_limit_per_cycle[i] <= 0`, so
+        //    airframes that don't opt in see no behavior change.
+        crate::kernel::slew::apply_slew_limit(
+            &mut actuator_cmd,
+            &previous_outputs,
+            &self.cfg.slew_limit_per_cycle,
+        );
+
+        // 10. Record the final commanded outputs (post-slew). This is
+        //     what next cycle's `previous_outputs` will read.
+        self.state
+            .actuator_state
+            .update_commanded(&actuator_cmd, timestamp);
+
+        // 11. Construct Result
         UpdateResult {
             actuator: actuator_cmd,
             status: ChannelStatus {

@@ -1,6 +1,18 @@
 use crate::math::Quaternion;
 use crate::types::{RadiansPerSecond, Scalar};
 
+/// Maximum body-frame angular rate the attitude controller is
+/// allowed to demand from the rate loop, per axis (rad/s).
+/// Without this cap the P-controller demands gain·error rad/s
+/// for arbitrarily large attitude errors — at a 90° error that
+/// is `gain · π/2` rad/s, which then saturates the rate loop
+/// against gyro and induces a recovery overshoot far larger
+/// than the original error. Physically, a multirotor cannot
+/// servo angular rates beyond a few rad/s without losing
+/// thrust authority anyway (the rotors spend their thrust on
+/// torque rather than lift).
+const MAX_ATTITUDE_RATE_CMD: Scalar = 3.0;
+
 #[derive(Clone, Debug)]
 pub struct AttitudeController {
     pub gains: [Scalar; 3], // P gains for Roll, Pitch, Yaw error -> Rate
@@ -12,28 +24,12 @@ impl AttitudeController {
     }
 
     pub fn step(&self, setpoint: &Quaternion, current: &Quaternion) -> [RadiansPerSecond; 3] {
-        // q_err = q_setpoint * q_current^-1 (local frame error)
-        // q_current^-1 is conjugate for unit quaternions
-
-        // If q_current rotates Earth->Body, then q_err should represent rotation from Current Body to Desired Body?
-        // Standard: q_e = q_des * q_est.inv()
-        // If q is Body->Earth? Usually q is Earth->Body in some conventions, or Body->Earth.
-        // Aviate EKF: "accel_earth = self.quat.rotate_vector(accel_corr)".
-        // `rotate_vector` uses standard q v q*.
-        // So `quat` rotates Body -> Earth (NED).
-
-        // We want angular velocity in Body frame to correct the error.
-        // Error Quaternion q_err: Rotation from Body_Current to Body_Desired?
-        // No, we want rotation vector that moves current to desired.
-        // q_err = q_est.inv() * q_des
-
-        // Let's check math.rs Quaternion implementation.
-        // It has `w, x, y, z`.
-        // `inv` would be `w, -x, -y, -z`.
-
-        let q_est_inv = Quaternion::new(current.w, -current.x, -current.y, -current.z);
-        // Error Quaternion q_err: Rotation from Current to Setpoint
-        let q_err = setpoint.mul(&q_est_inv).normalize();
+        // Body-frame attitude error: `Δq_body = q_cur⁻¹ · q_des`.
+        // The vector part is the rotation axis expressed in
+        // body frame, which is the frame the rate loop interprets
+        // its setpoint in.
+        let q_cur_inv = Quaternion::new(current.w, -current.x, -current.y, -current.z);
+        let q_err = q_cur_inv.mul(setpoint).normalize();
 
         // Extract rotation vector (axis-angle) from q_err.
         // q = [cos(theta/2), v*sin(theta/2)]
@@ -54,10 +50,17 @@ impl AttitudeController {
         let pitch_err = 2.0 * y;
         let yaw_err = 2.0 * z;
 
+        let roll_cmd =
+            (roll_err * self.gains[0]).clamp(-MAX_ATTITUDE_RATE_CMD, MAX_ATTITUDE_RATE_CMD);
+        let pitch_cmd =
+            (pitch_err * self.gains[1]).clamp(-MAX_ATTITUDE_RATE_CMD, MAX_ATTITUDE_RATE_CMD);
+        let yaw_cmd =
+            (yaw_err * self.gains[2]).clamp(-MAX_ATTITUDE_RATE_CMD, MAX_ATTITUDE_RATE_CMD);
+
         [
-            RadiansPerSecond(roll_err * self.gains[0]),
-            RadiansPerSecond(pitch_err * self.gains[1]),
-            RadiansPerSecond(yaw_err * self.gains[2]),
+            RadiansPerSecond(roll_cmd),
+            RadiansPerSecond(pitch_cmd),
+            RadiansPerSecond(yaw_cmd),
         ]
     }
 }

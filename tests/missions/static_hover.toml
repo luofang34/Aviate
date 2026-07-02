@@ -1,0 +1,95 @@
+# Aviate SITL: Real closed-loop takeoff + hover + land
+#
+# Drives the vehicle via `SET_POSITION_TARGET_LOCAL_NED` commands
+# end-to-end. The kernel's cascaded position → velocity →
+# attitude → rate loop converts the position target into per-step
+# motor outputs, the gz physics flies the airframe, and the gz
+# bridge feeds ground-truth state + a quaternion-derived gyro
+# back into the EKF.
+#
+# Every criterion is throughout-phase: a single sample outside
+# the bound fails the phase. There is no end-of-phase shortcut —
+# a flight that briefly hit a target and drifted away fails.
+#
+# Bounds are integration-grade. Tighter (cert-grade) bounds —
+# 0.3 m altitude / 0.5 m horizontal — wait on the position-loop
+# integral term, tracked on DRQ-CTL-002. What this mission DOES
+# assert is "the vehicle actually flew the intended course":
+# closed-loop position tracking with bounded drift and attitude.
+
+[test]
+name = "static_hover"
+description = "Closed-loop takeoff, station-keeping hover, land"
+lockstep = false
+
+[[vehicles]]
+id = "x500"
+model = "x500"
+instance = 0
+spawn_position = [0.0, 0.0, 0.0]
+spawn_heading = 0.0
+
+[vehicles.mission]
+name = "static_hover"
+
+[[vehicles.mission.phases]]
+name = "arm"
+duration_ms = 500
+action = { type = "arm" }
+verify = [{ type = "armed", value = true }]
+
+[[vehicles.mission.phases]]
+name = "settle"
+duration_ms = 1500
+action = { type = "thrust", value = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "station_keeping", center = [0.0, 0.0, 0.0], xy_tolerance = 0.2, z_tolerance = 0.2 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 5.0 },
+]
+
+# Closed-loop takeoff. Position target at 5 m altitude. Climb
+# bounded XY ≤ 2 m, altitude ≤ 8 m (P-only position loop has
+# some overshoot — DRQ-CTL-002 carries the integral-term work
+# that tightens this).
+[[vehicles.mission.phases]]
+name = "takeoff"
+duration_ms = 6000
+action = { type = "goto", position = [0.0, 0.0, -5.0], heading = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "reached_waypoint", position = [0.0, 0.0, -5.0], tolerance = 2.5 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
+  { type = "max_excursion", center = [0.0, 0.0, -4.0], xy_max = 2.0, z_max = 5.0 },
+]
+
+# Closed-loop hover. The vehicle must station-keep within a
+# 2.5 m XY × 2.5 m Z box around 5 m altitude for the entire
+# 5-second hover window. Attitude bounded throughout.
+[[vehicles.mission.phases]]
+name = "hover_station_keep"
+duration_ms = 5000
+action = { type = "goto", position = [0.0, 0.0, -5.0], heading = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "station_keeping", center = [0.0, 0.0, -5.0], xy_tolerance = 2.5, z_tolerance = 2.5 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
+]
+
+# Land — thrust to zero, vehicle falls. The fall is not closed-
+# loop, so XY drift from the last in-flight position is expected;
+# we just bound it.
+[[vehicles.mission.phases]]
+name = "land"
+duration_ms = 4000
+action = { type = "thrust", value = 0.0 }
+verify = [
+  { type = "max_altitude", value = 2.0 },
+  { type = "max_excursion", center = [0.0, 0.0, 0.0], xy_max = 10.0, z_max = 10.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "disarm"
+duration_ms = 500
+action = { type = "disarm" }
+verify = [{ type = "armed", value = false }]

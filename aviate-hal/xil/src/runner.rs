@@ -332,6 +332,21 @@ impl MavClient {
 // MissionRunner (backend-agnostic)
 // ============================================================================
 
+/// A single per-step entry in the phase trace.
+///
+/// Carries ground-truth position (NED, metres) and attitude
+/// quaternion (`[w, x, y, z]`, body→world) sampled at each
+/// `sim_step` advance. Criteria walk this trace to enforce
+/// throughout-phase and trace-walking constraints.
+#[derive(Debug, Clone, Copy)]
+pub struct TraceSample {
+    pub elapsed: f32,
+    pub position: [f32; 3],
+    pub velocity: [f32; 3],
+    pub attitude: [f32; 4],
+    pub angular_velocity: [f32; 3],
+}
+
 /// Mission runner state
 ///
 /// Generic over the simulator backend. Each vehicle instance gets its own runner.
@@ -339,6 +354,11 @@ impl MavClient {
 pub struct MissionRunner<B: SimulatorBackend> {
     backend: B,
     mav: MavClient,
+    /// Per-instance fault command UDP client. Constructed lazily; we
+    /// only need it when a mission contains `Action::InjectFault` or
+    /// `Action::ClearFaults`. Once constructed it owns its own
+    /// ephemeral receive port for ACKs.
+    fault_client: Option<crate::fault_protocol::FaultClient>,
     vehicle_id: String,
     last_step: u64,
     current_state: VehicleState,
@@ -356,6 +376,7 @@ impl<B: SimulatorBackend> MissionRunner<B> {
         Ok(Self {
             backend,
             mav,
+            fault_client: None,
             vehicle_id: vehicle_id.to_string(),
             last_step: 0,
             current_state: VehicleState::default(),
@@ -363,6 +384,28 @@ impl<B: SimulatorBackend> MissionRunner<B> {
             armed: false,
             max_altitude: 0.0,
         })
+    }
+
+    /// Lazily create or return the `FaultClient` for this instance.
+    /// Returns `None` if socket binding fails — the caller logs the
+    /// outcome and continues so a missing FaultController on the FC
+    /// side does not abort the entire mission run.
+    fn fault_client_mut(&mut self) -> Option<&mut crate::fault_protocol::FaultClient> {
+        if self.fault_client.is_none() {
+            let cfg = crate::XilConfig::for_instance(self.backend.instance());
+            match crate::fault_protocol::FaultClient::new(&cfg) {
+                Ok(c) => self.fault_client = Some(c),
+                Err(e) => {
+                    self.log(&format!(
+                        "WARN: FaultClient bind failed for instance {}: {:?}",
+                        self.backend.instance(),
+                        e
+                    ));
+                    return None;
+                }
+            }
+        }
+        self.fault_client.as_mut()
     }
 
     /// Get the vehicle ID
@@ -486,6 +529,28 @@ impl<B: SimulatorBackend> MissionRunner<B> {
 
         let total_duration = mission_start.elapsed();
 
+        // Dump per-step trace to CSV for post-mortem inspection.
+        // Aircraft-agnostic columns (position, velocity, attitude
+        // quaternion, body-frame angular rate, derived Euler) so the
+        // same writer works for multirotor, fixed-wing, or VTOL —
+        // the CSV reader can plot whichever axes a given vehicle
+        // class cares about. One file per mission, overwritten on
+        // each run, lives next to the world SDF in the OS temp
+        // directory.
+        let csv_path = std::env::temp_dir().join(format!(
+            "aviate_trace_{}.csv",
+            mission.name.replace(['/', ' '], "_")
+        ));
+        if let Err(e) = write_trace_csv(&csv_path, &mission.name, &phase_results) {
+            self.log_error(&format!(
+                "Failed to write trace CSV ({}): {}",
+                csv_path.display(),
+                e
+            ));
+        } else {
+            self.log(&format!("Trace CSV: {}", csv_path.display()));
+        }
+
         if mission_passed {
             self.log(&format!(
                 "==> PASSED | duration={:.2}s max_alt={:.2}m <==",
@@ -513,6 +578,12 @@ impl<B: SimulatorBackend> MissionRunner<B> {
     fn run_phase(&mut self, phase: &Phase) -> PhaseResult {
         let phase_start = Instant::now();
         let mut phase_max_altitude = 0.0f32;
+        // Per-step trace: each sample carries `(elapsed_s,
+        // position_ned, attitude_quat[w,x,y,z])`. The third field
+        // is what makes attitude-aware criteria possible; without
+        // it a tumbling vehicle could still pass a position-only
+        // check.
+        let mut trace: Vec<TraceSample> = Vec::new();
 
         while phase_start.elapsed() < phase.duration {
             let current_step = self.backend.sim_step();
@@ -528,6 +599,14 @@ impl<B: SimulatorBackend> MissionRunner<B> {
                     if phase_max_altitude > self.max_altitude {
                         self.max_altitude = phase_max_altitude;
                     }
+                    let elapsed = phase_start.elapsed().as_secs_f32();
+                    trace.push(TraceSample {
+                        elapsed,
+                        position: self.current_state.position,
+                        velocity: self.current_state.velocity,
+                        attitude: self.current_state.orientation,
+                        angular_velocity: self.current_state.angular_velocity,
+                    });
                 }
 
                 // Execute action
@@ -545,7 +624,7 @@ impl<B: SimulatorBackend> MissionRunner<B> {
         let criteria_results: Vec<CriterionResult> = phase
             .verify
             .iter()
-            .map(|c| self.verify_criterion(c, phase_max_altitude))
+            .map(|c| self.verify_criterion(c, phase_max_altitude, &trace))
             .collect();
 
         let passed = criteria_results.iter().all(|r| r.passed);
@@ -557,6 +636,8 @@ impl<B: SimulatorBackend> MissionRunner<B> {
             max_altitude: phase_max_altitude,
             final_position: self.current_state.position,
             criteria_results,
+            trace,
+            action_tag: format!("{:?}", phase.action),
         }
     }
 
@@ -598,19 +679,46 @@ impl<B: SimulatorBackend> MissionRunner<B> {
                 }
             }
             Action::InjectFault { sensor, fault } => {
-                self.log(&format!(
-                    "INJECT_FAULT {:?} {:?} (not yet implemented)",
-                    sensor, fault
-                ));
+                let target = *sensor;
+                let spec = *fault;
+                if let Some(client) = self.fault_client_mut() {
+                    match client.inject(target, spec) {
+                        Ok(ack) => self.log(&format!(
+                            "INJECT_FAULT {:?} {:?} ack={:?}",
+                            target, spec, ack.status
+                        )),
+                        Err(e) => self.log_error(&format!(
+                            "INJECT_FAULT {:?} {:?} failed: {:?}",
+                            target, spec, e
+                        )),
+                    }
+                } else {
+                    self.log_error(&format!(
+                        "INJECT_FAULT {:?} {:?} skipped: FaultClient unavailable",
+                        target, spec
+                    ));
+                }
             }
             Action::ClearFaults => {
-                self.log("CLEAR_FAULTS (not yet implemented)");
+                if let Some(client) = self.fault_client_mut() {
+                    match client.clear_all() {
+                        Ok(ack) => self.log(&format!("CLEAR_FAULTS ack={:?}", ack.status)),
+                        Err(e) => self.log_error(&format!("CLEAR_FAULTS failed: {:?}", e)),
+                    }
+                } else {
+                    self.log_error("CLEAR_FAULTS skipped: FaultClient unavailable");
+                }
             }
         }
     }
 
     /// Verify a criterion
-    fn verify_criterion(&self, criterion: &Criterion, phase_max_alt: f32) -> CriterionResult {
+    fn verify_criterion(
+        &self,
+        criterion: &Criterion,
+        phase_max_alt: f32,
+        trace: &[TraceSample],
+    ) -> CriterionResult {
         match criterion {
             Criterion::Armed(expected) => CriterionResult {
                 criterion: "armed".to_string(),
@@ -666,14 +774,324 @@ impl<B: SimulatorBackend> MissionRunner<B> {
                     expected: format!("<= {:.2}m", max),
                 }
             }
+            Criterion::ReachedWaypoint { target, tolerance } => {
+                let min_err = trace
+                    .iter()
+                    .map(|s| {
+                        let dx = s.position[0] - target[0];
+                        let dy = s.position[1] - target[1];
+                        let dz = s.position[2] - target[2];
+                        (dx * dx + dy * dy + dz * dz).sqrt()
+                    })
+                    .fold(f32::INFINITY, f32::min);
+                CriterionResult {
+                    criterion: "reached_waypoint".to_string(),
+                    passed: min_err <= *tolerance,
+                    actual_value: format!("min error: {:.2}m", min_err),
+                    expected: format!("<= {:.2}m at any point", tolerance),
+                }
+            }
+            Criterion::StableHover {
+                altitude,
+                tolerance,
+                hold_secs,
+            } => {
+                // Sliding-window check: find the longest contiguous
+                // run of samples whose altitude (positive up) is in
+                // band. Pass iff that run is at least `hold_secs`.
+                let in_band = |z_ned: f32| {
+                    let alt = -z_ned;
+                    (alt - altitude).abs() <= *tolerance
+                };
+                let mut best_run = 0.0_f32;
+                let mut run_start: Option<f32> = None;
+                for s in trace {
+                    if in_band(s.position[2]) {
+                        if run_start.is_none() {
+                            run_start = Some(s.elapsed);
+                        }
+                        if let Some(t0) = run_start {
+                            best_run = best_run.max(s.elapsed - t0);
+                        }
+                    } else {
+                        run_start = None;
+                    }
+                }
+                CriterionResult {
+                    criterion: "stable_hover".to_string(),
+                    passed: best_run >= *hold_secs,
+                    actual_value: format!("best continuous run: {:.2}s", best_run),
+                    expected: format!(
+                        ">= {:.2}s in [{:.2},{:.2}]m band",
+                        hold_secs,
+                        altitude - tolerance,
+                        altitude + tolerance,
+                    ),
+                }
+            }
+            Criterion::StationKeeping {
+                center_ned,
+                xy_tolerance,
+                z_tolerance,
+            } => {
+                // Throughout-phase: every sample must be inside the
+                // box. We report the WORST sample (the one that
+                // pushed furthest outside) — that's what a debugger
+                // wants to see when the criterion fails.
+                let mut worst_xy = 0.0_f32;
+                let mut worst_z = 0.0_f32;
+                let mut worst_t = 0.0_f32;
+                for s in trace {
+                    let dx = s.position[0] - center_ned[0];
+                    let dy = s.position[1] - center_ned[1];
+                    let dz = s.position[2] - center_ned[2];
+                    let xy = (dx * dx + dy * dy).sqrt();
+                    let z = dz.abs();
+                    if xy > worst_xy {
+                        worst_xy = xy;
+                        worst_t = s.elapsed;
+                    }
+                    if z > worst_z {
+                        worst_z = z;
+                    }
+                }
+                let passed =
+                    worst_xy <= *xy_tolerance && worst_z <= *z_tolerance && !trace.is_empty();
+                CriterionResult {
+                    criterion: "station_keeping".to_string(),
+                    passed,
+                    actual_value: format!(
+                        "worst xy={:.2}m z={:.2}m at t={:.2}s ({} samples)",
+                        worst_xy,
+                        worst_z,
+                        worst_t,
+                        trace.len(),
+                    ),
+                    expected: format!(
+                        "every sample within xy<={:.2}m, z<={:.2}m of {:?}",
+                        xy_tolerance, z_tolerance, center_ned
+                    ),
+                }
+            }
+            Criterion::MaxExcursion {
+                center_ned,
+                xy_max,
+                z_max,
+            } => {
+                let mut worst_xy = 0.0_f32;
+                let mut worst_z = 0.0_f32;
+                for s in trace {
+                    let dx = s.position[0] - center_ned[0];
+                    let dy = s.position[1] - center_ned[1];
+                    let dz = s.position[2] - center_ned[2];
+                    worst_xy = worst_xy.max((dx * dx + dy * dy).sqrt());
+                    worst_z = worst_z.max(dz.abs());
+                }
+                let passed = worst_xy <= *xy_max && worst_z <= *z_max;
+                CriterionResult {
+                    criterion: "max_excursion".to_string(),
+                    passed,
+                    actual_value: format!("xy={:.2}m z={:.2}m", worst_xy, worst_z),
+                    expected: format!("xy<={:.2}m, z<={:.2}m", xy_max, z_max),
+                }
+            }
+            Criterion::TrajectoryTracking {
+                waypoints,
+                tolerance,
+                max_time_s,
+            } => {
+                // Walk the trace; advance to the next waypoint each
+                // time we land inside the tolerance ball. The
+                // criterion passes only if every waypoint is
+                // visited in order before `max_time_s` elapses.
+                let mut idx = 0;
+                let mut visit_time = None;
+                for s in trace {
+                    if idx >= waypoints.len() {
+                        break;
+                    }
+                    if s.elapsed > *max_time_s {
+                        break;
+                    }
+                    let w = &waypoints[idx];
+                    let dx = s.position[0] - w[0];
+                    let dy = s.position[1] - w[1];
+                    let dz = s.position[2] - w[2];
+                    let err = (dx * dx + dy * dy + dz * dz).sqrt();
+                    if err <= *tolerance {
+                        idx += 1;
+                        visit_time = Some(s.elapsed);
+                    }
+                }
+                let passed = idx == waypoints.len();
+                CriterionResult {
+                    criterion: "trajectory_tracking".to_string(),
+                    passed,
+                    actual_value: format!(
+                        "visited {}/{} at last t={:?}",
+                        idx,
+                        waypoints.len(),
+                        visit_time
+                    ),
+                    expected: format!(
+                        "every waypoint reached within {:.2}m, total time <= {:.2}s",
+                        tolerance, max_time_s
+                    ),
+                }
+            }
+            Criterion::ReturnedNear {
+                target_ned,
+                tolerance,
+            } => {
+                let dx = self.current_state.position[0] - target_ned[0];
+                let dy = self.current_state.position[1] - target_ned[1];
+                let dz = self.current_state.position[2] - target_ned[2];
+                let err = (dx * dx + dy * dy + dz * dz).sqrt();
+                CriterionResult {
+                    criterion: "returned_near".to_string(),
+                    passed: err <= *tolerance,
+                    actual_value: format!("end-of-phase error: {:.2}m", err),
+                    expected: format!("<= {:.2}m of {:?}", tolerance, target_ned),
+                }
+            }
+            Criterion::AttitudeBounded { roll_pitch_max_deg } => {
+                let limit_rad = roll_pitch_max_deg.to_radians();
+                let mut worst_roll_rad = 0.0_f32;
+                let mut worst_pitch_rad = 0.0_f32;
+                let mut worst_t = 0.0_f32;
+                for s in trace {
+                    let (roll, pitch, _) = quat_to_rpy(s.attitude);
+                    if roll.abs() > worst_roll_rad.abs() {
+                        worst_roll_rad = roll;
+                        worst_t = s.elapsed;
+                    }
+                    if pitch.abs() > worst_pitch_rad.abs() {
+                        worst_pitch_rad = pitch;
+                    }
+                }
+                let passed = worst_roll_rad.abs() <= limit_rad
+                    && worst_pitch_rad.abs() <= limit_rad
+                    && !trace.is_empty();
+                CriterionResult {
+                    criterion: "attitude_bounded".to_string(),
+                    passed,
+                    actual_value: format!(
+                        "worst roll={:.1}° pitch={:.1}° at t={:.2}s",
+                        worst_roll_rad.to_degrees(),
+                        worst_pitch_rad.to_degrees(),
+                        worst_t,
+                    ),
+                    expected: format!("|roll|, |pitch| <= {:.1}°", roll_pitch_max_deg),
+                }
+            }
             Criterion::SensorDataReceived => CriterionResult {
                 criterion: "sensor_data".to_string(),
                 passed: self.last_step > 0,
                 actual_value: format!("{} steps", self.last_step),
                 expected: "> 0 steps".to_string(),
             },
+            Criterion::TouchdownVelocity {
+                max_descent_mps,
+                ground_tolerance,
+            } => {
+                // Find the index of the first sample within
+                // `ground_tolerance` of the ground. gz's
+                // `WorldLinearVelocity` component returns zero on
+                // macOS — same gap that forced the quaternion-
+                // derived gyro in the synth path — so we derive
+                // the touchdown vertical speed from a finite
+                // difference over the position samples just
+                // before contact instead of reading the velocity
+                // field.
+                let idx = trace
+                    .iter()
+                    .position(|s| s.position[2] >= -ground_tolerance);
+                match idx {
+                    Some(i) if i > 0 => {
+                        // Use the highest-altitude sample within
+                        // the previous 100 ms as the back step so a
+                        // single-sample contact-damping spike does
+                        // not hide the real approach speed.
+                        let s_now = &trace[i];
+                        let lookback = trace[..i]
+                            .iter()
+                            .rev()
+                            .take_while(|s| s_now.elapsed - s.elapsed < 0.1)
+                            .min_by(|a, b| {
+                                a.position[2]
+                                    .partial_cmp(&b.position[2])
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                            .unwrap_or(&trace[i - 1]);
+                        let dt = (s_now.elapsed - lookback.elapsed).max(1e-3);
+                        let v_down = (s_now.position[2] - lookback.position[2]) / dt;
+                        CriterionResult {
+                            criterion: "touchdown_velocity".to_string(),
+                            passed: v_down <= *max_descent_mps,
+                            actual_value: format!(
+                                "v_down={:.2} m/s at t={:.2}s (alt={:.2}m, derived from Δz/Δt over {:.0}ms)",
+                                v_down,
+                                s_now.elapsed,
+                                -s_now.position[2],
+                                dt * 1000.0,
+                            ),
+                            expected: format!(
+                                "v_down ≤ {:.2} m/s within {:.2}m of ground",
+                                max_descent_mps, ground_tolerance,
+                            ),
+                        }
+                    }
+                    Some(_) => CriterionResult {
+                        criterion: "touchdown_velocity".to_string(),
+                        passed: false,
+                        actual_value: "vehicle already on ground at phase start".to_string(),
+                        expected: format!(
+                            "vehicle reaches within {:.2}m of ground during the phase",
+                            ground_tolerance
+                        ),
+                    },
+                    None => CriterionResult {
+                        criterion: "touchdown_velocity".to_string(),
+                        passed: false,
+                        actual_value: format!(
+                            "no touchdown sample (min alt {:.2}m)",
+                            trace
+                                .iter()
+                                .map(|s| -s.position[2])
+                                .fold(f32::INFINITY, f32::min)
+                        ),
+                        expected: format!(
+                            "vehicle reaches within {:.2}m of ground",
+                            ground_tolerance
+                        ),
+                    },
+                }
+            }
         }
     }
+}
+
+/// Body-axis roll, pitch, yaw (radians) from a unit quaternion
+/// `[w, x, y, z]` representing body→world (NED+FRD) rotation.
+/// Standard Z-Y-X (yaw-pitch-roll) extraction.
+fn quat_to_rpy(q: [f32; 4]) -> (f32, f32, f32) {
+    let [w, x, y, z] = q;
+    // roll (x-axis rotation)
+    let sinr_cosp = 2.0 * (w * x + y * z);
+    let cosr_cosp = 1.0 - 2.0 * (x * x + y * y);
+    let roll = sinr_cosp.atan2(cosr_cosp);
+    // pitch (y-axis rotation)
+    let sinp = 2.0 * (w * y - z * x);
+    let pitch = if sinp.abs() >= 1.0 {
+        std::f32::consts::FRAC_PI_2.copysign(sinp)
+    } else {
+        sinp.asin()
+    };
+    // yaw (z-axis rotation)
+    let siny_cosp = 2.0 * (w * z + x * y);
+    let cosy_cosp = 1.0 - 2.0 * (y * y + z * z);
+    let yaw = siny_cosp.atan2(cosy_cosp);
+    (roll, pitch, yaw)
 }
 
 // ============================================================================
@@ -781,6 +1199,53 @@ where
         passed: all_passed,
         duration: start.elapsed(),
     }
+}
+
+/// Write the per-step flight trace to a CSV.
+///
+/// Columns are aircraft-agnostic so the same file format works for
+/// multirotor / fixed-wing / VTOL: `t,phase,action` then NED
+/// position, NED velocity, body→world attitude quaternion + derived
+/// Euler angles, body-frame angular rate. Each row is one
+/// gz-physics step (~1 kHz). The file is overwritten per mission.
+fn write_trace_csv(
+    path: &std::path::Path,
+    mission_name: &str,
+    phases: &[PhaseResult],
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)?;
+    writeln!(
+        f,
+        "# mission={}\nt_s,phase,action,x_ned_m,y_ned_m,z_ned_m,vx_mps,vy_mps,vz_mps,qw,qx,qy,qz,roll_deg,pitch_deg,yaw_deg,p_radps,q_radps,r_radps"
+    , mission_name)?;
+    let mut t_offset = 0.0f32;
+    for phase in phases {
+        // CSV `action` column is the TOML action with whitespace
+        // collapsed so the column doesn't break on commas inside
+        // the debug-formatted enum.
+        let action = phase
+            .action_tag
+            .replace([',', '\n', '\r'], ";")
+            .replace("  ", " ");
+        for s in &phase.trace {
+            let (roll, pitch, yaw) = quat_to_rpy(s.attitude);
+            writeln!(
+                f,
+                "{:.4},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.6},{:.6},{:.6},{:.6},{:.3},{:.3},{:.3},{:.4},{:.4},{:.4}",
+                t_offset + s.elapsed,
+                phase.name,
+                action,
+                s.position[0], s.position[1], s.position[2],
+                s.velocity[0], s.velocity[1], s.velocity[2],
+                s.attitude[0], s.attitude[1], s.attitude[2], s.attitude[3],
+                roll.to_degrees(), pitch.to_degrees(), yaw.to_degrees(),
+                s.angular_velocity[0], s.angular_velocity[1], s.angular_velocity[2],
+            )?;
+        }
+        t_offset += phase.duration_actual.as_secs_f32();
+    }
+    Ok(())
 }
 
 #[cfg(test)]

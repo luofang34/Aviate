@@ -1,0 +1,81 @@
+# Aviate SITL: open-loop vertical flight baseline.
+# Closed-loop landing depends on the velocity-loop tuning + a
+# position controller with proper energy management (sqrt-shaped
+# vel setpoint) — see DRQ-CTL-002.
+
+[test]
+name = "hover_trim_check"
+description = "Open-loop vertical flight"
+lockstep = false
+
+[[vehicles]]
+id = "x500"
+model = "x500"
+instance = 0
+spawn_position = [0.0, 0.0, 0.0]
+spawn_heading = 0.0
+
+[vehicles.mission]
+name = "hover_trim_check"
+
+[[vehicles.mission.phases]]
+name = "arm"
+duration_ms = 500
+action = { type = "arm" }
+verify = [{ type = "armed", value = true }]
+
+[[vehicles.mission.phases]]
+name = "settle"
+duration_ms = 1000
+action = { type = "thrust", value = 0.0 }
+verify = [
+  { type = "armed", value = true },
+  { type = "station_keeping", center = [0.0, 0.0, 0.0], xy_tolerance = 0.2, z_tolerance = 0.2 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 5.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "ascend"
+duration_ms = 2500
+action = { type = "thrust", value = 0.85 }
+verify = [
+  { type = "armed", value = true },
+  { type = "min_altitude", value = 4.0 },
+  { type = "max_excursion", center = [0.0, 0.0, -4.0], xy_max = 0.5, z_max = 10.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 15.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "decelerate"
+duration_ms = 3000
+action = { type = "thrust", value = 0.55 }
+verify = [
+  { type = "armed", value = true },
+  { type = "max_excursion", center = [0.0, 0.0, -8.0], xy_max = 0.5, z_max = 12.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 15.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "descend"
+duration_ms = 2000
+action = { type = "thrust", value = 0.30 }
+verify = [
+  { type = "armed", value = true },
+  { type = "max_excursion", center = [0.0, 0.0, -4.0], xy_max = 0.5, z_max = 12.0 },
+  { type = "attitude_bounded", roll_pitch_max_deg = 15.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "land"
+duration_ms = 3000
+action = { type = "thrust", value = 0.0 }
+verify = [
+  { type = "max_altitude", value = 1.0 },
+  { type = "max_excursion", center = [0.0, 0.0, 0.0], xy_max = 0.5, z_max = 8.0 },
+]
+
+[[vehicles.mission.phases]]
+name = "disarm"
+duration_ms = 500
+action = { type = "disarm" }
+verify = [{ type = "armed", value = false }]

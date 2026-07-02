@@ -8,7 +8,9 @@
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 
 /// FC process configuration
 pub struct FcConfig {
@@ -50,34 +52,70 @@ use log::info;
 /// Gazebo spawner for SITL mode
 pub struct GazeboSpawner {
     child: Option<Child>,
+    /// Optional GUI client process. macOS `gz sim` cannot host server +
+    /// GUI in one process (<https://github.com/gazebosim/gz-sim/issues/44>);
+    /// when the caller asks for GUI we spawn the server headless and a
+    /// separate `gz sim -g` client that attaches via gz-transport.
+    gui_child: Option<Child>,
     world_path: Option<PathBuf>,
 }
 
 impl GazeboSpawner {
     pub fn new() -> Self {
+        // Reclaim orphan FC / gz processes left behind by a prior
+        // run that exited without running `Drop` (a `timeout`-killed
+        // gcs-test, a SIGKILL, etc.). Orphans hold port 20000 and
+        // the gz shared-memory region, so subsequent runs see
+        // "Address already in use" on the FC bind and a polluted
+        // motor-command stream that prevents takeoff. Scoped to
+        // this user's processes by binary name so a parallel
+        // pytest job or another developer's session is untouched.
+        cleanup_orphan_aviate_sitl_processes();
         Self {
             child: None,
+            gui_child: None,
             world_path: None,
         }
     }
 
-    /// Launch Gazebo with the specified world file
+    /// Launch Gazebo with the specified world file.
+    ///
+    /// `headless = true`: server-only, EGL rendering, no GUI client.
+    /// `headless = false`: server-only (same as headless server) PLUS
+    /// a separate `gz sim -g` GUI client process so the plugin (a
+    /// server-side system) loads correctly on macOS.
     pub fn launch(&mut self, world_path: &Path, headless: bool) -> Result<(), String> {
         // Clean up any existing processes first
         self.cleanup();
 
-        let child = launch_gazebo(world_path, headless)
-            .map_err(|e| format!("Failed to launch Gazebo: {}", e))?;
+        let child = launch_gazebo(world_path)
+            .map_err(|e| format!("Failed to launch Gazebo server: {}", e))?;
 
         info!(
             target: "gcs",
-            "Gazebo started (PID: {}, headless={})",
+            "Gazebo server started (PID: {}, headless={})",
             child.id(),
-            headless
+            headless,
         );
 
         self.child = Some(child);
         self.world_path = Some(world_path.to_path_buf());
+
+        if !headless {
+            // Give the server a moment to begin advertising topics
+            // before the GUI client tries to attach.
+            std::thread::sleep(Duration::from_millis(500));
+            match launch_gazebo_gui() {
+                Ok(gui) => {
+                    info!(target: "gcs", "Gazebo GUI started (PID: {})", gui.id());
+                    self.gui_child = Some(gui);
+                }
+                Err(e) => {
+                    // Non-fatal: tests can still run without the GUI.
+                    log::warn!(target: "gcs", "GUI launch failed (continuing headless): {}", e);
+                }
+            }
+        }
 
         Ok(())
     }
@@ -100,12 +138,18 @@ impl GazeboSpawner {
 
     /// Cleanup Gazebo processes and shared memory
     pub fn cleanup(&mut self) {
+        if let Some(ref mut gui) = self.gui_child {
+            let _ = gui.kill();
+        }
+        self.gui_child = None;
         if let Some(ref mut child) = self.child {
             let _ = child.kill();
+            // Give SIGKILL a moment to land before unlinking shm.
+            std::thread::sleep(Duration::from_millis(200));
         }
         self.child = None;
 
-        cleanup_gazebo();
+        cleanup_gazebo_shm();
     }
 }
 
@@ -208,12 +252,34 @@ impl Spawner {
         Ok(())
     }
 
-    /// Wait for FC to be ready
-    pub fn wait_for_fc_ready(&self, _timeout: Duration) -> bool {
-        // Minimal wait to allow process to start up.
-        // Connection logic is handled by MavClient checking for heartbeats.
-        std::thread::sleep(Duration::from_secs(2));
-        true
+    /// Wait for the FC binary to be ready to fly.
+    ///
+    /// Polls the gz shared-memory region for a valid model state.
+    /// Once the plugin has both found the model and started
+    /// publishing pose, the FC is up and ready to receive mission
+    /// commands. Returns as soon as that signal lands rather than
+    /// burning a fixed sleep — typically 5–15 s on macOS depending
+    /// on whether dlopen is cold-cache or warm.
+    pub fn wait_for_fc_ready(&self, timeout: Duration) -> bool {
+        #[cfg(feature = "gazebo")]
+        {
+            use aviate_backend_gz::GzPluginBridge;
+            let start = std::time::Instant::now();
+            while start.elapsed() < timeout {
+                if let Ok(bridge) = GzPluginBridge::for_instance(0) {
+                    if bridge.get_model_state().is_some() {
+                        return true;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            false
+        }
+        #[cfg(not(feature = "gazebo"))]
+        {
+            std::thread::sleep(Duration::from_secs(10).min(timeout));
+            true
+        }
     }
 
     /// Kill all spawned processes
@@ -252,7 +318,7 @@ impl Default for Spawner {
 // ============================================================================
 
 /// Launch Gazebo with the specified world file
-fn launch_gazebo(world_path: &Path, headless: bool) -> Result<Child, std::io::Error> {
+fn launch_gazebo(world_path: &Path) -> Result<Child, std::io::Error> {
     // Set up environment paths
     let aviate_dir = env::current_dir().unwrap_or_default();
 
@@ -272,17 +338,17 @@ fn launch_gazebo(world_path: &Path, headless: bool) -> Result<Child, std::io::Er
     let plugin_dir = aviate_dir.join("aviate-hal/xil/backends/gz/plugin/build");
     let gz_plugin_path = plugin_dir.to_string_lossy().to_string();
 
+    // Always run the server in server-only mode. The GUI (if requested)
+    // is a separate `gz sim -g` process — see `launch_gazebo_gui`. On
+    // macOS server+GUI in one process is not supported
+    // (https://github.com/gazebosim/gz-sim/issues/44); the split-process
+    // form is portable across macOS and Linux.
     let mut cmd = Command::new("gz");
-    cmd.arg("sim");
-
-    if headless {
-        cmd.arg("-s"); // Server only
-        cmd.arg("-r"); // Run immediately
-        cmd.arg("--headless-rendering");
-        cmd.env_remove("DISPLAY");
-    } else {
-        cmd.arg("-r"); // Run immediately
-    }
+    cmd.arg("sim")
+        .arg("-s") // Server only
+        .arg("-r") // Run immediately
+        .arg("--headless-rendering");
+    cmd.env_remove("DISPLAY");
 
     cmd.arg(world_path);
 
@@ -308,30 +374,138 @@ fn launch_gazebo(world_path: &Path, headless: bool) -> Result<Child, std::io::Er
         cmd.env("LD_LIBRARY_PATH", gz_plugin_path);
     }
 
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
+    cmd.stdout(Stdio::inherit());
+    cmd.stderr(Stdio::inherit());
 
     cmd.spawn()
 }
 
-/// Clean up Gazebo processes and shared memory
-fn cleanup_gazebo() {
-    let _ = Command::new("pkill").args(["-9", "-f", "gz sim"]).status();
-    let _ = std::fs::remove_file("/dev/shm/aviate_gz_bridge");
-    std::thread::sleep(Duration::from_millis(500));
+/// Launch the Gazebo GUI as a separate client process.
+///
+/// On macOS `gz sim` cannot host server + GUI in one process; on
+/// Linux it can, but spawning a separate GUI client is the same
+/// shape and works there too — kept identical across platforms so
+/// the test harness has one launch path.
+fn launch_gazebo_gui() -> Result<Child, std::io::Error> {
+    let mut cmd = Command::new("gz");
+    cmd.arg("sim").arg("-g");
+    cmd.stdout(Stdio::inherit());
+    cmd.stderr(Stdio::inherit());
+    cmd.spawn()
 }
 
-/// Wait for Gazebo shared memory to be ready
-fn wait_for_shm(timeout: Duration) -> bool {
-    let shm_path = Path::new("/dev/shm/aviate_gz_bridge");
-    let start = Instant::now();
+/// Reclaim leftover `sitl-gazebo-x500` and `gz sim` processes
+/// owned by the current user. Scoped tighter than a blanket
+/// `pkill -f` — only specific binary names, and only the user's
+/// own pid namespace.
+fn cleanup_orphan_aviate_sitl_processes() {
+    use std::process::Command as PCommand;
+    let user = std::env::var("USER").unwrap_or_default();
+    if user.is_empty() {
+        return;
+    }
+    let _ = PCommand::new("pkill")
+        .args(["-9", "-u", &user, "-f", "sitl-gazebo-x500"])
+        .status();
+    // gz sim must be matched by command-line so we don't also nuke
+    // a gz GUI client or unrelated gz process. Pattern picks up the
+    // server invocation (`gz sim -s -r --headless-rendering`).
+    let _ = PCommand::new("pkill")
+        .args(["-9", "-u", &user, "-f", "gz sim -s -r"])
+        .status();
 
-    while start.elapsed() < timeout {
-        if shm_path.exists() {
-            return true;
+    // Wait for the SIGKILL'd processes to actually exit and
+    // release their resources. macOS holds onto UDP port 20000
+    // and the POSIX shm name for ~100-300 ms after SIGKILL —
+    // proceeding too eagerly leaves the next run's FC racing
+    // a partially-dead orphan. Poll for absence with a
+    // bounded retry so we don't pay the full wait when the
+    // host was clean to start with.
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        let any_left = PCommand::new("pgrep")
+            .args(["-u", &user, "-f", "sitl-gazebo-x500"])
+            .output()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false)
+            || PCommand::new("pgrep")
+                .args(["-u", &user, "-f", "gz sim -s -r"])
+                .output()
+                .map(|o| !o.stdout.is_empty())
+                .unwrap_or(false);
+        if !any_left {
+            break;
         }
-        std::thread::sleep(Duration::from_millis(250));
+        std::thread::sleep(Duration::from_millis(50));
     }
 
-    false
+    // Belt-and-suspenders: explicitly unlink the POSIX shm name
+    // the plugin uses, in case a process exited without running
+    // the plugin's own `shm_unlink` (e.g. SIGKILL during init).
+    // Multi-instance harnesses unlink both base and `_<n>` names.
+    // `shm_unlink` returns ENOENT silently when nothing's there.
+    #[cfg(target_family = "unix")]
+    unsafe {
+        for instance in 0u8..4 {
+            let name = if instance == 0 {
+                std::ffi::CString::new("/aviate_gz_bridge").ok()
+            } else {
+                std::ffi::CString::new(format!("/aviate_gz_bridge_{}", instance)).ok()
+            };
+            if let Some(name) = name {
+                libc::shm_unlink(name.as_ptr());
+            }
+        }
+    }
+}
+
+/// Clean up only the Linux shm mirror file (no broad `pkill`).
+///
+/// `cleanup` already kills the `Child` it spawned by PID; nuking
+/// every `gz sim` on the host was hostile to parallel CI runs and
+/// to developers running a separate Gazebo session. `/dev/shm/...`
+/// only exists on Linux — on macOS POSIX shm is virtual.
+///
+/// If `cleanup` is called on a never-spawned spawner (or
+/// best-effort recovery from a previous run), there's nothing to
+/// kill and the shm mirror file is the only thing worth touching.
+fn cleanup_gazebo_shm() {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::fs::remove_file("/dev/shm/aviate_gz_bridge");
+    }
+}
+
+/// Wait for Gazebo shared memory to be ready.
+///
+/// On Linux POSIX shm is backed by a `/dev/shm/<name>` path, so we
+/// can poll its existence. macOS has no such mirror — `shm_open()`
+/// returns a virtual fd with no filesystem trace — so the only
+/// signal we have is the gz-sim process being alive. Sleep a fixed
+/// startup quantum and let the FC binary handle its own retry loop
+/// (`GzPluginBridge::connect_with_retry`) once it starts.
+fn wait_for_shm(timeout: Duration) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let shm_path = Path::new("/dev/shm/aviate_gz_bridge");
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            if shm_path.exists() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        false
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // macOS / non-Linux: no /dev/shm. Cap the wait to the smaller
+        // of the caller's timeout and a 3 s startup quantum, then
+        // return true unconditionally — the FC binary will retry its
+        // shm_open and surface a clearer error if the plugin is
+        // genuinely not running.
+        let warmup = Duration::from_secs(3).min(timeout);
+        std::thread::sleep(warmup);
+        true
+    }
 }

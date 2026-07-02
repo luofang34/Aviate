@@ -510,3 +510,433 @@ binary, divergent state" attack surface left open.
 """
 verification_methods = ["test", "review"]
 traces_to = ["d45a87b2-6e51-42b0-995f-a7b6a6a011b9"]
+
+# -------------------------------------------------------------------
+# Behavioral HLRs (200-series). These complement the structural rows
+# above. Numeric thresholds are tuned at integration time; the cert
+# evidence is that each row has a measured number and a test that
+# holds the line. See docs/AVIATE_CORE_BEHAVIORAL_REQUIREMENTS.md.
+# -------------------------------------------------------------------
+
+[[requirements]]
+uid = "35c5ea78-f62b-46c3-aea2-8cc5404122fe"
+id = "HLR-EST-201"
+title = "Attitude estimate converges from cold-start under static conditions"
+owner = "aviate-core@aviate"
+description = """
+After kernel construction with a fresh `EkfState`, when the
+estimator is fed accelerometer + gyro + magnetometer samples that
+all report `Healthy` and reflect a stationary vehicle, the
+attitude reported by `Ekf::get_estimate()` SHALL satisfy:
+
+  - `is_initialized() == true` within 1.0 s of simulated time;
+  - roll/pitch error against ground truth ≤ 2.0° within 10.0 s of
+    simulated time;
+  - yaw error against ground truth ≤ 5.0° within 10.0 s of
+    simulated time (looser bound: heading converges via mag fusion,
+    which is sensitive to local field anomalies).
+
+Convergence SHALL be monotonic in the sense that no excursion
+beyond 2× the steady-state bound occurs after the first second.
+"""
+verification_methods = ["test"]
+traces_to = ["af89dde4-4c9a-4e6d-a7a9-5bb2447a58d1"]
+
+[[requirements]]
+uid = "fdd76262-2577-49d8-8dd8-700bf6829968"
+id = "HLR-EST-202"
+title = "Attitude estimate tracks ground-truth angular rate in maneuvering flight"
+owner = "aviate-core@aviate"
+description = """
+During smooth angular-rate maneuvers with ground-truth body rates
+bounded by ±30 °/s on each axis, the steady-state error between the
+estimator's reported attitude quaternion and ground truth SHALL be
+≤ 1.0 °/s when expressed as an effective angular-rate tracking
+error (finite-difference of attitude-quaternion log).
+
+This is the in-flight counterpart to HLR-EST-201's static
+convergence: it pins the estimator's dynamic accuracy under the
+flight envelope, not just at rest.
+"""
+verification_methods = ["test"]
+traces_to = ["af89dde4-4c9a-4e6d-a7a9-5bb2447a58d1"]
+
+[[requirements]]
+uid = "80d94e93-b4a8-4f69-8426-31395eabb89c"
+id = "HLR-EST-203"
+title = "Position estimate tracks ground truth with healthy GNSS+baro"
+owner = "aviate-core@aviate"
+description = """
+When `SensorReading.health == Good` for the IMU, baro, and GNSS;
+`GnssData.health == Good`; and `GnssFix` reports `Fix3D`, the
+estimator's NED-frame position estimate SHALL satisfy:
+
+  - horizontal (N, E) error ≤ 0.5 m steady-state over a 30 s window;
+  - vertical (D) error ≤ 0.3 m steady-state over a 30 s window;
+
+against ground truth, with the vehicle operating inside the
+configured flight envelope. Transient excursions during GNSS-fix
+acquisition and immediately after a position-jump on the GNSS
+input are excluded.
+"""
+verification_methods = ["test"]
+traces_to = ["af89dde4-4c9a-4e6d-a7a9-5bb2447a58d1"]
+
+[[requirements]]
+uid = "a75ad122-2e13-4268-b388-f821d1bea6e3"
+id = "HLR-EST-204"
+title = "Estimator latches NUMERIC_ERROR on non-finite sensor input"
+owner = "aviate-core@aviate"
+description = """
+When `Ekf::observe()` is called with a `SensorSet` containing any
+non-finite (NaN / ±Inf) IMU component, the estimator SHALL:
+
+  - set `has_numeric_fault() == true` within the same call;
+  - NOT mutate the estimator state for that cycle;
+  - remain in the latched state across subsequent cycles
+    regardless of whether subsequent inputs are clean;
+  - clear `has_numeric_fault()` ONLY when explicit reset is
+    invoked through `EkfState::reset()` (which is driven by the
+    kernel's `ground_reset()` path, never by ordinary cycle flow).
+
+The same gate SHALL apply to non-finite `dt`.
+"""
+verification_methods = ["test"]
+traces_to = ["af89dde4-4c9a-4e6d-a7a9-5bb2447a58d1", "86aeb60c-68a1-45a3-b452-aef33a0f4df0"]
+
+[[requirements]]
+uid = "1a16d9c8-7632-4aee-9b23-3bcbfe74036d"
+id = "HLR-EST-205"
+title = "Estimator survives bounded GNSS dropouts without divergence"
+owner = "aviate-core@aviate"
+description = """
+When `GnssData.health` transitions from `Good` to `Lost` and
+remains `Lost` for up to 5.0 s of simulated time, the estimator
+SHALL:
+
+  - continue propagating position and velocity from the IMU
+    (dead-reckoning) without producing non-finite state;
+  - keep horizontal position error growth ≤ 2.0 m total during the
+    dropout window;
+  - keep attitude estimate unchanged in error behavior — attitude
+    SHALL NOT degrade with GNSS loss (it has no GNSS dependency in
+    the fusion path).
+
+Recovery on GNSS return SHALL not produce a position-state step
+exceeding the configured fusion gate.
+"""
+verification_methods = ["test"]
+traces_to = ["af89dde4-4c9a-4e6d-a7a9-5bb2447a58d1"]
+
+[[requirements]]
+uid = "363a9170-26ab-425e-b074-126b63a90cea"
+id = "HLR-CTL-201"
+title = "Rate controller tracks rate setpoint with bounded steady-state error"
+owner = "aviate-core@aviate"
+description = """
+When the active control law issues a rate setpoint and the airframe
+is responding inside its authority envelope, the closed-loop steady-
+state error between commanded body rate and measured body rate
+SHALL be ≤ 0.5 °/s on each axis under a ±60 °/s smooth command
+profile (no step inputs, no saturating commands).
+
+Transient response: the controller SHALL not exhibit sustained
+oscillation; any oscillation SHALL decay below the steady-state
+bound within 1.0 s of the disturbance.
+"""
+verification_methods = ["test"]
+traces_to = ["6f3eb555-3636-48b4-90f2-5d11abfcaa54"]
+
+[[requirements]]
+uid = "c61d7392-52fa-40ee-ba86-bf3794443555"
+id = "HLR-CTL-202"
+title = "Attitude controller step response is stable and bounded"
+owner = "aviate-core@aviate"
+description = """
+Under a 10° roll-setpoint step command from steady hover, the
+attitude controller closed-loop response SHALL satisfy:
+
+  - overshoot ≤ 30 % of the step;
+  - settle time (±5 % of the step) ≤ 1.0 s;
+  - no sustained oscillation (decaying ringdown after the first
+    settle event is acceptable; persistent oscillation is not);
+  - no axis saturation beyond the configured authority envelope.
+
+The same shape contract applies to pitch step; yaw step is
+exempted from this HLR because yaw dynamics differ (verified by a
+separate scenario).
+"""
+verification_methods = ["test"]
+traces_to = ["6f3eb555-3636-48b4-90f2-5d11abfcaa54"]
+
+[[requirements]]
+uid = "7c75fe16-1a65-4362-8983-41dcf844e587"
+id = "HLR-CTL-203"
+title = "Hover holds altitude and position within bounds in still air"
+owner = "aviate-core@aviate"
+description = """
+In a position-hold control law, with healthy estimator and zero
+ambient disturbance, the closed-loop position SHALL satisfy over a
+30 s observation window:
+
+  - altitude error ≤ 0.3 m peak-to-peak around setpoint;
+  - horizontal position error ≤ 0.5 m radial around setpoint;
+  - attitude motion bounded — no sustained roll/pitch oscillation
+    exceeding ±5° amplitude.
+
+This is the integrated stabilization-quality benchmark; primary
+verification is Gazebo XIL because synthetic dynamics surrogates
+do not capture aerodynamic and motor-response behavior at this
+fidelity.
+"""
+verification_methods = ["test"]
+traces_to = ["6f3eb555-3636-48b4-90f2-5d11abfcaa54"]
+
+[[requirements]]
+uid = "3c1fba89-90d3-4b4d-9f86-357cc2c3d955"
+id = "HLR-CTL-204"
+title = "Authority limits are honored under saturating commands"
+owner = "aviate-core@aviate"
+description = """
+When the controller is given a setpoint whose required axis
+command would exceed the configured authority envelope
+(`max_tilt_rad`, `max_rate_rad_s`, `max_vertical_accel_mss`; spec
+§13), the emitted `AxisCommand` SHALL be clamped to the envelope
+boundary, never exceed it, and clamping SHALL be smooth (no axis
+jump > configured slew limit between cycles).
+
+Saturation events SHALL be observable via the in-flight check
+flags (spec §15.2) so downstream layers can record them.
+"""
+verification_methods = ["test"]
+traces_to = ["6f3eb555-3636-48b4-90f2-5d11abfcaa54"]
+
+[[requirements]]
+uid = "f706ab12-12a2-4567-9258-aeab939f4bf7"
+id = "HLR-MIX-201"
+title = "Mixer produces actuator commands inside [0.0, 1.0]"
+owner = "aviate-core@aviate"
+description = """
+For every `AxisCommand` whose components lie inside the configured
+authority envelope, `Mixer::mix()` SHALL produce an `ActuatorCmd`
+whose every used slot lies in `[0.0, 1.0]` (`Normalized` invariant).
+Unused slots SHALL be either explicitly zero or sentinel-tagged per
+the airframe contract — never non-finite, never negative, never
+exceeding 1.0.
+"""
+verification_methods = ["test"]
+traces_to = ["aa8459c8-585e-402c-9de0-7daba25a575b"]
+
+[[requirements]]
+uid = "d71b37a4-6022-4e2b-8ddd-625b4a2e17de"
+id = "HLR-MIX-202"
+title = "QuadX mixer is geometrically symmetric for zero axis command"
+owner = "aviate-core@aviate"
+description = """
+For `QuadXMixer::mix(AxisCommand { roll: 0, pitch: 0, yaw: 0,
+throttle: T })` with any `T` in `[0.0, 1.0]`, all four motor slots
+SHALL be assigned exactly `T` (bit-equal). Any asymmetry would
+indicate a mixing-matrix bug that would cause off-axis drift at
+hover.
+
+This is a property test over the throttle scalar; it is the most
+direct executable expression of "the mixer geometry is correct".
+"""
+verification_methods = ["test"]
+traces_to = ["aa8459c8-585e-402c-9de0-7daba25a575b"]
+
+[[requirements]]
+uid = "ebf6171c-dbae-41cf-9e3c-d5b625a8348f"
+id = "HLR-MIX-203"
+title = "Sanitizer falls back to safe pattern on unhealthy actuator group"
+owner = "aviate-core@aviate"
+description = """
+When `ActuatorState` reports `ActuatorHealth::Unhealthy` for any
+actuator group, `ActuatorSanitizer::sanitize()` SHALL replace the
+commanded outputs of that group with the group's configured safe
+pattern within the current cycle and:
+
+  - increment `consecutive_fallback` for the group monotonically
+    while the unhealthy condition persists, up to
+    `MAX_CONSECUTIVE_FALLBACK`;
+  - reset `consecutive_fallback` to 0 only on a clean (Healthy)
+    cycle for that group;
+  - record the event in the returned `SanitizeReport` so callers
+    can surface it.
+
+Per-cycle correctness: the fallback substitution SHALL be visible
+in the `ActuatorCmd` emitted from the SAME cycle in which the
+unhealthy state was detected — never delayed by one cycle.
+"""
+verification_methods = ["test"]
+traces_to = ["aa8459c8-585e-402c-9de0-7daba25a575b", "86aeb60c-68a1-45a3-b452-aef33a0f4df0"]
+
+[[requirements]]
+uid = "cde83b23-7574-4b9f-af99-624918000900"
+id = "HLR-FLT-201"
+title = "Disarmed kernel emits safe actuator pattern unconditionally"
+owner = "aviate-core@aviate"
+description = """
+While `kernel.init_state()` is not `Armed`, every actuator command
+emitted via `update()` SHALL be the configured safe pattern (zero,
+or per-airframe idle), regardless of:
+
+  - the estimator's reported state, including spurious or
+    out-of-envelope estimates;
+  - the commanded `Setpoint` value, including extreme or non-finite
+    components;
+  - latched faults present in `FaultFlags`;
+  - watchdog status.
+
+This is the most fundamental ground-safety invariant. It SHALL
+hold during transitions in (PowerOn → ConfigLoading → Ready) and
+on transitions out (Armed → Fault, Armed → Disarmed via
+`disarm()`).
+"""
+verification_methods = ["test"]
+traces_to = ["c925725e-29bf-40e1-b0d5-2e257ed02819"]
+
+[[requirements]]
+uid = "30f749c3-82ee-4ca3-9c0b-91413894c385"
+id = "HLR-FLT-202"
+title = "Pre-arm checks reject arm with typed ArmError"
+owner = "aviate-core@aviate"
+description = """
+`AviateKernelImpl::arm()` SHALL return `Err(ArmError::*)` and leave
+`init_state` unchanged when any of the following pre-arm gates
+fails:
+
+  - estimator's `is_initialized() == false`;
+  - estimator's `has_numeric_fault() == true`;
+  - any sensor channel last-seen-Healthy timestamp older than 1.0 s;
+  - watchdog deadline missed since power-on;
+  - resolved configuration's canonical hash mismatches the
+    expected value (config drift);
+  - latched fault in `FaultFlags` with `FaultCategory::Algorithm`
+    or `FaultCategory::Sensor` priority above the arm threshold.
+
+The returned `ArmError` discriminant SHALL identify which gate
+failed (no opaque "arm denied").
+"""
+verification_methods = ["test"]
+traces_to = ["c925725e-29bf-40e1-b0d5-2e257ed02819"]
+
+[[requirements]]
+uid = "6a9be893-efec-4a80-99c0-885dbe19808e"
+id = "HLR-FLT-203"
+title = "NUMERIC_ERROR inhibits control output until ground reset"
+owner = "aviate-core@aviate"
+description = """
+When `FaultFlags::NUMERIC_ERROR` is latched (via HLR-EST-204 or
+equivalent), the kernel's `update()` SHALL emit the configured safe
+actuator pattern for every subsequent cycle, even if the input
+sensors return to fully Healthy state. The latch SHALL persist
+across `update()` invocations until `ground_reset()` is called.
+
+`disarm()` alone SHALL NOT clear the latch — only `ground_reset()`
+clears latched algorithm-category faults (spec §15).
+"""
+verification_methods = ["test"]
+traces_to = ["86aeb60c-68a1-45a3-b452-aef33a0f4df0"]
+
+[[requirements]]
+uid = "48f7c065-7176-44b1-b6e8-77ae93d4f7ef"
+id = "HLR-FLT-204"
+title = "Command timeout transitions to safe mode within one cycle"
+owner = "aviate-core@aviate"
+description = """
+When the kernel observes `command_age_ms > command_timeout_ms`
+during a cycle, the in-flight check flag `COMMAND_RECENT` SHALL
+clear within the same cycle, the control law SHALL switch to the
+configured command-loss-safe mode (per spec §12), and the actuator
+command emitted SHALL be the safe pattern for that mode.
+
+The transition SHALL NOT produce an actuator runaway: the
+cycle-to-cycle delta SHALL respect the configured slew limit.
+
+When `command_age_ms` returns inside the threshold, the kernel
+SHALL re-engage the active control law (no permanent latching for
+command staleness — it is recoverable, unlike algorithm faults).
+"""
+verification_methods = ["test"]
+traces_to = ["86aeb60c-68a1-45a3-b452-aef33a0f4df0"]
+
+[[requirements]]
+uid = "aa59b8a5-8f1e-4a0b-8da6-bfc202364e69"
+id = "HLR-MORPH-201"
+title = "ConfigMode transition is atomic within a control cycle"
+owner = "aviate-core@aviate"
+description = """
+When `request_config_mode(to)` is accepted during cycle N, the
+`ActuatorCmd` emitted by cycle N+1 SHALL reflect exactly one of
+{mode-before, mode-after} consistently — every mixer parameter,
+authority limit, and active controller selection SHALL come from
+the same `ModeConfig`.
+
+The transition SHALL appear atomic to external observers: no cycle
+shall emit an actuator command computed from a half-applied mode
+where (e.g.) the new mixer matrix is paired with the old authority
+envelope.
+"""
+verification_methods = ["test"]
+traces_to = ["5dedb209-3aec-452a-ab28-4b959a596fff"]
+
+[[requirements]]
+uid = "ef464858-6ca8-452e-959e-089c4e194a69"
+id = "HLR-MORPH-202"
+title = "GeometryState change does not produce actuator spikes"
+owner = "aviate-core@aviate"
+description = """
+When the active `GeometryState` (continuous airframe-morph
+parameter, e.g. tilt-rotor angle, fold-arm position) updates by
+some `dGeom` during cycle N, the cycle-N actuator command SHALL
+differ from cycle-(N-1) by no more than the per-actuator slew
+limit configured for the airframe.
+
+Equivalently: continuous-geometry updates SHALL behave as
+parameter changes inside the mixer, not as control-law mode
+switches. No mid-flight transient should be observable that is
+not present in the geometry signal itself.
+"""
+verification_methods = ["test"]
+traces_to = ["5dedb209-3aec-452a-ab28-4b959a596fff"]
+
+[[requirements]]
+uid = "30d12e11-bdb6-4a0a-b078-fef3e81181df"
+id = "HLR-INIT-201"
+title = "Kernel cold-start is bit-deterministic given identical input"
+owner = "aviate-core@aviate"
+description = """
+Two `AviateKernelImpl` instances of the same build, constructed
+with the same `ResolvedKernelConfig` and fed bit-identical
+sequences of `(time, SensorSet, Command, command_age_ms,
+ActuatorState, Option<&CrossChannelData>)` tuples, SHALL produce
+bit-identical `KernelState` snapshots at every cycle N.
+
+This includes EkfState (filter covariance and quaternion),
+ControllerRuntimeState, ActuatorFallbackState counters, fault
+latch state, and timing statistics. Cross-channel byte equality
+(SYS-PIPE-001 / HLR-CCS-001) is a corollary of this requirement.
+"""
+verification_methods = ["test"]
+traces_to = ["78a41dd0-c754-439f-a2a1-325111713954"]
+
+[[requirements]]
+uid = "3fcf8206-d100-4323-a7ea-67187012d42a"
+id = "HLR-INIT-202"
+title = "Pre-arm gate set is complete and individually testable"
+owner = "aviate-core@aviate"
+description = """
+The set of pre-arm gates enumerated in HLR-FLT-202 SHALL be the
+COMPLETE set checked by `arm()`. Each gate SHALL be individually
+provable by a test that constructs a kernel with all other gates
+satisfied, fails the single gate under test, and verifies that
+`arm()` returns the specific `ArmError` discriminant for that
+gate.
+
+This requirement makes the gate set auditable: a reviewer can
+walk the gates listed in HLR-FLT-202, find one test per gate, and
+conclude the implementation matches the contract.
+"""
+verification_methods = ["test"]
+traces_to = ["78a41dd0-c754-439f-a2a1-325111713954", "c925725e-29bf-40e1-b0d5-2e257ed02819"]

@@ -81,7 +81,7 @@ pub use fault_protocol::{
 };
 
 // Fault controller exports
-pub use fault_ctrl::{FaultController, FaultCtrlError};
+pub use fault_ctrl::{FaultController, FaultCtrlError, FaultSensors};
 
 /// XIL Network Configuration
 ///
