@@ -11,6 +11,11 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # bmi2 breaks its API inside patch releases (0.1.1 -> 0.1.2 changed
+      # Bmi2's generics and new_spi's signature); aviate-drivers exact-pins
+      # it. Bump manually with a migration, never automatically.
+      - dependency-name: bmi2
     groups:
       cargo-minor-patch:
         update-types:

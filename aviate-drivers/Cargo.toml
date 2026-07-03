@@ -20,12 +20,11 @@ embedded-hal = "1.0"
 libm = "0.2"
 
 # External sensor drivers (embedded-hal 1.0 compatible).
-# Cargo.lock is gitignored in this repo, so CI resolves to latest-compatible
-# on every run. bmi2 0.1.2 is API-incompatible with our bmi270.rs (Bmi2 gained
-# two generics and new_spi gained a delay argument); pin exactly until the
-# code is updated to the new shape.
+# bmi2 has shipped API-breaking changes inside patch releases, so it is
+# pinned exactly and excluded from Dependabot version updates (ignore
+# rule in .github/dependabot.yml); bumps are deliberate migration PRs.
 bmi088 = "0.2"
-bmi2 = "=0.1.1"
+bmi2 = "=0.1.2"
 
 # Forked sensor drivers (will be upgraded to embedded-hal 1.0)
 # spl06-007 = { path = "external/spl06-007" }
