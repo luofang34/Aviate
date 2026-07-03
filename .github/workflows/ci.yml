@@ -36,6 +36,74 @@ jobs:
       - name: Verify aviate-runtime env-flight dependency closure
         run: ./scripts/check_runtime_boundary.sh
 
+  floors-lower-lint:
+    name: Floors Lower Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history so the lint can diff cert/floors.toml against
+          # the base ref regardless of merge style.
+          fetch-depth: 0
+
+      - name: Resolve merged-PR body (push events only)
+        # On push events `github.event.pull_request` is empty even when
+        # the push was produced by merging a PR. Under plain merge-commits
+        # the head commit is a mechanical "Merge pull request #N..."
+        # subject, so a `Lower-Floor:` line written in the PR body would
+        # be lost. Fetch the PR(s) associated with the pushed commit via
+        # the API; for a direct-to-main push the endpoint returns empty.
+        if: github.event_name == 'push'
+        id: merged-pr-body
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bodies=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+            --jq '.[] | .body // ""' 2>/dev/null || echo "")
+          {
+            echo 'pr_bodies<<_END_OF_PR_BODIES_'
+            printf '%s\n' "$bodies"
+            echo '_END_OF_PR_BODIES_'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Lint floor decreases against Lower-Floor override
+        shell: bash
+        env:
+          # The override line can legitimately live in several places
+          # depending on merge style:
+          #   - pull_request event: PR body.
+          #   - push event, squash-merge: GitHub copies the PR body into
+          #     head_commit.message.
+          #   - push event, merge-commit: the merged PR's body (fetched
+          #     above) or one of the branch commits merged in.
+          #   - push event, rebase-merge: one of the pushed commits.
+          # Plumbing all four haystacks means the gate works the same
+          # regardless of merge style.
+          PR_BODY: |
+            ${{ github.event.pull_request.body }}
+            ${{ steps.merged-pr-body.outputs.pr_bodies }}
+            ${{ github.event.head_commit.message }}
+          PUSH_COMMITS_MESSAGES: ${{ toJSON(github.event.commits.*.message) }}
+        run: |
+          # Concatenate the push-commits messages array (JSON-encoded
+          # strings) onto PR_BODY. jq -r preserves per-element internal
+          # newlines, which the script's `^Lower-Floor:` line anchor
+          # needs.
+          if [ -n "${PUSH_COMMITS_MESSAGES:-}" ] && [ "${PUSH_COMMITS_MESSAGES}" != "null" ]; then
+            extra=$(printf '%s' "$PUSH_COMMITS_MESSAGES" | jq -r '.[]? // empty' || true)
+            PR_BODY=$(printf '%s\n%s' "$PR_BODY" "$extra")
+          fi
+          export PR_BODY
+          base="origin/main"
+          # On push-to-main the checkout IS main; diff against the
+          # commit before the push so the lint still sees the change.
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            base="${{ github.event.before }}"
+          fi
+          ./scripts/floors-lower-lint.sh "$base"
+
   check:
     name: Check & Clippy
     runs-on: ubuntu-latest
