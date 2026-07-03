@@ -20,7 +20,7 @@
 //! ```ignore
 //! use aviate_drivers::bmi270::Bmi270;
 //!
-//! let mut imu = Bmi270::new(spi, config_file, rotation)?;
+//! let mut imu = Bmi270::new(spi, delay, config_file, rotation)?;
 //! let reading = imu.read()?;
 //! ```
 
@@ -31,7 +31,13 @@ use bmi2::types::{
     AccRange as Bmi2AccRange, Burst, GyrRange as Bmi2GyrRange, GyrRangeVal, OisRange, PwrCtrl,
 };
 use bmi2::Bmi2;
+use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::SpiDevice;
+
+/// Stack buffer length for config-file burst writes. Must be at least the
+/// configured burst size: `Bmi2::init` rejects `max_burst > N` with
+/// `BufferTooSmall`. `Burst::default()` bursts 512 bytes.
+const BURST_BUF_LEN: usize = 512;
 
 use crate::Rotation;
 
@@ -128,35 +134,38 @@ impl GyroRange {
 ///
 /// Wraps the `bmi2` crate to provide a unified interface implementing
 /// the `ImuDriver` trait.
-pub struct Bmi270<Spi>
+pub struct Bmi270<Spi, D>
 where
     Spi: SpiDevice,
 {
-    bmi2: Bmi2<SpiInterface<Spi>>,
+    bmi2: Bmi2<SpiInterface<Spi>, D, BURST_BUF_LEN>,
     accel_scale: f32,
     gyro_scale: f32,
     rotation: Rotation,
     source_id: u8,
 }
 
-impl<Spi> Bmi270<Spi>
+impl<Spi, D> Bmi270<Spi, D>
 where
     Spi: SpiDevice,
     <Spi as embedded_hal::spi::ErrorType>::Error: core::fmt::Debug,
+    D: DelayNs,
 {
     /// Create a new BMI270 driver
     ///
     /// # Arguments
     /// * `spi` - SPI device
+    /// * `delay` - Delay provider for the chip's datasheet-mandated init
+    ///   delays (soft-reset settle, power-save toggles)
     /// * `config_file` - BMI270 config file (from Bosch SDK)
     /// * `rotation` - Sensor mounting rotation
     ///
     /// # Returns
     /// Initialized BMI270 driver or error
-    pub fn new(spi: Spi, config_file: &[u8], rotation: Rotation) -> SensorResult<Self> {
-        // Create BMI2 instance with SPI interface
-        // Use Max burst mode (512 bytes)
-        let mut bmi2 = Bmi2::new_spi(spi, Burst::Max);
+    pub fn new(spi: Spi, delay: D, config_file: &[u8], rotation: Rotation) -> SensorResult<Self> {
+        // Create BMI2 instance with SPI interface.
+        // Burst::default() = 512-byte bursts.
+        let mut bmi2 = Bmi2::new_spi(spi, delay, Burst::default());
 
         // Initialize with config file
         bmi2.init(config_file)
@@ -190,11 +199,12 @@ where
     /// Create a new BMI270 driver with custom source ID
     pub fn new_with_source_id(
         spi: Spi,
+        delay: D,
         config_file: &[u8],
         rotation: Rotation,
         source_id: u8,
     ) -> SensorResult<Self> {
-        let mut driver = Self::new(spi, config_file, rotation)?;
+        let mut driver = Self::new(spi, delay, config_file, rotation)?;
         driver.source_id = source_id;
         Ok(driver)
     }
@@ -225,10 +235,11 @@ where
     }
 }
 
-impl<Spi> ImuDriver for Bmi270<Spi>
+impl<Spi, D> ImuDriver for Bmi270<Spi, D>
 where
     Spi: SpiDevice,
     <Spi as embedded_hal::spi::ErrorType>::Error: core::fmt::Debug,
+    D: DelayNs,
 {
     fn read(&mut self) -> SensorResult<RawImuReading> {
         // Read combined data

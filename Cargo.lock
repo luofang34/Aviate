@@ -364,9 +364,9 @@ dependencies = [
 
 [[package]]
 name = "bmi2"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2da8dd196c8e438b3369be122ba7317013eee4f540a3bb485ca126346fc1d2c7"
+checksum = "48eb062697fa0234a96acdc8ed34f141e9f2951d34e358ed449f312d7e5b6469"
 dependencies = [
  "embedded-hal 1.0.0",
  "fixedvec",
