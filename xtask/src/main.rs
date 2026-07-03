@@ -487,8 +487,13 @@ fn run_cleanup() -> anyhow::Result<()> {
     let mut killed_count = 0;
 
     for process in system.processes().values() {
-        let name = process.name();
-        let cmd = process.cmd().join(" ");
+        let name = process.name().to_string_lossy();
+        let cmd = process
+            .cmd()
+            .iter()
+            .map(|arg| arg.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
 
         for target in targets.iter() {
             // Check process name or full command line
