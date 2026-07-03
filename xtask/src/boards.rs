@@ -178,7 +178,7 @@ fn parse_board_metadata(package: &Package) -> Result<BoardMetadata> {
         .into_std_path_buf();
 
     Ok(BoardMetadata {
-        package_name: package.name.clone(),
+        package_name: package.name.to_string(),
         board_dir,
         chip: raw.chip,
         programmer,
