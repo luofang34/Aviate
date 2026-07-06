@@ -13,7 +13,7 @@ use aviate_core::checks::{KernelChecks, PreArmFlags};
 use aviate_core::control::runtime::ControllerRuntimeState;
 use aviate_core::control::{
     AxisCommand, Command, CommandSource, ConfigMode, ControlLawV1, ControlMode, Limits, Setpoint,
-    VehicleController,
+    VehicleControlMode, VehicleController,
 };
 use aviate_core::ekf::Ekf;
 use aviate_core::fault::FaultFlags;
@@ -57,6 +57,7 @@ impl VehicleController for TestStatefulController {
         runtime: &mut TestRuntime,
         _state: &StateEstimate,
         _command: &Command,
+        _flags: &VehicleControlMode,
         _mode: ConfigMode,
         _limits: &Limits,
     ) -> AxisCommand {
@@ -150,6 +151,7 @@ fn step_increments_runtime_counter() {
         &mut runtime,
         &placeholder_state(),
         &placeholder_command(),
+        &VehicleControlMode::default(),
         ConfigMode::Hover,
         &placeholder_limits(),
     );
@@ -158,6 +160,7 @@ fn step_increments_runtime_counter() {
         &mut runtime,
         &placeholder_state(),
         &placeholder_command(),
+        &VehicleControlMode::default(),
         ConfigMode::Hover,
         &placeholder_limits(),
     );

@@ -9,7 +9,10 @@ use crate::control::cascade_gains::CascadeGains;
 use crate::control::position::PositionController;
 use crate::control::rate::{RateController, RateLoopState};
 use crate::control::velocity::{AccelFeedforward, VelocityController, VelocityLoopState};
-use crate::control::{AxisCommand, Command, ConfigMode, Limits, Scalar, VehicleController};
+use crate::control::{
+    AxisCommand, Command, ConfigMode, Limits, OuterLoopSelection, Scalar, VehicleControlMode,
+    VehicleController,
+};
 use crate::math::{Quaternion, Vector3};
 use crate::state::StateEstimate;
 use crate::types::{MetersPerSecond, MetersPerSecondSquared};
@@ -160,6 +163,7 @@ impl VehicleController for MultirotorController {
         runtime: &mut MultirotorRuntimeState,
         state: &StateEstimate,
         command: &Command,
+        flags: &VehicleControlMode,
         _mode: ConfigMode,
         _limits: &Limits,
     ) -> AxisCommand {
@@ -173,26 +177,34 @@ impl VehicleController for MultirotorController {
         );
 
         // ---- position → velocity setpoint ----
+        // Loop selection is driven by the control-mode flags, not by
+        // which setpoint fields are populated: `outer_loop` is the
+        // single authority that maps mode → active loop and rejects
+        // setpoints illegal for the active mode.
         let mut vel_sp_active = false;
         let mut vel_sp_ned = Vector3::new(
             MetersPerSecond(0.0),
             MetersPerSecond(0.0),
             MetersPerSecond(0.0),
         );
-        if let Some(pos_sp_arr) = command.setpoint.position {
-            let pos_sp = Vector3::new(pos_sp_arr[0], pos_sp_arr[1], pos_sp_arr[2]);
-            vel_sp_ned = self.pos_ctrl.step(
-                pos_sp,
-                Vector3 {
-                    x: state.position_ned[0],
-                    y: state.position_ned[1],
-                    z: state.position_ned[2],
-                },
-            );
-            vel_sp_active = true;
-        } else if let Some(vel_sp_arr) = command.setpoint.velocity {
-            vel_sp_ned = Vector3::new(vel_sp_arr[0], vel_sp_arr[1], vel_sp_arr[2]);
-            vel_sp_active = true;
+        match flags.outer_loop(&command.setpoint) {
+            OuterLoopSelection::Position(pos_sp_arr) => {
+                let pos_sp = Vector3::new(pos_sp_arr[0], pos_sp_arr[1], pos_sp_arr[2]);
+                vel_sp_ned = self.pos_ctrl.step(
+                    pos_sp,
+                    Vector3 {
+                        x: state.position_ned[0],
+                        y: state.position_ned[1],
+                        z: state.position_ned[2],
+                    },
+                );
+                vel_sp_active = true;
+            }
+            OuterLoopSelection::Velocity(vel_sp_arr) => {
+                vel_sp_ned = Vector3::new(vel_sp_arr[0], vel_sp_arr[1], vel_sp_arr[2]);
+                vel_sp_active = true;
+            }
+            OuterLoopSelection::None => {}
         }
 
         if vel_sp_active {

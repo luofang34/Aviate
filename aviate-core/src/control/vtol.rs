@@ -1,5 +1,7 @@
 use crate::control::runtime::NoControllerState;
-use crate::control::{AxisCommand, Command, ConfigMode, Limits, VehicleController};
+use crate::control::{
+    AxisCommand, Command, ConfigMode, Limits, VehicleControlMode, VehicleController,
+};
 use crate::state::StateEstimate;
 use crate::types::NormalizedSigned;
 
@@ -17,6 +19,7 @@ impl VehicleController for VtolController {
         _runtime: &mut NoControllerState,
         _state: &StateEstimate,
         command: &Command,
+        _flags: &VehicleControlMode,
         _mode: ConfigMode,
         _limits: &Limits,
     ) -> AxisCommand {

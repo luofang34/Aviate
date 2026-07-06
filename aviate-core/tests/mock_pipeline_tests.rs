@@ -14,7 +14,7 @@ use aviate_core::checks::{KernelChecks, PreArmFlags};
 use aviate_core::control::runtime::ControllerRuntimeState;
 use aviate_core::control::{
     AxisCommand, Command, CommandSource, ConfigMode, ControlMode, Limits, Setpoint,
-    VehicleController,
+    VehicleControlMode, VehicleController,
 };
 use aviate_core::ekf::runtime::EstimatorRuntimeState;
 use aviate_core::ekf::Estimator;
@@ -145,6 +145,7 @@ impl VehicleController for MockController {
         runtime: &mut MockControllerRuntime,
         _state: &aviate_core::state::StateEstimate,
         _command: &Command,
+        _flags: &VehicleControlMode,
         _mode: ConfigMode,
         _limits: &Limits,
     ) -> AxisCommand {

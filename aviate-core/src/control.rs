@@ -18,7 +18,9 @@ pub use crate::types::Scalar;
 
 pub mod enums;
 pub mod runtime;
+pub mod vehicle_control_mode;
 pub use enums::{CommandSource, ConfigMode, ControlLawV1, ControlMode, SafetyLevelV1};
+pub use vehicle_control_mode::{OuterLoopSelection, VehicleControlMode};
 
 #[derive(Clone, Debug)]
 pub struct Setpoint {
@@ -200,6 +202,7 @@ pub trait VehicleController {
         runtime: &mut Self::RuntimeState,
         state: &StateEstimate,
         command: &Command,
+        flags: &VehicleControlMode,
         mode: ConfigMode,
         limits: &Limits, // COV:EXCL(phantom DA from enums.rs re-export; param decl)
     ) -> AxisCommand; // COV:EXCL(phantom DA from enums.rs re-export; return type)
