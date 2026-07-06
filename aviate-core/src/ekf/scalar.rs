@@ -23,7 +23,7 @@ impl Ekf {
         if s < 1e-9 {
             return; // COV:EXCL(DEFENSIVE: prevent division by zero)
         }
-
+        // COV:EXCL(phantom DA: grcov attributes a phantom region to this line after the early return above)
         // Innovation gating
         let gate_sq = self.config.innovation_gate * self.config.innovation_gate;
         if (innov * innov) / s > gate_sq {
@@ -127,7 +127,7 @@ impl Ekf {
         if (innov * innov) / s > gate_sq {
             return; // Reject measurement
         }
-
+        // COV:EXCL(phantom DA: grcov attributes a phantom region to this line after the reject-gate branch above)
         // Kalman Gain
         let k_gain_factor = 1.0 / s;
         let mut k_vector = [0.0; STATE_DIM];
