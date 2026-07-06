@@ -156,11 +156,16 @@ pub trait MagDriver {
 /// GNSS fix type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GnssFix {
+    /// No position fix.
     #[default]
     None,
+    /// 2D fix (horizontal position only).
     TwoD,
+    /// 3D fix (horizontal position and altitude).
     ThreeD,
+    /// RTK solution with float ambiguities.
     RtkFloat,
+    /// RTK solution with fixed integer ambiguities.
     RtkFixed,
 }
 
@@ -268,13 +273,21 @@ impl Default for RawActuatorCmd {
 pub struct ActuatorErrorFlags(pub u8);
 
 impl ActuatorErrorFlags {
+    /// No fault flags set.
     pub const NONE: Self = Self(0);
+    /// Channel current exceeded its limit.
     pub const OVERCURRENT: Self = Self(1 << 0);
+    /// Channel temperature exceeded its limit.
     pub const OVERTEMPERATURE: Self = Self(1 << 1);
+    /// Actuator failed to move / rotor stalled.
     pub const STALL: Self = Self(1 << 2);
+    /// Supply voltage below the safe operating range.
     pub const VOLTAGE_LOW: Self = Self(1 << 3);
+    /// Supply voltage above the safe operating range.
     pub const VOLTAGE_HIGH: Self = Self(1 << 4);
+    /// Communication with the actuator failed.
     pub const COMM_ERROR: Self = Self(1 << 5);
+    /// Actuator reported an internal hardware fault.
     pub const HARDWARE_FAULT: Self = Self(1 << 6);
 
     /// Check if any error flag is set

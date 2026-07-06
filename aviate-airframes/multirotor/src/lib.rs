@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! Multirotor airframe definitions.
 //!
 //! This crate provides airframe implementations for multirotor vehicles

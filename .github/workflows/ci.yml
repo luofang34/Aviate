@@ -9,10 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  # Coverage threshold is 100% after documented exclusions.
-  # See aviate-core/coverage.exclude for exclusion list with justifications.
-  # This ensures new code cannot be introduced without tests.
-  COVERAGE_THRESHOLD: 100
 
 jobs:
   file-sizes:
@@ -144,7 +140,7 @@ jobs:
         run: cargo check --manifest-path aviate-hal/stm32h7/Cargo.toml --target thumbv7em-none-eabihf
 
       - name: Clippy (host)
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
     name: Tests
@@ -170,7 +166,9 @@ jobs:
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests
-        run: cargo test --workspace
+        run: |
+          cargo test --workspace --all-targets
+          cargo test --workspace --doc
 
       # The behavioral suite now stages faults through the public
       # `state.faults` surface, so it runs under the plain `cargo test
@@ -182,7 +180,7 @@ jobs:
         run: cargo check -p aviate-core --features test-hooks --all-targets
 
   coverage:
-    name: Coverage (DO-178C LLVM)
+    name: Coverage (region+branch)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -217,9 +215,9 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run LLVM coverage analysis
+      - name: Run region+branch coverage analysis
         run: |
-          COVERAGE_MODE=branch COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD ./scripts/check_coverage.sh
+          COVERAGE_MODE=branch ./scripts/check_coverage.sh
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
@@ -256,10 +254,40 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # In-boundary crates carry `#![deny(missing_docs)]`, so a public item
+      # without a doc comment fails this rustdoc build (as well as clippy and
+      # the release build). `-D warnings` promotes every remaining rustdoc
+      # diagnostic — broken intra-doc links included — to an error.
       - name: Build documentation
         run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
+
+  build-release:
+    name: Build (release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install system libudev
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build workspace (release)
+        run: cargo build --workspace --release
 
   evidence:
     name: Evidence (doctor + floors)

@@ -218,6 +218,7 @@ pub trait VehicleController {
 pub mod attitude;
 pub mod cascade_gains;
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod cascade_tests;
 pub mod envelope;
 pub mod position;
