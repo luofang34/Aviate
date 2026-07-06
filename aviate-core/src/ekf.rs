@@ -6,13 +6,13 @@
 //! complementary filter, particle filter, VIO graph backends) can
 //! plug in with their own state shape — a 6-state attitude-only
 //! cubesat ADCS filter, an N-particle cloud, or a sliding-window
-//! graph all need different on-disk shapes than the 18-state ESKF
+//! graph all need different on-disk shapes than the 15-state ESKF
 //! the EKF uses today.
 //!
 //! Roles:
 //!
-//!   - `EkfState` — the persistent 18-state filter contents
-//!     (position, velocity, attitude, biases, 18×18 covariance,
+//!   - `EkfState` — the persistent 15-state filter contents
+//!     (position, velocity, attitude, biases, 15×15 covariance,
 //!     init/fault latches). Implements `EstimatorRuntimeState`.
 //!     Lives under `KernelState.estimator` (single safety-relevant-
 //!     state owner). Pure-state operations (`init`, `reset`,
@@ -49,9 +49,7 @@ use crate::ekf::runtime::EstimatorRuntimeState;
 use crate::math::{Matrix, Quaternion, Vector3, QUAT_NORM_EPS};
 use crate::sensor::SensorSet;
 use crate::state::{EstimateQuality, StateEstimate, StateValidFlags};
-use crate::types::{
-    Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, RadiansPerSecond, Scalar,
-};
+use crate::types::{Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond, Scalar};
 
 /// State estimator contract (LLR-EST-110, LLR-EST-111, LLR-STATE-105).
 ///
@@ -143,8 +141,8 @@ pub trait Estimator {
     }
 }
 
-// State dimension: 3 pos, 3 vel, 3 att_err, 3 gyro_bias, 3 accel_bias, 3 mag_bias = 18
-pub const STATE_DIM: usize = 18;
+// State dimension: 3 pos, 3 vel, 3 att_err, 3 gyro_bias, 3 accel_bias = 15
+pub const STATE_DIM: usize = 15;
 
 // State indices — shared with predict/update/scalar submodules.
 // COV:EXCL_START(phantom DA: const decl lines carry coverage
@@ -154,7 +152,6 @@ pub(crate) const IDX_VEL: usize = 3;
 pub(crate) const IDX_ATT: usize = 6;
 pub(crate) const IDX_GB: usize = 9;
 pub(crate) const IDX_AB: usize = 12;
-pub(crate) const IDX_MB: usize = 15;
 // COV:EXCL_STOP
 
 // COV:EXCL_START(phantom DA: struct-field declaration lines for
@@ -184,8 +181,6 @@ pub struct EkfConfig {
     pub mag_field_min: Scalar,
     /// Maximum valid field strength \[μT\] (default 70.0)
     pub mag_field_max: Scalar,
-    /// Mag bias random walk process noise [μT²/s] (default 1e-5)
-    pub process_noise_mag_bias: Scalar,
 }
 
 impl Default for EkfConfig {
@@ -205,13 +200,12 @@ impl Default for EkfConfig {
             mag_inclination_limit: 0.95,       // Stop fusion
             mag_field_min: 20.0,               // μT
             mag_field_max: 70.0,               // μT
-            process_noise_mag_bias: 1e-5,      // μT²/s
         }
     }
 }
 // COV:EXCL_STOP
 
-/// Persistent filter state — the 18-state error-state EKF contents
+/// Persistent filter state — the 15-state error-state EKF contents
 /// plus initialization and numeric-fault latches. Lives under
 /// `KernelState.estimator` (single safety-relevant-state owner).
 ///
@@ -235,13 +229,11 @@ pub struct EkfState {
     pub gyro_bias: Vector3<RadiansPerSecond>,
     /// Accelerometer bias (body frame).
     pub accel_bias: Vector3<MetersPerSecondSquared>,
-    /// Magnetometer bias (body frame).
-    pub mag_bias: Vector3<Microtesla>,
     /// Last bias-corrected gyro sample, exposed via `get_estimate`'s
     /// `angular_velocity` field. Persisted across cycles because the
     /// caller observes it on cycles between predict() invocations.
     pub last_gyro_body: Vector3<RadiansPerSecond>,
-    /// Covariance matrix P (18×18).
+    /// Covariance matrix P (15×15).
     pub p_cov: Matrix<STATE_DIM, STATE_DIM>,
     /// True after a successful `init()`; cleared by `reset()`.
     pub initialized: bool,
@@ -275,7 +267,6 @@ impl EkfState {
                 MetersPerSecondSquared(0.0),
                 MetersPerSecondSquared(0.0),
             ),
-            mag_bias: Vector3::new(Microtesla(0.0), Microtesla(0.0), Microtesla(0.0)),
             last_gyro_body: Vector3::new(
                 RadiansPerSecond(0.0),
                 RadiansPerSecond(0.0),
@@ -303,7 +294,6 @@ impl EkfState {
             MetersPerSecondSquared(0.0),
             MetersPerSecondSquared(0.0),
         );
-        self.mag_bias = Vector3::new(Microtesla(0.0), Microtesla(0.0), Microtesla(0.0));
         self.p_cov = Matrix::identity().mul_scalar(0.1);
         self.initialized = true;
         self.quat_fault = false;
@@ -405,11 +395,11 @@ impl EstimatorRuntimeState for EkfState {
 
 impl crate::replicable::Replicable for EkfState {
     // 4 (quat) + 3 (pos) + 3 (vel) + 3 (gyro_bias) + 3 (accel_bias)
-    // + 3 (mag_bias) + 3 (last_gyro_body) = 22 f32s for vector data,
-    // + STATE_DIM*STATE_DIM = 324 f32s for the covariance matrix,
+    // + 3 (last_gyro_body) = 19 f32s for vector data,
+    // + STATE_DIM*STATE_DIM = 225 f32s for the covariance matrix,
     // + 2 bytes for the boolean latches (initialized, quat_fault).
-    // Total = (22 + 324) * 4 + 2 = 1386 bytes.
-    const ENCODED_LEN: usize = (22 + STATE_DIM * STATE_DIM) * 4 + 2;
+    // Total = (19 + 225) * 4 + 2 = 978 bytes.
+    const ENCODED_LEN: usize = (19 + STATE_DIM * STATE_DIM) * 4 + 2;
 
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
         use crate::replicable::copy_into;
@@ -431,7 +421,6 @@ impl crate::replicable::Replicable for EkfState {
         v3!(self.vel);
         v3!(self.gyro_bias);
         v3!(self.accel_bias);
-        v3!(self.mag_bias);
         v3!(self.last_gyro_body);
         // Covariance matrix: row-major, then column-major within each row.
         for row in &self.p_cov.data {

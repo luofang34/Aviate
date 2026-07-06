@@ -24,7 +24,13 @@
 ## change shipped — review carefully.
 
 [estimator]
-"ekf.basic-18state.v1" = 0x4554_494D_454B_4631  # Ekf
+"ekf.basic-15state.v1" = 0x4554_494D_454B_4632  # Ekf
+# Retired: "ekf.basic-18state.v1" = 0x4554_494D_454B_4631 (18-state
+# ESKF with a mag-bias block). The mag-bias state was structurally
+# unobservable and has been removed; the state vector shape changed,
+# so a fresh ID prevents an old 18-state image from matching the new
+# 15-state one at the cross-channel lockstep gate. Never reuse
+# 0x4554_494D_454B_4631.
 
 [controller]
 "controller.multirotor.v1"  = 0x4354_4C4D_5552_5631  # MultirotorController

@@ -86,10 +86,10 @@ update_mag SHALL be a no-op when (a) is_initialized() == false,
 (b) SensorReading.health is not Good, (c) field magnitude lies
 outside [mag_field_min, mag_field_max], or (d) the vertical-axis
 ratio meets or exceeds mag_inclination_limit. On accept, it SHALL
-apply the EKF-estimated mag_bias correction, compute a
-tilt-compensated magnetic heading, gate the innovation to [-π, π],
-and fuse heading via the heading-specialized scalar update with
-inclination-weighted measurement noise.
+compute a tilt-compensated (roll/pitch-only) magnetic heading so the
+measurement is absolute, form the innovation against the estimated
+yaw, gate it to [-π, π], and fuse heading via the heading-specialized
+scalar update with inclination-weighted measurement noise.
 """
 verification_methods = ["test"]
 modules = ["aviate-core/src/ekf/update.rs"]
@@ -959,13 +959,13 @@ use to assemble the byte stream. `write_usize` widens to `u64` so
 encodings are stable across 32-bit and 64-bit targets.
 
 `EkfState` SHALL implement `Replicable` with
-`ENCODED_LEN = (22 + STATE_DIM*STATE_DIM) * 4 + 2 = 1386` bytes:
+`ENCODED_LEN = (19 + STATE_DIM*STATE_DIM) * 4 + 2 = 978` bytes:
 
   - quat (w,x,y,z), pos (x,y,z), vel (x,y,z), gyro_bias (x,y,z),
-    accel_bias (x,y,z), mag_bias (x,y,z), last_gyro_body (x,y,z) —
-    22 f32s = 88 bytes
-  - p_cov (18×18 row-major, then column-major within each row) —
-    324 f32s = 1296 bytes
+    accel_bias (x,y,z), last_gyro_body (x,y,z) —
+    19 f32s = 76 bytes
+  - p_cov (15×15 row-major, then column-major within each row) —
+    225 f32s = 900 bytes
   - initialized (bool), quat_fault (bool) — 2 bytes
 
 Field order in the encoding mirrors the struct's declaration order

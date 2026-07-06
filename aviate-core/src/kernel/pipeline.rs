@@ -198,7 +198,12 @@ mod tests {
         // production-channel hash mismatch was introduced — that is
         // exactly what spec §16 cross-channel firmware verification
         // exists to catch.
-        const EXPECTED: u64 = 0x89bb_f951_e1fb_f9f8;
+        //
+        // This value reflects the Ekf identity `ETIMEKF2`
+        // ("ekf.basic-15state.v1"): the mag-bias state was removed, so
+        // the estimator shape and its cross-channel witness changed
+        // deliberately from the retired 18-state identity.
+        const EXPECTED: u64 = 0xa602_9a14_2d76_a3ef;
         let actual = make_pipeline().algorithm_identity_hash();
         assert_eq!(
             actual, EXPECTED,
