@@ -825,7 +825,7 @@ from `EkfState` — proving that `KernelState<E::RuntimeState, …>`
 parameterization actually accommodates a non-EKF state shape (any
 inadvertent downcast to `&EkfState` in kernel internals would fail
 to compile). The mock's runtime is a `(u32, bool)` struct with no
-covariance matrix; if the kernel were assuming the 18-state ESKF
+covariance matrix; if the kernel were assuming the 15-state ESKF
 shape this test would break.
 
 At least one of the tests SHALL assert the mock's predict counter
