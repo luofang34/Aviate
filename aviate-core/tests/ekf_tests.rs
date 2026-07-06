@@ -2110,3 +2110,195 @@ fn ekf_reinit_clears_fault_state() {
         "Re-init should clear quat_fault"
     );
 }
+
+// =============================================================================
+// Numerical-safety guardrails (#84)
+// Non-finite aiding rejection + covariance positive-definiteness + estimate
+// quality demotion on non-finite pos/vel.
+// =============================================================================
+
+fn init_at_origin() -> EkfState {
+    let mut state = EkfState::default();
+    state.init(
+        Vector3::new(Meters(1.0), Meters(2.0), Meters(-3.0)),
+        Vector3::new(
+            MetersPerSecond(0.5),
+            MetersPerSecond(-0.5),
+            MetersPerSecond(0.2),
+        ),
+        Quaternion::IDENTITY,
+    );
+    state
+}
+
+fn assert_state_finite_and_equal(before: &aviate_core::state::StateEstimate, after: &EkfState) {
+    let now = after.get_estimate();
+    for i in 0..3 {
+        assert!(
+            now.position_ned[i].0.is_finite() && now.velocity_ned[i].0.is_finite(),
+            "state must stay finite after rejecting non-finite aiding"
+        );
+        assert_eq!(before.position_ned[i].0, now.position_ned[i].0);
+        assert_eq!(before.velocity_ned[i].0, now.velocity_ned[i].0);
+    }
+}
+
+#[test]
+fn ekf_rejects_nan_gnss_position_leaves_state_unchanged() {
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = init_at_origin();
+    let before = state.get_estimate();
+
+    let gnss = make_gnss_reading(
+        [Meters(f32::NAN), Meters(5.0), Meters(-50.0)],
+        [
+            MetersPerSecond(1.0),
+            MetersPerSecond(0.5),
+            MetersPerSecond(-0.2),
+        ],
+        GnssHealth::Good,
+        SensorHealth::Good,
+        GnssFix::ThreeD,
+    );
+    ekf.update_gnss_state(&mut state, &gnss);
+
+    assert_state_finite_and_equal(&before, &state);
+}
+
+#[test]
+fn ekf_rejects_inf_gnss_velocity_leaves_state_unchanged() {
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = init_at_origin();
+    let before = state.get_estimate();
+
+    let gnss = make_gnss_reading(
+        [Meters(10.0), Meters(5.0), Meters(-50.0)],
+        [
+            MetersPerSecond(1.0),
+            MetersPerSecond(f32::INFINITY),
+            MetersPerSecond(-0.2),
+        ],
+        GnssHealth::Good,
+        SensorHealth::Good,
+        GnssFix::ThreeD,
+    );
+    ekf.update_gnss_state(&mut state, &gnss);
+
+    assert_state_finite_and_equal(&before, &state);
+}
+
+#[test]
+fn ekf_rejects_nan_baro_pressure_leaves_state_unchanged() {
+    use aviate_core::sensor::{AirData, BaroData};
+    use aviate_core::types::Pascals;
+
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = init_at_origin();
+    let before = state.get_estimate();
+
+    let baro = SensorReading {
+        value: BaroData {
+            altitude: None,
+            air: AirData {
+                static_pressure: Some(Pascals(f32::NAN)),
+                dynamic_pressure: None,
+                total_pressure: None,
+                temperature: None,
+                indicated_airspeed: None,
+                true_airspeed: None,
+            },
+        },
+        timestamp: dummy_timestamp(),
+        health: SensorHealth::Good,
+        valid: true,
+        source_id: 0,
+    };
+    ekf.update_baro_state(&mut state, &baro);
+
+    assert_state_finite_and_equal(&before, &state);
+}
+
+#[test]
+fn ekf_rejects_nan_mag_field_leaves_attitude_unchanged() {
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = init_at_origin();
+    let quat_before = state.quat;
+
+    let mag = make_mag_reading(
+        [Microtesla(f32::NAN), Microtesla(0.0), Microtesla(15.0)],
+        SensorHealth::Good,
+    );
+    ekf.update_mag_state(&mut state, &mag);
+
+    assert_eq!(state.quat.w, quat_before.w);
+    assert_eq!(state.quat.x, quat_before.x);
+    assert_eq!(state.quat.y, quat_before.y);
+    assert_eq!(state.quat.z, quat_before.z);
+    let (_, _, yaw) = state.quat.to_euler();
+    assert!(yaw.is_finite(), "yaw must stay finite");
+}
+
+#[test]
+fn ekf_covariance_stays_positive_definite_under_confident_updates() {
+    use aviate_core::ekf::STATE_DIM;
+
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = init_at_origin();
+
+    // Drive many confident, self-consistent GNSS updates. The naive
+    // (I−KH)P form would let f32 round-off drive a diagonal variance
+    // negative; the Joseph form plus the diagonal floor must keep every
+    // diagonal strictly positive and finite.
+    for _ in 0..2000 {
+        let gnss = make_gnss_reading(
+            [Meters(1.0), Meters(2.0), Meters(-3.0)],
+            [
+                MetersPerSecond(0.5),
+                MetersPerSecond(-0.5),
+                MetersPerSecond(0.2),
+            ],
+            GnssHealth::Good,
+            SensorHealth::Good,
+            GnssFix::ThreeD,
+        );
+        ekf.update_gnss_state(&mut state, &gnss);
+    }
+
+    for i in 0..STATE_DIM {
+        let d = state.p_cov.get(i, i);
+        assert!(
+            d.is_finite() && d > 0.0,
+            "covariance diagonal {i} must stay finite and positive, got {d}"
+        );
+    }
+}
+
+#[test]
+fn ekf_estimate_not_good_when_position_non_finite() {
+    use aviate_core::state::{EstimateQuality, StateValidFlags};
+
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = init_at_origin();
+
+    // Sanity: a healthy initialized state reports Good.
+    assert_eq!(state.get_estimate().quality, EstimateQuality::Good);
+
+    state.pos.x = Meters(f32::NAN);
+    let est = state.get_estimate();
+    assert_ne!(est.quality, EstimateQuality::Good);
+    assert!(!est.valid_flags.contains(StateValidFlags::POSITION));
+    assert!(!est.valid_flags.contains(StateValidFlags::VELOCITY));
+}
+
+#[test]
+fn ekf_estimate_not_good_when_velocity_non_finite() {
+    use aviate_core::state::{EstimateQuality, StateValidFlags};
+
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = init_at_origin();
+
+    state.vel.z = MetersPerSecond(f32::INFINITY);
+    let est = state.get_estimate();
+    assert_ne!(est.quality, EstimateQuality::Good);
+    assert!(!est.valid_flags.contains(StateValidFlags::VELOCITY));
+}

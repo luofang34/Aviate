@@ -33,6 +33,17 @@ impl Ekf {
 
         let gnss = &gnss_reading.value;
 
+        // Reject non-finite aiding before fusion, mirroring the IMU
+        // validity gate in `predict_state`. A single NaN/Inf component
+        // otherwise produces a NaN innovation that slips through the
+        // scalar gate and poisons every correlated state, so the whole
+        // reading is dropped if any component is non-finite.
+        for c in 0..3 {
+            if !gnss.position_ned[c].0.is_finite() || !gnss.velocity_ned[c].0.is_finite() {
+                return;
+            }
+        }
+
         // Update Position NED
         let r_pos = self.config.meas_noise_gnss_pos;
 
@@ -61,6 +72,14 @@ impl Ekf {
 
             // NED Z is negative altitude (down).
             let z_meas = -altitude_from_pressure;
+
+            // Reject non-finite aiding before fusion, mirroring the IMU
+            // validity gate: a NaN/Inf pressure yields a NaN altitude
+            // that would slip through the scalar gate and poison state.
+            if !z_meas.is_finite() {
+                return;
+            }
+
             let r_baro = self.config.meas_noise_baro;
             self.scalar_update(state, IDX_POS + 2, z_meas, r_baro);
         }
@@ -87,6 +106,16 @@ impl Ekf {
         }
 
         let mag = &mag_reading.value;
+
+        // Reject non-finite aiding before fusion, mirroring the IMU
+        // validity gate. A NaN component would otherwise pass the field
+        // and inclination checks (every NaN comparison is false) and
+        // poison the yaw state.
+        for c in 0..3 {
+            if !mag.field_ut[c].0.is_finite() {
+                return;
+            }
+        }
 
         let mag_x = mag.field_ut[0].0;
         let mag_y = mag.field_ut[1].0;

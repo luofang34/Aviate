@@ -300,7 +300,41 @@ impl EkfState {
     }
 
     /// Snapshot the current state estimate for downstream consumers.
+    ///
+    /// A non-finite position or velocity component (from numeric
+    /// corruption anywhere upstream) demotes the estimate below `Good`
+    /// and drops the position/velocity valid flags, so a poisoned
+    /// pos/vel can never be published as trustworthy navigation state.
     pub fn get_estimate(&self) -> StateEstimate {
+        let position_ned = [self.pos.x, self.pos.y, self.pos.z];
+        let velocity_ned = [self.vel.x, self.vel.y, self.vel.z];
+        let pos_vel_finite = [
+            self.pos.x.0,
+            self.pos.y.0,
+            self.pos.z.0,
+            self.vel.x.0,
+            self.vel.y.0,
+            self.vel.z.0,
+        ]
+        .iter()
+        .all(|v| v.is_finite());
+
+        let quality = if !self.initialized {
+            EstimateQuality::Unusable
+        } else if pos_vel_finite {
+            EstimateQuality::Good
+        } else {
+            EstimateQuality::Unusable
+        };
+
+        let valid_flags = if !self.initialized {
+            StateValidFlags::empty()
+        } else if pos_vel_finite {
+            StateValidFlags::all()
+        } else {
+            StateValidFlags::all() & !(StateValidFlags::POSITION | StateValidFlags::VELOCITY)
+        };
+
         StateEstimate {
             attitude: self.quat,
             angular_velocity: [
@@ -308,18 +342,10 @@ impl EkfState {
                 self.last_gyro_body.y,
                 self.last_gyro_body.z,
             ],
-            position_ned: [self.pos.x, self.pos.y, self.pos.z],
-            velocity_ned: [self.vel.x, self.vel.y, self.vel.z],
-            quality: if self.initialized {
-                EstimateQuality::Good
-            } else {
-                EstimateQuality::Unusable
-            },
-            valid_flags: if self.initialized {
-                StateValidFlags::all()
-            } else {
-                StateValidFlags::empty()
-            },
+            position_ned,
+            velocity_ned,
+            quality,
+            valid_flags,
         }
     }
 

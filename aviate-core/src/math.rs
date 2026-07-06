@@ -73,6 +73,20 @@ impl<const N: usize> Matrix<N, N> {
             }
         }
     }
+
+    /// Clamp each diagonal entry to at least `floor`, replacing any
+    /// non-finite diagonal with `floor`. A covariance matrix must keep
+    /// strictly-positive, finite diagonals to stay positive-definite;
+    /// sequential f32 rank-1 updates can otherwise drive a variance to
+    /// zero or slightly negative, after which Kalman gains diverge.
+    pub fn floor_diagonal(&mut self, floor: Scalar) {
+        for i in 0..N {
+            let d = self.data[i][i];
+            if !d.is_finite() || d < floor {
+                self.data[i][i] = floor;
+            }
+        }
+    }
 }
 
 impl<const R: usize, const C: usize> Matrix<R, C> {
@@ -365,5 +379,23 @@ impl Quaternion {
 impl Default for Quaternion {
     fn default() -> Self {
         Self::IDENTITY
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn floor_diagonal_clamps_sub_floor_and_non_finite_but_keeps_healthy() {
+        let mut m = Matrix::<3, 3>::zero();
+        m.set(0, 0, 5.0); // healthy: above floor, kept
+        m.set(1, 1, -2.0); // below floor: clamped
+        m.set(2, 2, Scalar::NAN); // non-finite: clamped
+        let floor = 1e-9;
+        m.floor_diagonal(floor);
+        assert_eq!(m.get(0, 0), 5.0);
+        assert_eq!(m.get(1, 1), floor);
+        assert_eq!(m.get(2, 2), floor);
     }
 }
