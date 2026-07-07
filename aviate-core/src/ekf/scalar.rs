@@ -206,14 +206,15 @@ impl Ekf {
     }
 }
 
-/// Implement the public `Estimator` trait by delegating each method
-/// to the per-submodule helper. The trait surface takes `&mut state`
-/// — the helpers carry the math against the same `&mut state`.
 // COV:EXCL_START(DELEGATE: every body in this impl forwards to the
 // equivalent inherent Ekf helper that carries the math; the delegate
 // has no executable logic of its own and is exercised through the
 // kernel update path. The math is tested directly via ekf_tests.rs
-// against the inherent helpers.)
+// against the inherent helpers. Also covers grcov phantom-DA
+// attribution on the trait doc comment below.)
+/// Implement the public `Estimator` trait by delegating each method
+/// to the per-submodule helper. The trait surface takes `&mut state`
+/// — the helpers carry the math against the same `&mut state`.
 impl super::Estimator for Ekf {
     type RuntimeState = EkfState;
 

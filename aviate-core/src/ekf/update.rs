@@ -12,6 +12,7 @@ use crate::sensor::{
 #[allow(unused_imports)] // FloatExt needed for no_std math methods
 use crate::types::FloatExt;
 use crate::types::Scalar;
+use core::f32::consts::PI;
 
 /// Initial variance of the QFE baro datum \[m²\] the first time it is
 /// latched. A few metres of uncertainty so GNSS-anchored height quickly
@@ -119,6 +120,7 @@ impl Ekf {
         }
     }
 
+    // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; correct_baro_datum is exercised by the baro-datum tests)
     /// Scalar random-walk update of the QFE baro datum (PX4-style baro
     /// bias estimation). The fused height implies a datum of
     /// `altitude + pos.z`; a 1-D Kalman step nudges the stored datum
@@ -126,6 +128,7 @@ impl Ekf {
     /// cannot separate height from datum, the correction only bites when
     /// GNSS anchors `pos.z`, which drives the standing offset to zero and
     /// lets the datum track slow ground-pressure drift.
+    // COV:EXCL_STOP
     fn correct_baro_datum(&self, state: &mut EkfState, altitude: Scalar, datum: Scalar) {
         let var = state.baro_ref_var + BARO_DATUM_PROCESS_VAR;
         let r_eff = self.config.meas_noise_baro + state.p_cov.get(IDX_POS + 2, IDX_POS + 2);
@@ -139,6 +142,7 @@ impl Ekf {
         state.baro_ref_var = (1.0 - k) * var;
     }
 
+    // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; update_mag_state is exercised by the mag-fusion tests)
     /// Update EKF with magnetometer reading for heading estimation.
     ///
     /// # Approach
@@ -151,9 +155,8 @@ impl Ekf {
     /// - Magnetometer data is in body frame
     /// - Heading is magnetic (no declination correction)
     /// - Positive yaw = clockwise from magnetic north when viewed from above
+    // COV:EXCL_STOP
     pub fn update_mag_state(&self, state: &mut EkfState, mag_reading: &SensorReading<MagData>) {
-        use core::f32::consts::PI;
-
         // Step 1: Health & Validity Gating
         if !state.initialized || mag_reading.health != SensorHealth::Good {
             return;
