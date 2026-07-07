@@ -121,7 +121,7 @@ impl Ekf {
         let mag_y = mag.field_ut[1].0;
         let mag_z = mag.field_ut[2].0;
 
-        // Step 2: Field Strength Validation
+        // Step 2: Field Strength Validation // COV:EXCL(phantom DA: grcov debug-info attribution onto this comment line)
         let mag_norm = (mag_x * mag_x + mag_y * mag_y + mag_z * mag_z).sqrt();
         if mag_norm < self.config.mag_field_min || mag_norm > self.config.mag_field_max {
             return;
@@ -159,7 +159,7 @@ impl Ekf {
         //
         // Projecting the body field through the FULL body→NED rotation
         // reconstructs the earth field with yaw already baked in, so the
-        // resulting heading is independent of the yaw estimate and its
+        // resulting heading is independent of the yaw estimate and its // COV:EXCL(phantom DA: grcov debug-info attribution onto this comment line)
         // innovation can never correct yaw. Rotating through roll/pitch
         // only (yaw = 0) leaves the horizontal components in a level,
         // yaw-free frame, making `heading_mag` an absolute measurement

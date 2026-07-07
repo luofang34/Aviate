@@ -358,10 +358,12 @@ impl EkfState {
         self.quat_fault
     }
 
+    // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; reset() is exercised by the ground-reset tests)
     /// Ground reset — clear all filter state to a factory
     /// un-initialized posture. Caller (kernel `ground_reset`) is
     /// responsible for ensuring the vehicle is on the ground and
     /// disarmed.
+    // COV:EXCL_STOP
     pub fn reset(&mut self) {
         *self = Self::new();
     }
