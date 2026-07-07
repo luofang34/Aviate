@@ -230,10 +230,7 @@ impl Ekf {
         // so the heading that reproduces the true yaw from a
         // north-pointing field is atan2(-east, north).
         let heading_mag = (-mag_e_level).atan2(mag_n_level);
-
-        // Step 5: Innovation Gating & Yaw Update
         let mut innov = heading_mag - yaw_est;
-
         // COV:EXCL_START(DEFENSIVE: atan2/euler outputs bounded to [-π,π], wrapping is safety guard)
         while innov > PI {
             innov -= 2.0 * PI;
@@ -242,7 +239,6 @@ impl Ekf {
             innov += 2.0 * PI;
         }
         // COV:EXCL_STOP
-
         let r_effective = if incl_weight > 0.1 {
             self.config.meas_noise_mag / (incl_weight * incl_weight)
         } else {

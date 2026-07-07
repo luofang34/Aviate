@@ -61,7 +61,7 @@ impl Ekf {
         if s < 1e-9 {
             return; // COV:EXCL(DEFENSIVE: prevent division by zero)
         }
-
+        // COV:EXCL(phantom DA: grcov attributes a phantom region to this line after the early return above)
         // Innovation gating. `innov` is finite here (mag field is
         // validated in `update_mag_state`), so the ordinary comparison
         // is safe.
@@ -158,7 +158,7 @@ impl Ekf {
         if (innov * innov) / s > gate_sq {
             return; // Reject measurement
         }
-
+        // COV:EXCL(phantom DA: grcov attributes a phantom region to this line after the reject-gate branch above)
         // Kalman Gain
         let k_gain_factor = 1.0 / s;
         let mut k_vector = [0.0; STATE_DIM];

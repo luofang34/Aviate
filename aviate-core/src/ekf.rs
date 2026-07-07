@@ -207,7 +207,11 @@ impl Default for EkfConfig {
     }
 }
 // COV:EXCL_STOP
-
+// COV:EXCL_START(phantom DA: grcov attributes non-executable coverage
+// regions onto the doc-comment, blank, and struct-field-declaration lines
+// of this `Default`/struct-literal chain; no executable code lives here
+// beyond the struct literal — same artifact class documented at the head
+// of `aviate-core/src/kernel/config.rs` and `aviate-core/src/kernel/state.rs`.)
 /// Persistent filter state — the 15-state error-state EKF contents
 /// plus initialization and numeric-fault latches. Lives under
 /// `KernelState.estimator` (single safety-relevant-state owner).
@@ -215,11 +219,6 @@ impl Default for EkfConfig {
 /// Cross-channel redundancy (spec §16) hashes / votes / replicates
 /// this struct; downstream Phase 5 will add `encode_canonical()` for
 /// deterministic byte serialization.
-// COV:EXCL_START(phantom DA: struct-init lines for the `Default`-impl
-// chain have no executable code beyond the struct literal; rustc's
-// coverage attribution places phantom DAs on the field declarations
-// under grcov — same artifact class documented at the head of
-// `aviate-core/src/kernel/config.rs` and `aviate-core/src/kernel/state.rs`.)
 #[derive(Clone, Debug)]
 pub struct EkfState {
     /// Body→Earth (NED) attitude quaternion.
@@ -407,12 +406,16 @@ impl EkfState {
         // COV:EXCL_STOP
     }
 
+    // COV:EXCL_START(phantom DA: grcov attributes non-executable coverage
+    // regions onto the doc-comment and `#[cfg(feature = "test-hooks")]`
+    // attribute lines; the fn body below stays covered by test-hooks exercises.)
     /// Inject state for testing (spec §20 test-hooks).
     ///
     /// Directly sets the EKF internal state from an external
     /// `StateEstimate`. Only available with the `test-hooks` feature
     /// enabled.
     #[cfg(feature = "test-hooks")]
+    // COV:EXCL_STOP
     pub fn set_state(&mut self, state: &StateEstimate) {
         self.quat = state.attitude;
         self.last_gyro_body = Vector3 {
