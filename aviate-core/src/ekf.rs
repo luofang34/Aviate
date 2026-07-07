@@ -241,6 +241,19 @@ pub struct EkfState {
     /// quaternion mul produces non-finite output; cleared only by
     /// `reset()` or a fresh `init()`.
     pub quat_fault: bool,
+    /// QFE origin-referencing datum for baro fusion. The ISA formula
+    /// yields absolute MSL pressure altitude, but `pos.z` is
+    /// local-origin-relative (as is fused GNSS height). This latches
+    /// the NED-Z offset on the first accepted baro sample so the
+    /// initial innovation is ≈0 and later samples measure height
+    /// change relative to the origin datum. `None` until the first
+    /// accepted sample; cleared by `reset()` and `init()`.
+    pub baro_ref: Option<Scalar>,
+    /// Variance \[m²\] of the QFE `baro_ref` datum for its scalar
+    /// random-walk estimator. Seeded when the datum is first latched;
+    /// GNSS-anchored height shrinks it and the process-noise floor lets
+    /// the datum track slow ground-pressure drift.
+    pub baro_ref_var: Scalar,
 }
 // COV:EXCL_STOP
 
@@ -275,6 +288,8 @@ impl EkfState {
             p_cov: Matrix::identity().mul_scalar(0.1),
             initialized: false,
             quat_fault: false,
+            baro_ref: None,
+            baro_ref_var: 0.0,
         }
     }
 
@@ -297,6 +312,11 @@ impl EkfState {
         self.p_cov = Matrix::identity().mul_scalar(0.1);
         self.initialized = true;
         self.quat_fault = false;
+        // A fresh init/arm re-latches the baro datum on the next
+        // accepted sample so field elevation is captured at the
+        // current site rather than a stale reference.
+        self.baro_ref = None;
+        self.baro_ref_var = 0.0;
     }
 
     /// Snapshot the current state estimate for downstream consumers.
@@ -423,9 +443,11 @@ impl crate::replicable::Replicable for EkfState {
     // 4 (quat) + 3 (pos) + 3 (vel) + 3 (gyro_bias) + 3 (accel_bias)
     // + 3 (last_gyro_body) = 19 f32s for vector data,
     // + STATE_DIM*STATE_DIM = 225 f32s for the covariance matrix,
-    // + 2 bytes for the boolean latches (initialized, quat_fault).
-    // Total = (19 + 225) * 4 + 2 = 978 bytes.
-    const ENCODED_LEN: usize = (19 + STATE_DIM * STATE_DIM) * 4 + 2;
+    // + 2 bytes for the boolean latches (initialized, quat_fault),
+    // + 1 presence byte and 4 f32 bytes for the QFE baro_ref datum,
+    // + 4 f32 bytes for its estimator variance (baro_ref_var).
+    // Total = (19 + 225) * 4 + 2 + 5 + 4 = 987 bytes.
+    const ENCODED_LEN: usize = (19 + STATE_DIM * STATE_DIM) * 4 + 2 + 5 + 4;
 
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
         use crate::replicable::copy_into;
@@ -457,6 +479,16 @@ impl crate::replicable::Replicable for EkfState {
         // Boolean latches.
         w += copy_into(buf, w, &[if self.initialized { 1 } else { 0 }]);
         w += copy_into(buf, w, &[if self.quat_fault { 1 } else { 0 }]);
+        // QFE baro datum: presence byte then the reference f32 (0.0
+        // when un-latched) so both channels encode a fixed-width,
+        // deterministic block regardless of latch state.
+        let (present, baro_ref) = match self.baro_ref {
+            Some(r) => (1u8, r),
+            None => (0u8, 0.0),
+        };
+        w += copy_into(buf, w, &[present]);
+        w += copy_into(buf, w, &baro_ref.to_le_bytes());
+        w += copy_into(buf, w, &self.baro_ref_var.to_le_bytes());
         w
     }
 }

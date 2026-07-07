@@ -722,11 +722,11 @@ mod tests {
             gyro: [RadiansPerSecond(0.0); 3],
         };
 
-        let baro_reading = SensorReading {
+        let baro_at = |pa: f32| SensorReading {
             value: BaroData {
                 altitude: None,
                 air: AirData {
-                    static_pressure: Some(Pascals(101313.0)),
+                    static_pressure: Some(Pascals(pa)),
                     dynamic_pressure: None,
                     total_pressure: None,
                     temperature: None,
@@ -743,15 +743,30 @@ mod tests {
             health: SensorHealth::Good,
         };
 
-        for _ in 0..50 {
+        // QFE referencing: the first sample latches the datum, and a
+        // constant pressure means constant height, so Z holds the origin
+        // instead of chasing an absolute pressure altitude.
+        for _ in 0..25 {
             ekf.predict_state(&mut state, &imu_stationary, 0.1);
-            ekf.update_baro_state(&mut state, &baro_reading);
+            ekf.update_baro_state(&mut state, &baro_at(101_313.0));
         }
+        assert!(
+            state.get_estimate().position_ned[2].0.abs() < 0.5,
+            "constant pressure must hold Z at the origin datum, got {}",
+            state.get_estimate().position_ned[2].0
+        );
 
+        // A sustained lower pressure is a real climb relative to the
+        // datum and must pull Z up (negative in NED).
+        for _ in 0..40 {
+            ekf.predict_state(&mut state, &imu_stationary, 0.1);
+            ekf.update_baro_state(&mut state, &baro_at(101_260.0));
+        }
         let est = state.get_estimate();
         assert!(
             est.position_ned[2].0 < -0.5,
-            "Baro update should move Z position (NED)"
+            "a climb relative to the datum should move Z up (NED), got {}",
+            est.position_ned[2].0
         );
     }
 
