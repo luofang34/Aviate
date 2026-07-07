@@ -12,9 +12,11 @@
 
 #![allow(clippy::expect_used, clippy::panic)]
 
-use aviate_core::checks::{InFlightFlags, PreArmFlags};
+use aviate_core::checks::{DegradationReason, InFlightFlags, PreArmFlags};
 use aviate_core::control::multirotor::MultirotorController;
-use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
+use aviate_core::control::{
+    Command, CommandSource, ConfigMode, ControlLawV1, ControlMode, Setpoint,
+};
 use aviate_core::ekf::{Ekf, EkfConfig, EkfState, Estimator};
 use aviate_core::fault::FaultFlags;
 use aviate_core::math::{Quaternion, Vector3};
@@ -591,5 +593,118 @@ fn altitude_ok_flag_tracks_geofence_through_update() {
             .current
             .contains(InFlightFlags::ALTITUDE_OK),
         "altitude below the geofence floor must clear ALTITUDE_OK"
+    );
+}
+
+// --- LLR-FLT-206 (Descend/Land terminal) ------------------------------------
+
+/// Sensors reporting a vehicle already descending at the failsafe rate.
+/// The estimator's vertical-velocity output then tracks that descent, so
+/// the terminal's velocity loop holds near hover thrust instead of the
+/// zero-thrust step-onset transient a from-hover rate step produces.
+fn descending_sensors() -> SensorSet {
+    let mut sensors = make_valid_sensors();
+    for gnss in sensors.gnss.iter_mut() {
+        if gnss.valid {
+            // NED z is down-positive: a positive velocity is a descent.
+            gnss.value.velocity_ned[2] = MetersPerSecond(2.0);
+        }
+    }
+    sensors
+}
+
+fn hover_cmd() -> Command {
+    Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint {
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 1,
+        source: CommandSource::Pilot,
+    }
+}
+
+/// LLR-FLT-206: a terminal failsafe (command/datalink loss) mid-air
+/// engages the kernel-owned Descend/Land terminal and rides the vehicle
+/// down under control — motors keep running at a wings-level descent —
+/// instead of cutting them to the all-zeros safe pattern. Arms the
+/// kernel, lets the estimator track a descending state, then drives the
+/// command age past the timeout and asserts the terminal law engages and
+/// the output is a live, level descent rather than zeros.
+#[test]
+fn terminal_failsafe_rides_a_controlled_descent_not_motors_off() {
+    let mut kernel = make_kernel();
+    arm_kernel(&mut kernel);
+
+    let sensors = descending_sensors();
+    let cmd = hover_cmd();
+
+    // Let the estimator's vertical velocity converge to the descent.
+    for _ in 0..60 {
+        let _ = step(&mut kernel, &cmd, &sensors, 0);
+    }
+
+    // Command/datalink loss: the last command is now stale beyond the
+    // timeout, so the kernel resolves the terminal failsafe to Descend.
+    let out = step(&mut kernel, &cmd, &sensors, 10_000);
+
+    assert_eq!(
+        kernel.state.control_law,
+        ControlLawV1::Direct,
+        "terminal failsafe must engage the Descend/Land terminal, not motors-off Backup"
+    );
+    assert!(
+        !all_motors_zero(&out),
+        "controlled descent must keep motors running, not cut them: {:?}",
+        out.outputs
+    );
+    // Wings-level: a quad holding zero roll/pitch commands balanced motor
+    // outputs. A tilted descent would spread them.
+    let motors: [Scalar; 4] = [
+        out.outputs[0].0,
+        out.outputs[1].0,
+        out.outputs[2].0,
+        out.outputs[3].0,
+    ];
+    let hi = motors.iter().copied().fold(Scalar::MIN, Scalar::max);
+    let lo = motors.iter().copied().fold(Scalar::MAX, Scalar::min);
+    assert!(
+        hi - lo < 1e-3,
+        "controlled descent must hold level attitude: motor spread {}",
+        hi - lo
+    );
+}
+
+/// LLR-FLT-206: total loss of attitude is the boundary case the Descend
+/// terminal does NOT cover — with no stable frame to descend in, the
+/// kernel falls to the motors-off safe pattern (`Backup`). This pins the
+/// distinction the failsafe mapping draws between "land under control"
+/// and "cut motors": `AttitudeLost` cuts, everything survivable descends.
+#[test]
+fn total_attitude_loss_cuts_motors_not_descent() {
+    let mut kernel = make_kernel();
+    arm_kernel(&mut kernel);
+
+    let sensors = descending_sensors();
+    let cmd = hover_cmd();
+    for _ in 0..30 {
+        let _ = step(&mut kernel, &cmd, &sensors, 0);
+    }
+
+    kernel.handle_degradation(DegradationReason::AttitudeLost, timestamp());
+    assert_eq!(
+        kernel.state.control_law,
+        ControlLawV1::Backup,
+        "total attitude loss must fall to the motors-off terminal"
+    );
+
+    let out = step(&mut kernel, &cmd, &sensors, 0);
+    assert!(
+        all_motors_zero(&out),
+        "total attitude loss must cut motors (safe pattern), not descend: {:?}",
+        out.outputs
     );
 }

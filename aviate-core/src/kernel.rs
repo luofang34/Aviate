@@ -14,6 +14,7 @@
 
 pub mod builder;
 pub mod config;
+pub mod descend;
 pub mod pipeline;
 pub mod slew;
 pub mod snapshot;

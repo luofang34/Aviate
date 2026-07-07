@@ -663,9 +663,11 @@ fn degradation_reason_all_variants() {
         DegradationReason::BaroDegraded,
         DegradationReason::EnvelopeViolation,
         DegradationReason::RcLost,
+        DegradationReason::TimingViolation,
+        DegradationReason::LandRequested,
     ];
 
-    assert_eq!(reasons.len(), 8);
+    assert_eq!(reasons.len(), 10);
 }
 
 // =============================================================================
@@ -2392,10 +2394,11 @@ fn handle_degradation_all_reasons() {
 
     let reasons_and_expected_laws = [
         (DegradationReason::AttitudeLost, ControlLawV1::Backup),
+        (DegradationReason::LandRequested, ControlLawV1::Direct),
+        (DegradationReason::CommandTimeout, ControlLawV1::Direct),
         (DegradationReason::ImuDegraded, ControlLawV1::Alternate),
         (DegradationReason::PositionLost, ControlLawV1::Alternate),
         (DegradationReason::VelocityLost, ControlLawV1::Alternate),
-        (DegradationReason::CommandTimeout, ControlLawV1::Alternate),
         (
             DegradationReason::EnvelopeViolation,
             ControlLawV1::Alternate,

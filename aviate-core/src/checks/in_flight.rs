@@ -33,6 +33,11 @@ pub enum DegradationReason {
     RcLost,
     /// Persistent timing violation (spec §18)
     TimingViolation,
+    /// Terminal failsafe requesting a controlled descent to the ground.
+    /// Distinct from the motors-off reasons: the vehicle is still
+    /// stabilizable (attitude and a vertical-rate source remain), so
+    /// the kernel rides it down rather than cutting thrust.
+    LandRequested,
 }
 
 bitflags::bitflags! {

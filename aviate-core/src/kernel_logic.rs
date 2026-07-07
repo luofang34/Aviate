@@ -262,11 +262,19 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     ) -> Option<DegradationEvent> {
         let from = self.state.control_law;
         let to = match reason {
+            // Total loss of attitude: no stable frame to descend in, so
+            // motors go to the safe pattern (last-ditch, LLR-FLT-202).
             DegradationReason::AttitudeLost => ControlLawV1::Backup,
+            // Terminal failsafes that keep a stabilizable frame ride the
+            // vehicle down under the Descend/Land terminal (`Direct`)
+            // rather than cutting thrust. Command/datalink loss is a
+            // terminal failsafe by the same logic PX4 resolves it to
+            // Land: no uplink is coming, so land now under control.
+            DegradationReason::LandRequested => ControlLawV1::Direct,
+            DegradationReason::CommandTimeout => ControlLawV1::Direct,
             DegradationReason::ImuDegraded => ControlLawV1::Alternate,
             DegradationReason::PositionLost => ControlLawV1::Alternate,
             DegradationReason::VelocityLost => ControlLawV1::Alternate,
-            DegradationReason::CommandTimeout => ControlLawV1::Alternate,
             DegradationReason::EnvelopeViolation => ControlLawV1::Alternate,
             DegradationReason::BaroDegraded => ControlLawV1::Alternate,
             DegradationReason::RcLost => ControlLawV1::Alternate,
@@ -276,13 +284,14 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // Only trigger if this is a degradation (worse state)
         if to.severity() > from.severity() {
             self.state.control_law = to;
-            // Reset controller persistent runtime state on transition
-            // to Backup — the Backup law's authority envelope and
-            // available actuator surface differ from the Primary law,
-            // so accumulated integrators / anti-windup / mode latches
+            // Reset controller persistent runtime state when entering a
+            // terminal law (Backup, or the Descend/Land terminal
+            // `Direct`). The terminal law's authority envelope and
+            // control objective differ from the prior law, so
+            // accumulated integrators / anti-windup / mode latches
             // computed against the prior authority must not leak
             // (LLR-CTL-101).
-            if to == ControlLawV1::Backup {
+            if to == ControlLawV1::Backup || to == ControlLawV1::Direct {
                 self.pipeline.controller.reset(&mut self.state.controller);
             }
             Some(DegradationEvent {

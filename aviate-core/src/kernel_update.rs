@@ -237,11 +237,13 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         };
 
         // 6. Control Step
-        // If Backup, we might want to use safe outputs or a simplified controller.
-        // For now, if Backup, force safe output (as per spec "Non-Armed states → Backup → safe").
-        // But Backup during flight might mean "Last-ditch stability".
-        // The spec says "Last-ditch stability only".
-        // For this minimal impl, if Backup, we output safe_output (effectively shutting down/idle).
+        // `Backup` is the motors-off last resort: reserved for cases
+        // where a controlled descent is impossible (on the ground,
+        // total loss of attitude, unrecoverable numeric/estimator
+        // divergence). Every other law flies the cascade — including
+        // the Descend/Land terminal (`Direct`), which rides a
+        // kernel-synthesized level-descent setpoint down instead of
+        // cutting thrust mid-air.
         let mut actuator_cmd = if self.state.control_law == ControlLawV1::Backup {
             ActuatorCmd {
                 outputs: self.cfg.safe_output,
@@ -252,15 +254,24 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                 sanitized: true,
             }
         } else {
-            // Derive the orthogonal control-mode flags from the
-            // requested mode and hand them to the cascade, which
-            // selects loops from the flags rather than from
-            // setpoint-field presence.
-            let control_flags = VehicleControlMode::from_control_mode(constrained_cmd.mode);
+            // Terminal descent flies the synthesized level-descent
+            // setpoint; all other laws fly the uplinked (constrained)
+            // command. Loop selection is driven by the control-mode
+            // flags derived from the effective command's mode.
+            let effective_cmd = if self.state.control_law == ControlLawV1::Direct {
+                crate::kernel::descend::descend_command(
+                    &state,
+                    &self.cfg.limits,
+                    constrained_cmd.sequence,
+                )
+            } else {
+                constrained_cmd
+            };
+            let control_flags = VehicleControlMode::from_control_mode(effective_cmd.mode);
             let axis_cmd = self.pipeline.controller.step(
                 &mut self.state.controller,
                 &state,
-                &constrained_cmd,
+                &effective_cmd,
                 &control_flags,
                 self.state.mode,
                 &self.cfg.limits,
