@@ -204,7 +204,6 @@ impl Default for EkfConfig {
     }
 }
 // COV:EXCL_STOP
-
 // COV:EXCL_START(phantom DA: grcov attributes non-executable coverage
 // regions onto the doc-comment, blank, and struct-field-declaration lines
 // of this `Default`/struct-literal chain; no executable code lives here
