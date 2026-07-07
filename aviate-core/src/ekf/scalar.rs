@@ -17,6 +17,7 @@ use crate::types::{Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSe
 /// flooring keeps P positive-definite so gains stay meaningful.
 const COV_VAR_FLOOR: Scalar = 1e-9;
 
+// COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; the fn body below is exercised by the covariance-PSD tests)
 /// Joseph-stabilized rank-1 covariance update for a scalar observation
 /// whose measurement Jacobian is the unit row `Hᵀ = e_{h_idx}`:
 /// `P⁺ = (I − K H) P (I − K H)ᵀ + K R Kᵀ`, followed by symmetrization
@@ -25,6 +26,7 @@ const COV_VAR_FLOOR: Scalar = 1e-9;
 ///
 /// `A = I − K H` differs from the identity only in column `h_idx`, where
 /// `A[r][h_idx] = δ_{r,h_idx} − K[r]`.
+// COV:EXCL_STOP
 fn joseph_scalar_cov_update(
     p: &mut Matrix<STATE_DIM, STATE_DIM>,
     k: &[Scalar; STATE_DIM],
