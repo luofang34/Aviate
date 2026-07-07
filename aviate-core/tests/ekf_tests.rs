@@ -2277,7 +2277,6 @@ fn ekf_covariance_stays_positive_definite_under_confident_updates() {
 fn ekf_estimate_not_good_when_position_non_finite() {
     use aviate_core::state::{EstimateQuality, StateValidFlags};
 
-    let ekf = Ekf::new(EkfConfig::default());
     let mut state = init_at_origin();
 
     // Sanity: a healthy initialized state reports Good.
@@ -2294,7 +2293,6 @@ fn ekf_estimate_not_good_when_position_non_finite() {
 fn ekf_estimate_not_good_when_velocity_non_finite() {
     use aviate_core::state::{EstimateQuality, StateValidFlags};
 
-    let ekf = Ekf::new(EkfConfig::default());
     let mut state = init_at_origin();
 
     state.vel.z = MetersPerSecond(f32::INFINITY);
