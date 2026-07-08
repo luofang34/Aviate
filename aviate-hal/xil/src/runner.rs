@@ -652,6 +652,12 @@ impl<B: SimulatorBackend> MissionRunner<B> {
                     self.mav.send_arm();
                     self.armed = true;
                     self.log("ARM via MAVLink");
+                } else {
+                    // Keep the command link live for the rest of the arm
+                    // phase, as a real RC/GCS stream would: a silent link
+                    // after arming reads as command loss and (correctly)
+                    // engages the Descend/Land terminal.
+                    self.mav.send_attitude_target([1.0, 0.0, 0.0, 0.0], 0.0);
                 }
             }
             Action::Disarm => {
