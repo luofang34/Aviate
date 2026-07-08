@@ -6,7 +6,8 @@
 
 use aviate_core::control::multirotor::{MultirotorController, MultirotorRuntimeState};
 use aviate_core::control::{
-    Command, CommandSource, ConfigMode, ControlMode, Limits, Setpoint, VehicleController,
+    Command, CommandSource, ConfigMode, ControlMode, Limits, Setpoint, VehicleControlMode,
+    VehicleController,
 };
 use aviate_core::math::Quaternion;
 use aviate_core::state::{EstimateQuality, StateEstimate, StateValidFlags};
@@ -71,7 +72,14 @@ fn mc_controller_position_control_path() {
     };
 
     let mut runtime = MultirotorRuntimeState::default();
-    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
+    let axis_cmd = controller.step(
+        &mut runtime,
+        &state,
+        &cmd,
+        &VehicleControlMode::from_control_mode(cmd.mode),
+        ConfigMode::Hover,
+        &limits,
+    );
 
     // Controller should produce output (position error -> velocity -> attitude -> rate)
     // Exact values depend on gains, but should be non-zero when there's position error
@@ -105,7 +113,14 @@ fn mc_controller_position_control_with_offset() {
     };
 
     let mut runtime = MultirotorRuntimeState::default();
-    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
+    let axis_cmd = controller.step(
+        &mut runtime,
+        &state,
+        &cmd,
+        &VehicleControlMode::from_control_mode(cmd.mode),
+        ConfigMode::Hover,
+        &limits,
+    );
 
     // With X position error, should produce some roll/pitch command
     // to generate horizontal acceleration
@@ -143,7 +158,14 @@ fn mc_controller_velocity_control_path() {
     };
 
     let mut runtime = MultirotorRuntimeState::default();
-    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
+    let axis_cmd = controller.step(
+        &mut runtime,
+        &state,
+        &cmd,
+        &VehicleControlMode::from_control_mode(cmd.mode),
+        ConfigMode::Hover,
+        &limits,
+    );
 
     // Should produce valid output
     assert!(axis_cmd.collective.0 >= 0.0 && axis_cmd.collective.0 <= 1.0);
@@ -174,7 +196,14 @@ fn mc_controller_velocity_control_vertical() {
     };
 
     let mut runtime = MultirotorRuntimeState::default();
-    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
+    let axis_cmd = controller.step(
+        &mut runtime,
+        &state,
+        &cmd,
+        &VehicleControlMode::from_control_mode(cmd.mode),
+        ConfigMode::Hover,
+        &limits,
+    );
 
     // Climbing should increase collective
     // (depends on controller gains, but should be reasonable)
@@ -208,7 +237,14 @@ fn mc_controller_attitude_only_path() {
     };
 
     let mut runtime = MultirotorRuntimeState::default();
-    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
+    let axis_cmd = controller.step(
+        &mut runtime,
+        &state,
+        &cmd,
+        &VehicleControlMode::from_control_mode(cmd.mode),
+        ConfigMode::Hover,
+        &limits,
+    );
 
     // Collective should be passed through
     assert!(
@@ -238,7 +274,14 @@ fn mc_controller_no_setpoint_uses_defaults() {
     };
 
     let mut runtime = MultirotorRuntimeState::default();
-    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
+    let axis_cmd = controller.step(
+        &mut runtime,
+        &state,
+        &cmd,
+        &VehicleControlMode::from_control_mode(cmd.mode),
+        ConfigMode::Hover,
+        &limits,
+    );
 
     // Should use default level attitude (identity quaternion)
     // and produce minimal roll/pitch/yaw commands
@@ -272,9 +315,169 @@ fn mc_controller_position_feedforward_fires_on_primed_cycle() {
 
     let mut runtime = MultirotorRuntimeState::default();
     // Cycle 1 primes vel_sp (dt_sec = 0 → feedforward skipped).
-    let _ = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
+    let _ = controller.step(
+        &mut runtime,
+        &state,
+        &cmd,
+        &VehicleControlMode::from_control_mode(cmd.mode),
+        ConfigMode::Hover,
+        &limits,
+    );
     // Cycle 2 with dt > 0 → the accel-feedforward finite difference runs.
     runtime.dt_sec = 0.01;
-    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Hover, &limits);
+    let axis_cmd = controller.step(
+        &mut runtime,
+        &state,
+        &cmd,
+        &VehicleControlMode::from_control_mode(cmd.mode),
+        ConfigMode::Hover,
+        &limits,
+    );
     assert!(axis_cmd.collective.0 >= 0.0 && axis_cmd.collective.0 <= 1.0);
+}
+
+// =============================================================================
+// Flag-Driven Loop Selection (issue #67)
+//
+// Loop selection follows the control-mode flags, not setpoint-field
+// presence: an identical position setpoint engages the position loop
+// only under a mode whose flags authorize it.
+// =============================================================================
+
+/// Build a command carrying a fixed horizontal position setpoint under
+/// the given mode. The state is level with a large along-track error,
+/// so the position loop (when selected) commands a non-level attitude
+/// and hence a non-zero roll/pitch torque.
+fn cmd_with_position(mode: ControlMode) -> Command {
+    Command {
+        mode,
+        setpoint: Setpoint {
+            position: Some([Meters(20.0), Meters(0.0), Meters(-10.0)]),
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 1,
+        source: CommandSource::Pilot,
+    }
+}
+
+fn step_roll_pitch(mode: ControlMode) -> (f32, f32) {
+    let controller = MultirotorController::default();
+    let state = make_state();
+    let limits = make_limits();
+    let cmd = cmd_with_position(mode);
+    let mut runtime = MultirotorRuntimeState::default();
+    let axis = controller.step(
+        &mut runtime,
+        &state,
+        &cmd,
+        &VehicleControlMode::from_control_mode(cmd.mode),
+        ConfigMode::Hover,
+        &limits,
+    );
+    (axis.roll.0, axis.pitch.0)
+}
+
+#[test]
+fn position_mode_engages_position_loop() {
+    // Position mode authorizes the position loop: the along-track
+    // error tilts the vehicle, producing a non-zero pitch torque.
+    let (_roll, pitch) = step_roll_pitch(ControlMode::PositionHold);
+    assert!(
+        pitch.abs() > 1e-3,
+        "position loop should tilt the vehicle in PositionHold, pitch={pitch}"
+    );
+}
+
+#[test]
+fn stabilized_mode_ignores_identical_position_setpoint() {
+    // Same position setpoint, Stabilized (Attitude) mode: the position
+    // flag is clear, so the loop is NOT selected and the vehicle holds
+    // the (identity) commanded attitude — level, near-zero torque.
+    let (roll, pitch) = step_roll_pitch(ControlMode::Attitude);
+    assert!(
+        roll.abs() < 1e-3 && pitch.abs() < 1e-3,
+        "Stabilized must not run the position loop, roll={roll} pitch={pitch}"
+    );
+}
+
+#[test]
+fn altitude_mode_ignores_horizontal_position_setpoint() {
+    // Altitude mode enables the altitude/climb-rate flags but NOT the
+    // horizontal position flag, so the horizontal position loop stays
+    // unselected: no roll/pitch tilt from the along-track error.
+    let (roll, pitch) = step_roll_pitch(ControlMode::AltitudeHold);
+    assert!(
+        roll.abs() < 1e-3 && pitch.abs() < 1e-3,
+        "Altitude must not run the horizontal position loop, roll={roll} pitch={pitch}"
+    );
+}
+
+#[test]
+fn position_mode_without_position_setpoint_runs_open_loop() {
+    // Position flag set but no position setpoint present: the outer
+    // loop is not selected (no fabricated hold target), so the cascade
+    // tracks the commanded attitude directly — level, near-zero torque.
+    let controller = MultirotorController::default();
+    let state = make_state();
+    let limits = make_limits();
+    let cmd = Command {
+        mode: ControlMode::PositionHold,
+        setpoint: Setpoint {
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 1,
+        source: CommandSource::Pilot,
+    };
+    let mut runtime = MultirotorRuntimeState::default();
+    let axis = controller.step(
+        &mut runtime,
+        &state,
+        &cmd,
+        &VehicleControlMode::from_control_mode(cmd.mode),
+        ConfigMode::Hover,
+        &limits,
+    );
+    assert!(
+        axis.roll.0.abs() < 1e-3 && axis.pitch.0.abs() < 1e-3,
+        "missing position setpoint must not tilt the vehicle"
+    );
+}
+
+#[test]
+fn velocity_mode_without_velocity_setpoint_runs_open_loop() {
+    // Velocity flag set but no velocity setpoint present: outer loop
+    // not selected; cascade tracks commanded attitude directly.
+    let controller = MultirotorController::default();
+    let state = make_state();
+    let limits = make_limits();
+    let cmd = Command {
+        mode: ControlMode::VelocityControl,
+        setpoint: Setpoint {
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 1,
+        source: CommandSource::Pilot,
+    };
+    let mut runtime = MultirotorRuntimeState::default();
+    let axis = controller.step(
+        &mut runtime,
+        &state,
+        &cmd,
+        &VehicleControlMode::from_control_mode(cmd.mode),
+        ConfigMode::Hover,
+        &limits,
+    );
+    assert!(
+        axis.roll.0.abs() < 1e-3 && axis.pitch.0.abs() < 1e-3,
+        "missing velocity setpoint must not tilt the vehicle"
+    );
 }
