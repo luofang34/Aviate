@@ -38,7 +38,7 @@ use aviate_core::ChannelId;
 // ----- Mock Estimator -----
 //
 // Selects its own `RuntimeState` distinct from `EkfState` to prove
-// the kernel does not assume the EKF's 18-state-+-18×18-covariance
+// the kernel does not assume the EKF's 15-state-+-15×15-covariance
 // shape. `MockEstimatorRuntime` is a 6-byte struct with no
 // covariance — totally incompatible with EkfState. If the kernel
 // were to inadvertently downcast to `&EkfState` somewhere, this

@@ -59,6 +59,7 @@ pub enum AuthError {
     ReplayAttack,
 }
 
+/// Result of an authentication or anti-replay operation.
 pub type AuthResult<T> = Result<T, AuthError>;
 
 /// High-level gateway errors (what applications see)
@@ -90,6 +91,7 @@ pub enum GatewayError {
     NoCommand,
 }
 
+/// Result surfaced to applications combining link- and security-layer errors.
 pub type GatewayResult<T> = Result<T, GatewayError>;
 
 /// Convert LinkError to GatewayError

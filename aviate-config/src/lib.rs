@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! Application configuration parsing for Aviate flight control apps
 //!
 //! # CRITICAL: DO-178C DAL Separation

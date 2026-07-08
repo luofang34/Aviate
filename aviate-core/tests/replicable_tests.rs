@@ -94,11 +94,11 @@ fn copy_into_no_op_when_offset_past_end() {
 
 #[test]
 fn ekf_state_encoded_len_matches_documented_size() {
-    // 22 vector f32s + 18*18 = 324 covariance f32s = 346 floats =
-    // 1384 bytes; plus 2 boolean latches = 1386 bytes. Mismatched
+    // 19 vector f32s + 15*15 = 225 covariance f32s = 244 floats =
+    // 976 bytes; plus 2 boolean latches = 978 bytes. Mismatched
     // const ENCODED_LEN would surface a manual edit drift between
     // the doc-comment and the impl.
-    assert_eq!(EkfState::ENCODED_LEN, 1386);
+    assert_eq!(EkfState::ENCODED_LEN, 978);
 }
 
 #[test]

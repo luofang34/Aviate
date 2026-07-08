@@ -53,6 +53,7 @@ pub struct SitlTime {
 }
 
 impl SitlTime {
+    /// Create a SITL clock anchored at the current instant.
     pub fn new() -> Self {
         Self {
             start: std::time::Instant::now(),
@@ -285,6 +286,7 @@ use aviate_core::types::Normalized;
 /// build-time parameter.
 const X500_HOVER_THRUST_NORM: f32 = 0.77;
 
+/// Build the SITL kernel wired for the x500 airframe.
 pub fn create_kernel() -> SitlKernel {
     let controller = MultirotorController::with_hover_thrust(X500_HOVER_THRUST_NORM);
     let mixer = QuadXMixerX500 {
@@ -354,7 +356,9 @@ pub fn sitl_timestamp() -> Timestamp {
 /// Board information structure (shared across SITL boards)
 #[derive(Clone, Debug)]
 pub struct SitlBoardInfo {
+    /// Short board identifier.
     pub name: &'static str,
+    /// Human-readable board description.
     pub description: &'static str,
 }
 

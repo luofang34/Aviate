@@ -38,6 +38,22 @@ trace_llr = 75
 # so those rows only ever GAPped it.
 trace_test = 68
 
+# Coverage ratchet for the kernel core (aviate-core). These are LLVM
+# source-based measurements produced by scripts/check_coverage.sh after
+# documented COV:EXCL exclusions:
+#   coverage_region — statement/region coverage (grcov DA line coverage).
+#   coverage_branch — branch coverage (if/else + match arms).
+# They live in their OWN section, not [floors], on purpose: cargo-evidence
+# reserves the [floors] namespace for dimensions it measures itself and
+# would report current=0 (no staged coverage artifact) for these keys,
+# reddening the evidence job. check_coverage.sh enforces measured >= floor;
+# scripts/floors-lower-lint.sh refuses a committed decrease without a
+# `Lower-Floor:` justification line. This is region+branch coverage only —
+# no MC/DC or DO-178C structural-coverage credit is claimed.
+[coverage_floors]
+coverage_region = 100
+coverage_branch = 100
+
 [delta_ceilings]
 # Reserved by the tool for new-additions-in-diff checks. Parsed today,
 # enforced in a follow-up.

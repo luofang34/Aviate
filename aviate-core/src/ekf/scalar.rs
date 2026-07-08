@@ -7,11 +7,9 @@
 //! file. Phase 4: methods take `&self` (algorithm tuning) and `&mut
 //! state: &mut EkfState` (filter state).
 
-use super::{Ekf, EkfState, IDX_AB, IDX_ATT, IDX_GB, IDX_MB, IDX_POS, IDX_VEL, STATE_DIM};
+use super::{Ekf, EkfState, IDX_AB, IDX_ATT, IDX_GB, IDX_POS, IDX_VEL, STATE_DIM};
 use crate::math::{Quaternion, Vector3};
-use crate::types::{
-    Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, RadiansPerSecond, Scalar,
-};
+use crate::types::{Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond, Scalar};
 
 impl Ekf {
     /// Internal: Update yaw/heading using scalar observation.
@@ -25,7 +23,7 @@ impl Ekf {
         if s < 1e-9 {
             return; // COV:EXCL(DEFENSIVE: prevent division by zero)
         }
-
+        // COV:EXCL(phantom DA: grcov attributes a phantom region to this line after the early return above)
         // Innovation gating
         let gate_sq = self.config.innovation_gate * self.config.innovation_gate;
         if (innov * innov) / s > gate_sq {
@@ -84,11 +82,6 @@ impl Ekf {
         state.accel_bias.z =
             MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
 
-        // Update mag bias
-        state.mag_bias.x = Microtesla(state.mag_bias.x.0 + k_vector[IDX_MB] * innov);
-        state.mag_bias.y = Microtesla(state.mag_bias.y.0 + k_vector[IDX_MB + 1] * innov);
-        state.mag_bias.z = Microtesla(state.mag_bias.z.0 + k_vector[IDX_MB + 2] * innov);
-
         // Update covariance: P = (I - K*H) * P
         let mut p_row_h = [0.0; STATE_DIM];
         for (c, val) in p_row_h.iter_mut().enumerate().take(STATE_DIM) {
@@ -134,7 +127,7 @@ impl Ekf {
         if (innov * innov) / s > gate_sq {
             return; // Reject measurement
         }
-
+        // COV:EXCL(phantom DA: grcov attributes a phantom region to this line after the reject-gate branch above)
         // Kalman Gain
         let k_gain_factor = 1.0 / s;
         let mut k_vector = [0.0; STATE_DIM];
@@ -205,8 +198,10 @@ impl super::Estimator for Ekf {
     type RuntimeState = EkfState;
 
     // Registered in cert/algorithm_id_registry.toml as
-    // "ekf.basic-18state.v1".
-    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4631; // "ETIMEKF1"
+    // "ekf.basic-15state.v1". The state vector carries no mag-bias
+    // block, so its shape (and cross-channel witness) differs from
+    // the retired 18-state identity.
+    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4632; // "ETIMEKF2"
 
     fn observe(
         &self,

@@ -1472,6 +1472,23 @@ fn make_mag_reading(
     }
 }
 
+/// Body-frame magnetometer reading a vehicle at `quat` would produce
+/// under an earth field `field_ned`: `mag_body = Rᵀ · field_ned`,
+/// where `R = quat.to_rotation_matrix()` maps body→NED. This is the
+/// physically consistent field the tilt-compensated heading must
+/// invert back to the true yaw.
+fn physical_mag_body(quat: Quaternion, field_ned: [f32; 3]) -> [Microtesla; 3] {
+    let r = quat.to_rotation_matrix();
+    let bx = r.get(0, 0) * field_ned[0] + r.get(1, 0) * field_ned[1] + r.get(2, 0) * field_ned[2];
+    let by = r.get(0, 1) * field_ned[0] + r.get(1, 1) * field_ned[1] + r.get(2, 1) * field_ned[2];
+    let bz = r.get(0, 2) * field_ned[0] + r.get(1, 2) * field_ned[1] + r.get(2, 2) * field_ned[2];
+    [Microtesla(bx), Microtesla(by), Microtesla(bz)]
+}
+
+fn yaw_quat(yaw: f32) -> Quaternion {
+    Quaternion::from_axis_angle(Vector3::new(0.0, 0.0, 1.0), yaw)
+}
+
 #[test]
 fn ekf_mag_update_moves_yaw_toward_measurement() {
     let config = EkfConfig::default();
@@ -1493,22 +1510,13 @@ fn ekf_mag_update_moves_yaw_toward_measurement() {
     let (_, _, yaw_before) = state_before.attitude.to_euler();
     assert!(yaw_before.abs() < 0.01, "Initial yaw should be ~0");
 
-    // Mag reading indicating East heading (yaw = 90° = π/2)
-    // When pointing East, body X (forward) aligns with NED East
-    // So mag vector in body frame should have strong +Y component (body Y points to mag North)
-    // For a ~45μT field typical of mid-latitudes:
-    // If heading is 45° (0.785 rad), mag in body:
-    //   mag_body_x = field * cos(heading) ≈ 32μT
-    //   mag_body_y = field * sin(heading) ≈ 32μT
-    //   mag_body_z = small (low inclination)
-    let heading_target: f32 = 0.3; // ~17° - small angle for testing
-    let field_strength: f32 = 45.0;
-    let mag_x = field_strength * heading_target.cos();
-    let mag_y = field_strength * heading_target.sin();
-    let mag_z: f32 = 10.0; // Low inclination
-
+    // Physically consistent field for a vehicle actually pointing at
+    // yaw = +0.3 rad under a north-pointing earth field. The
+    // tilt-compensated heading must recover that true yaw, so the
+    // innovation against the yaw=0 estimate is +0.3.
+    let target_yaw: f32 = 0.3;
     let mag = make_mag_reading(
-        [Microtesla(mag_x), Microtesla(mag_y), Microtesla(mag_z)],
+        physical_mag_body(yaw_quat(target_yaw), [40.0, 0.0, 15.0]),
         SensorHealth::Good,
     );
 
@@ -1517,17 +1525,83 @@ fn ekf_mag_update_moves_yaw_toward_measurement() {
     let state_after = state.get_estimate();
     let (_, _, yaw_after) = state_after.attitude.to_euler();
 
-    // Yaw should move toward the mag heading
-    // With K ≈ P/(P+R) = 0.1/0.15 ≈ 0.67, innovation = 0.3
-    // Expected: yaw ≈ 0.67 * 0.3 ≈ 0.2 rad
+    // With K ≈ P/(P+R) = 0.1/0.15 ≈ 0.67 and innovation +0.3,
+    // yaw ≈ 0.2 rad — strictly between the prior estimate and the
+    // measured heading.
     assert!(
         yaw_after > 0.1,
         "Yaw should move toward mag heading, got {} rad",
         yaw_after
     );
     assert!(
-        yaw_after < heading_target,
-        "Yaw should not exceed mag heading measurement"
+        yaw_after < target_yaw,
+        "Single update should not overshoot the measured heading, got {} rad",
+        yaw_after
+    );
+}
+
+/// Regression for the heading-fusion frame/sign defect: with a
+/// non-identity initial yaw and a physically consistent body-frame
+/// field, a perfect estimate must be left unchanged (innovation ~ 0)
+/// and a wrong estimate must be driven toward truth (correct sign).
+/// The pre-fix full-rotation projection made `heading_mag` depend
+/// only on true yaw, so neither property held away from yaw = 0.
+#[test]
+fn ekf_mag_regression_nonidentity_yaw_fuses_absolute_heading() {
+    use core::f32::consts::FRAC_PI_2;
+
+    let ekf = Ekf::new(EkfConfig::default());
+    let field_ned = [40.0, 0.0, 15.0];
+    let true_yaw = FRAC_PI_2;
+    let mag = make_mag_reading(
+        physical_mag_body(yaw_quat(true_yaw), field_ned),
+        SensorHealth::Good,
+    );
+
+    // (1) Perfect estimate at yaw = π/2 → innovation ~ 0, unchanged.
+    let mut perfect = EkfState::default();
+    perfect.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
+        yaw_quat(true_yaw),
+    );
+    ekf.update_mag_state(&mut perfect, &mag);
+    let (_, _, yaw_perfect) = perfect.get_estimate().attitude.to_euler();
+    assert!(
+        (yaw_perfect - true_yaw).abs() < 1e-3,
+        "Perfect estimate must be left unchanged, got {} rad",
+        yaw_perfect
+    );
+
+    // (2) Estimate low by 0.2 rad → innovation +0.2, yaw moves up
+    //     toward truth without overshooting.
+    let est_yaw = true_yaw - 0.2;
+    let mut wrong = EkfState::default();
+    wrong.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
+        yaw_quat(est_yaw),
+    );
+    ekf.update_mag_state(&mut wrong, &mag);
+    let (_, _, yaw_wrong) = wrong.get_estimate().attitude.to_euler();
+    assert!(
+        yaw_wrong > est_yaw + 0.05,
+        "Wrong-low estimate must move up toward truth, got {} rad (was {})",
+        yaw_wrong,
+        est_yaw
+    );
+    assert!(
+        yaw_wrong <= true_yaw + 1e-3,
+        "Single update must not overshoot true yaw, got {} rad",
+        yaw_wrong
     );
 }
 

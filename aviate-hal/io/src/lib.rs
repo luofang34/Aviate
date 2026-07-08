@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! I/O Device Traits for Aviate
 //!
 //! This crate provides I/O device traits for both:
