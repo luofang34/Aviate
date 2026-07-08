@@ -65,11 +65,16 @@ id = "LLR-EST-104"
 title = "Estimator::update_baro fuses pressure-derived altitude"
 owner = "aviate-core@aviate"
 description = """
-update_baro SHALL be a no-op when SensorReading.health is not Good
-or when static_pressure is None. Otherwise it SHALL convert the
-pressure to altitude via the standard ISA formula and fuse the
-resulting NED-Z scalar measurement (sign-flipped, since NED Z is
-down) with the configured baro measurement noise.
+update_baro SHALL be a no-op when SensorReading.health is not Good,
+when static_pressure is None, or when the ISA-derived altitude is
+non-finite. Otherwise it SHALL convert the pressure to altitude via
+the standard ISA formula and fuse the NED-Z scalar measurement
+referenced to a QFE origin datum: on the first accepted sample it
+SHALL latch a reference so the measurement is expressed relative to
+the local origin (initial innovation ≈0), matching the origin-relative
+datum of the fused GNSS height, and fuse it with the configured baro
+measurement noise. The reference is cleared by reset() and init() so a
+fresh arm re-latches the current field elevation.
 """
 verification_methods = ["test"]
 modules = ["aviate-core/src/ekf/update.rs"]

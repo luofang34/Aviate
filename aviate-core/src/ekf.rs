@@ -34,12 +34,15 @@
 //!   - `ekf/scalar.rs`  — scalar Kalman update kernel + heading
 //!     specialization, shared by the fusion entry points.
 //!   - `ekf/runtime.rs` — `EstimatorRuntimeState` trait surface.
+//!   - `ekf/replicable.rs` — canonical byte encoding for lockstep
+//!     cross-channel replication.
 //!
 //! Submodules carry no re-exports to sidestep rustc's coverage
 //! phantom-DA issue (see `aviate-core/src/lib.rs` for context); every
 //! `aviate_core::ekf::Ekf::X` still resolves from the parent module.
 
 mod predict;
+mod replicable;
 pub mod runtime;
 mod scalar;
 mod update;
@@ -240,6 +243,19 @@ pub struct EkfState {
     /// quaternion mul produces non-finite output; cleared only by
     /// `reset()` or a fresh `init()`.
     pub quat_fault: bool,
+    /// QFE origin-referencing datum for baro fusion. The ISA formula
+    /// yields absolute MSL pressure altitude, but `pos.z` is
+    /// local-origin-relative (as is fused GNSS height). This latches
+    /// the NED-Z offset on the first accepted baro sample so the
+    /// initial innovation is ≈0 and later samples measure height
+    /// change relative to the origin datum. `None` until the first
+    /// accepted sample; cleared by `reset()` and `init()`.
+    pub baro_ref: Option<Scalar>,
+    /// Variance \[m²\] of the QFE `baro_ref` datum for its scalar
+    /// random-walk estimator. Seeded when the datum is first latched;
+    /// GNSS-anchored height shrinks it and the process-noise floor lets
+    /// the datum track slow ground-pressure drift.
+    pub baro_ref_var: Scalar,
 }
 // COV:EXCL_STOP
 
@@ -274,6 +290,8 @@ impl EkfState {
             p_cov: Matrix::identity().mul_scalar(0.1),
             initialized: false,
             quat_fault: false,
+            baro_ref: None,
+            baro_ref_var: 0.0,
         }
     }
 
@@ -296,10 +314,49 @@ impl EkfState {
         self.p_cov = Matrix::identity().mul_scalar(0.1);
         self.initialized = true;
         self.quat_fault = false;
+        // A fresh init/arm re-latches the baro datum on the next
+        // accepted sample so field elevation is captured at the
+        // current site rather than a stale reference.
+        self.baro_ref = None;
+        self.baro_ref_var = 0.0;
     }
 
     /// Snapshot the current state estimate for downstream consumers.
+    ///
+    /// A non-finite position or velocity component (from numeric
+    /// corruption anywhere upstream) demotes the estimate below `Good`
+    /// and drops the position/velocity valid flags, so a poisoned
+    /// pos/vel can never be published as trustworthy navigation state.
     pub fn get_estimate(&self) -> StateEstimate {
+        let position_ned = [self.pos.x, self.pos.y, self.pos.z];
+        let velocity_ned = [self.vel.x, self.vel.y, self.vel.z];
+        let pos_vel_finite = [
+            self.pos.x.0,
+            self.pos.y.0,
+            self.pos.z.0,
+            self.vel.x.0,
+            self.vel.y.0,
+            self.vel.z.0,
+        ]
+        .iter()
+        .all(|v| v.is_finite());
+
+        let quality = if !self.initialized {
+            EstimateQuality::Unusable
+        } else if pos_vel_finite {
+            EstimateQuality::Good
+        } else {
+            EstimateQuality::Unusable
+        };
+
+        let valid_flags = if !self.initialized {
+            StateValidFlags::empty()
+        } else if pos_vel_finite {
+            StateValidFlags::all()
+        } else {
+            StateValidFlags::all() & !(StateValidFlags::POSITION | StateValidFlags::VELOCITY)
+        };
+
         StateEstimate {
             attitude: self.quat,
             angular_velocity: [
@@ -307,18 +364,10 @@ impl EkfState {
                 self.last_gyro_body.y,
                 self.last_gyro_body.z,
             ],
-            position_ned: [self.pos.x, self.pos.y, self.pos.z],
-            velocity_ned: [self.vel.x, self.vel.y, self.vel.z],
-            quality: if self.initialized {
-                EstimateQuality::Good
-            } else {
-                EstimateQuality::Unusable
-            },
-            valid_flags: if self.initialized {
-                StateValidFlags::all()
-            } else {
-                StateValidFlags::empty()
-            },
+            position_ned,
+            velocity_ned,
+            quality,
+            valid_flags,
         }
     }
 
@@ -332,10 +381,12 @@ impl EkfState {
         self.quat_fault
     }
 
+    // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; reset() is exercised by the ground-reset tests)
     /// Ground reset — clear all filter state to a factory
     /// un-initialized posture. Caller (kernel `ground_reset`) is
     /// responsible for ensuring the vehicle is on the ground and
     /// disarmed.
+    // COV:EXCL_STOP
     pub fn reset(&mut self) {
         *self = Self::new();
     }
@@ -393,48 +444,6 @@ impl EstimatorRuntimeState for EkfState {
         // Delegate to the inherent ground-reset path, which restores
         // the filter to its factory un-initialized posture.
         EkfState::reset(self);
-    }
-}
-
-impl crate::replicable::Replicable for EkfState {
-    // 4 (quat) + 3 (pos) + 3 (vel) + 3 (gyro_bias) + 3 (accel_bias)
-    // + 3 (last_gyro_body) = 19 f32s for vector data,
-    // + STATE_DIM*STATE_DIM = 225 f32s for the covariance matrix,
-    // + 2 bytes for the boolean latches (initialized, quat_fault).
-    // Total = (19 + 225) * 4 + 2 = 978 bytes.
-    const ENCODED_LEN: usize = (19 + STATE_DIM * STATE_DIM) * 4 + 2;
-
-    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        use crate::replicable::copy_into;
-        let mut w = 0usize;
-        // Vector helper: writes a Vector3<inner-f32> to buf.
-        macro_rules! v3 {
-            ($v:expr) => {{
-                w += copy_into(buf, w, &$v.x.0.to_le_bytes());
-                w += copy_into(buf, w, &$v.y.0.to_le_bytes());
-                w += copy_into(buf, w, &$v.z.0.to_le_bytes());
-            }};
-        }
-        // Quaternion: w, x, y, z in declaration order (no newtype wrap).
-        w += copy_into(buf, w, &self.quat.w.to_le_bytes());
-        w += copy_into(buf, w, &self.quat.x.to_le_bytes());
-        w += copy_into(buf, w, &self.quat.y.to_le_bytes());
-        w += copy_into(buf, w, &self.quat.z.to_le_bytes());
-        v3!(self.pos);
-        v3!(self.vel);
-        v3!(self.gyro_bias);
-        v3!(self.accel_bias);
-        v3!(self.last_gyro_body);
-        // Covariance matrix: row-major, then column-major within each row.
-        for row in &self.p_cov.data {
-            for v in row {
-                w += copy_into(buf, w, &v.to_le_bytes());
-            }
-        }
-        // Boolean latches.
-        w += copy_into(buf, w, &[if self.initialized { 1 } else { 0 }]);
-        w += copy_into(buf, w, &[if self.quat_fault { 1 } else { 0 }]);
-        w
     }
 }
 

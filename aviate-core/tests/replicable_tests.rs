@@ -95,10 +95,12 @@ fn copy_into_no_op_when_offset_past_end() {
 #[test]
 fn ekf_state_encoded_len_matches_documented_size() {
     // 19 vector f32s + 15*15 = 225 covariance f32s = 244 floats =
-    // 976 bytes; plus 2 boolean latches = 978 bytes. Mismatched
-    // const ENCODED_LEN would surface a manual edit drift between
-    // the doc-comment and the impl.
-    assert_eq!(EkfState::ENCODED_LEN, 978);
+    // 976 bytes; plus 2 boolean latches = 978 bytes; plus the QFE
+    // baro datum (1 presence byte + 4 f32 bytes) = 983 bytes; plus the
+    // datum estimator variance (4 f32 bytes) = 987 bytes. Mismatched
+    // const ENCODED_LEN would surface a manual edit drift between the
+    // doc-comment and the impl.
+    assert_eq!(EkfState::ENCODED_LEN, 987);
 }
 
 #[test]
@@ -179,6 +181,27 @@ fn ekf_state_mutating_initialized_flag_changes_encoding() {
     assert_ne!(
         buf_a, buf_b,
         "boolean init latch must contribute to the encoding"
+    );
+}
+
+#[test]
+fn ekf_state_mutating_baro_ref_changes_encoding() {
+    // The QFE baro datum is replicated so cross-channel witnesses agree
+    // on the latched reference; a latched `Some` must encode differently
+    // from the un-latched `None` baseline.
+    let baseline = EkfState::default();
+    let mutated = EkfState {
+        baro_ref: Some(-1658.0),
+        ..Default::default()
+    };
+
+    let mut buf_a = [0u8; EkfState::ENCODED_LEN];
+    let mut buf_b = [0u8; EkfState::ENCODED_LEN];
+    baseline.encode_canonical(&mut buf_a);
+    mutated.encode_canonical(&mut buf_b);
+    assert_ne!(
+        buf_a, buf_b,
+        "latched QFE baro datum must contribute to the encoding"
     );
 }
 
