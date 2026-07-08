@@ -1,0 +1,91 @@
+name: Nightly MC/DC (experimental, unqualified)
+
+# Tracks Modified Condition/Decision Coverage of the kernel core as a
+# READINESS INDICATOR ONLY. rustc's `-Zcoverage-options=mcdc` is
+# experimental and NOT a qualified DO-178C tool, so the number published
+# here carries no MC/DC or structural-coverage credit. This workflow is
+# deliberately NON-BLOCKING: it runs on a schedule (never on pull_request),
+# and every step is `continue-on-error`, so it can neither gate a PR nor
+# appear as a required check.
+
+on:
+  schedule:
+    # 07:00 UTC nightly.
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mcdc:
+    name: MC/DC tracking (non-blocking)
+    runs-on: ubuntu-latest
+    # The whole job is advisory; a failure here must never fail CI.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install system libudev
+        continue-on-error: true
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+      - name: Install Rust nightly + llvm-tools
+        continue-on-error: true
+        run: |
+          rustup toolchain install nightly --profile minimal
+          rustup component add llvm-tools-preview --toolchain nightly
+
+      - name: Install cargo-llvm-cov
+        continue-on-error: true
+        run: cargo install cargo-llvm-cov --locked
+
+      # cargo-llvm-cov --mcdc drives the nightly instrumentation
+      # (equivalent to RUSTFLAGS="-C instrument-coverage
+      # -Zcoverage-options=mcdc"), runs the kernel tests, and emits an
+      # llvm-cov JSON export whose totals carry an `mcdc` block when any
+      # decision is instrumented.
+      - name: Measure experimental MC/DC on aviate-core
+        id: mcdc
+        continue-on-error: true
+        run: |
+          set +e
+          cargo +nightly llvm-cov --mcdc -p aviate-core \
+            --json --output-path mcdc.json
+          cargo +nightly llvm-cov --mcdc -p aviate-core \
+            --summary-only > mcdc-summary.txt 2>&1
+          # `mcdc.count` is 0 when no decision is instrumented; report n/a
+          # rather than a misleading 100%.
+          pct=$(jq -r '(.data[0].totals.mcdc // {}) | if (.count // 0) > 0 then (.percent | tostring) else "n/a" end' mcdc.json 2>/dev/null || echo "n/a")
+          echo "pct=$pct" >> "$GITHUB_OUTPUT"
+
+      - name: Publish MC/DC number to job summary
+        continue-on-error: true
+        run: |
+          {
+            echo "## Experimental MC/DC (unqualified — no cert credit)"
+            echo ""
+            echo "**aviate-core MC/DC:** ${{ steps.mcdc.outputs.pct }}%"
+            echo ""
+            echo "Measured with rustc's experimental \`-Zcoverage-options=mcdc\`"
+            echo "via \`cargo llvm-cov --mcdc\`. This tool is NOT qualified for"
+            echo "DO-178C; the value is a readiness indicator only and gates"
+            echo "nothing. The blocking coverage gate remains region + branch"
+            echo "(see \`scripts/check_coverage.sh\` and \`cert/floors.toml\`)."
+            echo ""
+            echo '```'
+            cat mcdc-summary.txt 2>/dev/null || echo "summary unavailable"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload MC/DC artifacts
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: mcdc-experimental
+          path: |
+            mcdc.json
+            mcdc-summary.txt
+          if-no-files-found: ignore

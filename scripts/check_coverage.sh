@@ -1,9 +1,13 @@
 #!/bin/bash
 set -e
 
-# DO-178C DAL-A Coverage Verification Script
-# ===========================================
-# All metrics (lines, functions, branches) must reach 100% after exclusions.
+# Region+Branch Coverage Verification
+# ====================================
+# Measures LLVM source-based region (statement/line) and branch coverage of
+# the kernel core after documented COV:EXCL exclusions, and fails if either
+# drops below its floor in the [coverage_floors] section of cert/floors.toml.
+# This is NOT MC/DC and claims no DO-178C structural-coverage credit; MC/DC is
+# tracked non-blocking by the nightly workflow.
 #
 # Exclusion markers in source code:
 #   // COV:EXCL(reason)           - exclude single line
@@ -14,19 +18,40 @@ set -e
 #
 # LLVM branch artifacts (folded branches) are auto-detected and documented.
 
-THRESHOLD=100
 OUTPUT_DIR="${COVERAGE_OUTPUT:-target/coverage}"
 PROF_DIR="target/profiles"
 COVERAGE_MODE="${COVERAGE_MODE:-branch}"
 EXCLUDE_DOC="aviate-core/coverage.exclude"
+FLOORS_FILE="${FLOORS_FILE:-cert/floors.toml}"
+
+# Read a floor from the [coverage_floors] section of cert/floors.toml.
+# These floors live in their own section (not [floors]) because cargo-evidence
+# reserves the [floors] namespace for dimensions it measures itself; the
+# region/branch ratchet is enforced here (measured >= floor) and by
+# scripts/floors-lower-lint.sh (a committed floor cannot drop without a
+# `Lower-Floor:` justification line).
+read_coverage_floor() {
+    awk -v key="$1" '
+        /^\[coverage_floors\][[:space:]]*$/ { in_sec = 1; next }
+        /^\[/ { in_sec = 0 }
+        in_sec && $1 == key {
+            for (i = 1; i <= NF; i++) if ($i == "=") { print $(i + 1); exit }
+        }
+    ' "$FLOORS_FILE"
+}
+
+REGION_FLOOR="$(read_coverage_floor coverage_region)"
+BRANCH_FLOOR="$(read_coverage_floor coverage_branch)"
+: "${REGION_FLOOR:=100}"
+: "${BRANCH_FLOOR:=100}"
 
 echo "========================================"
-echo "Aviate LLVM Coverage Analysis (DO-178C)"
+echo "Aviate Region+Branch Coverage Analysis"
 echo "========================================"
-echo "Mode: ${COVERAGE_MODE} | Required: 100%"
+echo "Mode: ${COVERAGE_MODE} | Floors: region>=${REGION_FLOOR}% branch>=${BRANCH_FLOOR}%"
 echo "========================================"
 
-NIGHTLY_LLVM="$HOME/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin"
+NIGHTLY_LLVM="$(dirname "$(rustc +nightly --print target-libdir)")/bin"
 
 # Prerequisites
 command -v grcov &>/dev/null || { echo "Error: grcov not found"; exit 1; }
@@ -346,8 +371,13 @@ done
 echo ""
 FAILED=0
 
-if [[ "$LINE_FINAL" != "100.0" ]]; then
-    echo "FAILED: Lines $LINE_FINAL% < 100%"
+# Region coverage is LLVM source-based statement/line coverage (grcov DA
+# entries) of aviate-core/src after COV:EXCL exclusions. It must not drop
+# below the coverage_region floor.
+REGION_BELOW=$(awk -v m="$LINE_FINAL" -v f="$REGION_FLOOR" 'BEGIN { print (m + 0 < f + 0) ? 1 : 0 }')
+if [[ "$REGION_BELOW" == "1" ]]; then
+    echo "FAILED: Region $LINE_FINAL% < floor ${REGION_FLOOR}%"
+    echo "  Lower coverage_region in cert/floors.toml with a 'Lower-Floor:' line, or add tests/exclusions."
     echo "  Uncovered lines not excluded:"
     awk '
     /^SF:/ { f=$0; sub(/^SF:.*\//, "", f) }
@@ -384,9 +414,11 @@ if [[ "$FUNC_FINAL" != "100.0" ]]; then
     FAILED=1
 fi
 
-if [[ "$BRANCH_FINAL" != "100.0" ]]; then
-    echo "FAILED: Branches $BRANCH_FINAL% < 100%"
+BRANCH_BELOW=$(awk -v m="$BRANCH_FINAL" -v f="$BRANCH_FLOOR" 'BEGIN { print (m + 0 < f + 0) ? 1 : 0 }')
+if [[ "$BRANCH_BELOW" == "1" ]]; then
+    echo "FAILED: Branches $BRANCH_FINAL% < floor ${BRANCH_FLOOR}%"
     echo "  $BRANCH_EFFECTIVE_UNCOV real uncovered branches (after excluding $BRANCH_ARTIFACTS LLVM artifacts)"
+    echo "  Lower coverage_branch in cert/floors.toml with a 'Lower-Floor:' line, or add tests/exclusions."
     FAILED=1
 fi
 
@@ -397,6 +429,6 @@ if [[ $FAILED -eq 1 ]]; then
 fi
 
 echo "========================================"
-echo "PASSED: All metrics at 100%"
+echo "PASSED: region ${LINE_FINAL}% >= ${REGION_FLOOR}%, branch ${BRANCH_FINAL}% >= ${BRANCH_FLOOR}%"
 echo "========================================"
 exit 0

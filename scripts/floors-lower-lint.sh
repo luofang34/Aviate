@@ -55,14 +55,18 @@ else
     head_text=$(cat cert/floors.toml 2>/dev/null || true)
 fi
 
-# Parse `name = value` pairs inside the [floors] section only.
-# Stops at the next `[section]` header. Assumes ASCII names and
-# decimal integer values (matches cert/floors.toml shape).
+# Parse `name = value` pairs inside the floor-bearing sections
+# ([floors] and [coverage_floors]). Stops at the next `[section]`
+# header. Assumes ASCII names and decimal integer values (matches
+# cert/floors.toml shape). Coverage floors live in their own section
+# so cargo-evidence ignores them, but the same no-lowering-without-
+# justification ratchet applies here.
 extract_floors() {
-    # Portable awk (works on BSD/mac + gawk): filter lines inside
-    # [floors] of shape `name = number`, print `name value`.
+    # Portable awk (works on BSD/mac + gawk): filter lines inside a
+    # floor-bearing section of shape `name = number`, print `name value`.
     awk '
         /^\[floors\][[:space:]]*$/ { in_floors = 1; next }
+        /^\[coverage_floors\][[:space:]]*$/ { in_floors = 1; next }
         /^\[/ { in_floors = 0 }
         in_floors && /^[[:space:]]*[a-z_][a-z_0-9]*[[:space:]]*=[[:space:]]*[0-9]+/ {
             # Split on `=`, trim whitespace on both sides.

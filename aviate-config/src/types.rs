@@ -10,13 +10,18 @@ use serde::Deserialize;
 /// Top-level application configuration
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
+    /// Application identity and target metadata.
     pub app: AppInfo,
+    /// Telemetry queue/rate configuration; absent means defaults.
     #[serde(default)]
     pub telemetry: Option<TelemetryConfig>,
+    /// Command-authentication profile; absent means no security.
     #[serde(default)]
     pub security: Option<SecurityConfig>,
+    /// Transport endpoints (serial/UDP) and their roles.
     #[serde(default)]
     pub transports: Vec<TransportConfig>,
+    /// Simulator backend settings; present only for SITL builds.
     #[serde(default)]
     pub simulator: Option<SimulatorConfig>,
 }
@@ -24,9 +29,13 @@ pub struct AppConfig {
 /// App metadata
 #[derive(Debug, Deserialize)]
 pub struct AppInfo {
+    /// Unique application identifier.
     pub id: String,
+    /// Target board name.
     pub board: String,
+    /// Airframe model this build flies.
     pub airframe: String,
+    /// Runtime environment (`flight`, `sitl`, `hitl`).
     pub env: String,
 }
 
@@ -36,12 +45,17 @@ pub struct AppInfo {
 /// They must be ≤ the compile-time limits (`TELEMETRY_MAX_FRAME`, `TELEMETRY_MAX_QUEUE`).
 #[derive(Debug, Deserialize)]
 pub struct TelemetryConfig {
+    /// Maximum telemetry frame size in bytes.
     pub frame_size: usize,
+    /// Number of frames the outbound queue holds.
     pub queue_len: usize,
+    /// Heartbeat message rate in Hz.
     #[serde(default = "default_heartbeat_hz")]
     pub heartbeat_hz: u8,
+    /// Attitude message rate in Hz.
     #[serde(default = "default_attitude_hz")]
     pub attitude_hz: u8,
+    /// Position message rate in Hz.
     #[serde(default = "default_position_hz")]
     pub position_hz: u8,
 }
@@ -71,7 +85,8 @@ impl Default for TelemetryConfig {
 /// Security profile configuration
 #[derive(Debug, Deserialize)]
 pub struct SecurityConfig {
-    pub profile: String, // "none", "auth-only", "auth-and-encrypt"
+    /// Security profile: `none`, `auth-only`, or `auth-and-encrypt`.
+    pub profile: String,
 }
 
 impl Default for SecurityConfig {
@@ -85,13 +100,19 @@ impl Default for SecurityConfig {
 /// Transport configuration (port, protocol, roles)
 #[derive(Debug, Deserialize)]
 pub struct TransportConfig {
+    /// Serial device path or transport identifier.
     pub port: String,
+    /// Wire protocol spoken on this transport (e.g. `mavlink`).
     pub protocol: String,
+    /// Roles this transport serves (e.g. `telemetry`, `command`).
     pub roles: Vec<String>,
+    /// Serial baud rate; absent for non-serial transports.
     #[serde(default)]
     pub baudrate: Option<u32>,
+    /// UDP port for inbound sensor data (SITL).
     #[serde(default)]
     pub port_sensor: Option<u16>,
+    /// UDP port for outbound actuator commands (SITL).
     #[serde(default)]
     pub port_actuator: Option<u16>,
     /// UDP endpoint for telemetry/command (e.g., "127.0.0.1:14550")
@@ -102,9 +123,12 @@ pub struct TransportConfig {
 /// Simulator configuration (SITL only)
 #[derive(Debug, Deserialize)]
 pub struct SimulatorConfig {
-    pub backend: String, // "gazebo", "jmavsim"
+    /// Simulator backend: `gazebo` or `jmavsim`.
+    pub backend: String,
+    /// Run the simulator without a GUI.
     #[serde(default)]
     pub headless: bool,
+    /// Advance the simulator in lockstep with the flight loop.
     #[serde(default)]
     pub lockstep: bool,
 }
@@ -112,7 +136,10 @@ pub struct SimulatorConfig {
 /// Configuration error type
 #[derive(Debug)]
 pub enum ConfigError {
+    /// TOML could not be parsed into the config schema.
     ParseError,
+    /// Parsed config violated a validation constraint.
     ValidationError,
+    /// Underlying I/O failed while reading the config.
     IoError,
 }

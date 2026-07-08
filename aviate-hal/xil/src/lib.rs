@@ -22,9 +22,12 @@
 //! traits defined here and are selected at runtime via configuration.
 
 #![forbid(unsafe_code)]
-#![forbid(clippy::panic)]
-#![forbid(clippy::unwrap_used)]
-#![forbid(clippy::expect_used)]
+// deny (not forbid) so a `#[cfg(test)]` module can `#[allow]` these for
+// assertion helpers; forbid cannot be relaxed and breaks `clippy
+// --all-targets` on the test build.
+#![deny(clippy::panic)]
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
 
 pub mod backend;
 pub mod bridge;

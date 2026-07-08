@@ -11,9 +11,13 @@ use aviate_core::sensor::{BaroData, GnssData, ImuData, MagData, SensorReading, S
 /// EKF. Once we have at least one reading from each required sensor,
 /// we can initialize the kernel with a valid `SensorSet`.
 pub struct SensorCache {
+    /// Latest cached IMU reading, if any.
     pub imu: Option<SensorReading<ImuData>>,
+    /// Latest cached GNSS reading, if any.
     pub gnss: Option<SensorReading<GnssData>>,
+    /// Latest cached barometer reading, if any.
     pub baro: Option<SensorReading<BaroData>>,
+    /// Latest cached magnetometer reading, if any.
     pub mag: Option<SensorReading<MagData>>,
 }
 
