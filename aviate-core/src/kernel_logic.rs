@@ -27,16 +27,26 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             .pre_arm
             .update_from_faults(self.state.faults);
         // EKF initialization gate: read it through the trait surface
-        // (`Estimator::estimate(state).quality == Good` ⇔ initialized).
-        // Routing through the trait keeps this code generic over
-        // non-EKF estimators that don't have an `is_initialized` notion
-        // but do produce a `StateEstimate.quality`.
-        let est_initialized = matches!(
+        // (`Estimator::estimate(state).quality != Unusable`). Routing
+        // through the trait keeps this code generic over non-EKF
+        // estimators that don't have an `is_initialized` notion but do
+        // produce a `StateEstimate.quality`.
+        //
+        // Pre-arm never calls `observe()` — this loop only reads the
+        // estimate `init_step` cycle after cycle, so GNSS/baro aiding
+        // never gets a chance to fuse before arming. `Good` quality
+        // requires fresh GNSS/baro aiding (see `ekf/validity.rs`) and
+        // can therefore never be reached here; `Degraded` is the
+        // correct pre-arm ceiling (attitude converged, nav aiding not
+        // yet established). Gating on `!= Unusable` accepts that
+        // ceiling while still rejecting a filter that never
+        // initialized or has a latched numeric fault.
+        let est_initialized = !matches!(
             self.pipeline
                 .estimator
                 .estimate(&self.state.estimator)
                 .quality,
-            crate::state::EstimateQuality::Good
+            crate::state::EstimateQuality::Unusable
         );
         self.state.checks.pre_arm.update_ekf(est_initialized);
 

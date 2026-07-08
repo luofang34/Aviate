@@ -127,13 +127,21 @@ impl Ekf {
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
     }
 
+    // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; the accepted/rejected return path is exercised by the aiding-freshness tests)
+    /// Returns whether the measurement was accepted (fused into state)
+    /// as opposed to rejected by the innovation gate or a degenerate
+    /// innovation variance. Callers use this to drive per-source aiding
+    /// freshness — a rejected measurement must not reset the "last
+    /// accepted fusion" age, or a source that is permanently gated out
+    /// would still look continuously aided.
+    // COV:EXCL_STOP
     pub(crate) fn scalar_update(
         &self,
         state: &mut EkfState,
         state_idx: usize,
         meas: Scalar,
         r_noise: Scalar,
-    ) {
+    ) -> bool {
         // Standard EKF scalar update: H = [0, ..., 1, ... 0] at state_idx
         let pred = match state_idx {
             0 => state.pos.x.0,
@@ -142,7 +150,7 @@ impl Ekf {
             3 => state.vel.x.0,
             4 => state.vel.y.0,
             5 => state.vel.z.0,
-            _ => return, // COV:EXCL(DEFENSIVE: invalid state_idx guard)
+            _ => return false, // COV:EXCL(DEFENSIVE: invalid state_idx guard)
         };
 
         let innov = meas - pred;
@@ -150,7 +158,7 @@ impl Ekf {
         // Innovation Gating
         let s = state.p_cov.get(state_idx, state_idx) + r_noise;
         if s < 1e-9 {
-            return; // COV:EXCL(DEFENSIVE: prevent division by zero)
+            return false; // COV:EXCL(DEFENSIVE: prevent division by zero)
         }
 
         // Innovation gating. Callers reject non-finite aiding before
@@ -158,7 +166,7 @@ impl Ekf {
         // cannot silently accept a NaN.
         let gate_sq = self.config.innovation_gate * self.config.innovation_gate;
         if (innov * innov) / s > gate_sq {
-            return; // Reject measurement
+            return false; // Reject measurement
         }
         // COV:EXCL(phantom DA: grcov attributes a phantom region to this line after the reject-gate branch above)
         // Kalman Gain
@@ -203,15 +211,15 @@ impl Ekf {
         state.quat = state.sanitize_quat(new_quat);
 
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
+        true
     }
-}
-
-// COV:EXCL_START(DELEGATE: every body in this impl forwards to the
-// equivalent inherent Ekf helper that carries the math; the delegate
-// has no executable logic of its own and is exercised through the
-// kernel update path. The math is tested directly via ekf_tests.rs
-// against the inherent helpers. Also covers grcov phantom-DA
-// attribution on the trait doc comment below.)
+} // COV:EXCL(phantom DA: grcov attributes a phantom region to this impl-block closing brace)
+  // COV:EXCL_START(DELEGATE: every body in this impl forwards to the
+  // equivalent inherent Ekf helper that carries the math; the delegate
+  // has no executable logic of its own and is exercised through the
+  // kernel update path. The math is tested directly via ekf_tests.rs
+  // against the inherent helpers. Also covers grcov phantom-DA
+  // attribution on the trait doc comment below.)
 /// Implement the public `Estimator` trait by delegating each method
 /// to the per-submodule helper. The trait surface takes `&mut state`
 /// — the helpers carry the math against the same `&mut state`.
@@ -231,6 +239,11 @@ impl super::Estimator for Ekf {
         overrides: Option<&crate::control::SensorOverrides>,
         dt: Scalar,
     ) {
+        // Aiding-freshness ages advance once per cycle regardless of
+        // which channels are healthy this cycle — un-aided time keeps
+        // passing even when GNSS/baro are silently gated out below.
+        state.tick_aiding_age(dt);
+
         // EKF-shaped flow: predict-per-IMU + update-per-sensor.
         // Each gate (validity, health, override) is the same logic
         // that previously lived in `kernel_update.rs`; moving it
