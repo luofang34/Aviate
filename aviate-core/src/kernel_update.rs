@@ -5,7 +5,8 @@
 
 use crate::checks::DegradationReason;
 use crate::control::{
-    AuthorityProfile, Command, ControlLawV1, ControlMode, VehicleControlMode, VehicleController,
+    AuthorityProfile, Command, ControlLawV1, ControlMode, ModeEntryDecision, VehicleControlMode,
+    VehicleController,
 };
 use crate::ekf::Estimator;
 use crate::fault::FaultFlags;
@@ -103,6 +104,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                     sequence: command.sequence,
                     protection: Default::default(),
                     sanitize_report: SanitizeReport::default(),
+                    mode_entry: ModeEntryDecision::Granted(ControlMode::Attitude),
                 },
                 estimate: self.pipeline.estimator.estimate(&self.state.estimator),
                 timing: CycleTiming::default(),
@@ -142,6 +144,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                     sequence: command.sequence,
                     protection: Default::default(),
                     sanitize_report: SanitizeReport::default(),
+                    mode_entry: ModeEntryDecision::Granted(command.mode),
                 },
                 estimate: self.pipeline.estimator.estimate(&self.state.estimator),
                 timing: CycleTiming::default(),
@@ -182,6 +185,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                     sequence: command.sequence,
                     protection: Default::default(),
                     sanitize_report: SanitizeReport::default(),
+                    mode_entry: ModeEntryDecision::Granted(command.mode),
                 },
                 estimate: self.pipeline.estimator.estimate(&self.state.estimator),
                 timing: CycleTiming::default(),
@@ -281,7 +285,26 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             ..command.clone()
         };
 
-        // 6. Control Step
+        // 6a. Mode-entry gate: a commanded Position/Velocity-family
+        //    mode whose estimator requirement isn't met must not run
+        //    those loops. Refuse entry and fall back to the highest
+        //    mode current validity still supports — the kernel-side
+        //    analog of PX4's `mode_requirements.cpp` — surfaced
+        //    honestly below instead of echoing the raw request.
+        //    Scoped to the uplinked command only: `Backup` already
+        //    forces safe output regardless of mode, and the
+        //    synthesized Descend/Land terminal command (`Direct`) is
+        //    the existing terminal's own mode with its own validity
+        //    story, not re-gated here.
+        let mode_entry = match self.state.control_law {
+            ControlLawV1::Backup => ModeEntryDecision::Granted(command.mode),
+            ControlLawV1::Direct => ModeEntryDecision::Granted(ControlMode::AltitudeHold),
+            ControlLawV1::Primary | ControlLawV1::Alternate => {
+                crate::control::gate_mode_entry(constrained_cmd.mode, state.valid_flags)
+            }
+        };
+
+        // 6b. Control Step
         // `Backup` is the motors-off last resort: reserved for cases
         // where a controlled descent is impossible (on the ground,
         // total loss of attitude, unrecoverable numeric/estimator
@@ -300,9 +323,10 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             }
         } else {
             // Terminal descent flies the synthesized level-descent
-            // setpoint; all other laws fly the uplinked (constrained)
-            // command. Loop selection is driven by the control-mode
-            // flags derived from the effective command's mode.
+            // setpoint; all other laws fly the uplinked command,
+            // gated to the mode-entry decision above. Loop selection
+            // is driven by the control-mode flags derived from the
+            // effective command's mode.
             let effective_cmd = if self.state.control_law == ControlLawV1::Direct {
                 crate::kernel::descend::descend_command(
                     &state,
@@ -310,7 +334,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                     constrained_cmd.sequence,
                 )
             } else {
-                constrained_cmd
+                crate::control::apply_mode_entry(constrained_cmd, mode_entry)
             };
             let control_flags = VehicleControlMode::from_control_mode(effective_cmd.mode);
             let axis_cmd = self.pipeline.controller.step(
@@ -364,7 +388,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         UpdateResult {
             actuator: actuator_cmd,
             status: ChannelStatus {
-                mode: command.mode,
+                mode: mode_entry.effective(),
                 config_mode: self.state.mode,
                 transition_state: ConfigTransitionState::Stable(self.state.mode),
                 law: self.state.control_law,
@@ -375,6 +399,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                 sequence: command.sequence,
                 protection: protection_status,
                 sanitize_report,
+                mode_entry,
             },
             estimate: state,
             timing: CycleTiming {

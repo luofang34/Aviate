@@ -6,7 +6,7 @@
 
 use crate::checks::{DegradationReason, TransitionFailure};
 use crate::control::envelope::ProtectionStatus;
-use crate::control::{ConfigMode, ControlLawV1, ControlMode};
+use crate::control::{ConfigMode, ControlLawV1, ControlMode, ModeEntryDecision};
 use crate::fault::FaultFlags;
 use crate::mixer::{ActuatorCmd, SanitizeReport};
 use crate::state::{EstimateQuality, StateEstimate};
@@ -351,6 +351,11 @@ impl Default for ConfigTransitionState {
 /// Full per-cycle status from kernel
 #[derive(Clone, Debug)]
 pub struct ChannelStatus {
+    /// Mode actually driving the cascade this cycle — the
+    /// estimator-validity-gated mode (see `mode_entry`), not
+    /// necessarily what was requested. Reporting the raw request here
+    /// even when the gate refused it would be a silent lie about what
+    /// the vehicle is actually doing.
     pub mode: ControlMode,
     pub config_mode: ConfigMode,
     pub transition_state: ConfigTransitionState,
@@ -362,6 +367,12 @@ pub struct ChannelStatus {
     pub sequence: u32,
     pub protection: ProtectionStatus,
     pub sanitize_report: SanitizeReport,
+    /// Estimator-validity mode-entry gate outcome for this cycle:
+    /// the requested mode, the effective mode (`mode` above), and —
+    /// when they differ — the validity bits the requested mode was
+    /// short of. Lets an OEM mode manager see why a mode was refused
+    /// instead of only observing the substituted behavior.
+    pub mode_entry: ModeEntryDecision,
 }
 
 impl Default for ChannelStatus {
@@ -378,6 +389,7 @@ impl Default for ChannelStatus {
             sequence: 0,
             protection: ProtectionStatus::default(),
             sanitize_report: SanitizeReport::default(),
+            mode_entry: ModeEntryDecision::Granted(ControlMode::Rate),
         }
     }
 }

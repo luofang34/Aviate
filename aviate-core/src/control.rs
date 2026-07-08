@@ -17,9 +17,11 @@ use crate::types::{
 pub use crate::types::Scalar;
 
 pub mod enums;
+pub mod mode_gate;
 pub mod runtime;
 pub mod vehicle_control_mode;
 pub use enums::{CommandSource, ConfigMode, ControlLawV1, ControlMode, SafetyLevelV1};
+pub use mode_gate::{apply_mode_entry, gate_mode_entry, ModeEntryDecision};
 pub use vehicle_control_mode::{OuterLoopSelection, VehicleControlMode};
 
 #[derive(Clone, Debug)]
