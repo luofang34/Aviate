@@ -481,3 +481,296 @@ fn velocity_mode_without_velocity_setpoint_runs_open_loop() {
         "missing velocity setpoint must not tilt the vehicle"
     );
 }
+
+// =============================================================================
+// Altitude / climb-rate hold (issue #66)
+//
+// AltitudeHold drives only the vertical branch of the velocity loop
+// (collective around hover trim) while roll/pitch stay manual and yaw
+// slaves to the heading setpoint. Thrust must respond to the vertical
+// setpoint — not pass raw `collective_thrust` through.
+// =============================================================================
+
+/// Run one AltitudeHold step and return the resulting collective.
+fn step_altitude(
+    controller: &MultirotorController,
+    state: &StateEstimate,
+    limits: &Limits,
+    setpoint: Setpoint,
+) -> f32 {
+    let cmd = Command {
+        mode: ControlMode::AltitudeHold,
+        setpoint,
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 1,
+        source: CommandSource::Pilot,
+    };
+    let mut runtime = MultirotorRuntimeState::default();
+    controller
+        .step(
+            &mut runtime,
+            state,
+            &cmd,
+            &VehicleControlMode::from_control_mode(cmd.mode),
+            ConfigMode::Hover,
+            limits,
+        )
+        .collective
+        .0
+}
+
+#[test]
+fn altitude_mode_climb_rate_drives_collective_not_passthrough() {
+    // A commanded climb rate must raise collective above a commanded
+    // descent, and neither must equal the raw manual collective_thrust —
+    // proving the vertical loop is engaged rather than passing thrust
+    // straight through.
+    let controller = MultirotorController::with_hover_thrust(0.5);
+    let state = make_state();
+    let limits = make_limits();
+    let manual = 0.3;
+
+    // NED: -Z is up, so a negative vertical_speed is a climb.
+    let climb = step_altitude(
+        &controller,
+        &state,
+        &limits,
+        Setpoint {
+            vertical_speed: Some(MetersPerSecond(-2.0)),
+            collective_thrust: Normalized(manual),
+            ..Default::default()
+        },
+    );
+    let descend = step_altitude(
+        &controller,
+        &state,
+        &limits,
+        Setpoint {
+            vertical_speed: Some(MetersPerSecond(2.0)),
+            collective_thrust: Normalized(manual),
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        climb > descend,
+        "climb collective {climb} must exceed descend collective {descend}"
+    );
+    assert!(
+        (climb - manual).abs() > 1e-3,
+        "climb collective {climb} must not be raw pass-through of {manual}"
+    );
+}
+
+#[test]
+fn altitude_mode_altitude_error_drives_thrust() {
+    // Vehicle sits at 10 m (NED z = -10). Commanding a higher altitude
+    // must climb (collective above hover trim); a lower altitude must
+    // descend (below trim). Exercises the altitude→climb-rate shaper.
+    let controller = MultirotorController::with_hover_thrust(0.5);
+    let state = make_state();
+    let limits = make_limits();
+
+    let up = step_altitude(
+        &controller,
+        &state,
+        &limits,
+        Setpoint {
+            altitude: Some(Meters(11.0)),
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        },
+    );
+    let down = step_altitude(
+        &controller,
+        &state,
+        &limits,
+        Setpoint {
+            altitude: Some(Meters(9.0)),
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        up > down,
+        "higher altitude {up} must out-thrust lower {down}"
+    );
+    assert!(
+        up > 0.5 && down < 0.5,
+        "climb must exceed hover trim and descent fall below it: up={up} down={down}"
+    );
+}
+
+#[test]
+fn altitude_mode_keeps_manual_roll_pitch() {
+    // In AltitudeHold the horizontal attitude stays manual: a tilted
+    // manual attitude setpoint must still produce roll torque even while
+    // the vertical loop owns collective.
+    let controller = MultirotorController::with_hover_thrust(0.5);
+    let state = make_state();
+    let limits = make_limits();
+    let tilted = Quaternion::from_axis_angle(aviate_core::math::Vector3::new(1.0, 0.0, 0.0), 0.2);
+
+    let cmd = Command {
+        mode: ControlMode::AltitudeHold,
+        setpoint: Setpoint {
+            attitude: Some(tilted),
+            vertical_speed: Some(MetersPerSecond(0.0)),
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 1,
+        source: CommandSource::Pilot,
+    };
+    let mut runtime = MultirotorRuntimeState::default();
+    let axis = controller.step(
+        &mut runtime,
+        &state,
+        &cmd,
+        &VehicleControlMode::from_control_mode(cmd.mode),
+        ConfigMode::Hover,
+        &limits,
+    );
+    assert!(
+        axis.roll.0.abs() > 1e-3,
+        "manual roll must pass through in altitude mode, roll={}",
+        axis.roll.0
+    );
+}
+
+#[test]
+fn altitude_mode_slaves_yaw_to_heading() {
+    // With the vehicle at yaw 0 and a level manual attitude, a heading
+    // setpoint must drive a yaw command; without it, yaw stays zero.
+    let controller = MultirotorController::with_hover_thrust(0.5);
+    let state = make_state();
+    let limits = make_limits();
+
+    let yaw_no_heading = {
+        let axis_setpoint = Setpoint {
+            attitude: Some(Quaternion::IDENTITY),
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        };
+        let cmd = Command {
+            mode: ControlMode::AltitudeHold,
+            setpoint: axis_setpoint,
+            config_mode_request: None,
+            sensor_overrides: None,
+            sequence: 1,
+            source: CommandSource::Pilot,
+        };
+        let mut runtime = MultirotorRuntimeState::default();
+        controller
+            .step(
+                &mut runtime,
+                &state,
+                &cmd,
+                &VehicleControlMode::from_control_mode(cmd.mode),
+                ConfigMode::Hover,
+                &limits,
+            )
+            .yaw
+            .0
+    };
+
+    let yaw_with_heading = {
+        let cmd = Command {
+            mode: ControlMode::AltitudeHold,
+            setpoint: Setpoint {
+                attitude: Some(Quaternion::IDENTITY),
+                heading: Some(Radians(0.5)),
+                collective_thrust: Normalized(0.5),
+                ..Default::default()
+            },
+            config_mode_request: None,
+            sensor_overrides: None,
+            sequence: 1,
+            source: CommandSource::Pilot,
+        };
+        let mut runtime = MultirotorRuntimeState::default();
+        controller
+            .step(
+                &mut runtime,
+                &state,
+                &cmd,
+                &VehicleControlMode::from_control_mode(cmd.mode),
+                ConfigMode::Hover,
+                &limits,
+            )
+            .yaw
+            .0
+    };
+
+    assert!(
+        yaw_no_heading.abs() < 1e-6,
+        "level attitude with no heading setpoint must not command yaw, got {yaw_no_heading}"
+    );
+    assert!(
+        yaw_with_heading.abs() > 1e-3,
+        "heading setpoint must drive a yaw command, got {yaw_with_heading}"
+    );
+}
+
+#[test]
+fn altitude_hold_tracks_commanded_altitude_in_sim() {
+    // Closed-loop against a vertical point-mass plant: collective maps to
+    // upward acceleration around hover trim. Starting at 10 m and holding
+    // a 20 m altitude setpoint, the commanded altitude must be tracked.
+    let hover = 0.5_f32;
+    let g = 9.81_f32;
+    let dt = 0.01_f32;
+    let controller = MultirotorController::with_hover_thrust(hover);
+    let limits = make_limits();
+
+    let mut runtime = MultirotorRuntimeState {
+        dt_sec: dt,
+        ..Default::default()
+    };
+
+    let target_alt = 20.0_f32;
+    let mut pos_ned_z = -10.0_f32;
+    let mut vel_ned_z = 0.0_f32;
+    let mut state = make_state();
+
+    for _ in 0..6000 {
+        state.position_ned[2] = Meters(pos_ned_z);
+        state.velocity_ned[2] = MetersPerSecond(vel_ned_z);
+        let cmd = Command {
+            mode: ControlMode::AltitudeHold,
+            setpoint: Setpoint {
+                attitude: Some(Quaternion::IDENTITY),
+                altitude: Some(Meters(target_alt)),
+                collective_thrust: Normalized(hover),
+                ..Default::default()
+            },
+            config_mode_request: None,
+            sensor_overrides: None,
+            sequence: 1,
+            source: CommandSource::Pilot,
+        };
+        let axis = controller.step(
+            &mut runtime,
+            &state,
+            &cmd,
+            &VehicleControlMode::from_control_mode(cmd.mode),
+            ConfigMode::Hover,
+            &limits,
+        );
+        // Upward thrust acceleration is zero at hover trim and scales
+        // linearly with collective; NED z is down-positive.
+        let accel_up = (axis.collective.0 / hover - 1.0) * g;
+        vel_ned_z += -accel_up * dt;
+        pos_ned_z += vel_ned_z * dt;
+    }
+
+    let final_alt = -pos_ned_z;
+    assert!(
+        (final_alt - target_alt).abs() < 1.0,
+        "altitude hold must converge to {target_alt} m, settled at {final_alt} m"
+    );
+}

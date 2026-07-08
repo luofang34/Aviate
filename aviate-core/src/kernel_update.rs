@@ -188,6 +188,13 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // 3. Update in-flight checks
         self.state.checks.in_flight.update_from_state(&state);
         self.state.checks.in_flight.update_from_sensors(sensors);
+        // Geofence: flag whether the vehicle's measured altitude sits
+        // within the configured band. NED z is down-positive; altitude
+        // is up-positive.
+        let altitude_m = -state.position_ned[2].0;
+        let altitude_ok =
+            (self.cfg.limits.min_altitude.0..=self.cfg.limits.max_altitude.0).contains(&altitude_m);
+        self.state.checks.in_flight.update_altitude(altitude_ok);
         // Spec §12: Command staleness gate. The caller supplies
         // `command_age_ms` measured against its own timebase
         // (typically the time elapsed since the last RC/GCS frame

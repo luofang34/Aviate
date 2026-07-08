@@ -12,7 +12,7 @@
 
 #![allow(clippy::expect_used, clippy::panic)]
 
-use aviate_core::checks::PreArmFlags;
+use aviate_core::checks::{InFlightFlags, PreArmFlags};
 use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
 use aviate_core::ekf::{Ekf, EkfConfig, EkfState, Estimator};
@@ -538,5 +538,58 @@ fn ekf_gnss_baro_fusion_converges_position_within_bounds() {
     assert!(
         !state.has_numeric_fault(),
         "healthy GNSS + baro fusion must not produce numeric faults"
+    );
+}
+
+// --- Altitude geofence flag (issue #66) -------------------------------------
+
+/// The `update()` cycle drives the ALTITUDE_OK geofence flag from the
+/// vehicle's estimated altitude against the configured band. Within the
+/// band the flag latches set; tightening the band above the vehicle
+/// clears it. Witnesses that `update_altitude` is wired into the loop.
+#[test]
+fn altitude_ok_flag_tracks_geofence_through_update() {
+    let mut kernel = make_kernel();
+    arm_kernel(&mut kernel);
+    let sensors = make_valid_sensors();
+
+    let cmd = Command {
+        mode: ControlMode::AltitudeHold,
+        setpoint: Setpoint {
+            attitude: Some(Quaternion::IDENTITY),
+            altitude: Some(Meters(5.0)),
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 1,
+        source: CommandSource::Pilot,
+    };
+
+    // Default band [0, 100] m contains the ~0 m estimate → OK.
+    let _ = step(&mut kernel, &cmd, &sensors, 0);
+    assert!(
+        kernel
+            .state
+            .checks
+            .in_flight
+            .current
+            .contains(InFlightFlags::ALTITUDE_OK),
+        "altitude within the geofence must set ALTITUDE_OK"
+    );
+
+    // Raise the floor above the vehicle → measured altitude is now below
+    // the band and the flag clears.
+    kernel.cfg.limits.min_altitude = Meters(50.0);
+    let _ = step(&mut kernel, &cmd, &sensors, 0);
+    assert!(
+        !kernel
+            .state
+            .checks
+            .in_flight
+            .current
+            .contains(InFlightFlags::ALTITUDE_OK),
+        "altitude below the geofence floor must clear ALTITUDE_OK"
     );
 }
