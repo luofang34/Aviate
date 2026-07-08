@@ -596,7 +596,9 @@ fn altitude_ok_flag_tracks_geofence_through_update() {
     );
 }
 
-// --- LLR-FLT-206 (Descend/Land terminal) ------------------------------------
+// --- Descend/Land terminal (issue #65) --------------------------------------
+// No HLR/LLR entry exists yet for this behavior in cert/trace; these
+// tests pin the contract directly pending that trace addition.
 
 /// Sensors reporting a vehicle already descending at the failsafe rate.
 /// The estimator's vertical-velocity output then tracks that descent, so
@@ -627,7 +629,7 @@ fn hover_cmd() -> Command {
     }
 }
 
-/// LLR-FLT-206: a terminal failsafe (command/datalink loss) mid-air
+/// A terminal failsafe (command/datalink loss) mid-air
 /// engages the kernel-owned Descend/Land terminal and rides the vehicle
 /// down under control — motors keep running at a wings-level descent —
 /// instead of cutting them to the all-zeros safe pattern. Arms the
@@ -678,7 +680,7 @@ fn terminal_failsafe_rides_a_controlled_descent_not_motors_off() {
     );
 }
 
-/// LLR-FLT-206: total loss of attitude is the boundary case the Descend
+/// Total loss of attitude is the boundary case the Descend
 /// terminal does NOT cover — with no stable frame to descend in, the
 /// kernel falls to the motors-off safe pattern (`Backup`). This pins the
 /// distinction the failsafe mapping draws between "land under control"
@@ -705,6 +707,52 @@ fn total_attitude_loss_cuts_motors_not_descent() {
     assert!(
         all_motors_zero(&out),
         "total attitude loss must cut motors (safe pattern), not descend: {:?}",
+        out.outputs
+    );
+}
+
+/// HLR-FLT-203: an unrecoverable critical fault (numeric / estimator
+/// divergence) preempts an already-active Descend/Land terminal.
+/// `check_critical_faults()` runs ahead of the state estimate the terminal
+/// needs, so it must win outright rather than let a prior cycle's Direct
+/// engagement carry a stale descent command forward. Drives the kernel into
+/// Direct via command timeout exactly as
+/// `terminal_failsafe_rides_a_controlled_descent_not_motors_off` does, then
+/// latches `NUMERIC_ERROR` and asserts the next cycle falls back to the
+/// motors-off safe pattern instead of continuing the descent.
+#[test]
+fn critical_fault_preempts_an_active_descend_terminal() {
+    let mut kernel = make_kernel();
+    arm_kernel(&mut kernel);
+
+    let sensors = descending_sensors();
+    let cmd = hover_cmd();
+
+    for _ in 0..60 {
+        let _ = step(&mut kernel, &cmd, &sensors, 0);
+    }
+
+    // Command/datalink loss engages the Descend/Land terminal.
+    let descending = step(&mut kernel, &cmd, &sensors, 10_000);
+    assert_eq!(kernel.state.control_law, ControlLawV1::Direct);
+    assert!(
+        !all_motors_zero(&descending),
+        "precondition: terminal must be actively descending before the fault hits"
+    );
+
+    // A numeric fault now latches mid-descent — HLR-FLT-203 requires the
+    // safe pattern regardless of the terminal law that was active.
+    kernel.state.faults.insert(FaultFlags::NUMERIC_ERROR);
+    let out = step(&mut kernel, &cmd, &sensors, 10_000);
+
+    assert_eq!(
+        kernel.state.control_law,
+        ControlLawV1::Backup,
+        "a critical fault must override an active Descend/Land terminal"
+    );
+    assert!(
+        all_motors_zero(&out),
+        "critical fault mid-descent must cut motors, not continue the terminal: {:?}",
         out.outputs
     );
 }

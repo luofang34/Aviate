@@ -149,19 +149,40 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             };
         }
 
-        // 2. Check for critical faults (if we got here, we're armed)
+        // 2. Check for critical faults (if we got here, we're armed). These
+        //    are the unrecoverable cases (total sensor loss, numeric /
+        //    estimator divergence) HLR-FLT-203 requires the safe pattern
+        //    for — not the Descend/Land terminal, which needs a state
+        //    estimate this cycle hasn't computed yet. The ActuatorCmd and
+        //    ChannelStatus mirror the Backup branch built in step 6/11 so
+        //    telemetry reports the real fault state instead of defaults.
         if self.check_critical_faults() {
-            // If critical fault, force Backup/Frozen behavior
             return UpdateResult {
                 actuator: ActuatorCmd {
                     outputs: self.cfg.safe_output,
-                    active_mask: 0,
+                    active_mask: 0b1111,
                     sequence: command.sequence,
                     timestamp,
-                    fallback_mask: 0,
+                    fallback_mask: 0xFF,
                     sanitized: true,
                 },
-                status: ChannelStatus::default(), // TODO: Populate with fault info
+                status: ChannelStatus {
+                    mode: command.mode,
+                    config_mode: self.state.mode,
+                    transition_state: ConfigTransitionState::Stable(self.state.mode),
+                    law: ControlLawV1::Backup,
+                    health: ChannelHealthV1::Operative,
+                    faults: self.state.faults,
+                    confidence: self
+                        .pipeline
+                        .estimator
+                        .estimate(&self.state.estimator)
+                        .quality,
+                    envelope_margin: EnvelopeMargin::default(),
+                    sequence: command.sequence,
+                    protection: Default::default(),
+                    sanitize_report: SanitizeReport::default(),
+                },
                 estimate: self.pipeline.estimator.estimate(&self.state.estimator),
                 timing: CycleTiming::default(),
                 degradation: None,

@@ -1,15 +1,30 @@
 # Aviate SITL Test: Numeric Fault Isolation Under IMU NaN Injection
 #
-# Witnesses HLR-EST-204 / HLR-FLT-203 / HLR-FLT-205: when a sensor
+# Targets HLR-EST-204 / HLR-FLT-203 / HLR-FLT-205: when a sensor
 # delivers a non-finite value, the kernel must (1) detect the numeric
 # fault, (2) refuse to propagate NaN through the EKF state, and (3)
 # keep the actuator output bounded — i.e. the vehicle does not enter
 # an arbitrary attitude/altitude excursion from poisoned state.
 #
-# At the integration tier we only assert the visible safety property:
-# while NaN is being injected the vehicle stays armed and altitude
-# remains within a bounded envelope (the unit-tier covers the latched
-# fault flag itself — see `behavioral_tests::ekf_imu_nan_isolation`).
+# `FaultFlags::NUMERIC_ERROR` is the unrecoverable case: per
+# HLR-FLT-203 (aviate-core/tests/behavioral_tests.rs::
+# numeric_fault_latched_inhibits_actuator_output) it forces the
+# motors-off safe pattern until `ground_reset()`, and stays there
+# regardless of the kernel-owned Descend/Land terminal added for
+# issue #65 — that terminal covers recoverable terminal failsafes
+# (command/datalink loss) where a stable attitude frame remains, not
+# numeric/estimator divergence. This mission's safety property is
+# therefore "bounded, not a controlled descent": while NaN is being
+# injected the vehicle stays armed and altitude remains within a
+# bounded envelope, whichever of the two safe behaviors is active.
+#
+# The bridge from a non-finite IMU reading to a latched
+# `NUMERIC_ERROR` (HLR-EST-204) is not yet wired at the estimator
+# layer — `Ekf::predict_state` currently bails silently on invalid
+# IMU input without setting the fault (aviate-core/src/ekf/
+# predict.rs). Until that lands, this mission's assertions hold
+# because the bad cycle is simply skipped, not because the fault
+# path engaged; closing that gap is tracked separately from #65.
 #
 # Tolerance bounds:
 #   - altitude during NaN window stays in [0, 25] m (no NaN poison)
