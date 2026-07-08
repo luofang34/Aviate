@@ -61,7 +61,7 @@ use crate::mixer::{ActuatorFallbackState, ActuatorState};
 /// Generic over both the estimator's and the controller's runtime
 /// state types so the "exactly one safety-relevant-state owner"
 /// invariant covers MEKF / UKF / particle / VIO state shapes (not
-/// just the 18-state ESKF) and controller integrators alike. Today's
+/// just the 15-state ESKF) and controller integrators alike. Today's
 /// default instantiation is `KernelState<EkfState, NoControllerState>`;
 /// a custom estimator (e.g. cubesat MEKF, fixed-wing wind-augmented
 /// filter) declares its own `EstimatorRuntimeState` impl and that
@@ -112,7 +112,7 @@ pub struct KernelState<
 
     /// State estimator persistent contents. Owned by the kernel via
     /// the associated type `<E as Estimator>::RuntimeState` so the
-    /// concrete shape (18-state ESKF, 7-state MEKF + 3-vec error,
+    /// concrete shape (15-state ESKF, 7-state MEKF + 3-vec error,
     /// UKF sigma-point cache, particle cloud, sliding-window graph,
     /// …) is whatever the estimator declares — single safety-
     /// relevant-state-owner invariant (HLR-STATE-003).

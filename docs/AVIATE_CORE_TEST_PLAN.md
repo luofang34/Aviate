@@ -179,12 +179,13 @@ not currently ship.
   is blocked by DRQ-CTL-002 (controller tuning) — until the
   controller can hold steady-state hover, a stuck motor will
   simply crash the vehicle, masking whether the rebalance fired.
-- **MCDC coverage gate**. The DO-178C decision-coverage tool
-  (cargo-mutants or a custom MCDC walker) is not yet wired into
-  CI. Branch coverage at 100% (the current gate) is a strict
-  subset of MCDC and over-counts compound conditions as covered.
-  This is a DAL-A concern; for the DAL-B target it is a stretch
-  item, not a blocker.
+- **MC/DC coverage tracking**. The blocking CI coverage gate is
+  region + branch coverage (LLVM source-based) after documented
+  `COV:EXCL` exclusions. MC/DC is not measured in a qualified way
+  — rustc's `-Zcoverage-options=mcdc` is experimental and
+  unqualified — so no MC/DC or DO-178C structural-coverage credit
+  is claimed. MC/DC is tracked non-blocking as a readiness
+  indicator only (see the nightly job).
 
 ## What this plan does and does not assert
 

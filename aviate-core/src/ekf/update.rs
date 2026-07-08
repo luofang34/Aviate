@@ -126,27 +126,28 @@ impl Ekf {
         }
         // COV:EXCL_STOP
 
-        // Step 4: Apply EKF-Estimated Mag Bias Correction
-        let mag_corrected_x = mag_x - state.mag_bias.x.0;
-        let mag_corrected_y = mag_y - state.mag_bias.y.0;
-        let mag_corrected_z = mag_z - state.mag_bias.z.0;
+        // Step 4: Tilt-Compensated Heading Extraction
+        //
+        // Projecting the body field through the FULL body→NED rotation
+        // reconstructs the earth field with yaw already baked in, so the
+        // resulting heading is independent of the yaw estimate and its
+        // innovation can never correct yaw. Rotating through roll/pitch
+        // only (yaw = 0) leaves the horizontal components in a level,
+        // yaw-free frame, making `heading_mag` an absolute measurement
+        // whose innovation is the true heading error.
+        let (roll, pitch, yaw_est) = state.quat.to_euler();
+        let (sin_r, cos_r) = (roll.sin(), roll.cos());
+        let (sin_p, cos_p) = (pitch.sin(), pitch.cos());
 
-        // Step 5: Tilt-Compensated Heading Extraction
-        let r_mat = state.quat.to_rotation_matrix();
+        // Level-frame horizontal field via R_tilt = Ry(pitch) * Rx(roll).
+        let mag_n_level = cos_p * mag_x + sin_p * sin_r * mag_y + sin_p * cos_r * mag_z;
+        let mag_e_level = cos_r * mag_y - sin_r * mag_z;
 
-        let mag_n = r_mat.get(0, 0) * mag_corrected_x
-            + r_mat.get(0, 1) * mag_corrected_y
-            + r_mat.get(0, 2) * mag_corrected_z;
-        let mag_e = r_mat.get(1, 0) * mag_corrected_x
-            + r_mat.get(1, 1) * mag_corrected_y
-            + r_mat.get(1, 2) * mag_corrected_z;
-
-        let heading_mag = mag_e.atan2(mag_n);
-
-        // Step 6: Innovation Gating & Yaw Update
-        let (_, _, yaw_est) = state.quat.to_euler();
+        // Positive yaw is clockwise from magnetic north (NED, z down),
+        // so the heading that reproduces the true yaw from a
+        // north-pointing field is atan2(-east, north).
+        let heading_mag = (-mag_e_level).atan2(mag_n_level);
         let mut innov = heading_mag - yaw_est;
-
         // COV:EXCL_START(DEFENSIVE: atan2/euler outputs bounded to [-π,π], wrapping is safety guard)
         while innov > PI {
             innov -= 2.0 * PI;
@@ -155,7 +156,6 @@ impl Ekf {
             innov += 2.0 * PI;
         }
         // COV:EXCL_STOP
-
         let r_effective = if incl_weight > 0.1 {
             self.config.meas_noise_mag / (incl_weight * incl_weight)
         } else {

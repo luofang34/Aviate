@@ -18,11 +18,11 @@
 //!     one safety-relevant-state owner" rule covers estimator state
 //!     too.
 //!
-//! `EkfState` (the 18-state ESKF) is the default implementor and
+//! `EkfState` (the 15-state ESKF) is the default implementor and
 //! today's only one. The associated-type design lets a future MEKF /
 //! complementary filter / particle filter / VIO sliding window use
 //! its own runtime-state type without forcing every alternative into
-//! the EKF's fixed shape (`pos / vel / quat-error / 3-bias / 18×18 P`).
+//! the EKF's fixed shape (`pos / vel / quat-error / 2-bias / 15×15 P`).
 //!
 //! Phantom-DA note: this module avoids `pub use submodule::Trait`
 //! re-exports — see `aviate-core/src/lib.rs` for the rationale.

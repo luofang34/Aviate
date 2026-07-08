@@ -54,7 +54,7 @@ pub struct AviateKernelImpl<E: Estimator, V: VehicleController, M: Mixer, S: Act
 /// estimator, vehicle controller, mixer, sanitizer.
 pub type AviateKernel<E, V, M, S> = AviateKernelImpl<E, V, M, S>;
 
-/// Default kernel: 18-state EKF + group-aware Sanitizer. Use when
+/// Default kernel: 15-state EKF + group-aware Sanitizer. Use when
 /// callers don't need to substitute estimation or sanitization.
 pub type DefaultAviateKernel<V, M> = AviateKernelImpl<Ekf, V, M, Sanitizer>;
 
