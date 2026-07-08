@@ -55,18 +55,29 @@ impl Ekf {
             }
         }
 
-        // Update Position NED
+        // Update Position NED. The freshness age resets only if at
+        // least one axis was actually fused — `|=` (not `||`) so all
+        // three axes still get their own gate check even once one has
+        // already accepted, matching the per-axis innovation gating
+        // `scalar_update` already does.
         let r_pos = self.config.meas_noise_gnss_pos;
-
-        self.scalar_update(state, IDX_POS, gnss.position_ned[0].0, r_pos);
-        self.scalar_update(state, IDX_POS + 1, gnss.position_ned[1].0, r_pos);
-        self.scalar_update(state, IDX_POS + 2, gnss.position_ned[2].0, r_pos);
+        let mut pos_accepted = false;
+        pos_accepted |= self.scalar_update(state, IDX_POS, gnss.position_ned[0].0, r_pos);
+        pos_accepted |= self.scalar_update(state, IDX_POS + 1, gnss.position_ned[1].0, r_pos);
+        pos_accepted |= self.scalar_update(state, IDX_POS + 2, gnss.position_ned[2].0, r_pos);
+        if pos_accepted {
+            state.gnss_pos_age_s = 0.0;
+        }
 
         // Update Velocity NED
         let r_vel = self.config.meas_noise_gnss_vel;
-        self.scalar_update(state, IDX_VEL, gnss.velocity_ned[0].0, r_vel);
-        self.scalar_update(state, IDX_VEL + 1, gnss.velocity_ned[1].0, r_vel);
-        self.scalar_update(state, IDX_VEL + 2, gnss.velocity_ned[2].0, r_vel);
+        let mut vel_accepted = false;
+        vel_accepted |= self.scalar_update(state, IDX_VEL, gnss.velocity_ned[0].0, r_vel);
+        vel_accepted |= self.scalar_update(state, IDX_VEL + 1, gnss.velocity_ned[1].0, r_vel);
+        vel_accepted |= self.scalar_update(state, IDX_VEL + 2, gnss.velocity_ned[2].0, r_vel);
+        if vel_accepted {
+            state.gnss_vel_age_s = 0.0;
+        }
     }
 
     pub fn update_baro_state(&self, state: &mut EkfState, baro_reading: &SensorReading<BaroData>) {
@@ -113,7 +124,9 @@ impl Ekf {
             let z_meas = datum - altitude_from_pressure;
 
             let r_baro = self.config.meas_noise_baro;
-            self.scalar_update(state, IDX_POS + 2, z_meas, r_baro);
+            if self.scalar_update(state, IDX_POS + 2, z_meas, r_baro) {
+                state.baro_age_s = 0.0;
+            }
 
             self.correct_baro_datum(state, altitude_from_pressure, datum);
         }

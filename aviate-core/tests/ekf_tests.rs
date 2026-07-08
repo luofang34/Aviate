@@ -4,9 +4,9 @@
 //! - update_gnss with valid GNSS data
 //! - GNSS health gating
 
-use aviate_core::ekf::{Ekf, EkfConfig, EkfState};
+use aviate_core::ekf::{Ekf, EkfConfig, EkfState, Estimator};
 use aviate_core::math::{Quaternion, Vector3};
-use aviate_core::sensor::{GnssData, GnssFix, GnssHealth, SensorHealth, SensorReading};
+use aviate_core::sensor::{GnssData, GnssFix, GnssHealth, SensorHealth, SensorReading, SensorSet};
 use aviate_core::time::{TimeSource, Timestamp};
 use aviate_core::types::{Meters, MetersPerSecond};
 
@@ -2405,32 +2405,373 @@ fn ekf_covariance_stays_positive_definite_under_confident_updates() {
     }
 }
 
+/// Build a state whose POSITION and VELOCITY have each been earned by
+/// one accepted GNSS + baro fusion (freshness age reset to zero,
+/// covariance already well under the validity bounds), so `quality`
+/// legitimately reaches `Good`. This is the correct baseline for
+/// testing that a subsequent non-finite injection tears validity back
+/// down — a bare `init()` (see `init_at_origin`) starts with no
+/// aiding history at all and is already Degraded (see
+/// `ekf/validity.rs`: a freshly initialized filter reports
+/// POSITION/VELOCITY invalid until it has actually been aided).
+fn fully_aided_state() -> EkfState {
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = init_at_origin();
+
+    let gnss = make_gnss_reading(
+        [Meters(1.0), Meters(2.0), Meters(-3.0)],
+        [
+            MetersPerSecond(0.5),
+            MetersPerSecond(-0.5),
+            MetersPerSecond(0.2),
+        ],
+        GnssHealth::Good,
+        SensorHealth::Good,
+        GnssFix::ThreeD,
+    );
+    ekf.update_gnss_state(&mut state, &gnss);
+    ekf.update_baro_state(&mut state, &baro_reading_at(101_325.0));
+
+    state
+}
+
 #[test]
 fn ekf_estimate_not_good_when_position_non_finite() {
     use aviate_core::state::{EstimateQuality, StateValidFlags};
 
-    let ekf = Ekf::new(EkfConfig::default());
-    let mut state = init_at_origin();
+    let mut state = fully_aided_state();
 
-    // Sanity: a healthy initialized state reports Good.
+    // Sanity: a fully-aided state reports Good.
     assert_eq!(state.get_estimate().quality, EstimateQuality::Good);
 
     state.pos.x = Meters(f32::NAN);
     let est = state.get_estimate();
-    assert_ne!(est.quality, EstimateQuality::Good);
+    assert_eq!(est.quality, EstimateQuality::Unusable);
     assert!(!est.valid_flags.contains(StateValidFlags::POSITION));
-    assert!(!est.valid_flags.contains(StateValidFlags::VELOCITY));
+    // POSITION and VELOCITY are graded independently (see
+    // `ekf/validity.rs`) — a fault isolated to `pos.x` must not blank
+    // out an otherwise-healthy, still-fused VELOCITY.
+    assert!(est.valid_flags.contains(StateValidFlags::VELOCITY));
 }
 
 #[test]
 fn ekf_estimate_not_good_when_velocity_non_finite() {
     use aviate_core::state::{EstimateQuality, StateValidFlags};
 
-    let ekf = Ekf::new(EkfConfig::default());
-    let mut state = init_at_origin();
+    let mut state = fully_aided_state();
+    assert_eq!(state.get_estimate().quality, EstimateQuality::Good);
 
     state.vel.z = MetersPerSecond(f32::INFINITY);
     let est = state.get_estimate();
-    assert_ne!(est.quality, EstimateQuality::Good);
+    assert_eq!(est.quality, EstimateQuality::Unusable);
     assert!(!est.valid_flags.contains(StateValidFlags::VELOCITY));
+    // Decoupled from velocity — POSITION remains valid.
+    assert!(est.valid_flags.contains(StateValidFlags::POSITION));
+}
+
+// =============================================================================
+// Issue #73 — POSITION/VELOCITY validity derived from aiding
+// freshness and covariance, not just `initialized` (LLR-EST-2xx).
+// =============================================================================
+
+/// `SensorSet` with every channel healthy and consistent with a
+/// stationary vehicle at the NED origin — mirrors the fixtures used in
+/// `behavioral_tests.rs` / `kernel.rs`, kept local here so the aging
+/// tests below can drive the full `Estimator::observe()` cycle
+/// (predict + fuse, which ticks aiding freshness) rather than poking
+/// the lower-level `update_*_state` helpers directly.
+fn make_valid_sensor_set() -> SensorSet {
+    use aviate_core::sensor::{AirData, BaroData, ImuData, MagData};
+    use aviate_core::types::{
+        Celsius, MetersPerSecondSquared, Microtesla, Pascals, RadiansPerSecond,
+    };
+
+    let ts = dummy_timestamp();
+
+    let imu = SensorReading {
+        value: ImuData {
+            accel: [
+                MetersPerSecondSquared(0.0),
+                MetersPerSecondSquared(0.0),
+                MetersPerSecondSquared(-9.81),
+            ],
+            gyro: [
+                RadiansPerSecond(0.0),
+                RadiansPerSecond(0.0),
+                RadiansPerSecond(0.0),
+            ],
+        },
+        valid: true,
+        source_id: 0,
+        timestamp: ts,
+        health: SensorHealth::Good,
+    };
+
+    let baro = SensorReading {
+        value: BaroData {
+            altitude: Some(Meters(0.0)),
+            air: AirData {
+                static_pressure: Some(Pascals(101_325.0)),
+                dynamic_pressure: None,
+                total_pressure: None,
+                temperature: Some(Celsius(20.0)),
+                indicated_airspeed: None,
+                true_airspeed: None,
+            },
+        },
+        valid: true,
+        source_id: 0,
+        timestamp: ts,
+        health: SensorHealth::Good,
+    };
+
+    let mag = SensorReading {
+        value: MagData {
+            field_ut: [Microtesla(20.0), Microtesla(0.0), Microtesla(40.0)],
+        },
+        valid: true,
+        source_id: 0,
+        timestamp: ts,
+        health: SensorHealth::Good,
+    };
+
+    let gnss = make_gnss_reading(
+        [Meters(0.0), Meters(0.0), Meters(0.0)],
+        [
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ],
+        GnssHealth::Good,
+        SensorHealth::Good,
+        GnssFix::ThreeD,
+    );
+
+    SensorSet {
+        imus: [imu, SensorReading::default(), SensorReading::default()],
+        gnss: [gnss, SensorReading::default()],
+        mags: [mag, SensorReading::default()],
+        baros: [baro, SensorReading::default()],
+        airspeeds: [SensorReading::default(), SensorReading::default()],
+        geometry: None,
+    }
+}
+
+fn init_stationary_at_origin() -> EkfState {
+    let mut state = EkfState::default();
+    state.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
+        Quaternion::IDENTITY,
+    );
+    state
+}
+
+/// The bug this issue fixes: `observe()` fusing real aiding now earns
+/// POSITION/VELOCITY validity and `Good` quality — flipping this test
+/// (assert flags/quality on a bare `init()`, no fusion) is exactly the
+/// old, incorrect behavior `get_estimate()` used to report.
+#[test]
+fn ekf_position_and_velocity_valid_after_observe_fuses_gnss() {
+    use aviate_core::state::{EstimateQuality, StateValidFlags};
+
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = init_stationary_at_origin();
+    let sensors = make_valid_sensor_set();
+
+    for _ in 0..50 {
+        ekf.observe(&mut state, &sensors, None, 0.01);
+    }
+
+    let est = state.get_estimate();
+    assert_eq!(est.quality, EstimateQuality::Good);
+    assert!(est.valid_flags.contains(StateValidFlags::POSITION));
+    assert!(est.valid_flags.contains(StateValidFlags::VELOCITY));
+    assert!(est.valid_flags.contains(StateValidFlags::ATTITUDE));
+}
+
+/// Acceptance criterion: losing GNSS degrades POSITION validity only
+/// after the aiding-freshness threshold — not instantly. Within the
+/// grace period the dead-reckoned estimate is still the one
+/// HLR-EST-205 promises is trustworthy (≤2 m drift over 5 s).
+#[test]
+fn ekf_position_stays_valid_within_gnss_dropout_grace_period() {
+    use aviate_core::state::StateValidFlags;
+
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = init_stationary_at_origin();
+    let healthy = make_valid_sensor_set();
+    let dt = 0.01_f32;
+
+    // Warm up so freshness and covariance both settle at "confidently aided".
+    for _ in 0..200 {
+        ekf.observe(&mut state, &healthy, None, dt);
+    }
+    assert!(state
+        .get_estimate()
+        .valid_flags
+        .contains(StateValidFlags::POSITION));
+
+    // 1.0 s of GNSS loss — well inside the 5.0 s aiding timeout.
+    let mut dropped = healthy;
+    for g in dropped.gnss.iter_mut() {
+        g.value.health = GnssHealth::Lost;
+    }
+    for _ in 0..100 {
+        ekf.observe(&mut state, &dropped, None, dt);
+    }
+
+    let est = state.get_estimate();
+    assert!(
+        est.valid_flags.contains(StateValidFlags::POSITION),
+        "POSITION must not drop within the aiding-freshness grace period"
+    );
+    assert!(
+        est.valid_flags.contains(StateValidFlags::VELOCITY),
+        "VELOCITY must not drop within the aiding-freshness grace period"
+    );
+}
+
+/// Acceptance criterion: fuse GNSS, withhold it past the aiding
+/// timeout, and POSITION/VELOCITY drop while ATTITUDE (gyro-driven,
+/// no GNSS dependency) stays valid. Quality demotes from Good to
+/// Degraded, not Unusable — the filter is dead-reckoning on a healthy
+/// IMU, not numerically poisoned.
+#[test]
+fn ekf_position_and_velocity_invalidate_after_gnss_aiding_timeout() {
+    use aviate_core::state::{EstimateQuality, StateValidFlags};
+
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = init_stationary_at_origin();
+    let healthy = make_valid_sensor_set();
+    let dt = 0.01_f32;
+
+    for _ in 0..200 {
+        ekf.observe(&mut state, &healthy, None, dt);
+    }
+    assert_eq!(state.get_estimate().quality, EstimateQuality::Good);
+
+    let mut dropped = healthy;
+    for g in dropped.gnss.iter_mut() {
+        g.value.health = GnssHealth::Lost;
+    }
+    // 6.0 s of dropout — past the 5.0 s aiding timeout.
+    for _ in 0..600 {
+        ekf.observe(&mut state, &dropped, None, dt);
+    }
+
+    let after = state.get_estimate();
+    assert!(
+        !after.valid_flags.contains(StateValidFlags::POSITION),
+        "POSITION must drop once GNSS aiding has been stale past its timeout"
+    );
+    assert!(
+        !after.valid_flags.contains(StateValidFlags::VELOCITY),
+        "VELOCITY must drop once GNSS aiding has been stale past its timeout"
+    );
+    assert!(
+        after.valid_flags.contains(StateValidFlags::ATTITUDE),
+        "ATTITUDE is gyro-driven and must survive GNSS loss"
+    );
+    assert_eq!(
+        after.quality,
+        EstimateQuality::Degraded,
+        "a stale-but-finite dead-reckoning estimate is Degraded, not Unusable"
+    );
+}
+
+/// Acceptance criterion: covariance-based invalidation is independent
+/// of freshness. A filter whose GNSS aiding just landed (age = 0) but
+/// whose covariance has numerically diverged must not report POSITION
+/// or VELOCITY as valid — freshness alone is not sufficient.
+#[test]
+fn ekf_position_invalid_when_covariance_exceeds_bound_despite_fresh_aiding() {
+    use aviate_core::state::StateValidFlags;
+
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = init_at_origin();
+
+    let gnss = make_gnss_reading(
+        [Meters(1.0), Meters(2.0), Meters(-3.0)],
+        [
+            MetersPerSecond(0.5),
+            MetersPerSecond(-0.5),
+            MetersPerSecond(0.2),
+        ],
+        GnssHealth::Good,
+        SensorHealth::Good,
+        GnssFix::ThreeD,
+    );
+    ekf.update_gnss_state(&mut state, &gnss);
+    let fresh = state.get_estimate();
+    assert!(fresh.valid_flags.contains(StateValidFlags::POSITION));
+    assert!(fresh.valid_flags.contains(StateValidFlags::VELOCITY));
+
+    // Directly inflate the position/velocity covariance diagonals well
+    // past any plausible validity bound, simulating numerical
+    // divergence the freshness clock alone cannot see. State layout:
+    // indices 0-2 are position, 3-5 are velocity (see `ekf.rs`'s
+    // `STATE_DIM` doc comment).
+    for i in 0..6 {
+        state.p_cov.set(i, i, 1.0e6);
+    }
+
+    let diverged = state.get_estimate();
+    assert!(
+        !diverged.valid_flags.contains(StateValidFlags::POSITION),
+        "POSITION must drop when its covariance diverges, even with fresh aiding"
+    );
+    assert!(
+        !diverged.valid_flags.contains(StateValidFlags::VELOCITY),
+        "VELOCITY must drop when its covariance diverges, even with fresh aiding"
+    );
+}
+
+/// Quality transition: a stale barometer backs `Good` off to
+/// `Degraded` even while GNSS keeps POSITION/VELOCITY set. Baro
+/// anchors the vertical QFE datum (`correct_baro_datum`), so its own
+/// staleness is a real loss of vertical-redundancy confidence that
+/// the POSITION/VELOCITY flags (GNSS-gated only) do not capture on
+/// their own.
+#[test]
+fn ekf_quality_degrades_when_baro_goes_stale_even_with_fresh_gnss() {
+    use aviate_core::state::{EstimateQuality, StateValidFlags};
+
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = init_stationary_at_origin();
+    let healthy = make_valid_sensor_set();
+    let dt = 0.01_f32;
+
+    for _ in 0..200 {
+        ekf.observe(&mut state, &healthy, None, dt);
+    }
+    assert_eq!(state.get_estimate().quality, EstimateQuality::Good);
+
+    // Baro alone goes unhealthy; GNSS keeps fusing every cycle.
+    let mut baro_lost = healthy;
+    for b in baro_lost.baros.iter_mut() {
+        b.health = SensorHealth::Failed;
+    }
+    for _ in 0..600 {
+        ekf.observe(&mut state, &baro_lost, None, dt);
+    }
+
+    let est = state.get_estimate();
+    assert!(
+        est.valid_flags.contains(StateValidFlags::POSITION),
+        "POSITION stays valid — GNSS (not baro) gates the flag"
+    );
+    assert!(
+        est.valid_flags.contains(StateValidFlags::VELOCITY),
+        "VELOCITY stays valid — GNSS (not baro) gates the flag"
+    );
+    assert_eq!(
+        est.quality,
+        EstimateQuality::Degraded,
+        "stale baro backs Good off to Degraded despite fresh GNSS"
+    );
 }

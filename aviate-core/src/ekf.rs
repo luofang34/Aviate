@@ -36,6 +36,8 @@
 //!   - `ekf/runtime.rs` — `EstimatorRuntimeState` trait surface.
 //!   - `ekf/replicable.rs` — canonical byte encoding for lockstep
 //!     cross-channel replication.
+//!   - `ekf/validity.rs` — per-source aiding-freshness bookkeeping
+//!     and the `get_estimate()` validity/quality derivation.
 //!
 //! Submodules carry no re-exports to sidestep rustc's coverage
 //! phantom-DA issue (see `aviate-core/src/lib.rs` for context); every
@@ -46,12 +48,15 @@ mod replicable;
 pub mod runtime;
 mod scalar;
 mod update;
+mod validity;
 
 use crate::control::SensorOverrides;
 use crate::ekf::runtime::EstimatorRuntimeState;
 use crate::math::{Matrix, Quaternion, Vector3, QUAT_NORM_EPS};
 use crate::sensor::SensorSet;
-use crate::state::{EstimateQuality, StateEstimate, StateValidFlags};
+use crate::state::StateEstimate;
+#[cfg(feature = "test-hooks")]
+use crate::state::StateValidFlags;
 use crate::types::{Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond, Scalar};
 
 /// State estimator contract (LLR-EST-110, LLR-EST-111, LLR-STATE-105).
@@ -257,6 +262,23 @@ pub struct EkfState {
     /// GNSS-anchored height shrinks it and the process-noise floor lets
     /// the datum track slow ground-pressure drift.
     pub baro_ref_var: Scalar,
+    /// Seconds since the last ACCEPTED GNSS position fusion (any of the
+    /// three axes passing the innovation gate resets this). Drives
+    /// `get_estimate()`'s POSITION validity — see `ekf/validity.rs`.
+    /// Starts (and is reset by `init()`/`reset()`) at
+    /// `validity::AGE_SATURATION_S`, i.e. "never fused", so a freshly
+    /// initialized filter does not claim position validity before any
+    /// aiding has actually landed.
+    pub gnss_pos_age_s: Scalar,
+    /// Seconds since the last ACCEPTED GNSS velocity fusion. Same
+    /// semantics as `gnss_pos_age_s`, drives VELOCITY validity.
+    pub gnss_vel_age_s: Scalar,
+    /// Seconds since the last ACCEPTED barometer height fusion. Feeds
+    /// `EstimateQuality` (not the POSITION flag itself — horizontal
+    /// position is unobservable from baro alone, so only GNSS position
+    /// freshness gates that flag; a stale baro still backs `Good` off
+    /// to `Degraded` as the vertical-redundancy signal it is).
+    pub baro_age_s: Scalar,
 }
 // COV:EXCL_STOP
 
@@ -293,6 +315,9 @@ impl EkfState {
             quat_fault: false,
             baro_ref: None,
             baro_ref_var: 0.0,
+            gnss_pos_age_s: validity::AGE_SATURATION_S,
+            gnss_vel_age_s: validity::AGE_SATURATION_S,
+            baro_age_s: validity::AGE_SATURATION_S,
         }
     }
 
@@ -320,56 +345,12 @@ impl EkfState {
         // current site rather than a stale reference.
         self.baro_ref = None;
         self.baro_ref_var = 0.0;
-    }
-
-    /// Snapshot the current state estimate for downstream consumers.
-    ///
-    /// A non-finite position or velocity component (from numeric
-    /// corruption anywhere upstream) demotes the estimate below `Good`
-    /// and drops the position/velocity valid flags, so a poisoned
-    /// pos/vel can never be published as trustworthy navigation state.
-    pub fn get_estimate(&self) -> StateEstimate {
-        let position_ned = [self.pos.x, self.pos.y, self.pos.z];
-        let velocity_ned = [self.vel.x, self.vel.y, self.vel.z];
-        let pos_vel_finite = [
-            self.pos.x.0,
-            self.pos.y.0,
-            self.pos.z.0,
-            self.vel.x.0,
-            self.vel.y.0,
-            self.vel.z.0,
-        ]
-        .iter()
-        .all(|v| v.is_finite());
-
-        let quality = if !self.initialized {
-            EstimateQuality::Unusable
-        } else if pos_vel_finite {
-            EstimateQuality::Good
-        } else {
-            EstimateQuality::Unusable
-        };
-
-        let valid_flags = if !self.initialized {
-            StateValidFlags::empty()
-        } else if pos_vel_finite {
-            StateValidFlags::all()
-        } else {
-            StateValidFlags::all() & !(StateValidFlags::POSITION | StateValidFlags::VELOCITY)
-        };
-
-        StateEstimate {
-            attitude: self.quat,
-            angular_velocity: [
-                self.last_gyro_body.x,
-                self.last_gyro_body.y,
-                self.last_gyro_body.z,
-            ],
-            position_ned,
-            velocity_ned,
-            quality,
-            valid_flags,
-        }
+        // A fresh init/arm has no aiding history yet — any fusion
+        // accepted before this init() call must not make the new
+        // filter look pre-aided.
+        self.gnss_pos_age_s = validity::AGE_SATURATION_S;
+        self.gnss_vel_age_s = validity::AGE_SATURATION_S;
+        self.baro_age_s = validity::AGE_SATURATION_S;
     }
 
     /// Whether `init()` has run successfully since construction or `reset()`.
