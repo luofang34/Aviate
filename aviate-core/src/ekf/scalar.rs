@@ -127,12 +127,14 @@ impl Ekf {
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
     }
 
+    // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; the accepted/rejected return path is exercised by the aiding-freshness tests)
     /// Returns whether the measurement was accepted (fused into state)
     /// as opposed to rejected by the innovation gate or a degenerate
     /// innovation variance. Callers use this to drive per-source aiding
     /// freshness — a rejected measurement must not reset the "last
     /// accepted fusion" age, or a source that is permanently gated out
     /// would still look continuously aided.
+    // COV:EXCL_STOP
     pub(crate) fn scalar_update(
         &self,
         state: &mut EkfState,
@@ -211,14 +213,13 @@ impl Ekf {
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
         true
     }
-}
-
-// COV:EXCL_START(DELEGATE: every body in this impl forwards to the
-// equivalent inherent Ekf helper that carries the math; the delegate
-// has no executable logic of its own and is exercised through the
-// kernel update path. The math is tested directly via ekf_tests.rs
-// against the inherent helpers. Also covers grcov phantom-DA
-// attribution on the trait doc comment below.)
+} // COV:EXCL(phantom DA: grcov attributes a phantom region to this impl-block closing brace)
+  // COV:EXCL_START(DELEGATE: every body in this impl forwards to the
+  // equivalent inherent Ekf helper that carries the math; the delegate
+  // has no executable logic of its own and is exercised through the
+  // kernel update path. The math is tested directly via ekf_tests.rs
+  // against the inherent helpers. Also covers grcov phantom-DA
+  // attribution on the trait doc comment below.)
 /// Implement the public `Estimator` trait by delegating each method
 /// to the per-submodule helper. The trait surface takes `&mut state`
 /// — the helpers carry the math against the same `&mut state`.

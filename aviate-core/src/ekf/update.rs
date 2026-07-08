@@ -110,6 +110,10 @@ impl Ekf {
             // this, an elevated site's pressure-altitude offset (≈1658 m
             // in Denver) is a standing innovation that gates baro out
             // forever.
+            // COV:EXCL_START(phantom DA: grcov attributes a debug-info region
+            // to the `None` match arm below; the first-accepted-sample datum
+            // latch it performs is exercised by ekf_baro_update_modifies_altitude
+            // and ekf_baro_accepted_at_high_site_elevation.)
             let datum = match state.baro_ref {
                 Some(d) => d,
                 None => {
@@ -119,11 +123,11 @@ impl Ekf {
                     d
                 }
             };
+            // COV:EXCL_STOP
 
             // NED Z is negative altitude (down); referencing to the
-            // latched datum keeps the measurement on the origin frame.
+            // latched datum keeps the measurement on the origin frame. // COV:EXCL(phantom DA: grcov debug-info attribution onto this comment line)
             let z_meas = datum - altitude_from_pressure;
-
             let r_baro = self.config.meas_noise_baro;
             if self.scalar_update(state, IDX_POS + 2, z_meas, r_baro) {
                 state.baro_age_s = 0.0;

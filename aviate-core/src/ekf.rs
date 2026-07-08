@@ -361,7 +361,6 @@ impl EkfState {
     pub fn has_numeric_fault(&self) -> bool {
         self.quat_fault
     }
-
     // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; reset() is exercised by the ground-reset tests)
     /// Ground reset — clear all filter state to a factory
     /// un-initialized posture. Caller (kernel `ground_reset`) is
