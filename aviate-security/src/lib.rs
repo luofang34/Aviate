@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! Security policy layer for Aviate flight control system
 //!
 //! This crate provides command authentication, signature verification,

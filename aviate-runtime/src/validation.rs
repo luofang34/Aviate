@@ -10,9 +10,19 @@ use aviate_link::{TELEMETRY_MAX_FRAME, TELEMETRY_MAX_QUEUE};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TelemetryConfigError {
     /// frame_size exceeds TELEMETRY_MAX_FRAME
-    FrameSizeTooLarge { requested: usize, max: usize },
+    FrameSizeTooLarge {
+        /// Requested frame size in bytes.
+        requested: usize,
+        /// Compile-time maximum frame size.
+        max: usize,
+    },
     /// queue_len exceeds TELEMETRY_MAX_QUEUE
-    QueueLenTooLarge { requested: usize, max: usize },
+    QueueLenTooLarge {
+        /// Requested queue length in frames.
+        requested: usize,
+        /// Compile-time maximum queue length.
+        max: usize,
+    },
 }
 
 impl core::fmt::Display for TelemetryConfigError {

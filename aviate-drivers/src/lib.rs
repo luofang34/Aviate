@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! Aviate Sensor and Actuator Drivers
 //!
 //! This crate provides hardware-independent sensor drivers that implement

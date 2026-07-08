@@ -4,7 +4,9 @@
 //! the 500-line per-.rs limit and is easy to locate at review time.
 
 use crate::checks::DegradationReason;
-use crate::control::{AuthorityProfile, Command, ControlLawV1, ControlMode, VehicleController};
+use crate::control::{
+    AuthorityProfile, Command, ControlLawV1, ControlMode, VehicleControlMode, VehicleController,
+};
 use crate::ekf::Estimator;
 use crate::fault::FaultFlags;
 use crate::kernel::AviateKernelImpl;
@@ -243,10 +245,16 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                 sanitized: true,
             }
         } else {
+            // Derive the orthogonal control-mode flags from the
+            // requested mode and hand them to the cascade, which
+            // selects loops from the flags rather than from
+            // setpoint-field presence.
+            let control_flags = VehicleControlMode::from_control_mode(constrained_cmd.mode);
             let axis_cmd = self.pipeline.controller.step(
                 &mut self.state.controller,
                 &state,
                 &constrained_cmd,
+                &control_flags,
                 self.state.mode,
                 &self.cfg.limits,
             );

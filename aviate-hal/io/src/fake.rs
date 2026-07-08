@@ -757,9 +757,13 @@ impl ActuatorDriver for FakeActuator {
 /// for feeding data from HIL messages.
 #[derive(Debug, Default)]
 pub struct FakeSensorSet {
+    /// Fake inertial measurement unit.
     pub imu: FakeImu,
+    /// Fake barometric pressure/altitude sensor.
     pub baro: FakeBaro,
+    /// Fake magnetometer.
     pub mag: FakeMag,
+    /// Fake GNSS receiver.
     pub gnss: FakeGnss,
 }
 

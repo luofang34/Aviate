@@ -61,10 +61,17 @@ panic = "abort"
 # in their own Cargo.toml. Crates that cannot comply (FFI shims requiring
 # unsafe, tooling that uses .unwrap(), test harnesses) omit the opt-in
 # and keep a local stance.
+#
+# `panic`/`unwrap_used`/`expect_used` are `deny`, not `forbid`, so a
+# `#[cfg(test)]` module may carry `#[allow(clippy::expect_used,
+# clippy::panic)]` for its assertion helpers. `forbid` cannot be relaxed
+# locally and therefore collides with those test allows once
+# `cargo clippy --all-targets` compiles the test targets. `unsafe_code`
+# stays `forbid`: no test needs to opt out of memory safety.
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
-panic = "forbid"
-unwrap_used = "forbid"
-expect_used = "forbid"
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"

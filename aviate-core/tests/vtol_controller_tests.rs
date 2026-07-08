@@ -6,7 +6,8 @@
 use aviate_core::control::runtime::NoControllerState;
 use aviate_core::control::vtol::VtolController;
 use aviate_core::control::{
-    Command, CommandSource, ConfigMode, ControlMode, Limits, Setpoint, VehicleController,
+    Command, CommandSource, ConfigMode, ControlMode, Limits, Setpoint, VehicleControlMode,
+    VehicleController,
 };
 use aviate_core::math::Quaternion;
 use aviate_core::state::{EstimateQuality, StateEstimate, StateValidFlags};
@@ -65,7 +66,14 @@ fn vtol_controller_step_returns_collective() {
     };
 
     let mut runtime = NoControllerState;
-    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Cruise, &limits);
+    let axis_cmd = controller.step(
+        &mut runtime,
+        &state,
+        &cmd,
+        &VehicleControlMode::from_control_mode(cmd.mode),
+        ConfigMode::Cruise,
+        &limits,
+    );
 
     // VtolController returns collective from setpoint
     assert_eq!(axis_cmd.collective.0, 0.7);
@@ -95,7 +103,14 @@ fn vtol_controller_step_in_transition_mode() {
 
     // Test with Transition mode
     let mut runtime = NoControllerState;
-    let axis_cmd = controller.step(&mut runtime, &state, &cmd, ConfigMode::Transition, &limits);
+    let axis_cmd = controller.step(
+        &mut runtime,
+        &state,
+        &cmd,
+        &VehicleControlMode::from_control_mode(cmd.mode),
+        ConfigMode::Transition,
+        &limits,
+    );
 
     assert_eq!(axis_cmd.collective.0, 0.5);
 }
