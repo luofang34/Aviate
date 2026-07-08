@@ -343,6 +343,32 @@ impl crate::replicable::Replicable for TimingStats {
     }
 }
 
+/// Why the active terminal control law engaged. Replicated so a
+/// hot-spare channel inherits not just that the terminal is active
+/// but whether it is allowed to release: command-loss descents are
+/// recoverable per LLR-FLT-209, a commanded land is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum TerminalCause {
+    /// No terminal law active (or terminal is Backup, which only
+    /// ground_reset releases).
+    #[default]
+    None = 0,
+    /// Descend terminal engaged by command/datalink staleness —
+    /// releases when command recency is restored (LLR-FLT-209).
+    CommandLoss = 1,
+    /// Descend terminal engaged by an explicit land request — latched
+    /// for the remainder of the armed flight.
+    Commanded = 2,
+}
+
+impl crate::replicable::Replicable for TerminalCause {
+    const ENCODED_LEN: usize = 1;
+    fn encode_canonical(&self, buf: &mut [u8]) -> usize {
+        crate::replicable::copy_into(buf, 0, &[*self as u8])
+    }
+}
+
 impl crate::replicable::Replicable for InitState {
     const ENCODED_LEN: usize = 1;
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {

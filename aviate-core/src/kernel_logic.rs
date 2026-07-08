@@ -9,8 +9,8 @@ use crate::ekf::Estimator;
 use crate::fault::FaultFlags;
 use crate::kernel::{AviateKernelImpl, InitState};
 use crate::kernel_types::{
-    ArmError, ChannelHealthV1, DegradationEvent, HealthReport, InitResult, TransitionError,
-    CRITICAL_FAULTS,
+    ArmError, ChannelHealthV1, DegradationEvent, HealthReport, InitResult, TerminalCause,
+    TransitionError, CRITICAL_FAULTS,
 };
 use crate::mixer::{ActuatorSanitizer, Mixer};
 use crate::sensor::SensorSet;
@@ -190,6 +190,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     pub fn disarm(&mut self) {
         self.state.init_state = InitState::Disarmed;
         self.state.control_law = ControlLawV1::Backup; // Was Frozen, now Backup
+        self.state.terminal_cause = TerminalCause::None;
         self.state.checks.in_flight.reset();
         // Reset controller persistent runtime state — disarm
         // invalidates accumulated integrators / anti-windup / mode
@@ -284,6 +285,16 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // Only trigger if this is a degradation (worse state)
         if to.severity() > from.severity() {
             self.state.control_law = to;
+            // Record why a Direct terminal engaged: command-loss
+            // descents release when recency returns (LLR-FLT-209);
+            // a commanded land is latched for the flight.
+            self.state.terminal_cause = match (to, reason) {
+                (ControlLawV1::Direct, DegradationReason::CommandTimeout) => {
+                    TerminalCause::CommandLoss
+                }
+                (ControlLawV1::Direct, _) => TerminalCause::Commanded,
+                _ => TerminalCause::None,
+            };
             // Reset controller persistent runtime state when entering a
             // terminal law (Backup, or the Descend/Land terminal
             // `Direct`). The terminal law's authority envelope and
@@ -398,6 +409,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         }
 
         self.state.faults = FaultFlags::empty();
+        self.state.terminal_cause = TerminalCause::None;
         self.state.checks.pre_arm.reset();
         self.state.checks.in_flight.reset();
         self.state.checks.transition.reset();
@@ -455,10 +467,11 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         if self.state.faults.intersects(CRITICAL_FAULTS) {
             self.state.init_state = InitState::Fault;
             self.state.control_law = ControlLawV1::Backup; // Was Frozen
-                                                           // Reset controller persistent runtime state — entering
-                                                           // Backup on a critical fault means the prior law's
-                                                           // accumulated integrators / mode latches were computed
-                                                           // against state we now consider invalid (LLR-CTL-101).
+            self.state.terminal_cause = TerminalCause::None;
+            // Reset controller persistent runtime state — entering
+            // Backup on a critical fault means the prior law's
+            // accumulated integrators / mode latches were computed
+            // against state we now consider invalid (LLR-CTL-101).
             self.pipeline.controller.reset(&mut self.state.controller);
             true
         } else {

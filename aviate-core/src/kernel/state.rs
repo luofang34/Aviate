@@ -52,7 +52,7 @@ use crate::control::{ConfigMode, ControlLawV1};
 use crate::ekf::runtime::EstimatorRuntimeState;
 use crate::ekf::EkfState;
 use crate::fault::FaultFlags;
-use crate::kernel_types::{InitState, TimingStats};
+use crate::kernel_types::{InitState, TerminalCause, TimingStats};
 use crate::mixer::{ActuatorFallbackState, ActuatorState};
 
 /// Kernel runtime state. Each field's mutation locus is documented at
@@ -93,6 +93,10 @@ pub struct KernelState<
     /// Currently-active control authority profile (spec §14).
     /// Transitions through `handle_degradation` and `disarm`.
     pub control_law: ControlLawV1,
+
+    /// Why the active terminal law engaged (LLR-FLT-209 release
+    /// gating). `None` whenever `control_law` is not `Direct`.
+    pub terminal_cause: TerminalCause,
 
     /// Pre-arm / in-flight / transition gate aggregator. The
     /// sub-flag bits are owned by `KernelChecks`; this struct only
@@ -154,6 +158,7 @@ impl<E: EstimatorRuntimeState, R: ControllerRuntimeState> KernelState<E, R> {
             mode: ConfigMode::Hover,
             faults: FaultFlags::empty(),
             control_law: ControlLawV1::Primary,
+            terminal_cause: TerminalCause::default(),
             checks,
             actuator_state: ActuatorState::default(),
             timing_stats: TimingStats::default(),
@@ -184,6 +189,7 @@ impl<E: EstimatorRuntimeState, R: ControllerRuntimeState> crate::replicable::Rep
             + <crate::control::ConfigMode as crate::replicable::Replicable>::ENCODED_LEN
             + <crate::fault::FaultFlags as crate::replicable::Replicable>::ENCODED_LEN
             + <crate::control::ControlLawV1 as crate::replicable::Replicable>::ENCODED_LEN
+            + <crate::kernel_types::TerminalCause as crate::replicable::Replicable>::ENCODED_LEN
             + <KernelChecks as crate::replicable::Replicable>::ENCODED_LEN
             + <ActuatorState as crate::replicable::Replicable>::ENCODED_LEN
             + <crate::kernel_types::TimingStats as crate::replicable::Replicable>::ENCODED_LEN
@@ -209,6 +215,7 @@ impl<E: EstimatorRuntimeState, R: ControllerRuntimeState> crate::replicable::Rep
         step!(self.mode);
         step!(self.faults);
         step!(self.control_law);
+        step!(self.terminal_cause);
         step!(self.checks);
         step!(self.actuator_state);
         step!(self.timing_stats);

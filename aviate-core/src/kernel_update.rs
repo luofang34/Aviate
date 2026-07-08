@@ -13,7 +13,7 @@ use crate::fault::FaultFlags;
 use crate::kernel::AviateKernelImpl;
 use crate::kernel_types::{
     ChannelHealthV1, ChannelId, ChannelStatus, ConfigTransitionState, CrossChannelData,
-    CycleTiming, EnvelopeMargin, UpdateResult, TIMING_VIOLATION_THRESHOLD,
+    CycleTiming, EnvelopeMargin, TerminalCause, UpdateResult, TIMING_VIOLATION_THRESHOLD,
 };
 use crate::mixer::{ActuatorCmd, ActuatorSanitizer, ActuatorState, Mixer, SanitizeReport};
 use crate::sensor::SensorSet;
@@ -229,6 +229,30 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             .checks
             .in_flight
             .update_command_status(command_age_ms, self.cfg.command_timeout_ms);
+
+        // 4a. Terminal release (LLR-FLT-209): command staleness is
+        //     recoverable and SHALL NOT be latched. A Direct terminal
+        //     that engaged for command loss releases in the same cycle
+        //     command recency is restored; the cascade resumes flying
+        //     the live command. A commanded land (TerminalCause::
+        //     Commanded) stays latched, and Backup only releases via
+        //     ground_reset.
+        if self.state.control_law == ControlLawV1::Direct
+            && self.state.terminal_cause == TerminalCause::CommandLoss
+            && self
+                .state
+                .checks
+                .in_flight
+                .current
+                .contains(crate::checks::InFlightFlags::COMMAND_RECENT)
+        {
+            self.state.control_law = ControlLawV1::Primary;
+            self.state.terminal_cause = TerminalCause::None;
+            // Restored authority means restored control objective; the
+            // terminal's accumulated integrators must not leak into the
+            // resumed law (LLR-CTL-101).
+            self.pipeline.controller.reset(&mut self.state.controller);
+        }
 
         // 4. Handle degradation
         // Timing violations are reported externally via report_timing_violation()

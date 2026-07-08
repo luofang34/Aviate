@@ -680,6 +680,69 @@ fn terminal_failsafe_rides_a_controlled_descent_not_motors_off() {
     );
 }
 
+/// LLR-FLT-209: command staleness is recoverable and SHALL NOT be
+/// latched. A Descend terminal that engaged for command loss releases
+/// in the same cycle command recency is restored, and the cascade
+/// resumes flying the live command under the restored law.
+#[test]
+fn command_recovery_releases_descend_terminal() {
+    let mut kernel = make_kernel();
+    arm_kernel(&mut kernel);
+
+    let sensors = descending_sensors();
+    let cmd = hover_cmd();
+
+    for _ in 0..60 {
+        let _ = step(&mut kernel, &cmd, &sensors, 0);
+    }
+
+    // Command loss engages the terminal.
+    let _ = step(&mut kernel, &cmd, &sensors, 10_000);
+    assert_eq!(kernel.state.control_law, ControlLawV1::Direct);
+
+    // The link recovers: fresh commands must release the terminal in
+    // the same cycle, not leave the vehicle committed to a descent.
+    let _ = step(&mut kernel, &cmd, &sensors, 0);
+    assert_eq!(
+        kernel.state.control_law,
+        ControlLawV1::Primary,
+        "restored command recency must release the CommandLoss terminal (LLR-FLT-209)"
+    );
+
+    // And a later loss engages it again — release is not one-shot.
+    let _ = step(&mut kernel, &cmd, &sensors, 10_000);
+    assert_eq!(kernel.state.control_law, ControlLawV1::Direct);
+}
+
+/// A commanded land is the opposite contract: once requested, fresh
+/// commands do NOT release the terminal — the vehicle finishes the
+/// descent unless the operator disarms/ground-resets.
+#[test]
+fn commanded_land_terminal_stays_latched_through_fresh_commands() {
+    let mut kernel = make_kernel();
+    arm_kernel(&mut kernel);
+
+    let sensors = descending_sensors();
+    let cmd = hover_cmd();
+
+    for _ in 0..60 {
+        let _ = step(&mut kernel, &cmd, &sensors, 0);
+    }
+
+    let event = kernel.handle_degradation(DegradationReason::LandRequested, timestamp());
+    assert!(event.is_some());
+    assert_eq!(kernel.state.control_law, ControlLawV1::Direct);
+
+    for _ in 0..30 {
+        let _ = step(&mut kernel, &cmd, &sensors, 0);
+    }
+    assert_eq!(
+        kernel.state.control_law,
+        ControlLawV1::Direct,
+        "a commanded land must stay latched regardless of command recency"
+    );
+}
+
 /// Total loss of attitude is the boundary case the Descend
 /// terminal does NOT cover — with no stable frame to descend in, the
 /// kernel falls to the motors-off safe pattern (`Backup`). This pins the
