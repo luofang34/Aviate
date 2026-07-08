@@ -113,8 +113,14 @@ pub struct SitlIO {
     sensor_data: Option<HilSensorData>,
     gps_data: Option<HilGpsData>,
 
-    // Buffered command
+    // Discrete command slot (arm/disarm). Kept separate from the
+    // setpoint slot: poll() drains every pending datagram into these
+    // slots latest-wins, so a same-batch setpoint stream would
+    // otherwise overwrite an Arm/Disarm and silently drop it.
     command: Option<SystemCommand>,
+    // High-rate setpoint slot (latest-wins is the correct semantics
+    // for a stream — only the newest setpoint matters).
+    flight_cmd: Option<SystemCommand>,
 
     // Heartbeat timing
     last_heartbeat_us: u64,
@@ -152,6 +158,7 @@ impl SitlIO {
             sensor_data: None,
             gps_data: None,
             command: None,
+            flight_cmd: None,
             last_heartbeat_us: 0,
             gcs_addr: None,
             rx_count: 0,
@@ -336,12 +343,12 @@ impl SitlIO {
 
     fn handle_set_attitude_target(&mut self, tgt: SetAttitudeTarget) {
         let cmd = bridge::mavlink_to_command(&tgt);
-        self.command = Some(SystemCommand::FlightControl(cmd));
+        self.flight_cmd = Some(SystemCommand::FlightControl(cmd));
     }
 
     fn handle_set_position_target(&mut self, tgt: SetPositionTargetLocalNed) {
         let cmd = bridge::mavlink_position_to_command(&tgt);
-        self.command = Some(SystemCommand::FlightControl(cmd));
+        self.flight_cmd = Some(SystemCommand::FlightControl(cmd));
     }
 
     fn handle_command_long(&mut self, cmd: CommandLong) {
@@ -527,6 +534,106 @@ impl SystemHal for SitlIO {
 impl CommandHal for SitlIO {
     fn recv_command(&mut self) -> Option<SystemCommand> {
         self.poll();
-        self.command.take()
+        // Discrete commands (arm/disarm) first: they must never be
+        // starved or dropped by the setpoint stream.
+        self.command.take().or_else(|| self.flight_cmd.take())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use crate::XilNetConfig;
+
+    /// Ephemeral-port config so tests never collide on a fixed port
+    /// (base_port 0 + SensorIn slot 0 → OS-assigned bind).
+    fn test_io() -> SitlIO {
+        let net = XilNetConfig {
+            base_port: 0,
+            stride: 16,
+        };
+        SitlIO::new(XilConfig::for_instance_with_net(0, net)).expect("bind ephemeral UDP")
+    }
+
+    fn arm_msg() -> CommandLong {
+        CommandLong {
+            param1: 1.0,
+            param2: 0.0,
+            param3: 0.0,
+            param4: 0.0,
+            param5: 0.0,
+            param6: 0.0,
+            param7: 0.0,
+            command: mav_cmd::COMPONENT_ARM_DISARM,
+            target_system: 1,
+            target_component: 1,
+            confirmation: 0,
+        }
+    }
+
+    fn attitude_msg(thrust: f32) -> SetAttitudeTarget {
+        SetAttitudeTarget {
+            time_boot_ms: 0,
+            target_system: 1,
+            target_component: 1,
+            type_mask: 0,
+            q: [1.0, 0.0, 0.0, 0.0],
+            body_roll_rate: 0.0,
+            body_pitch_rate: 0.0,
+            body_yaw_rate: 0.0,
+            thrust,
+            thrust_body: [0.0, 0.0, 0.0],
+        }
+    }
+
+    /// A setpoint parsed in the same poll batch after an Arm must not
+    /// clobber it: both survive, discrete command first.
+    #[test]
+    fn setpoint_in_same_batch_does_not_clobber_arm() {
+        let mut io = test_io();
+        io.handle_command_long(arm_msg());
+        io.handle_set_attitude_target(attitude_msg(0.4));
+
+        assert!(matches!(io.recv_command(), Some(SystemCommand::Arm)));
+        match io.recv_command() {
+            Some(SystemCommand::FlightControl(cmd)) => {
+                assert!((cmd.setpoint.collective_thrust.0 - 0.4).abs() < 1e-6);
+            }
+            other => panic!("expected buffered FlightControl, got {other:?}"),
+        }
+    }
+
+    /// Arm parsed after a setpoint in the same batch: discrete command
+    /// still drains first, the setpoint is preserved behind it.
+    #[test]
+    fn arm_after_setpoint_in_same_batch_preserves_both() {
+        let mut io = test_io();
+        io.handle_set_attitude_target(attitude_msg(0.7));
+        io.handle_command_long(arm_msg());
+
+        assert!(matches!(io.recv_command(), Some(SystemCommand::Arm)));
+        assert!(matches!(
+            io.recv_command(),
+            Some(SystemCommand::FlightControl(_))
+        ));
+        assert!(io.recv_command().is_none());
+    }
+
+    /// Setpoints remain latest-wins: only the newest survives a batch.
+    #[test]
+    fn setpoint_slot_is_latest_wins() {
+        let mut io = test_io();
+        io.handle_set_attitude_target(attitude_msg(0.2));
+        io.handle_set_attitude_target(attitude_msg(0.9));
+
+        match io.recv_command() {
+            Some(SystemCommand::FlightControl(cmd)) => {
+                assert!((cmd.setpoint.collective_thrust.0 - 0.9).abs() < 1e-6);
+            }
+            other => panic!("expected latest setpoint, got {other:?}"),
+        }
+        assert!(io.recv_command().is_none());
     }
 }
