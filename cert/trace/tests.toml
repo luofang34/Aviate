@@ -1281,6 +1281,26 @@ is recoverable, not latched).
 """
 traces_to = ["d20185a8-dd10-45f4-a1b6-f5b31e25cd40"]
 
+[[tests]]
+uid = "034ae323-2d44-48dc-83eb-93a5e233e867"
+id = "TST-FLT-209B"
+title = "command_recovery_releases_descend_terminal (control-law resume)"
+test_selector = "command_recovery_releases_descend_terminal"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/behavioral_tests.rs::
+command_recovery_releases_descend_terminal` witnesses the second
+sentence of LLR-FLT-209 at the control-law tier: a Descend terminal
+engaged by command loss releases in the same cycle command recency is
+restored (law returns to Primary), and a later loss re-engages it —
+release is not one-shot. The companion test
+`commanded_land_terminal_stays_latched_through_fresh_commands` pins
+the deliberate boundary of the requirement: an explicit land request
+(TerminalCause::Commanded) is not a staleness condition and stays
+latched.
+"""
+traces_to = ["d20185a8-dd10-45f4-a1b6-f5b31e25cd40"]
+
 # --- X-side mission TOMLs (run via gcs-test against Gazebo SITL) ---
 # These witness the X-tagged LLRs at the integrated tier. The unit
 # tests above pin the same LLRs at the synthetic tier; the mission

@@ -313,13 +313,14 @@ fn kernel_state_encoded_len_is_sum_of_field_lens() {
     use aviate_core::ekf::EkfState;
     use aviate_core::fault::FaultFlags;
     use aviate_core::kernel::state::KernelState;
-    use aviate_core::kernel_types::{InitState, TimingStats};
+    use aviate_core::kernel_types::{InitState, TerminalCause, TimingStats};
     use aviate_core::mixer::{ActuatorFallbackState, ActuatorState};
 
     let expected = <InitState as Replicable>::ENCODED_LEN
         + <ConfigMode as Replicable>::ENCODED_LEN
         + <FaultFlags as Replicable>::ENCODED_LEN
         + <ControlLawV1 as Replicable>::ENCODED_LEN
+        + <TerminalCause as Replicable>::ENCODED_LEN
         + <KernelChecks as Replicable>::ENCODED_LEN
         + <ActuatorState as Replicable>::ENCODED_LEN
         + <TimingStats as Replicable>::ENCODED_LEN
