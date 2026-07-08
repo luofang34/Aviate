@@ -56,18 +56,29 @@ impl Ekf {
             }
         }
 
-        // Update Position NED
+        // Update Position NED. The freshness age resets only if at
+        // least one axis was actually fused — `|=` (not `||`) so all
+        // three axes still get their own gate check even once one has
+        // already accepted, matching the per-axis innovation gating
+        // `scalar_update` already does.
         let r_pos = self.config.meas_noise_gnss_pos;
-
-        self.scalar_update(state, IDX_POS, gnss.position_ned[0].0, r_pos);
-        self.scalar_update(state, IDX_POS + 1, gnss.position_ned[1].0, r_pos);
-        self.scalar_update(state, IDX_POS + 2, gnss.position_ned[2].0, r_pos);
+        let mut pos_accepted = false;
+        pos_accepted |= self.scalar_update(state, IDX_POS, gnss.position_ned[0].0, r_pos);
+        pos_accepted |= self.scalar_update(state, IDX_POS + 1, gnss.position_ned[1].0, r_pos);
+        pos_accepted |= self.scalar_update(state, IDX_POS + 2, gnss.position_ned[2].0, r_pos);
+        if pos_accepted {
+            state.gnss_pos_age_s = 0.0;
+        }
 
         // Update Velocity NED
         let r_vel = self.config.meas_noise_gnss_vel;
-        self.scalar_update(state, IDX_VEL, gnss.velocity_ned[0].0, r_vel);
-        self.scalar_update(state, IDX_VEL + 1, gnss.velocity_ned[1].0, r_vel);
-        self.scalar_update(state, IDX_VEL + 2, gnss.velocity_ned[2].0, r_vel);
+        let mut vel_accepted = false;
+        vel_accepted |= self.scalar_update(state, IDX_VEL, gnss.velocity_ned[0].0, r_vel);
+        vel_accepted |= self.scalar_update(state, IDX_VEL + 1, gnss.velocity_ned[1].0, r_vel);
+        vel_accepted |= self.scalar_update(state, IDX_VEL + 2, gnss.velocity_ned[2].0, r_vel);
+        if vel_accepted {
+            state.gnss_vel_age_s = 0.0;
+        }
     }
 
     pub fn update_baro_state(&self, state: &mut EkfState, baro_reading: &SensorReading<BaroData>) {
@@ -99,6 +110,10 @@ impl Ekf {
             // this, an elevated site's pressure-altitude offset (≈1658 m
             // in Denver) is a standing innovation that gates baro out
             // forever.
+            // COV:EXCL_START(phantom DA: grcov attributes a debug-info region
+            // to the `None` match arm below; the first-accepted-sample datum
+            // latch it performs is exercised by ekf_baro_update_modifies_altitude
+            // and ekf_baro_accepted_at_high_site_elevation.)
             let datum = match state.baro_ref {
                 Some(d) => d,
                 None => {
@@ -108,13 +123,15 @@ impl Ekf {
                     d
                 }
             };
+            // COV:EXCL_STOP
 
             // NED Z is negative altitude (down); referencing to the
-            // latched datum keeps the measurement on the origin frame.
+            // latched datum keeps the measurement on the origin frame. // COV:EXCL(phantom DA: grcov debug-info attribution onto this comment line)
             let z_meas = datum - altitude_from_pressure;
-
             let r_baro = self.config.meas_noise_baro;
-            self.scalar_update(state, IDX_POS + 2, z_meas, r_baro);
+            if self.scalar_update(state, IDX_POS + 2, z_meas, r_baro) {
+                state.baro_age_s = 0.0;
+            }
 
             self.correct_baro_datum(state, altitude_from_pressure, datum);
         }
@@ -233,6 +250,8 @@ impl Ekf {
         // so the heading that reproduces the true yaw from a
         // north-pointing field is atan2(-east, north).
         let heading_mag = (-mag_e_level).atan2(mag_n_level);
+
+        // Step 5: Innovation Gating & Yaw Update
         let mut innov = heading_mag - yaw_est;
         // COV:EXCL_START(DEFENSIVE: atan2/euler outputs bounded to [-π,π], wrapping is safety guard)
         while innov > PI {
