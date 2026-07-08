@@ -134,6 +134,12 @@ impl SitlRunner {
                         // Only arm HAL and transport if kernel arm succeeded
                         self.board_hal.arm();
                         self.transport.set_armed(true);
+                        // Arming is commanding activity on the same link:
+                        // anchor command freshness here, otherwise a
+                        // command-less arm reports u32::MAX age on the
+                        // first armed cycle and latches the CommandTimeout
+                        // terminal before any setpoint can arrive.
+                        self.last_cmd_rx_ticks = Some(self.transport.now().ticks);
                     }
                 }
                 SystemCommand::Disarm => {

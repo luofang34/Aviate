@@ -12,9 +12,11 @@
 
 #![allow(clippy::expect_used, clippy::panic)]
 
-use aviate_core::checks::{InFlightFlags, PreArmFlags};
+use aviate_core::checks::{DegradationReason, InFlightFlags, PreArmFlags};
 use aviate_core::control::multirotor::MultirotorController;
-use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
+use aviate_core::control::{
+    Command, CommandSource, ConfigMode, ControlLawV1, ControlMode, Setpoint,
+};
 use aviate_core::ekf::{Ekf, EkfConfig, EkfState, Estimator};
 use aviate_core::fault::FaultFlags;
 use aviate_core::math::{Quaternion, Vector3};
@@ -591,5 +593,229 @@ fn altitude_ok_flag_tracks_geofence_through_update() {
             .current
             .contains(InFlightFlags::ALTITUDE_OK),
         "altitude below the geofence floor must clear ALTITUDE_OK"
+    );
+}
+
+// --- Descend/Land terminal (issue #65) --------------------------------------
+// No HLR/LLR entry exists yet for this behavior in cert/trace; these
+// tests pin the contract directly pending that trace addition.
+
+/// Sensors reporting a vehicle already descending at the failsafe rate.
+/// The estimator's vertical-velocity output then tracks that descent, so
+/// the terminal's velocity loop holds near hover thrust instead of the
+/// zero-thrust step-onset transient a from-hover rate step produces.
+fn descending_sensors() -> SensorSet {
+    let mut sensors = make_valid_sensors();
+    for gnss in sensors.gnss.iter_mut() {
+        if gnss.valid {
+            // NED z is down-positive: a positive velocity is a descent.
+            gnss.value.velocity_ned[2] = MetersPerSecond(2.0);
+        }
+    }
+    sensors
+}
+
+fn hover_cmd() -> Command {
+    Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint {
+            collective_thrust: Normalized(0.5),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 1,
+        source: CommandSource::Pilot,
+    }
+}
+
+/// A terminal failsafe (command/datalink loss) mid-air
+/// engages the kernel-owned Descend/Land terminal and rides the vehicle
+/// down under control — motors keep running at a wings-level descent —
+/// instead of cutting them to the all-zeros safe pattern. Arms the
+/// kernel, lets the estimator track a descending state, then drives the
+/// command age past the timeout and asserts the terminal law engages and
+/// the output is a live, level descent rather than zeros.
+#[test]
+fn terminal_failsafe_rides_a_controlled_descent_not_motors_off() {
+    let mut kernel = make_kernel();
+    arm_kernel(&mut kernel);
+
+    let sensors = descending_sensors();
+    let cmd = hover_cmd();
+
+    // Let the estimator's vertical velocity converge to the descent.
+    for _ in 0..60 {
+        let _ = step(&mut kernel, &cmd, &sensors, 0);
+    }
+
+    // Command/datalink loss: the last command is now stale beyond the
+    // timeout, so the kernel resolves the terminal failsafe to Descend.
+    let out = step(&mut kernel, &cmd, &sensors, 10_000);
+
+    assert_eq!(
+        kernel.state.control_law,
+        ControlLawV1::Direct,
+        "terminal failsafe must engage the Descend/Land terminal, not motors-off Backup"
+    );
+    assert!(
+        !all_motors_zero(&out),
+        "controlled descent must keep motors running, not cut them: {:?}",
+        out.outputs
+    );
+    // Wings-level: a quad holding zero roll/pitch commands balanced motor
+    // outputs. A tilted descent would spread them.
+    let motors: [Scalar; 4] = [
+        out.outputs[0].0,
+        out.outputs[1].0,
+        out.outputs[2].0,
+        out.outputs[3].0,
+    ];
+    let hi = motors.iter().copied().fold(Scalar::MIN, Scalar::max);
+    let lo = motors.iter().copied().fold(Scalar::MAX, Scalar::min);
+    assert!(
+        hi - lo < 1e-3,
+        "controlled descent must hold level attitude: motor spread {}",
+        hi - lo
+    );
+}
+
+/// LLR-FLT-209: command staleness is recoverable and SHALL NOT be
+/// latched. A Descend terminal that engaged for command loss releases
+/// in the same cycle command recency is restored, and the cascade
+/// resumes flying the live command under the restored law.
+#[test]
+fn command_recovery_releases_descend_terminal() {
+    let mut kernel = make_kernel();
+    arm_kernel(&mut kernel);
+
+    let sensors = descending_sensors();
+    let cmd = hover_cmd();
+
+    for _ in 0..60 {
+        let _ = step(&mut kernel, &cmd, &sensors, 0);
+    }
+
+    // Command loss engages the terminal.
+    let _ = step(&mut kernel, &cmd, &sensors, 10_000);
+    assert_eq!(kernel.state.control_law, ControlLawV1::Direct);
+
+    // The link recovers: fresh commands must release the terminal in
+    // the same cycle, not leave the vehicle committed to a descent.
+    let _ = step(&mut kernel, &cmd, &sensors, 0);
+    assert_eq!(
+        kernel.state.control_law,
+        ControlLawV1::Primary,
+        "restored command recency must release the CommandLoss terminal (LLR-FLT-209)"
+    );
+
+    // And a later loss engages it again — release is not one-shot.
+    let _ = step(&mut kernel, &cmd, &sensors, 10_000);
+    assert_eq!(kernel.state.control_law, ControlLawV1::Direct);
+}
+
+/// A commanded land is the opposite contract: once requested, fresh
+/// commands do NOT release the terminal — the vehicle finishes the
+/// descent unless the operator disarms/ground-resets.
+#[test]
+fn commanded_land_terminal_stays_latched_through_fresh_commands() {
+    let mut kernel = make_kernel();
+    arm_kernel(&mut kernel);
+
+    let sensors = descending_sensors();
+    let cmd = hover_cmd();
+
+    for _ in 0..60 {
+        let _ = step(&mut kernel, &cmd, &sensors, 0);
+    }
+
+    let event = kernel.handle_degradation(DegradationReason::LandRequested, timestamp());
+    assert!(event.is_some());
+    assert_eq!(kernel.state.control_law, ControlLawV1::Direct);
+
+    for _ in 0..30 {
+        let _ = step(&mut kernel, &cmd, &sensors, 0);
+    }
+    assert_eq!(
+        kernel.state.control_law,
+        ControlLawV1::Direct,
+        "a commanded land must stay latched regardless of command recency"
+    );
+}
+
+/// Total loss of attitude is the boundary case the Descend
+/// terminal does NOT cover — with no stable frame to descend in, the
+/// kernel falls to the motors-off safe pattern (`Backup`). This pins the
+/// distinction the failsafe mapping draws between "land under control"
+/// and "cut motors": `AttitudeLost` cuts, everything survivable descends.
+#[test]
+fn total_attitude_loss_cuts_motors_not_descent() {
+    let mut kernel = make_kernel();
+    arm_kernel(&mut kernel);
+
+    let sensors = descending_sensors();
+    let cmd = hover_cmd();
+    for _ in 0..30 {
+        let _ = step(&mut kernel, &cmd, &sensors, 0);
+    }
+
+    kernel.handle_degradation(DegradationReason::AttitudeLost, timestamp());
+    assert_eq!(
+        kernel.state.control_law,
+        ControlLawV1::Backup,
+        "total attitude loss must fall to the motors-off terminal"
+    );
+
+    let out = step(&mut kernel, &cmd, &sensors, 0);
+    assert!(
+        all_motors_zero(&out),
+        "total attitude loss must cut motors (safe pattern), not descend: {:?}",
+        out.outputs
+    );
+}
+
+/// HLR-FLT-203: an unrecoverable critical fault (numeric / estimator
+/// divergence) preempts an already-active Descend/Land terminal.
+/// `check_critical_faults()` runs ahead of the state estimate the terminal
+/// needs, so it must win outright rather than let a prior cycle's Direct
+/// engagement carry a stale descent command forward. Drives the kernel into
+/// Direct via command timeout exactly as
+/// `terminal_failsafe_rides_a_controlled_descent_not_motors_off` does, then
+/// latches `NUMERIC_ERROR` and asserts the next cycle falls back to the
+/// motors-off safe pattern instead of continuing the descent.
+#[test]
+fn critical_fault_preempts_an_active_descend_terminal() {
+    let mut kernel = make_kernel();
+    arm_kernel(&mut kernel);
+
+    let sensors = descending_sensors();
+    let cmd = hover_cmd();
+
+    for _ in 0..60 {
+        let _ = step(&mut kernel, &cmd, &sensors, 0);
+    }
+
+    // Command/datalink loss engages the Descend/Land terminal.
+    let descending = step(&mut kernel, &cmd, &sensors, 10_000);
+    assert_eq!(kernel.state.control_law, ControlLawV1::Direct);
+    assert!(
+        !all_motors_zero(&descending),
+        "precondition: terminal must be actively descending before the fault hits"
+    );
+
+    // A numeric fault now latches mid-descent — HLR-FLT-203 requires the
+    // safe pattern regardless of the terminal law that was active.
+    kernel.state.faults.insert(FaultFlags::NUMERIC_ERROR);
+    let out = step(&mut kernel, &cmd, &sensors, 10_000);
+
+    assert_eq!(
+        kernel.state.control_law,
+        ControlLawV1::Backup,
+        "a critical fault must override an active Descend/Land terminal"
+    );
+    assert!(
+        all_motors_zero(&out),
+        "critical fault mid-descent must cut motors, not continue the terminal: {:?}",
+        out.outputs
     );
 }

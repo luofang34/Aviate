@@ -663,9 +663,11 @@ fn degradation_reason_all_variants() {
         DegradationReason::BaroDegraded,
         DegradationReason::EnvelopeViolation,
         DegradationReason::RcLost,
+        DegradationReason::TimingViolation,
+        DegradationReason::LandRequested,
     ];
 
-    assert_eq!(reasons.len(), 8);
+    assert_eq!(reasons.len(), 10);
 }
 
 // =============================================================================
@@ -2247,10 +2249,23 @@ fn step_returns_safe_on_critical_fault() {
     // Step with failed sensors should detect critical fault
     let output = kernel.step_test(dummy_time_delta(), &cmd, &failed_sensors, 0);
 
-    // Should return safe output (active_mask = 0)
+    // Critical fault must fall to the safe pattern: all channels driven
+    // to the configured safe output, matching the Backup branch built
+    // for every other motors-off path (active_mask/fallback_mask are
+    // "all channels", not "no channels" — a critical fault still owns
+    // and zeroes every actuator rather than leaving them unmanaged).
+    assert!(
+        (0..4).all(|i| output.outputs[i].0.abs() < 1e-5),
+        "Critical fault should cause safe (zero) output: {:?}",
+        output.outputs
+    );
     assert_eq!(
-        output.active_mask, 0,
-        "Critical fault should cause safe output"
+        output.active_mask, 0b1111,
+        "Critical fault safe output must claim all actuator channels"
+    );
+    assert_eq!(
+        output.fallback_mask, 0xFF,
+        "Critical fault safe output must mark all groups fallen back"
     );
 }
 
@@ -2392,10 +2407,11 @@ fn handle_degradation_all_reasons() {
 
     let reasons_and_expected_laws = [
         (DegradationReason::AttitudeLost, ControlLawV1::Backup),
+        (DegradationReason::LandRequested, ControlLawV1::Direct),
+        (DegradationReason::CommandTimeout, ControlLawV1::Direct),
         (DegradationReason::ImuDegraded, ControlLawV1::Alternate),
         (DegradationReason::PositionLost, ControlLawV1::Alternate),
         (DegradationReason::VelocityLost, ControlLawV1::Alternate),
-        (DegradationReason::CommandTimeout, ControlLawV1::Alternate),
         (
             DegradationReason::EnvelopeViolation,
             ControlLawV1::Alternate,

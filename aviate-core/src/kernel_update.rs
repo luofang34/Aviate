@@ -12,7 +12,7 @@ use crate::fault::FaultFlags;
 use crate::kernel::AviateKernelImpl;
 use crate::kernel_types::{
     ChannelHealthV1, ChannelId, ChannelStatus, ConfigTransitionState, CrossChannelData,
-    CycleTiming, EnvelopeMargin, UpdateResult, TIMING_VIOLATION_THRESHOLD,
+    CycleTiming, EnvelopeMargin, TerminalCause, UpdateResult, TIMING_VIOLATION_THRESHOLD,
 };
 use crate::mixer::{ActuatorCmd, ActuatorSanitizer, ActuatorState, Mixer, SanitizeReport};
 use crate::sensor::SensorSet;
@@ -149,19 +149,40 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             };
         }
 
-        // 2. Check for critical faults (if we got here, we're armed)
+        // 2. Check for critical faults (if we got here, we're armed). These
+        //    are the unrecoverable cases (total sensor loss, numeric /
+        //    estimator divergence) HLR-FLT-203 requires the safe pattern
+        //    for — not the Descend/Land terminal, which needs a state
+        //    estimate this cycle hasn't computed yet. The ActuatorCmd and
+        //    ChannelStatus mirror the Backup branch built in step 6/11 so
+        //    telemetry reports the real fault state instead of defaults.
         if self.check_critical_faults() {
-            // If critical fault, force Backup/Frozen behavior
             return UpdateResult {
                 actuator: ActuatorCmd {
                     outputs: self.cfg.safe_output,
-                    active_mask: 0,
+                    active_mask: 0b1111,
                     sequence: command.sequence,
                     timestamp,
-                    fallback_mask: 0,
+                    fallback_mask: 0xFF,
                     sanitized: true,
                 },
-                status: ChannelStatus::default(), // TODO: Populate with fault info
+                status: ChannelStatus {
+                    mode: command.mode,
+                    config_mode: self.state.mode,
+                    transition_state: ConfigTransitionState::Stable(self.state.mode),
+                    law: ControlLawV1::Backup,
+                    health: ChannelHealthV1::Operative,
+                    faults: self.state.faults,
+                    confidence: self
+                        .pipeline
+                        .estimator
+                        .estimate(&self.state.estimator)
+                        .quality,
+                    envelope_margin: EnvelopeMargin::default(),
+                    sequence: command.sequence,
+                    protection: Default::default(),
+                    sanitize_report: SanitizeReport::default(),
+                },
                 estimate: self.pipeline.estimator.estimate(&self.state.estimator),
                 timing: CycleTiming::default(),
                 degradation: None,
@@ -205,6 +226,30 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             .in_flight
             .update_command_status(command_age_ms, self.cfg.command_timeout_ms);
 
+        // 4a. Terminal release (LLR-FLT-209): command staleness is
+        //     recoverable and SHALL NOT be latched. A Direct terminal
+        //     that engaged for command loss releases in the same cycle
+        //     command recency is restored; the cascade resumes flying
+        //     the live command. A commanded land (TerminalCause::
+        //     Commanded) stays latched, and Backup only releases via
+        //     ground_reset.
+        if self.state.control_law == ControlLawV1::Direct
+            && self.state.terminal_cause == TerminalCause::CommandLoss
+            && self
+                .state
+                .checks
+                .in_flight
+                .current
+                .contains(crate::checks::InFlightFlags::COMMAND_RECENT)
+        {
+            self.state.control_law = ControlLawV1::Primary;
+            self.state.terminal_cause = TerminalCause::None;
+            // Restored authority means restored control objective; the
+            // terminal's accumulated integrators must not leak into the
+            // resumed law (LLR-CTL-101).
+            self.pipeline.controller.reset(&mut self.state.controller);
+        }
+
         // 4. Handle degradation
         // Timing violations are reported externally via report_timing_violation()
         let degradation =
@@ -237,11 +282,13 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         };
 
         // 6. Control Step
-        // If Backup, we might want to use safe outputs or a simplified controller.
-        // For now, if Backup, force safe output (as per spec "Non-Armed states → Backup → safe").
-        // But Backup during flight might mean "Last-ditch stability".
-        // The spec says "Last-ditch stability only".
-        // For this minimal impl, if Backup, we output safe_output (effectively shutting down/idle).
+        // `Backup` is the motors-off last resort: reserved for cases
+        // where a controlled descent is impossible (on the ground,
+        // total loss of attitude, unrecoverable numeric/estimator
+        // divergence). Every other law flies the cascade — including
+        // the Descend/Land terminal (`Direct`), which rides a
+        // kernel-synthesized level-descent setpoint down instead of
+        // cutting thrust mid-air.
         let mut actuator_cmd = if self.state.control_law == ControlLawV1::Backup {
             ActuatorCmd {
                 outputs: self.cfg.safe_output,
@@ -252,15 +299,24 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                 sanitized: true,
             }
         } else {
-            // Derive the orthogonal control-mode flags from the
-            // requested mode and hand them to the cascade, which
-            // selects loops from the flags rather than from
-            // setpoint-field presence.
-            let control_flags = VehicleControlMode::from_control_mode(constrained_cmd.mode);
+            // Terminal descent flies the synthesized level-descent
+            // setpoint; all other laws fly the uplinked (constrained)
+            // command. Loop selection is driven by the control-mode
+            // flags derived from the effective command's mode.
+            let effective_cmd = if self.state.control_law == ControlLawV1::Direct {
+                crate::kernel::descend::descend_command(
+                    &state,
+                    &self.cfg.limits,
+                    constrained_cmd.sequence,
+                )
+            } else {
+                constrained_cmd
+            };
+            let control_flags = VehicleControlMode::from_control_mode(effective_cmd.mode);
             let axis_cmd = self.pipeline.controller.step(
                 &mut self.state.controller,
                 &state,
-                &constrained_cmd,
+                &effective_cmd,
                 &control_flags,
                 self.state.mode,
                 &self.cfg.limits,
