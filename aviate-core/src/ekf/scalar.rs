@@ -17,6 +17,7 @@ use crate::types::{Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSe
 /// flooring keeps P positive-definite so gains stay meaningful.
 const COV_VAR_FLOOR: Scalar = 1e-9;
 
+// COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; the fn body below is exercised by the covariance-PSD tests)
 /// Joseph-stabilized rank-1 covariance update for a scalar observation
 /// whose measurement Jacobian is the unit row `Hᵀ = e_{h_idx}`:
 /// `P⁺ = (I − K H) P (I − K H)ᵀ + K R Kᵀ`, followed by symmetrization
@@ -25,6 +26,7 @@ const COV_VAR_FLOOR: Scalar = 1e-9;
 ///
 /// `A = I − K H` differs from the identity only in column `h_idx`, where
 /// `A[r][h_idx] = δ_{r,h_idx} − K[r]`.
+// COV:EXCL_STOP
 fn joseph_scalar_cov_update(
     p: &mut Matrix<STATE_DIM, STATE_DIM>,
     k: &[Scalar; STATE_DIM],
@@ -61,7 +63,7 @@ impl Ekf {
         if s < 1e-9 {
             return; // COV:EXCL(DEFENSIVE: prevent division by zero)
         }
-
+        // COV:EXCL(phantom DA: grcov attributes a phantom region to this line after the early return above)
         // Innovation gating. `innov` is finite here (mag field is
         // validated in `update_mag_state`), so the ordinary comparison
         // is safe.
@@ -164,7 +166,7 @@ impl Ekf {
         if (innov * innov) / s > gate_sq {
             return false; // Reject measurement
         }
-
+        // COV:EXCL(phantom DA: grcov attributes a phantom region to this line after the reject-gate branch above)
         // Kalman Gain
         let k_gain_factor = 1.0 / s;
         let mut k_vector = [0.0; STATE_DIM];
@@ -211,14 +213,15 @@ impl Ekf {
     }
 }
 
-/// Implement the public `Estimator` trait by delegating each method
-/// to the per-submodule helper. The trait surface takes `&mut state`
-/// — the helpers carry the math against the same `&mut state`.
 // COV:EXCL_START(DELEGATE: every body in this impl forwards to the
 // equivalent inherent Ekf helper that carries the math; the delegate
 // has no executable logic of its own and is exercised through the
 // kernel update path. The math is tested directly via ekf_tests.rs
-// against the inherent helpers.)
+// against the inherent helpers. Also covers grcov phantom-DA
+// attribution on the trait doc comment below.)
+/// Implement the public `Estimator` trait by delegating each method
+/// to the per-submodule helper. The trait surface takes `&mut state`
+/// — the helpers carry the math against the same `&mut state`.
 impl super::Estimator for Ekf {
     type RuntimeState = EkfState;
 

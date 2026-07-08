@@ -12,6 +12,7 @@ use crate::sensor::{
 #[allow(unused_imports)] // FloatExt needed for no_std math methods
 use crate::types::FloatExt;
 use crate::types::Scalar;
+use core::f32::consts::PI;
 
 /// Initial variance of the QFE baro datum \[m²\] the first time it is
 /// latched. A few metres of uncertainty so GNSS-anchored height quickly
@@ -132,6 +133,7 @@ impl Ekf {
         }
     }
 
+    // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; correct_baro_datum is exercised by the baro-datum tests)
     /// Scalar random-walk update of the QFE baro datum (PX4-style baro
     /// bias estimation). The fused height implies a datum of
     /// `altitude + pos.z`; a 1-D Kalman step nudges the stored datum
@@ -139,6 +141,7 @@ impl Ekf {
     /// cannot separate height from datum, the correction only bites when
     /// GNSS anchors `pos.z`, which drives the standing offset to zero and
     /// lets the datum track slow ground-pressure drift.
+    // COV:EXCL_STOP
     fn correct_baro_datum(&self, state: &mut EkfState, altitude: Scalar, datum: Scalar) {
         let var = state.baro_ref_var + BARO_DATUM_PROCESS_VAR;
         let r_eff = self.config.meas_noise_baro + state.p_cov.get(IDX_POS + 2, IDX_POS + 2);
@@ -152,6 +155,7 @@ impl Ekf {
         state.baro_ref_var = (1.0 - k) * var;
     }
 
+    // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; update_mag_state is exercised by the mag-fusion tests)
     /// Update EKF with magnetometer reading for heading estimation.
     ///
     /// # Approach
@@ -164,9 +168,8 @@ impl Ekf {
     /// - Magnetometer data is in body frame
     /// - Heading is magnetic (no declination correction)
     /// - Positive yaw = clockwise from magnetic north when viewed from above
+    // COV:EXCL_STOP
     pub fn update_mag_state(&self, state: &mut EkfState, mag_reading: &SensorReading<MagData>) {
-        use core::f32::consts::PI;
-
         // Step 1: Health & Validity Gating
         if !state.initialized || mag_reading.health != SensorHealth::Good {
             return;
@@ -188,7 +191,7 @@ impl Ekf {
         let mag_y = mag.field_ut[1].0;
         let mag_z = mag.field_ut[2].0;
 
-        // Step 2: Field Strength Validation
+        // Step 2: Field Strength Validation // COV:EXCL(phantom DA: grcov debug-info attribution onto this comment line)
         let mag_norm = (mag_x * mag_x + mag_y * mag_y + mag_z * mag_z).sqrt();
         if mag_norm < self.config.mag_field_min || mag_norm > self.config.mag_field_max {
             return;
@@ -226,7 +229,7 @@ impl Ekf {
         //
         // Projecting the body field through the FULL body→NED rotation
         // reconstructs the earth field with yaw already baked in, so the
-        // resulting heading is independent of the yaw estimate and its
+        // resulting heading is independent of the yaw estimate and its // COV:EXCL(phantom DA: grcov debug-info attribution onto this comment line)
         // innovation can never correct yaw. Rotating through roll/pitch
         // only (yaw = 0) leaves the horizontal components in a level,
         // yaw-free frame, making `heading_mag` an absolute measurement
@@ -246,7 +249,6 @@ impl Ekf {
 
         // Step 5: Innovation Gating & Yaw Update
         let mut innov = heading_mag - yaw_est;
-
         // COV:EXCL_START(DEFENSIVE: atan2/euler outputs bounded to [-π,π], wrapping is safety guard)
         while innov > PI {
             innov -= 2.0 * PI;
@@ -255,7 +257,6 @@ impl Ekf {
             innov += 2.0 * PI;
         }
         // COV:EXCL_STOP
-
         let r_effective = if incl_weight > 0.1 {
             self.config.meas_noise_mag / (incl_weight * incl_weight)
         } else {

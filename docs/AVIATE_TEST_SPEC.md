@@ -22,7 +22,7 @@ The Aviate project targets software assurance levels equivalent to **DO-178C Lev
 
 ### 1.1 Core Objectives
 1.  **Requirements-Based Testing**: All code must be traceable to requirements in `AVIATE_SPEC.md`.
-2.  **Structural Coverage**: 100% Statement, Branch, and MC/DC coverage for critical components.
+2.  **Structural Coverage**: The blocking CI coverage gate is region + branch coverage (LLVM source-based) after documented `COV:EXCL` exclusions. MC/DC is not measured in a qualified way — rustc's `-Zcoverage-options=mcdc` is experimental and unqualified — so no MC/DC or DO-178C structural-coverage credit is claimed. MC/DC is tracked non-blocking as a readiness indicator only (see the nightly job).
 3.  **Robustness**: Verification of behavior under abnormal inputs and failure conditions.
 4.  **Independence**: Verification activities performed by engineers independent of the design implementation where possible.
 
@@ -101,12 +101,12 @@ To cover edge cases that manual tests miss:
     -   Mode transition sequences (Hover -> Cruise -> Hover).
 
 ### 4.4 Structural Code Coverage
-We aim for **100% MC/DC (Modified Condition/Decision Coverage)** on the kernel core.
--   **Tools**: `cargo-tarpaulin` or `llvm-cov`.
+The blocking CI coverage gate is region + branch coverage (LLVM source-based) after documented `COV:EXCL` exclusions. MC/DC is not measured in a qualified way — rustc's `-Zcoverage-options=mcdc` is experimental and unqualified — so no MC/DC or DO-178C structural-coverage credit is claimed. MC/DC is tracked non-blocking as a readiness indicator only (see the nightly job).
+-   **Tool**: `grcov` over LLVM source-based instrumentation (`-C instrument-coverage`), driven by `scripts/check_coverage.sh`.
 -   **Metrics**:
-    -   **Statement Coverage**: All lines executed.
-    -   **Branch Coverage**: All `if/else` and `match` arms taken.
-    -   **MC/DC**: Critical for Level A. For complex boolean expressions, test cases must demonstrate independence of conditions.
+    -   **Region Coverage**: LLVM source-based statement/region coverage of the kernel core, held at or above the `coverage_region` floor in `cert/floors.toml`.
+    -   **Branch Coverage**: All `if/else` and `match` arms taken, held at or above the `coverage_branch` floor in `cert/floors.toml`.
+    -   **MC/DC**: Tracked non-blocking by the nightly workflow using rustc's experimental, unqualified `-Zcoverage-options=mcdc`. The published number is a readiness indicator, not certification credit.
 
 ---
 

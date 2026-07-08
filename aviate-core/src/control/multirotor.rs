@@ -9,10 +9,13 @@ use crate::control::cascade_gains::CascadeGains;
 use crate::control::position::PositionController;
 use crate::control::rate::{RateController, RateLoopState};
 use crate::control::velocity::{AccelFeedforward, VelocityController, VelocityLoopState};
-use crate::control::{AxisCommand, Command, ConfigMode, Limits, Scalar, VehicleController};
+use crate::control::{
+    AxisCommand, Command, ConfigMode, Limits, OuterLoopSelection, Scalar, Setpoint,
+    VehicleControlMode, VehicleController,
+};
 use crate::math::{Quaternion, Vector3};
 use crate::state::StateEstimate;
-use crate::types::{MetersPerSecond, MetersPerSecondSquared};
+use crate::types::{MetersPerSecond, MetersPerSecondSquared, Normalized, Radians};
 
 /// Persistent runtime state for the multirotor cascade. Owned by
 /// `KernelState.controller`. Reset on every transition that
@@ -146,6 +149,76 @@ impl MultirotorController {
     pub fn with_hover_thrust(hover_thrust_norm: Scalar) -> Self {
         Self::from_gains(CascadeGains::x500_defaults(), hover_thrust_norm)
     }
+
+    /// Vertical velocity command for the altitude / climb-rate hold.
+    ///
+    /// A `vertical_speed` setpoint is a direct climb-rate command; an
+    /// `altitude` setpoint is held by shaping the altitude error through
+    /// the position loop's vertical sqrt-controller (altitude error →
+    /// climb rate). The result is clamped to the climb/descent envelope
+    /// so the vertical loop never chases a rate the airframe is not
+    /// authorized to fly. `None` when no vertical setpoint is present.
+    fn vertical_velocity_setpoint(
+        &self,
+        setpoint: &Setpoint,
+        state: &StateEstimate,
+        limits: &Limits,
+    ) -> Option<MetersPerSecond> {
+        let vertical = if let Some(vspeed) = setpoint.vertical_speed {
+            vspeed.0
+        } else {
+            // NED z is down-positive; altitude is up-positive, so the
+            // held target in NED is the negated altitude setpoint.
+            let target_ned_z = -setpoint.altitude?.0;
+            let error_ned_z = target_ned_z - state.position_ned[2].0;
+            crate::control::position::sqrt_shape(
+                error_ned_z,
+                self.pos_ctrl.gains[2],
+                self.pos_ctrl.accel_limits[2],
+                self.pos_ctrl.vel_caps[2],
+            )
+        };
+        Some(MetersPerSecond(
+            vertical.clamp(-limits.max_climb_rate.0, limits.max_descent_rate.0),
+        ))
+    }
+
+    /// Collective for the vertical-only path. Runs the velocity loop
+    /// with a zeroed horizontal setpoint against zeroed horizontal
+    /// error, so it derives no tilt, and keeps only the collective
+    /// output. Horizontal attitude stays with the manual setpoint.
+    fn vertical_collective(
+        &self,
+        vel_state: &mut VelocityLoopState,
+        state: &StateEstimate,
+        vertical_sp: MetersPerSecond,
+        dt_sec: Scalar,
+    ) -> Normalized {
+        let zero = MetersPerSecond(0.0);
+        let vel_sp = Vector3::new(zero, zero, vertical_sp);
+        let current = Vector3::new(zero, zero, state.velocity_ned[2]);
+        self.vel_ctrl
+            .step(
+                vel_state,
+                vel_sp,
+                current,
+                AccelFeedforward::default(),
+                &state.attitude,
+                dt_sec,
+            )
+            .collective
+    }
+}
+
+/// Replace the yaw of an attitude setpoint with a commanded heading,
+/// preserving its roll and pitch. Altitude mode keeps horizontal
+/// attitude manual (roll/pitch) but slaves yaw to the heading setpoint.
+fn attitude_with_heading(att_sp: &Quaternion, heading: Radians) -> Quaternion {
+    let (roll, pitch, _yaw) = att_sp.to_euler();
+    let qz = Quaternion::from_axis_angle(Vector3::new(0.0, 0.0, 1.0), heading.0);
+    let qy = Quaternion::from_axis_angle(Vector3::new(0.0, 1.0, 0.0), pitch);
+    let qx = Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0), roll);
+    qz.mul(&qy).mul(&qx).normalize()
 }
 
 impl VehicleController for MultirotorController {
@@ -160,8 +233,9 @@ impl VehicleController for MultirotorController {
         runtime: &mut MultirotorRuntimeState,
         state: &StateEstimate,
         command: &Command,
+        flags: &VehicleControlMode,
         _mode: ConfigMode,
-        _limits: &Limits,
+        limits: &Limits,
     ) -> AxisCommand {
         let dt_sec = runtime.dt_sec;
         let mut collective_sp = command.setpoint.collective_thrust;
@@ -173,26 +247,34 @@ impl VehicleController for MultirotorController {
         );
 
         // ---- position → velocity setpoint ----
+        // Loop selection is driven by the control-mode flags, not by
+        // which setpoint fields are populated: `outer_loop` is the
+        // single authority that maps mode → active loop and rejects
+        // setpoints illegal for the active mode.
         let mut vel_sp_active = false;
         let mut vel_sp_ned = Vector3::new(
             MetersPerSecond(0.0),
             MetersPerSecond(0.0),
             MetersPerSecond(0.0),
         );
-        if let Some(pos_sp_arr) = command.setpoint.position {
-            let pos_sp = Vector3::new(pos_sp_arr[0], pos_sp_arr[1], pos_sp_arr[2]);
-            vel_sp_ned = self.pos_ctrl.step(
-                pos_sp,
-                Vector3 {
-                    x: state.position_ned[0],
-                    y: state.position_ned[1],
-                    z: state.position_ned[2],
-                },
-            );
-            vel_sp_active = true;
-        } else if let Some(vel_sp_arr) = command.setpoint.velocity {
-            vel_sp_ned = Vector3::new(vel_sp_arr[0], vel_sp_arr[1], vel_sp_arr[2]);
-            vel_sp_active = true;
+        match flags.outer_loop(&command.setpoint) {
+            OuterLoopSelection::Position(pos_sp_arr) => {
+                let pos_sp = Vector3::new(pos_sp_arr[0], pos_sp_arr[1], pos_sp_arr[2]);
+                vel_sp_ned = self.pos_ctrl.step(
+                    pos_sp,
+                    Vector3 {
+                        x: state.position_ned[0],
+                        y: state.position_ned[1],
+                        z: state.position_ned[2],
+                    },
+                );
+                vel_sp_active = true;
+            }
+            OuterLoopSelection::Velocity(vel_sp_arr) => {
+                vel_sp_ned = Vector3::new(vel_sp_arr[0], vel_sp_arr[1], vel_sp_arr[2]);
+                vel_sp_active = true;
+            }
+            OuterLoopSelection::None => {}
         }
 
         if vel_sp_active {
@@ -225,6 +307,26 @@ impl VehicleController for MultirotorController {
             );
             collective_sp = vel_out.collective;
             att_sp = vel_out.attitude;
+        } else if flags.flag_control_altitude_enabled {
+            // Altitude / climb-rate hold: drive only the vertical branch
+            // of the velocity loop around hover trim; roll/pitch stay
+            // with the manual attitude setpoint and yaw slaves to the
+            // heading setpoint. Horizontal is not closed here, so the
+            // accel-feedforward prime is cleared.
+            if let Some(vertical_sp) =
+                self.vertical_velocity_setpoint(&command.setpoint, state, limits)
+            {
+                collective_sp = self.vertical_collective(
+                    &mut runtime.velocity_loop,
+                    state,
+                    vertical_sp,
+                    dt_sec,
+                );
+            }
+            if let Some(heading) = command.setpoint.heading {
+                att_sp = attitude_with_heading(&att_sp, heading);
+            }
+            runtime.vel_sp_primed = false;
         } else {
             // Open-loop / manual: nothing to derive feedforward
             // from; ensure the next closed-loop entry doesn't
