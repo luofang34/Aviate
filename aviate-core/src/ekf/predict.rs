@@ -5,7 +5,7 @@
 //! filter state through `&mut state: &mut EkfState`. There is
 //! exactly one owner of the persistent filter state (KernelState).
 
-use super::{EkfState, IDX_AB, IDX_ATT, IDX_GB, IDX_MB, IDX_POS, IDX_VEL, STATE_DIM};
+use super::{EkfState, IDX_AB, IDX_ATT, IDX_GB, IDX_POS, IDX_VEL, STATE_DIM};
 use crate::ekf::Ekf;
 use crate::math::{Matrix, Quaternion, Vector3};
 use crate::sensor::ImuData;
@@ -166,13 +166,6 @@ impl Ekf {
                 IDX_AB + i,
                 IDX_AB + i,
                 self.config.process_noise_accel_bias * dt,
-            );
-        }
-        for i in 0..3 {
-            q_noise.set(
-                IDX_MB + i,
-                IDX_MB + i,
-                self.config.process_noise_mag_bias * dt,
             );
         }
 

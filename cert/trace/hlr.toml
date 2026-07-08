@@ -25,7 +25,7 @@ The `aviate_core::ekf::Estimator` trait SHALL expose exactly:
     &StateEstimate)` (default impl: no-op)
 
 The associated `RuntimeState` type lifts the previously-hardcoded
-`EkfState` (18-state ESKF + 18×18 P) to a per-implementation choice
+`EkfState` (15-state ESKF + 15×15 P) to a per-implementation choice
 — required for non-EKF estimators (MEKF for cubesat ADCS, UKF for
 fixed-wing wind augmentation, complementary filter for low-cost
 GNSS-denied platforms, particle filter, sliding-window VIO graphs).
