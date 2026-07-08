@@ -405,12 +405,15 @@ impl Default for ActuatorFallbackState {
     }
 }
 
-// Spec §4.2 ModeConfig (Partial stub for Sanitizer)
+/// Airframe configuration-mode descriptor for the actuator sanitizer:
+/// the configuration mode (VTOL Hover/Cruise/Transition) and the
+/// actuator groups it validates. Not a flight-mode/loop contract —
+/// cascade loop selection is owned by
+/// [`crate::control::VehicleControlMode`].
 #[derive(Clone, Debug)]
 pub struct ModeConfig {
     pub mode: ConfigMode,
     pub groups: &'static [ActuatorGroupConfig],
-    // other fields (mixer, limits, etc) omitted for now as not used in sanitizer signature
 }
 
 // Spec §10.3 Sanitization

@@ -50,6 +50,7 @@ pub use aviate_link::{
 /// because telemetry failure is low-DAL (not critical) - we just drop frames.
 #[allow(clippy::result_unit_err)]
 pub trait FrameTx {
+    /// Attempt to enqueue one frame; `Err(())` drops it (low-DAL, non-critical).
     fn try_send(&mut self, frame: &[u8]) -> Result<(), ()>;
 }
 

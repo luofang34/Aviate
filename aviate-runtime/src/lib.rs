@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! Aviate application runtime
 //!
 //! This crate provides the control loop, task scheduling, and wiring infrastructure

@@ -62,7 +62,10 @@ use crate::mixer::{Mixer, ModeConfig};
 ///   an enum for type safety.
 ///
 /// - `mode_config()` must be **deterministic and pure** (no side effects).
-///   It declares supported modes, setpoint types, limits, and failsafe defaults.
+///   It declares the airframe configuration mode (VTOL
+///   Hover/Cruise/Transition) and the actuator groups the sanitizer
+///   drives. Flight-mode/loop selection is owned by the kernel's
+///   `VehicleControlMode`, not by this method.
 pub trait Airframe {
     /// Closed-loop controller used for this airframe.
     ///
@@ -112,13 +115,18 @@ pub trait Airframe {
     /// to `Mixer::mix()`; the airframe does not own the clock.
     fn create_mixer() -> Self::Mixer;
 
-    /// Declarative description of supported modes and their defaults.
+    /// Actuator-group configuration for this airframe's configuration
+    /// mode.
     ///
-    /// This must be **deterministic and pure** - no side effects.
-    /// It declares:
-    /// - Supported flight modes (MANUAL, ALTCTL, POSCTL, AUTO, etc.)
-    /// - Setpoint types and limits per mode
-    /// - Failsafe/default mode configuration
-    /// - Actuator group configurations
+    /// This must be **deterministic and pure** - no side effects. It
+    /// declares:
+    /// - The airframe configuration mode (VTOL Hover/Cruise/Transition)
+    /// - The actuator groups the sanitizer validates and falls back on
+    ///
+    /// Flight-mode/loop selection is a separate concern owned by the
+    /// kernel: the requested `ControlMode` maps to a
+    /// `VehicleControlMode` flag set that selects the cascade loops.
+    /// This method describes neither flight modes, per-mode setpoint
+    /// types and limits, nor failsafe transitions.
     fn mode_config() -> ModeConfig;
 }
