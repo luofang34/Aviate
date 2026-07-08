@@ -8,8 +8,48 @@
 //! state: &mut EkfState` (filter state).
 
 use super::{Ekf, EkfState, IDX_AB, IDX_ATT, IDX_GB, IDX_POS, IDX_VEL, STATE_DIM};
-use crate::math::{Quaternion, Vector3};
+use crate::math::{Matrix, Quaternion, Vector3};
 use crate::types::{Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond, Scalar};
+
+/// Positive floor applied to covariance diagonals after each scalar
+/// fusion. Sequential f32 rank-1 updates on a 15×15 matrix accumulate
+/// round-off that can push a variance to zero or slightly negative;
+/// flooring keeps P positive-definite so gains stay meaningful.
+const COV_VAR_FLOOR: Scalar = 1e-9;
+
+// COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; the fn body below is exercised by the covariance-PSD tests)
+/// Joseph-stabilized rank-1 covariance update for a scalar observation
+/// whose measurement Jacobian is the unit row `Hᵀ = e_{h_idx}`:
+/// `P⁺ = (I − K H) P (I − K H)ᵀ + K R Kᵀ`, followed by symmetrization
+/// and a diagonal floor. The Joseph form preserves positive-definiteness
+/// far better than the naive `(I − K H) P` under f32 arithmetic.
+///
+/// `A = I − K H` differs from the identity only in column `h_idx`, where
+/// `A[r][h_idx] = δ_{r,h_idx} − K[r]`.
+// COV:EXCL_STOP
+fn joseph_scalar_cov_update(
+    p: &mut Matrix<STATE_DIM, STATE_DIM>,
+    k: &[Scalar; STATE_DIM],
+    h_idx: usize,
+    r_noise: Scalar,
+) {
+    let mut a = Matrix::<STATE_DIM, STATE_DIM>::identity();
+    for (r, &k_r) in k.iter().enumerate().take(STATE_DIM) {
+        let delta = if r == h_idx { 1.0 } else { 0.0 };
+        a.set(r, h_idx, delta - k_r);
+    }
+    let ap = a.mat_mul(p);
+    let mut p_new = ap.mat_mul(&a.t());
+    for (r, &k_r) in k.iter().enumerate().take(STATE_DIM) {
+        for (c, &k_c) in k.iter().enumerate().take(STATE_DIM) {
+            let v = p_new.get(r, c) + k_r * r_noise * k_c;
+            p_new.set(r, c, v);
+        }
+    }
+    *p = p_new;
+    p.make_symmetric();
+    p.floor_diagonal(COV_VAR_FLOOR);
+}
 
 impl Ekf {
     /// Internal: Update yaw/heading using scalar observation.
@@ -24,7 +64,9 @@ impl Ekf {
             return; // COV:EXCL(DEFENSIVE: prevent division by zero)
         }
         // COV:EXCL(phantom DA: grcov attributes a phantom region to this line after the early return above)
-        // Innovation gating
+        // Innovation gating. `innov` is finite here (mag field is
+        // validated in `update_mag_state`), so the ordinary comparison
+        // is safe.
         let gate_sq = self.config.innovation_gate * self.config.innovation_gate;
         if (innov * innov) / s > gate_sq {
             return; // Reject measurement
@@ -82,20 +124,7 @@ impl Ekf {
         state.accel_bias.z =
             MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
 
-        // Update covariance: P = (I - K*H) * P
-        let mut p_row_h = [0.0; STATE_DIM];
-        for (c, val) in p_row_h.iter_mut().enumerate().take(STATE_DIM) {
-            *val = state.p_cov.get(state_idx, c);
-        }
-
-        for (r, &k_val) in k_vector.iter().enumerate().take(STATE_DIM) {
-            for (c, &p_val) in p_row_h.iter().enumerate().take(STATE_DIM) {
-                let val = state.p_cov.get(r, c) - k_val * p_val;
-                state.p_cov.set(r, c, val);
-            }
-        }
-
-        state.p_cov.make_symmetric();
+        joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
     }
 
     pub(crate) fn scalar_update(
@@ -115,6 +144,7 @@ impl Ekf {
             5 => state.vel.z.0,
             _ => return, // COV:EXCL(DEFENSIVE: invalid state_idx guard)
         };
+
         let innov = meas - pred;
 
         // Innovation Gating
@@ -123,6 +153,9 @@ impl Ekf {
             return; // COV:EXCL(DEFENSIVE: prevent division by zero)
         }
 
+        // Innovation gating. Callers reject non-finite aiding before
+        // fusion, so `innov` is finite and the ordinary comparison
+        // cannot silently accept a NaN.
         let gate_sq = self.config.innovation_gate * self.config.innovation_gate;
         if (innov * innov) / s > gate_sq {
             return; // Reject measurement
@@ -169,31 +202,19 @@ impl Ekf {
         let new_quat = state.quat.mul(&dq_small);
         state.quat = state.sanitize_quat(new_quat);
 
-        // Update P = (I - KH) * P
-        let mut p_row_h = [0.0; STATE_DIM];
-        for (c, val) in p_row_h.iter_mut().enumerate().take(STATE_DIM) {
-            *val = state.p_cov.get(state_idx, c);
-        }
-
-        for (r, &k_val) in k_vector.iter().enumerate().take(STATE_DIM) {
-            for (c, &p_val) in p_row_h.iter().enumerate().take(STATE_DIM) {
-                let val = state.p_cov.get(r, c) - k_val * p_val;
-                state.p_cov.set(r, c, val);
-            }
-        }
-
-        state.p_cov.make_symmetric();
+        joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
     }
 }
 
-/// Implement the public `Estimator` trait by delegating each method
-/// to the per-submodule helper. The trait surface takes `&mut state`
-/// — the helpers carry the math against the same `&mut state`.
 // COV:EXCL_START(DELEGATE: every body in this impl forwards to the
 // equivalent inherent Ekf helper that carries the math; the delegate
 // has no executable logic of its own and is exercised through the
 // kernel update path. The math is tested directly via ekf_tests.rs
-// against the inherent helpers.)
+// against the inherent helpers. Also covers grcov phantom-DA
+// attribution on the trait doc comment below.)
+/// Implement the public `Estimator` trait by delegating each method
+/// to the per-submodule helper. The trait surface takes `&mut state`
+/// — the helpers carry the math against the same `&mut state`.
 impl super::Estimator for Ekf {
     type RuntimeState = EkfState;
 

@@ -11,6 +11,18 @@ use crate::sensor::{
 };
 #[allow(unused_imports)] // FloatExt needed for no_std math methods
 use crate::types::FloatExt;
+use crate::types::Scalar;
+use core::f32::consts::PI;
+
+/// Initial variance of the QFE baro datum \[m²\] the first time it is
+/// latched. A few metres of uncertainty so GNSS-anchored height quickly
+/// pulls the datum onto the true local-origin elevation.
+const BARO_DATUM_INIT_VAR: Scalar = 4.0;
+
+/// Random-walk process variance added to the QFE baro datum per fused
+/// sample \[m²\]. Small so the datum tracks slow ground-pressure drift
+/// without chasing high-rate vehicle height motion.
+const BARO_DATUM_PROCESS_VAR: Scalar = 1e-4;
 
 impl Ekf {
     pub fn update_gnss_state(&self, state: &mut EkfState, gnss_reading: &SensorReading<GnssData>) {
@@ -32,6 +44,17 @@ impl Ekf {
         }
 
         let gnss = &gnss_reading.value;
+
+        // Reject non-finite aiding before fusion, mirroring the IMU
+        // validity gate in `predict_state`. A single NaN/Inf component
+        // otherwise produces a NaN innovation that slips through the
+        // scalar gate and poisons every correlated state, so the whole
+        // reading is dropped if any component is non-finite.
+        for c in 0..3 {
+            if !gnss.position_ned[c].0.is_finite() || !gnss.velocity_ned[c].0.is_finite() {
+                return;
+            }
+        }
 
         // Update Position NED
         let r_pos = self.config.meas_noise_gnss_pos;
@@ -59,13 +82,67 @@ impl Ekf {
             let p0 = 101325.0; // Sea level standard pressure in Pascals
             let altitude_from_pressure = 44330.0 * (1.0 - (static_pressure.0 / p0).powf(0.1903));
 
-            // NED Z is negative altitude (down).
-            let z_meas = -altitude_from_pressure;
+            // Reject non-finite aiding before fusion, mirroring the IMU
+            // validity gate: a NaN/Inf pressure yields a NaN altitude
+            // that would slip through the scalar gate and poison state.
+            if !altitude_from_pressure.is_finite() {
+                return;
+            }
+
+            // QFE origin referencing. The ISA formula yields absolute
+            // MSL pressure altitude, but `pos.z` is local-origin-relative
+            // — as is the GNSS height fused into the same state. Latch a
+            // datum on the first accepted sample so the initial innovation
+            // is ≈0 (`z_meas == pos.z`); thereafter a scalar random-walk
+            // estimator lets GNSS-anchored height pull the datum onto the
+            // true origin and tracks slow ground-pressure drift. Without
+            // this, an elevated site's pressure-altitude offset (≈1658 m
+            // in Denver) is a standing innovation that gates baro out
+            // forever.
+            let datum = match state.baro_ref {
+                Some(d) => d,
+                None => {
+                    let d = state.pos.z.0 + altitude_from_pressure;
+                    state.baro_ref = Some(d);
+                    state.baro_ref_var = BARO_DATUM_INIT_VAR;
+                    d
+                }
+            };
+
+            // NED Z is negative altitude (down); referencing to the
+            // latched datum keeps the measurement on the origin frame.
+            let z_meas = datum - altitude_from_pressure;
+
             let r_baro = self.config.meas_noise_baro;
             self.scalar_update(state, IDX_POS + 2, z_meas, r_baro);
+
+            self.correct_baro_datum(state, altitude_from_pressure, datum);
         }
     }
 
+    // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; correct_baro_datum is exercised by the baro-datum tests)
+    /// Scalar random-walk update of the QFE baro datum (PX4-style baro
+    /// bias estimation). The fused height implies a datum of
+    /// `altitude + pos.z`; a 1-D Kalman step nudges the stored datum
+    /// toward it, weighted by the height uncertainty. Because baro alone
+    /// cannot separate height from datum, the correction only bites when
+    /// GNSS anchors `pos.z`, which drives the standing offset to zero and
+    /// lets the datum track slow ground-pressure drift.
+    // COV:EXCL_STOP
+    fn correct_baro_datum(&self, state: &mut EkfState, altitude: Scalar, datum: Scalar) {
+        let var = state.baro_ref_var + BARO_DATUM_PROCESS_VAR;
+        let r_eff = self.config.meas_noise_baro + state.p_cov.get(IDX_POS + 2, IDX_POS + 2);
+        let s = var + r_eff;
+        if s < 1e-9 {
+            return; // COV:EXCL(DEFENSIVE: datum and height variances are positive, so S > 0)
+        }
+        let k = var / s;
+        let implied = altitude + state.pos.z.0;
+        state.baro_ref = Some(datum + k * (implied - datum));
+        state.baro_ref_var = (1.0 - k) * var;
+    }
+
+    // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; update_mag_state is exercised by the mag-fusion tests)
     /// Update EKF with magnetometer reading for heading estimation.
     ///
     /// # Approach
@@ -78,9 +155,8 @@ impl Ekf {
     /// - Magnetometer data is in body frame
     /// - Heading is magnetic (no declination correction)
     /// - Positive yaw = clockwise from magnetic north when viewed from above
+    // COV:EXCL_STOP
     pub fn update_mag_state(&self, state: &mut EkfState, mag_reading: &SensorReading<MagData>) {
-        use core::f32::consts::PI;
-
         // Step 1: Health & Validity Gating
         if !state.initialized || mag_reading.health != SensorHealth::Good {
             return;
@@ -88,11 +164,21 @@ impl Ekf {
 
         let mag = &mag_reading.value;
 
+        // Reject non-finite aiding before fusion, mirroring the IMU
+        // validity gate. A NaN component would otherwise pass the field
+        // and inclination checks (every NaN comparison is false) and
+        // poison the yaw state.
+        for c in 0..3 {
+            if !mag.field_ut[c].0.is_finite() {
+                return;
+            }
+        }
+
         let mag_x = mag.field_ut[0].0;
         let mag_y = mag.field_ut[1].0;
         let mag_z = mag.field_ut[2].0;
 
-        // Step 2: Field Strength Validation
+        // Step 2: Field Strength Validation // COV:EXCL(phantom DA: grcov debug-info attribution onto this comment line)
         let mag_norm = (mag_x * mag_x + mag_y * mag_y + mag_z * mag_z).sqrt();
         if mag_norm < self.config.mag_field_min || mag_norm > self.config.mag_field_max {
             return;
@@ -130,7 +216,7 @@ impl Ekf {
         //
         // Projecting the body field through the FULL body→NED rotation
         // reconstructs the earth field with yaw already baked in, so the
-        // resulting heading is independent of the yaw estimate and its
+        // resulting heading is independent of the yaw estimate and its // COV:EXCL(phantom DA: grcov debug-info attribution onto this comment line)
         // innovation can never correct yaw. Rotating through roll/pitch
         // only (yaw = 0) leaves the horizontal components in a level,
         // yaw-free frame, making `heading_mag` an absolute measurement
