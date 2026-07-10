@@ -148,7 +148,7 @@ impl Ekf {
     // COV:EXCL_STOP
     fn correct_baro_datum(&self, state: &mut EkfState, altitude: Scalar, datum: Scalar) {
         let var = state.baro_ref_var + BARO_DATUM_PROCESS_VAR;
-        let r_eff = self.config.meas_noise_baro + state.p_cov.get(IDX_POS + 2, IDX_POS + 2);
+        let r_eff = self.config.meas_noise_baro + state.p_cov.get(IDX_POS + 2, IDX_POS + 2); // COV:EXCL_BR(inlined-callee fold)
         let s = var + r_eff;
         if s < 1e-9 {
             return; // COV:EXCL(DEFENSIVE: datum and height variances are positive, so S > 0)

@@ -359,7 +359,7 @@ impl EkfState {
         self.vel = vel;
         self.quat = quat;
         self.gyro_bias = Vector3::new(
-            RadiansPerSecond(0.0),
+            RadiansPerSecond(0.0), // COV:EXCL_BR(inlined-callee fold)
             RadiansPerSecond(0.0),
             RadiansPerSecond(0.0),
         );
