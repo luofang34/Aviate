@@ -120,7 +120,7 @@ impl Ekf {
             k_vector[IDX_ATT] * innov,
             k_vector[IDX_ATT + 1] * innov,
             k_vector[IDX_ATT + 2] * innov,
-        );
+        ); // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
         let dq_small = state.sanitize_quat(Quaternion::new(
             1.0,
             d_ang.x * 0.5,
@@ -210,11 +210,11 @@ impl Ekf {
         state.vel.x = MetersPerSecond(state.vel.x.0 + k_vector[IDX_VEL] * innov);
         state.vel.y = MetersPerSecond(state.vel.y.0 + k_vector[IDX_VEL + 1] * innov);
         state.vel.z = MetersPerSecond(state.vel.z.0 + k_vector[IDX_VEL + 2] * innov);
-
+        // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
         state.gyro_bias.x = RadiansPerSecond(state.gyro_bias.x.0 + k_vector[IDX_GB] * innov);
         state.gyro_bias.y = RadiansPerSecond(state.gyro_bias.y.0 + k_vector[IDX_GB + 1] * innov);
         state.gyro_bias.z = RadiansPerSecond(state.gyro_bias.z.0 + k_vector[IDX_GB + 2] * innov);
-
+        // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
         state.accel_bias.x =
             MetersPerSecondSquared(state.accel_bias.x.0 + k_vector[IDX_AB] * innov);
         state.accel_bias.y =
@@ -222,24 +222,24 @@ impl Ekf {
         state.accel_bias.z =
             MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
         self.clamp_biases(state);
-
-        // Attitude update (linearized error). Global (nav-frame)
+        // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
+        // Attitude update (linearized error). Global (nav-frame) // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
         // error state ⇒ left multiply — see the frame-convention
-        // note in `heading_update`.
+        // note in `heading_update`. // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
         let d_ang = Vector3::new(
             k_vector[IDX_ATT] * innov,
             k_vector[IDX_ATT + 1] * innov,
             k_vector[IDX_ATT + 2] * innov,
-        );
+        ); // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
         let dq_small = state.sanitize_quat(Quaternion::new(
             1.0,
             d_ang.x * 0.5,
             d_ang.y * 0.5,
             d_ang.z * 0.5,
-        ));
+        )); // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
         let new_quat = dq_small.mul(&state.quat);
         state.quat = state.sanitize_quat(new_quat);
-
+        // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
         true
     }

@@ -174,3 +174,63 @@ fn attitude_correction_is_applied_in_the_nav_frame() {
         "correction must not disturb roll or yaw: roll {roll:.5}, yaw {yaw:.5}"
     );
 }
+
+/// Bias states clamp to their configured physical limits: a fusion
+/// whose covariance cross-terms would walk gyro/accel bias to absurd
+/// values (the #123 pump walked gyro-bias-z to -1.8 rad/s) must land
+/// exactly on the bound, in both directions.
+#[test]
+fn bias_states_clamp_to_configured_limits() {
+    let config = EkfConfig::default();
+    let ekf = Ekf::new(config);
+
+    for sign in [1.0f32, -1.0] {
+        let mut state = EkfState::default();
+        state.init(
+            Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+            Vector3::new(
+                MetersPerSecond(0.0),
+                MetersPerSecond(0.0),
+                MetersPerSecond(0.0),
+            ),
+            Quaternion::IDENTITY,
+        );
+        // Enormous cross-covariance between vel-N (state 3) and every
+        // bias state (9..15): one big velocity innovation then tries
+        // to push each bias far past its physical limit.
+        for b in 9..15 {
+            state.p_cov.set(3, b, 50.0);
+            state.p_cov.set(b, 3, 50.0);
+        }
+        // Innovation sized to pass the 5σ gate (s = P(3,3) + r = 0.2,
+        // so |innov| must stay under √(25·0.2) ≈ 2.24) while the
+        // planted cross-terms give a bias gain of 50/0.2 = 250 —
+        // far past every clamp.
+        let mut gnss = gnss_at_rest();
+        gnss.value.velocity_ned[0] = MetersPerSecond(sign * 2.0);
+        ekf.update_gnss_state(&mut state, &gnss);
+
+        for (axis, v) in [
+            ("x", state.gyro_bias.x.0),
+            ("y", state.gyro_bias.y.0),
+            ("z", state.gyro_bias.z.0),
+        ] {
+            assert!(
+                (v.abs() - config.gyro_bias_limit).abs() < 1e-6,
+                "gyro bias {axis} must sit on the ±{} clamp, got {v}",
+                config.gyro_bias_limit
+            );
+        }
+        for (axis, v) in [
+            ("x", state.accel_bias.x.0),
+            ("y", state.accel_bias.y.0),
+            ("z", state.accel_bias.z.0),
+        ] {
+            assert!(
+                (v.abs() - config.accel_bias_limit).abs() < 1e-5,
+                "accel bias {axis} must sit on the ±{} clamp, got {v}",
+                config.accel_bias_limit
+            );
+        }
+    }
+}

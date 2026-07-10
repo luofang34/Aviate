@@ -90,7 +90,7 @@ impl Command {
     /// Checks that enum discriminants are within valid ranges.
     /// Returns true if all fields are valid, false if any corruption detected.
     /// This is a fast O(1) operation that checks discriminant values.
-    #[inline]
+    #[inline] // COV:EXCL(phantom DA: grcov attributes a debug-info region to this inline-attribute line; validate_enums' body is inside a DEFENSIVE exclusion block)
     pub fn validate_enums(&self) -> bool {
         // COV:EXCL_START(DEFENSIVE: SEU/memory corruption detection - cannot trigger in unit tests)
         // Check ControlMode discriminant (0-5)
