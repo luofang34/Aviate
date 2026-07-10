@@ -54,6 +54,7 @@ fn p_step(
         current,
         AccelFeedforward::default(),
         current_att,
+        None,
         0.0,
     )
 }
@@ -461,6 +462,7 @@ fn vertical_d_term_adds_brake_on_rising_descent() {
         at_rest,
         AccelFeedforward::default(),
         &Quaternion::IDENTITY,
+        None,
         0.01,
     );
     // Cycle 2: vertical velocity has risen to +0.5 m/s (descending). Both
@@ -477,6 +479,7 @@ fn vertical_d_term_adds_brake_on_rising_descent() {
         descending,
         AccelFeedforward::default(),
         &Quaternion::IDENTITY,
+        None,
         0.01,
     );
     assert!(
