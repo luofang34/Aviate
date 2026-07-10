@@ -245,9 +245,9 @@ mod tests {
         let mixer = QuadXMixer {
             timestamp_source: dummy_timestamp,
         };
-        // High collective + roll
-        // t=0.9, r=0.2
-        // M1 = 0.9 + 0.2 = 1.1 -> clamped to 1.0
+        // High collective + roll: t=0.9, r=0.2. Desaturation lowers
+        // collective to 0.8 so the full ±0.2 roll differential
+        // survives on every motor instead of truncating M1/M2.
         let axis = AxisCommand {
             roll: NormalizedSigned(0.2),
             pitch: NormalizedSigned(0.0),
@@ -257,7 +257,10 @@ mod tests {
 
         let cmd = mixer.mix(&axis);
 
+        assert!((cmd.outputs[0].0 - 0.6).abs() < 1e-5);
         assert!((cmd.outputs[1].0 - 1.0).abs() < 1e-5);
+        assert!((cmd.outputs[2].0 - 1.0).abs() < 1e-5);
+        assert!((cmd.outputs[3].0 - 0.6).abs() < 1e-5);
     }
 
     // =========================================================================
@@ -733,17 +736,20 @@ mod tests {
     }
 
     /// Test mixer saturation handling with combined axis inputs.
-    /// Verifies that when total demand exceeds motor capacity,
-    /// outputs are clamped symmetrically preserving attitude authority.
+    /// When total demand exceeds motor capacity, the mixer resolves
+    /// by priority — roll/pitch keep their differential, collective
+    /// shifts to make room, yaw is clipped to the remaining headroom
+    /// — instead of truncating whichever motor happens to saturate.
     #[test]
     fn test_mixer_saturation_priority() {
         let mixer = QuadXMixer {
             timestamp_source: dummy_timestamp,
         };
 
-        // Scenario 1: High thrust + maximum roll
-        // t=0.9, r=0.5 -> M1 = 0.9+0.5 = 1.4 (clamped to 1.0)
-        //               -> M0 = 0.9-0.5 = 0.4
+        // Scenario 1: High thrust + maximum roll. The ±0.5 roll
+        // differential needs the full [0, 1] span, so collective
+        // centers at 0.5 and the delivered roll moment is exactly
+        // what was commanded.
         let axis1 = AxisCommand {
             roll: NormalizedSigned(0.5),
             pitch: NormalizedSigned(0.0),
@@ -753,21 +759,17 @@ mod tests {
 
         let cmd1 = mixer.mix(&axis1);
 
-        // Verify clamping behavior
-        assert_eq!(cmd1.outputs[1].0, 1.0, "M1 should be clamped to 1.0");
-        assert!((cmd1.outputs[0].0 - 0.4).abs() < 1e-5, "M0 should be 0.4");
-        // M2 = t + r = 1.4 clamped to 1.0
-        assert_eq!(cmd1.outputs[2].0, 1.0, "M2 should be clamped to 1.0");
-        // M3 = t - r = 0.4
-        assert!((cmd1.outputs[3].0 - 0.4).abs() < 1e-5, "M3 should be 0.4");
+        assert!((cmd1.outputs[0].0 - 0.0).abs() < 1e-5, "M0 = 0.0");
+        assert_eq!(cmd1.outputs[1].0, 1.0, "M1 = 1.0");
+        assert_eq!(cmd1.outputs[2].0, 1.0, "M2 = 1.0");
+        assert!((cmd1.outputs[3].0 - 0.0).abs() < 1e-5, "M3 = 0.0");
 
-        // Scenario 2: Combined roll + pitch + yaw saturation
-        // Tests that all axes contribute even when saturating
-        // t=0.8, r=0.3, p=0.3, y=0.2
-        // M0 = t - r + p - y = 0.8 - 0.3 + 0.3 - 0.2 = 0.6
-        // M1 = t + r + p + y = 0.8 + 0.3 + 0.3 + 0.2 = 1.6 → 1.0
-        // M2 = t + r - p + y = 0.8 + 0.3 - 0.3 + 0.2 = 1.0
-        // M3 = t - r - p - y = 0.8 - 0.3 - 0.3 - 0.2 = 0.0
+        // Scenario 2: Combined roll + pitch + yaw saturation.
+        // Roll/pitch spans [-0.6, 0.6] = 1.2 → scaled by 1/1.2 to
+        // [-0.5, 0.5]; collective centers at 0.5; the pre-yaw
+        // outputs [0.5, 1.0, 0.5, 0.0] leave no yaw headroom, so
+        // the +0.2 yaw command is dropped for this cycle rather
+        // than eating collective off the saturated motors.
         let axis2 = AxisCommand {
             roll: NormalizedSigned(0.3),
             pitch: NormalizedSigned(0.3),
@@ -777,15 +779,17 @@ mod tests {
 
         let cmd2 = mixer.mix(&axis2);
 
-        assert!((cmd2.outputs[0].0 - 0.6).abs() < 1e-5, "M0 = 0.6");
-        assert_eq!(cmd2.outputs[1].0, 1.0, "M1 clamped to 1.0");
-        assert!((cmd2.outputs[2].0 - 1.0).abs() < 1e-5, "M2 = 1.0");
+        assert!((cmd2.outputs[0].0 - 0.5).abs() < 1e-5, "M0 = 0.5");
+        assert_eq!(cmd2.outputs[1].0, 1.0, "M1 = 1.0");
+        assert!((cmd2.outputs[2].0 - 0.5).abs() < 1e-5, "M2 = 0.5");
         assert!((cmd2.outputs[3].0 - 0.0).abs() < 1e-5, "M3 = 0.0");
 
-        // Scenario 3: Negative saturation (low thrust with large control demand)
-        // t=0.1, r=0.3
-        // M0 = 0.1 - 0.3 = -0.2 → 0.0
-        // M3 = 0.1 - 0.3 = -0.2 → 0.0
+        // Scenario 3: Low thrust with large roll demand. Collective
+        // boosts from 0.1 to 0.3 so the ±0.3 differential survives
+        // instead of being floored at zero on M0/M3. (The
+        // controller's thrust gate zeroes the axes when collective
+        // is essentially zero, so this boost cannot spin motors on
+        // the ground.)
         let axis3 = AxisCommand {
             roll: NormalizedSigned(0.3),
             pitch: NormalizedSigned(0.0),
@@ -795,10 +799,10 @@ mod tests {
 
         let cmd3 = mixer.mix(&axis3);
 
-        assert_eq!(cmd3.outputs[0].0, 0.0, "M0 clamped to 0.0");
-        assert_eq!(cmd3.outputs[3].0, 0.0, "M3 clamped to 0.0");
-        // M1 = 0.1 + 0.3 = 0.4
-        assert!((cmd3.outputs[1].0 - 0.4).abs() < 1e-5, "M1 = 0.4");
+        assert_eq!(cmd3.outputs[0].0, 0.0, "M0 = 0.0");
+        assert_eq!(cmd3.outputs[3].0, 0.0, "M3 = 0.0");
+        assert!((cmd3.outputs[1].0 - 0.6).abs() < 1e-5, "M1 = 0.6");
+        assert!((cmd3.outputs[2].0 - 0.6).abs() < 1e-5, "M2 = 0.6");
     }
 
     // =========================================================================

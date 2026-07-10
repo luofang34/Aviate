@@ -95,9 +95,9 @@ impl CascadeGains {
     /// * `vel_i` — small velocity I for hover-trim drift; sized
     ///   so a 1-second wind-up at maximum unsaturated error
     ///   contributes ≤ 5 % of hover thrust (one trim-step).
-    /// * `rate_d` — yaw left at zero (the airframe is yaw-
-    ///   damped by rotor drag); roll / pitch get a small D term
-    ///   that the LPF smooths against gyro noise.
+    /// * `rate_d` — roll / pitch rely on the LPF-smoothed D term
+    ///   hook (currently zero); yaw gets a non-zero D to damp the
+    ///   overshoot its hot P gain would otherwise ring with.
     pub fn x500_defaults() -> Self {
         Self {
             // Vertical gains sized for the X500's actual brake
@@ -162,9 +162,20 @@ impl CascadeGains {
             // margin) and ωn ≈ √(3.5 · 74 · 0.30) ≈ 8.8 rad/s,
             // settle ≈ 0.5 s with ζ ≈ 1.26 (overdamped — no
             // overshoot).
-            att_p: [3.5, 3.5, 1.5],
-            rate_p: [0.30, 0.30, 0.15],
-            rate_d: [0.0, 0.0, 0.0],
+            //
+            // The yaw axis runs much hotter than roll/pitch
+            // because the plant is much weaker: quad yaw torque
+            // comes from rotor drag (the X500's momentConstant of
+            // 0.016 puts yaw authority ~60× below thrust per unit
+            // output), so matching roll/pitch-style gains tracks
+            // only a fraction of the commanded heading rate. The
+            // mixer's priority desaturation clips what the yaw
+            // loop over-asks rather than letting it starve
+            // collective, and the yaw rate D term damps the
+            // overshoot a P-only loop rings with at this gain.
+            att_p: [3.5, 3.5, 2.5],
+            rate_p: [0.30, 0.30, 0.60],
+            rate_d: [0.0, 0.0, 0.05],
             rate_d_lpf_alpha: 0.5,
         }
     }

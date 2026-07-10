@@ -38,7 +38,15 @@
 "controller.vtol.v1"        = 0x4354_4C56_544F_4C31  # VtolController
 
 [mixer]
-"mixer.quad_x.v1" = 0x4D49_5851_5541_4458  # QuadXMixer
+"mixer.quad_x.v2"      = 0x4D49_5851_5541_4432  # QuadXMixer
+"mixer.quad_x_x500.v2" = 0x4D49_5851_5835_5632  # QuadXMixerX500
+# Retired: "mixer.quad_x.v1" = 0x4D49_5851_5541_4458 and
+# QuadXMixerX500's pre-registry ID 0x4D49_5851_5435_3030. v1 mixers
+# clamped each motor independently, silently truncating whichever
+# axis pushed a motor past its limit; v2 resolves saturation by
+# priority (roll/pitch > collective > yaw), so saturated-regime
+# outputs differ and a v1 image must not match a v2 one at the
+# lockstep gate.
 
 [sanitizer]
 "sanitizer.group_aware.v1" = 0x5341_4E47_5250_5631  # Sanitizer

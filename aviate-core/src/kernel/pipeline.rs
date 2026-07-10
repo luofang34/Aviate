@@ -200,10 +200,12 @@ mod tests {
         // exists to catch.
         //
         // This value reflects the Ekf identity `ETIMEKF2`
-        // ("ekf.basic-15state.v1"): the mag-bias state was removed, so
-        // the estimator shape and its cross-channel witness changed
-        // deliberately from the retired 18-state identity.
-        const EXPECTED: u64 = 0xa602_9a14_2d76_a3ef;
+        // ("ekf.basic-15state.v1") and the mixer identity `MIXQUAD2`
+        // ("mixer.quad_x.v2"): the mixer moved from per-motor
+        // clamping to priority desaturation, which changes
+        // saturated-regime outputs, so its cross-channel witness
+        // changed deliberately from the retired v1 identity.
+        const EXPECTED: u64 = 0xd3aa_3c8b_11a4_5831;
         let actual = make_pipeline().algorithm_identity_hash();
         assert_eq!(
             actual, EXPECTED,
