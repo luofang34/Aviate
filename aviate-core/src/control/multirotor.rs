@@ -227,8 +227,14 @@ impl VehicleController for MultirotorController {
     type RuntimeState = MultirotorRuntimeState;
 
     // Registered in cert/algorithm_id_registry.toml as
-    // "controller.multirotor.v1".
-    const ALGORITHM_ID: u64 = 0x4354_4C4D_5552_5631; // "CTLMURV1"
+    // "controller.multirotor.v2" — v2 rotates the velocity loop's
+    // NED acceleration command into the heading frame before
+    // deriving roll/pitch; v1 skipped the rotation, which is only
+    // correct at yaw 0 and turns the horizontal loop anti-corrective
+    // past 90° of heading (#110). Same cascade structure, different
+    // control arithmetic, so a v1 image must not match a v2 one at
+    // the lockstep gate.
+    const ALGORITHM_ID: u64 = 0x4354_4C4D_5552_5632; // "CTLMURV2"
 
     fn step(
         &self,

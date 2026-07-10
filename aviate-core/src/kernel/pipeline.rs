@@ -201,11 +201,13 @@ mod tests {
         //
         // This value reflects the Ekf identity `ETIMEKF3`
         // ("ekf.basic-15state.v2", global-frame attitude-error
-        // corrections) and the mixer identity `MIXQUAD2`
-        // ("mixer.quad_x.v2", priority desaturation): both moved
-        // deliberately off their retired v1 identities because their
-        // numerical behavior changed while their state shapes did not.
-        const EXPECTED: u64 = 0x5d5b_e32f_d83f_8014;
+        // corrections), the controller identity `CTLMURV2`
+        // ("controller.multirotor.v2", heading-frame tilt mapping),
+        // and the mixer identity `MIXQUAD2` ("mixer.quad_x.v2",
+        // priority desaturation): each moved deliberately off its
+        // retired v1 identity because its numerical behavior changed
+        // while its state shape did not.
+        const EXPECTED: u64 = 0x0d08_c65b_500f_2247;
         let actual = make_pipeline().algorithm_identity_hash();
         assert_eq!(
             actual, EXPECTED,

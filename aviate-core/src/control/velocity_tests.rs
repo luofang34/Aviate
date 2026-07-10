@@ -307,3 +307,93 @@ fn heading_error_wraps_across_minus_pi() {
         "short-way wrap expected, got applied yaw {yaw}"
     );
 }
+
+/// The NED acceleration command must rotate into the heading frame
+/// before becoming roll/pitch: those tilts compose AFTER the yaw
+/// quaternion, so they are body-frame quantities. At yaw = +90°
+/// (nose east) a NORTH velocity demand lies off the vehicle's LEFT
+/// wing — the tilt must be a negative (left-wing-down) roll with no
+/// meaningful pitch. The unrotated mapping produces nose-down pitch
+/// instead (a push toward the vehicle's nose = east — 90° wrong),
+/// which turns the horizontal loop into positive feedback past 90°
+/// of heading and spirals position holds away (#110).
+#[test]
+fn tilt_command_rotates_with_heading() {
+    let c = ctrl(0.5);
+    let mut s = VelocityLoopState::default();
+    let east = Quaternion::from_axis_angle(
+        crate::math::Vector3::new(0.0, 0.0, 1.0),
+        core::f32::consts::FRAC_PI_2,
+    );
+    let sp_north = Vector3::new(
+        MetersPerSecond(1.0),
+        MetersPerSecond(0.0),
+        MetersPerSecond(0.0),
+    );
+    let out = c.step(
+        &mut s,
+        sp_north,
+        zero_vel(),
+        AccelFeedforward::default(),
+        &east,
+        None,
+        0.0,
+    );
+    // Decompose the attitude setpoint as yaw ⊗ tilt: tilt = yaw⁻¹ ⊗ q.
+    let yaw_inv = Quaternion::from_axis_angle(
+        crate::math::Vector3::new(0.0, 0.0, 1.0),
+        -core::f32::consts::FRAC_PI_2,
+    );
+    let tilt = yaw_inv.mul(&out.attitude);
+    let (roll, pitch, _) = tilt.to_euler();
+    assert!(
+        roll < -0.01,
+        "north demand at nose-east must be left-wing-down roll, got roll={roll}"
+    );
+    assert!(
+        pitch.abs() < 0.01,
+        "north demand at nose-east must not pitch, got pitch={pitch}"
+    );
+}
+
+/// Same probe at yaw = 180°: a north demand must become nose-UP
+/// pitch (the target is behind the vehicle). The unrotated mapping
+/// commands nose-down — directly away from the setpoint, the
+/// anti-corrective regime.
+#[test]
+fn tilt_command_inverts_at_180_deg_heading() {
+    let c = ctrl(0.5);
+    let mut s = VelocityLoopState::default();
+    let south_facing = Quaternion::from_axis_angle(
+        crate::math::Vector3::new(0.0, 0.0, 1.0),
+        core::f32::consts::PI,
+    );
+    let sp_north = Vector3::new(
+        MetersPerSecond(1.0),
+        MetersPerSecond(0.0),
+        MetersPerSecond(0.0),
+    );
+    let out = c.step(
+        &mut s,
+        sp_north,
+        zero_vel(),
+        AccelFeedforward::default(),
+        &south_facing,
+        None,
+        0.0,
+    );
+    let yaw_inv = Quaternion::from_axis_angle(
+        crate::math::Vector3::new(0.0, 0.0, 1.0),
+        -core::f32::consts::PI,
+    );
+    let tilt = yaw_inv.mul(&out.attitude);
+    let (roll, pitch, _) = tilt.to_euler();
+    assert!(
+        pitch > 0.01,
+        "north demand at nose-south must be nose-up pitch, got pitch={pitch}"
+    );
+    assert!(
+        roll.abs() < 0.01,
+        "north demand at nose-south must not roll, got roll={roll}"
+    );
+}
