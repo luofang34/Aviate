@@ -52,6 +52,22 @@ fn joseph_scalar_cov_update(
 }
 
 impl Ekf {
+    /// Clamp both bias blocks to their configured physical limits.
+    /// A Kalman update is free to *propose* any bias, but a MEMS
+    /// bias beyond tens of mrad/s (gyro) or a few dm/s² (accel) is
+    /// the filter mis-attributing vehicle motion to bias; letting it
+    /// stand hands predict a phantom rate to integrate every cycle.
+    fn clamp_biases(&self, state: &mut EkfState) {
+        let g = self.config.gyro_bias_limit;
+        state.gyro_bias.x = RadiansPerSecond(state.gyro_bias.x.0.clamp(-g, g));
+        state.gyro_bias.y = RadiansPerSecond(state.gyro_bias.y.0.clamp(-g, g));
+        state.gyro_bias.z = RadiansPerSecond(state.gyro_bias.z.0.clamp(-g, g));
+        let a = self.config.accel_bias_limit;
+        state.accel_bias.x = MetersPerSecondSquared(state.accel_bias.x.0.clamp(-a, a));
+        state.accel_bias.y = MetersPerSecondSquared(state.accel_bias.y.0.clamp(-a, a));
+        state.accel_bias.z = MetersPerSecondSquared(state.accel_bias.z.0.clamp(-a, a));
+    }
+
     /// Internal: Update yaw/heading using scalar observation.
     ///
     /// H = [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, ..., 0] (observes z-component of attitude error)
@@ -133,6 +149,7 @@ impl Ekf {
             MetersPerSecondSquared(state.accel_bias.y.0 + k_vector[IDX_AB + 1] * innov);
         state.accel_bias.z =
             MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
+        self.clamp_biases(state);
 
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
     }
@@ -204,6 +221,7 @@ impl Ekf {
             MetersPerSecondSquared(state.accel_bias.y.0 + k_vector[IDX_AB + 1] * innov);
         state.accel_bias.z =
             MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
+        self.clamp_biases(state);
 
         // Attitude update (linearized error). Global (nav-frame)
         // error state ⇒ left multiply — see the frame-convention
