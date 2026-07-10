@@ -342,9 +342,12 @@ impl VehicleController for MultirotorController {
         // commanded collective is essentially zero we treat
         // the airframe as on the ground and silence axis
         // control. Mid-flight the cascade keeps running even
-        // at low collective; the mixer's per-motor `[0, 1]`
-        // clamp absorbs any residual roll/pitch demand the
-        // collective can't physically support.
+        // at low collective; the mixer's priority desaturation
+        // resolves any roll/pitch demand the collective can't
+        // physically support. This gate is also what keeps the
+        // desaturation's collective boost from spinning motors
+        // on the ground — with the axes silenced the boost is a
+        // no-op.
         const DISARMED_THRESHOLD: Scalar = 0.02;
         if collective_sp.0 < DISARMED_THRESHOLD {
             runtime.velocity_loop.reset();

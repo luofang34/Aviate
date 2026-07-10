@@ -32,79 +32,57 @@ pub struct QuadXMixer {
     pub timestamp_source: fn() -> Timestamp,
 }
 
+/// Per-motor axis signs for [`QuadXMixer`]:
+///
+/// ```text
+///   m0 = t − r + p − y      m1 = t + r + p + y
+///   m2 = t + r − p + y      m3 = t − r − p − y
+/// ```
+///
+/// Roll (+right) lowers the right side (M0/M3), pitch (+nose-up)
+/// raises the front (M0/M1), and +yaw (CW) raises the CCW motors
+/// (M1/M2) whose reaction torque is CW.
+const QUAD_X_SIGNS: desaturate::QuadSigns = desaturate::QuadSigns {
+    roll: [-1.0, 1.0, 1.0, -1.0],
+    pitch: [1.0, 1.0, -1.0, -1.0],
+    yaw: [-1.0, 1.0, 1.0, -1.0],
+};
+
 impl Mixer for QuadXMixer {
     // Registered in cert/algorithm_id_registry.toml as
-    // "mixer.quad_x.v1".
-    const ALGORITHM_ID: u64 = 0x4D49_5851_5541_4458; // "MIXQUADX"
+    // "mixer.quad_x.v2" — v2 replaced per-motor clamping with
+    // priority desaturation (see `desaturate`), which changes the
+    // saturated-regime outputs, so lockstep must not match a v1
+    // image.
+    const ALGORITHM_ID: u64 = 0x4D49_5851_5541_4432; // "MIXQUAD2"
 
     fn mix(&self, axis: &AxisCommand) -> ActuatorCmd {
-        let t = axis.collective.0; // [0, 1]
-        let r = axis.roll.0; // [-1, 1]
-        let p = axis.pitch.0; // [-1, 1]
-        let y = axis.yaw.0; // [-1, 1]
+        quad_actuator_cmd(
+            desaturate::mix_desaturated(
+                axis.collective.0,
+                axis.roll.0,
+                axis.pitch.0,
+                axis.yaw.0,
+                &QUAD_X_SIGNS,
+            ),
+            (self.timestamp_source)(),
+        )
+    }
+}
 
-        // Standard X-config mixing:
-        // M0 (front-right, CW):  +roll -pitch +yaw
-        // M1 (front-left, CCW):  -roll -pitch -yaw
-        // M2 (rear-left, CW):    -roll +pitch +yaw
-        // M3 (rear-right, CCW):  +roll +pitch -yaw
-
-        let _m0 = t - r + p + y; // M0: Front Right (CW) -> -Roll, +Pitch, +Yaw (Wait, standard is +Roll? FR is +X +Y? No, FR is +X -Y (NED?))
-                                 // Spec does not define motor mapping explicitly yet.
-                                 // Standard PX4/ArduPilot Quad X:
-                                 // 1 (FR, CCW) - 3 (RL, CCW)
-                                 //    \ /
-                                 //    / \
-                                 // 2 (FL, CW) - 4 (RR, CW)
-                                 // Let's stick to the layout in the prompt comment:
-                                 //   0(CW)   1(CCW)  (Front)
-                                 //      \   /
-                                 //       [X]
-                                 //      /   \
-                                 //   2(CCW)  3(CW)   (Rear)
-                                 //
-                                 // Roll (+ right):  M0(Right) down/up?, M3(Right) down/up?
-                                 // Right roll -> Right side down (thrust decrease), Left side up (thrust increase).
-                                 // M0 (FR), M3 (RR) -> Decrease. (- roll)
-                                 // M1 (FL), M2 (RL) -> Increase. (+ roll)
-                                 //
-                                 // Pitch (+ nose up): Front up, Rear down.
-                                 // M0 (FR), M1 (FL) -> Increase (+ pitch)
-                                 // M2 (RL), M3 (RR) -> Decrease (- pitch)
-                                 //
-                                 // Yaw (+ CW): CW motors torque left (anti-torque right). To yaw right (CW), increase CCW motors, decrease CW?
-                                 // No, to yaw right (CW), body torque must be CW. Motors apply torque opposite to spin.
-                                 // CW motors (0, 3) apply CCW torque. CCW motors (1, 2) apply CW torque.
-                                 // To yaw CW (positive), we need net CW torque. So increase CCW motors (1, 2), decrease CW motors (0, 3).
-                                 //
-                                 // Summary:
-                                 // M0 (FR, CW):  -roll +pitch -yaw
-                                 // M1 (FL, CCW): +roll +pitch +yaw
-                                 // M2 (RL, CCW): +roll -pitch +yaw
-                                 // M3 (RR, CW):  -roll -pitch -yaw
-
-        // Let's implement THIS logic.
-
-        let m0 = t - r + p - y;
-        let m1 = t + r + p + y;
-        let m2 = t + r - p + y;
-        let m3 = t - r - p - y;
-
-        // Clamp to [0, 1]
-        let mut outputs = [Normalized(0.0); MAX_ACTUATORS];
-        outputs[0] = Normalized(m0.clamp(0.0, 1.0));
-        outputs[1] = Normalized(m1.clamp(0.0, 1.0));
-        outputs[2] = Normalized(m2.clamp(0.0, 1.0));
-        outputs[3] = Normalized(m3.clamp(0.0, 1.0));
-
-        ActuatorCmd {
-            outputs,
-            active_mask: 0b1111,
-            sequence: 0,
-            timestamp: (self.timestamp_source)(),
-            fallback_mask: 0,
-            sanitized: false,
-        }
+/// Packs four desaturated motor outputs into an [`ActuatorCmd`].
+fn quad_actuator_cmd(motors: [crate::types::Scalar; 4], timestamp: Timestamp) -> ActuatorCmd {
+    let mut outputs = [Normalized(0.0); MAX_ACTUATORS];
+    for (out, m) in outputs.iter_mut().zip(motors) {
+        *out = Normalized(m);
+    }
+    ActuatorCmd {
+        outputs,
+        active_mask: 0b1111,
+        sequence: 0,
+        timestamp,
+        fallback_mask: 0,
+        sanitized: false,
     }
 }
 
@@ -130,43 +108,38 @@ pub struct QuadXMixerX500 {
     pub timestamp_source: fn() -> Timestamp,
 }
 
+/// Per-motor axis signs for [`QuadXMixerX500`]. Roll and pitch
+/// follow physical position; yaw sign follows the spin direction's
+/// reaction torque on the body — CCW motors produce +CW body torque
+/// (so +yaw means more thrust on CCW motors):
+///
+/// ```text
+///   rotor_0: FR, CCW → −r +p +y      rotor_1: RL, CCW → +r −p +y
+///   rotor_2: FL, CW  → +r +p −y      rotor_3: RR, CW  → −r −p −y
+/// ```
+const QUAD_X500_SIGNS: desaturate::QuadSigns = desaturate::QuadSigns {
+    roll: [-1.0, 1.0, 1.0, -1.0],
+    pitch: [1.0, -1.0, 1.0, -1.0],
+    yaw: [1.0, 1.0, -1.0, -1.0],
+};
+
 impl Mixer for QuadXMixerX500 {
-    const ALGORITHM_ID: u64 = 0x4D49_5851_5435_3030; // "MIXQX500"
+    // Registered in cert/algorithm_id_registry.toml as
+    // "mixer.quad_x_x500.v2" — v2 for the same desaturation change
+    // as "mixer.quad_x.v2".
+    const ALGORITHM_ID: u64 = 0x4D49_5851_5835_5632; // "MIXQX5V2"
 
     fn mix(&self, axis: &AxisCommand) -> ActuatorCmd {
-        let t = axis.collective.0;
-        let r = axis.roll.0;
-        let p = axis.pitch.0;
-        let y = axis.yaw.0;
-
-        // Per-motor formulas. Roll and pitch follow physical
-        // position. Yaw sign follows the spin direction's reaction
-        // torque on the body — CCW motors produce +CW body torque
-        // (so +yaw command means more thrust on CCW motors).
-        //
-        //   rotor_0: FR, CCW → -r +p +y
-        //   rotor_1: RL, CCW → +r -p +y
-        //   rotor_2: FL, CW  → +r +p -y
-        //   rotor_3: RR, CW  → -r -p -y
-        let m0 = t - r + p + y;
-        let m1 = t + r - p + y;
-        let m2 = t + r + p - y;
-        let m3 = t - r - p - y;
-
-        let mut outputs = [Normalized(0.0); MAX_ACTUATORS];
-        outputs[0] = Normalized(m0.clamp(0.0, 1.0));
-        outputs[1] = Normalized(m1.clamp(0.0, 1.0));
-        outputs[2] = Normalized(m2.clamp(0.0, 1.0));
-        outputs[3] = Normalized(m3.clamp(0.0, 1.0));
-
-        ActuatorCmd {
-            outputs,
-            active_mask: 0b1111,
-            sequence: 0,
-            timestamp: (self.timestamp_source)(),
-            fallback_mask: 0,
-            sanitized: false,
-        }
+        quad_actuator_cmd(
+            desaturate::mix_desaturated(
+                axis.collective.0,
+                axis.roll.0,
+                axis.pitch.0,
+                axis.yaw.0,
+                &QUAD_X500_SIGNS,
+            ),
+            (self.timestamp_source)(),
+        )
     }
 }
 
@@ -495,6 +468,7 @@ pub struct Sanitizer;
 // 500-line per-.rs cap. No re-export here — rustc's coverage phantom-DA
 // issue triggers on `pub use submodule::X`, not on method-carrying impl
 // blocks split across files.
+mod desaturate;
 mod replicable;
 mod sanitizer_impl;
 // COV:EXCL_STOP
