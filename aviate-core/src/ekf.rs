@@ -315,7 +315,7 @@ fn initial_covariance() -> Matrix<STATE_DIM, STATE_DIM> {
 
 impl EkfState {
     /// Construct a fresh state with the initial-uncertainty
-    /// covariance from [`initial_covariance`]. All other fields are
+    /// covariance from `initial_covariance`. All other fields are
     /// zero / identity.
     pub fn new() -> Self {
         Self {
