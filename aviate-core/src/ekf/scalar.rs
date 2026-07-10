@@ -221,23 +221,27 @@ impl Ekf {
             MetersPerSecondSquared(state.accel_bias.y.0 + k_vector[IDX_AB + 1] * innov);
         state.accel_bias.z =
             MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
-        self.clamp_biases(state);
-        // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
-        // Attitude update (linearized error). Global (nav-frame) // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
-        // error state ⇒ left multiply — see the frame-convention
-        // note in `heading_update`. // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
-        let d_ang = Vector3::new(
-            k_vector[IDX_ATT] * innov,
-            k_vector[IDX_ATT + 1] * innov,
-            k_vector[IDX_ATT + 2] * innov,
-        ); // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
+        // Saturation branches of the inlined clamp are exercised
+        // directly by bias_states_clamp_to_configured_limits.
+        self.clamp_biases(state); // COV:EXCL_BR(inlined-callee fold)
+                                  // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
+                                  // Attitude update (linearized error). Global (nav-frame) // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
+                                  // error state ⇒ left multiply — see the frame-convention
+                                  // note in `heading_update`. // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
+        let d_ang = Vector3 {
+            x: k_vector[IDX_ATT] * innov,
+            y: k_vector[IDX_ATT + 1] * innov,
+            z: k_vector[IDX_ATT + 2] * innov,
+        }; // COV:EXCL(phantom DA: debug-info region on a non-executable line)
         let dq_small = state.sanitize_quat(Quaternion::new(
             1.0,
             d_ang.x * 0.5,
             d_ang.y * 0.5,
             d_ang.z * 0.5,
         )); // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
-        let new_quat = dq_small.mul(&state.quat);
+            // The inlined callee's INV-27 guard is DEFENSIVE-excluded
+            // at its definition site.
+        let new_quat = dq_small.mul(&state.quat); // COV:EXCL_BR(inlined-callee fold)
         state.quat = state.sanitize_quat(new_quat);
         // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
