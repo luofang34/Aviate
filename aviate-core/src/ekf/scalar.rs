@@ -89,7 +89,17 @@ impl Ekf {
         state.vel.y = MetersPerSecond(state.vel.y.0 + k_vector[IDX_VEL + 1] * innov);
         state.vel.z = MetersPerSecond(state.vel.z.0 + k_vector[IDX_VEL + 2] * innov);
 
-        // Update attitude
+        // Update attitude. The attitude-error state is GLOBAL
+        // (nav-frame): the predict Jacobians are dVel/dAtt = -[R·a]×
+        // and dAtt/dGyroBias = -R·dt with no -[ω]× term in the
+        // attitude block — all the global-convention forms. A global
+        // δθ applies as q ← δq ⊗ q (left multiply). Right-multiplying
+        // would apply the correction about BODY axes, which only
+        // coincides with the global frame while the attitude is near
+        // identity: at 90° of yaw a horizontal correction lands on
+        // the wrong axis, and past 180° it lands sign-flipped —
+        // anti-corrective, so sustained-yaw flight diverges the
+        // filter (the #123 crash signature).
         let d_ang = Vector3::new(
             k_vector[IDX_ATT] * innov,
             k_vector[IDX_ATT + 1] * innov,
@@ -101,7 +111,7 @@ impl Ekf {
             d_ang.y * 0.5,
             d_ang.z * 0.5,
         ));
-        let new_quat = state.quat.mul(&dq_small);
+        let new_quat = dq_small.mul(&state.quat);
         state.quat = state.sanitize_quat(new_quat);
 
         // Gyro bias is NOT updated from the heading (mag) scalar
@@ -195,7 +205,9 @@ impl Ekf {
         state.accel_bias.z =
             MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
 
-        // Attitude update (linearized error)
+        // Attitude update (linearized error). Global (nav-frame)
+        // error state ⇒ left multiply — see the frame-convention
+        // note in `heading_update`.
         let d_ang = Vector3::new(
             k_vector[IDX_ATT] * innov,
             k_vector[IDX_ATT + 1] * innov,
@@ -207,7 +219,7 @@ impl Ekf {
             d_ang.y * 0.5,
             d_ang.z * 0.5,
         ));
-        let new_quat = state.quat.mul(&dq_small);
+        let new_quat = dq_small.mul(&state.quat);
         state.quat = state.sanitize_quat(new_quat);
 
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
@@ -227,10 +239,12 @@ impl super::Estimator for Ekf {
     type RuntimeState = EkfState;
 
     // Registered in cert/algorithm_id_registry.toml as
-    // "ekf.basic-15state.v1". The state vector carries no mag-bias
-    // block, so its shape (and cross-channel witness) differs from
-    // the retired 18-state identity.
-    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4632; // "ETIMEKF2"
+    // "ekf.basic-15state.v2" — v2 applies attitude-error corrections
+    // in the global (nav) frame matching the covariance Jacobians;
+    // v1 applied them about body axes, which diverges under sustained
+    // yaw. Same 15-state shape, different fusion arithmetic, so a v1
+    // image must not match a v2 one at the lockstep gate.
+    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4633; // "ETIMEKF3"
 
     fn observe(
         &self,

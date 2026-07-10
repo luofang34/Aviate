@@ -199,13 +199,13 @@ mod tests {
         // exactly what spec §16 cross-channel firmware verification
         // exists to catch.
         //
-        // This value reflects the Ekf identity `ETIMEKF2`
-        // ("ekf.basic-15state.v1") and the mixer identity `MIXQUAD2`
-        // ("mixer.quad_x.v2"): the mixer moved from per-motor
-        // clamping to priority desaturation, which changes
-        // saturated-regime outputs, so its cross-channel witness
-        // changed deliberately from the retired v1 identity.
-        const EXPECTED: u64 = 0xd3aa_3c8b_11a4_5831;
+        // This value reflects the Ekf identity `ETIMEKF3`
+        // ("ekf.basic-15state.v2", global-frame attitude-error
+        // corrections) and the mixer identity `MIXQUAD2`
+        // ("mixer.quad_x.v2", priority desaturation): both moved
+        // deliberately off their retired v1 identities because their
+        // numerical behavior changed while their state shapes did not.
+        const EXPECTED: u64 = 0x5d5b_e32f_d83f_8014;
         let actual = make_pipeline().algorithm_identity_hash();
         assert_eq!(
             actual, EXPECTED,
