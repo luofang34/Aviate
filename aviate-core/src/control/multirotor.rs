@@ -204,6 +204,8 @@ impl MultirotorController {
                 current,
                 AccelFeedforward::default(),
                 &state.attitude,
+                // AltitudeHold is a manual-yaw behavior: hold current.
+                None,
                 dt_sec,
             )
             .collective
@@ -303,6 +305,7 @@ impl VehicleController for MultirotorController {
                     accel_ned: accel_ff_ned,
                 },
                 &state.attitude,
+                command.setpoint.heading,
                 dt_sec,
             );
             collective_sp = vel_out.collective;
