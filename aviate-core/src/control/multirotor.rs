@@ -74,14 +74,23 @@ impl crate::control::runtime::ControllerRuntimeState for MultirotorRuntimeState 
 }
 
 impl crate::replicable::Replicable for MultirotorRuntimeState {
-    // 13 f32 fields × 4 bytes = 52 bytes.
-    const ENCODED_LEN: usize = 52;
+    // 16 f32 lanes x 4 bytes = 64 bytes. EVERY persistent field of
+    // the runtime state must appear here: an omitted field lets two
+    // lockstep channels diverge in hidden state while comparing
+    // byte-equal, surfacing one cycle later as differing actuator
+    // outputs with no witness (#141 — last_vel_filt_ned and d_primed
+    // were missing). The per-field mutation test below is the
+    // guardrail: adding a field without encoding it fails the test.
+    const ENCODED_LEN: usize = 64;
 
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let fields: [f32; 13] = [
+        let fields: [f32; 16] = [
             self.velocity_loop.integrator_ned.x.0,
             self.velocity_loop.integrator_ned.y.0,
             self.velocity_loop.integrator_ned.z.0,
+            self.velocity_loop.last_vel_filt_ned.x.0,
+            self.velocity_loop.last_vel_filt_ned.y.0,
+            self.velocity_loop.last_vel_filt_ned.z.0,
             self.rate_loop.meas_filtered_prev.x.0,
             self.rate_loop.meas_filtered_prev.y.0,
             self.rate_loop.meas_filtered_prev.z.0,
@@ -92,13 +101,13 @@ impl crate::replicable::Replicable for MultirotorRuntimeState {
             // encoding all-f32; they're picked back up by the
             // cross-channel reader by structural shape.
             if self.vel_sp_primed { 1.0 } else { 0.0 },
+            if self.velocity_loop.d_primed {
+                1.0
+            } else {
+                0.0
+            },
             if self.rate_loop.primed { 1.0 } else { 0.0 },
             self.dt_sec,
-            // One f32 of padding so the total is a 13×4=52 →
-            // align to 54 with two bool bytes is messy; just
-            // emit 13 f32 = 52 bytes total and leave the 54
-            // constant for future per-cycle flags.
-            0.0,
         ];
         for (i, &v) in fields.iter().enumerate() {
             let bytes = v.to_le_bytes();
