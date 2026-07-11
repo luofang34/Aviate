@@ -365,9 +365,11 @@ jobs:
       - name: cargo evidence check --mode=source
         run: cargo evidence check --mode=source
 
-  sitl-missions:
-    name: SITL Missions (Gazebo XIL)
+  sitl_build:
+    name: SITL Build (Gazebo XIL)
     runs-on: ubuntu-latest
+    outputs:
+      shard_matrix: ${{ steps.shards.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -377,14 +379,11 @@ jobs:
       # from the OSRF apt repo, plus the toolchain the C++ plugin and the
       # serialport-backed gcs-test need. The plugin links protobuf via
       # gz-msgs10; libudev is a transitive serialport build dependency.
-      # mesa + xvfb give the gz sensors system a software GL context on the
-      # GPU-less runner.
-      - name: Install Gazebo Harmonic + build deps
+      - name: Install Gazebo Harmonic + build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y curl lsb-release gnupg cmake build-essential \
-            libudev-dev libprotobuf-dev protobuf-compiler libabsl-dev \
-            xvfb libgl1-mesa-dri libegl1 mesa-utils
+            libudev-dev libprotobuf-dev protobuf-compiler libabsl-dev
           sudo curl https://packages.osrfoundation.org/gazebo.gpg \
             --output /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
@@ -404,19 +403,92 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-sitl-${{ hashFiles('**/Cargo.lock') }}
 
-      # Builds AviateGzPlugin.so + MotorFailurePlugin.so into
-      # aviate-hal/xil/backends/gz/plugin/build/, where gcs-test's spawner
-      # points GZ_SIM_SYSTEM_PLUGIN_PATH.
-      - name: Build the Aviate Gazebo plugin
-        run: ./scripts/build_gz_plugin.sh
-
-      # gcs-test drives the missions; it spawns the SITL FC binary
-      # `./target/debug/sitl-gazebo-x500` (aviate-app-sitl-gazebo-x500),
-      # which must be built too or every mission aborts at spawn.
-      - name: Build gcs-test + the SITL FC binary
+      - name: Validate SITL shard configuration
+        id: shards
         run: |
+          jq -e '.include | type == "array" and length > 0' \
+            tests/missions/ci-shards.json > /dev/null
+          matrix=$(jq -c . tests/missions/ci-shards.json)
+          missions=$(jq -r '.include[].missions' tests/missions/ci-shards.json \
+            | tr ' ' '\n' | sed '/^$/d')
+          duplicates=$(printf '%s\n' "$missions" | sort | uniq -d)
+          if [ -n "$duplicates" ]; then
+            printf 'Duplicate SITL missions:\n%s\n' "$duplicates"
+            exit 1
+          fi
+          while IFS= read -r mission; do
+            test -f "tests/missions/${mission}.toml"
+          done <<< "$missions"
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
+      - name: Build shared SITL artifact
+        run: |
+          ./scripts/build_gz_plugin.sh
           cargo build -p gcs-test --features gazebo
           cargo build -p aviate-app-sitl-gazebo-x500
+          sha256sum \
+            target/debug/gcs-test \
+            target/debug/sitl-gazebo-x500 \
+            aviate-hal/xil/backends/gz/plugin/build/libAviateGzPlugin.so \
+            aviate-hal/xil/backends/gz/plugin/build/libMotorFailurePlugin.so \
+            > sitl-artifact.sha256
+          tar -cf sitl-artifact.tar \
+            sitl-artifact.sha256 \
+            target/debug/gcs-test \
+            target/debug/sitl-gazebo-x500 \
+            aviate-hal/xil/backends/gz/plugin/build/libAviateGzPlugin.so \
+            aviate-hal/xil/backends/gz/plugin/build/libMotorFailurePlugin.so
+
+      - name: Upload shared SITL artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sitl-linux-x64
+          path: sitl-artifact.tar
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  # Every runner pays the Gazebo install and checkout overhead. Keep each
+  # shard at 3-5 minutes of mission execution, excluding that setup time;
+  # add a shard only when the existing missions cannot stay below the upper
+  # bound after rebalancing. Missions need separate runners because their
+  # fixed UDP ports, shared-memory names, and cleanup processes conflict.
+  # See docs/SITL_CI_SHARDING.md for the update procedure and cost model.
+  sitl_missions:
+    name: SITL Missions (Gazebo XIL) / ${{ matrix.name }}
+    needs: sitl_build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.sitl_build.outputs.shard_matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Gazebo Harmonic runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl lsb-release gnupg \
+            xvfb libgl1-mesa-dri libegl1 mesa-utils
+          sudo curl https://packages.osrfoundation.org/gazebo.gpg \
+            --output /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
+            | sudo tee /etc/apt/sources.list.d/gazebo-stable.list
+          sudo apt-get update
+          sudo apt-get install -y gz-harmonic
+
+      - name: Download shared SITL artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: sitl-linux-x64
+
+      - name: Verify shared SITL artifact
+        run: |
+          tar -xf sitl-artifact.tar
+          sha256sum --check sitl-artifact.sha256
+          test -x target/debug/gcs-test
+          test -x target/debug/sitl-gazebo-x500
 
       # Each mission runs 3× behind a 2/3 reliability bar
       # (run_sitl_missions.sh exits non-zero if any mission misses it, and
@@ -433,11 +505,9 @@ jobs:
       # (the closed-loop holds in hover_stability / position_hold pass).
       # Recalibrating that mission's altitude profile is a follow-up; the
       # attitude loop itself is witnessed in-process by TST-CTL-202.
-      - name: Run SITL missions (3 runs each, 2/3 reliability bar)
+      - name: Run SITL mission shard
         env:
+          GCS_TEST_BIN: ./target/debug/gcs-test
           RUNS_PER_MISSION: 3
           LIBGL_ALWAYS_SOFTWARE: 1
-        run: |
-          xvfb-run -a ./scripts/run_sitl_missions.sh \
-            basic_flight hover_stability position_hold \
-            gnss_dropout command_timeout numeric_fault_inject
+        run: xvfb-run -a ./scripts/run_sitl_missions.sh ${{ matrix.missions }}

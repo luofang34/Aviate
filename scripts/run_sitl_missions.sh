@@ -11,6 +11,10 @@
 # Usage:
 #   ./scripts/run_sitl_missions.sh              # 3 runs each, default
 #   RUNS_PER_MISSION=5 ./scripts/run_sitl_missions.sh
+#   GCS_TEST_BIN=./target/debug/gcs-test ./scripts/run_sitl_missions.sh
+#
+# CI sets GCS_TEST_BIN so every shard runs the exact artifact produced by
+# the build job. Local runs omit it and let cargo build on demand.
 #
 # Companion U-tier invocation (run first to surface logic failures
 # before paying the SITL setup cost):
@@ -54,10 +58,17 @@ for mission in "${MISSIONS[@]}"; do
         # gcs-test exits non-zero when a mission fails; that's
         # expected here, so disable `set -e` for the run.
         set +e
-        run_log=$(
-            timeout 150 cargo run --quiet -p gcs-test --features gazebo -- \
-                run --xil --headless "${MISSIONS_DIR}/${mission}.toml" 2>&1
-        )
+        if [[ -n "${GCS_TEST_BIN:-}" ]]; then
+            run_log=$(
+                timeout 150 "${GCS_TEST_BIN}" run --xil --headless \
+                    "${MISSIONS_DIR}/${mission}.toml" 2>&1
+            )
+        else
+            run_log=$(
+                timeout 150 cargo run --quiet -p gcs-test --features gazebo -- \
+                    run --xil --headless "${MISSIONS_DIR}/${mission}.toml" 2>&1
+            )
+        fi
         set -e
         result=$(printf '%s\n' "${run_log}" | grep "^Result:" | tail -1)
         if [[ "${result}" == "Result: PASS" ]]; then
