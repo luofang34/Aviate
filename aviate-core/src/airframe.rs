@@ -115,6 +115,22 @@ pub trait Airframe {
     /// to `Mixer::mix()`; the airframe does not own the clock.
     fn create_mixer() -> Self::Mixer;
 
+    /// Cascade tuning for this airframe — the single source both the
+    /// controller construction and the lockstep-hashed
+    /// `ResolvedKernelConfig` must draw from (#114): factories that
+    /// initialize the two sides independently drift apart silently.
+    /// Multirotor airframes override with measured gains; the default
+    /// is the validated baseline.
+    fn cascade_gains() -> crate::control::cascade_gains::CascadeGains {
+        crate::control::cascade_gains::CascadeGains::default()
+    }
+
+    /// Hover thrust trim \[normalized\] for this airframe. The same
+    /// single-source rule as `cascade_gains` applies.
+    fn hover_thrust_norm() -> crate::types::Scalar {
+        0.5
+    }
+
     /// Actuator-group configuration for this airframe's configuration
     /// mode.
     ///

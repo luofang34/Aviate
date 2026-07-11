@@ -267,34 +267,18 @@ use aviate_core::mixer::ModeConfig;
 use aviate_core::time::{TimeSource, Timestamp};
 use aviate_core::types::Normalized;
 
-/// Create an AviateKernel configured for SITL multirotor simulation
-///
-/// This is shared by all SITL boards (Gazebo, jMAVSim, etc.) to ensure
-/// consistent kernel initialization. Hover thrust is the normalized
-/// command at which 4× rotor lift equals airframe weight. With the
-/// linear `omega = cmd · MAX_RPS` motor mapping in the X500 FC
-/// binary and the gz model's `motorConstant 8.55e-6` and
-/// `MAX_RPS 1000`, per-motor thrust is `motorConstant · ω² =
-/// 8.55 · cmd² N`. Empirically the X500 with the PX4-gazebo-models
-/// rotor + frame assembly hovers around `cmd ≈ 0.83` (effective
-/// mass ~2.4 kg once link inertias and aerodynamic drag enter);
-/// the literal Newtonian calculation from base + rotor masses
-/// alone gives 0.77 but underestimates the steady-state thrust
-/// margin the vehicle actually needs. Other SITL boards
-/// (jMAVSim etc.) currently share this kernel — when a non-X500
-/// airframe lands we will lift this constant into a per-board
-/// build-time parameter.
-const X500_HOVER_THRUST_NORM: f32 = 0.77;
-
 /// Build the SITL kernel wired for the x500 airframe.
 pub fn create_kernel() -> SitlKernel {
-    // Single tuning source (#114): the same CascadeGains value and
-    // hover trim construct the flying controller AND land in the
-    // lockstep-hashed ResolvedKernelConfig. Two independently
-    // initialized copies can drift apart silently — the hash then
-    // vouches for tuning the cascade isn't actually flying.
-    let gains = aviate_core::control::cascade_gains::CascadeGains::x500_defaults();
-    let controller = MultirotorController::from_gains(gains, X500_HOVER_THRUST_NORM);
+    // Single tuning source (#114/#120): the airframe owns the truth.
+    // The same CascadeGains value and hover trim construct the flying
+    // controller AND land in the lockstep-hashed ResolvedKernelConfig
+    // — two independently initialized copies can drift apart
+    // silently, with the hash vouching for tuning the cascade isn't
+    // actually flying.
+    use aviate_airframe_multirotor::{Airframe as _, X500Airframe};
+    let gains = X500Airframe::cascade_gains();
+    let hover = X500Airframe::hover_thrust_norm();
+    let controller = MultirotorController::from_gains(gains, hover);
     let mixer = QuadXMixerX500 {
         timestamp_source: sitl_timestamp,
     };
@@ -305,7 +289,7 @@ pub fn create_kernel() -> SitlKernel {
 
     let mut kernel = AviateKernel::new(Ekf::default(), controller, mixer, Sanitizer, mode_config);
     kernel.cfg.cascade_gains = gains;
-    kernel.cfg.hover_thrust_norm = aviate_core::types::Normalized(X500_HOVER_THRUST_NORM);
+    kernel.cfg.hover_thrust_norm = aviate_core::types::Normalized(hover);
 
     // Initialize throttle check as satisfied (default command has low throttle)
     kernel.state.checks.pre_arm.update_throttle(true);
