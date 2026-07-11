@@ -29,6 +29,8 @@ DEFAULT_MISSIONS=(
     hover_stability
     attitude_control
     position_hold
+    square_course
+    rotated_course
     gnss_dropout
     command_timeout
 )
