@@ -17,3 +17,6 @@ std = []  # Enable for file-based loading (SITL tools)
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
+
+[dev-dependencies]
+aviate-core = { path = "../aviate-core", features = ["mc"] }

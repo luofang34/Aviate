@@ -181,6 +181,7 @@ dependencies = [
 name = "aviate-config"
 version = "0.0.0"
 dependencies = [
+ "aviate-core",
  "serde",
  "toml",
 ]

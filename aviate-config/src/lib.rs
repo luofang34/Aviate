@@ -29,6 +29,7 @@
 
 extern crate alloc;
 
+pub mod airframe_preset;
 mod parser;
 mod types;
 mod validation;
