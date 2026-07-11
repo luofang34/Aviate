@@ -154,3 +154,46 @@ fn never_aided_filter_keeps_the_outlier_gate() {
         state.vel.z.0
     );
 }
+
+/// Same recovery for the position block: a pinned, gate-rejected
+/// position must snap back to healthy GNSS once its aiding age goes
+/// stale.
+#[test]
+fn stale_rejected_position_snaps_back_to_gnss() {
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = EkfState::default();
+    state.init(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
+        Vector3::new(
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
+        Quaternion::IDENTITY,
+    );
+
+    let sensors = resting_sensors(0.0);
+    for _ in 0..50 {
+        ekf.observe(&mut state, &sensors, None, 0.01);
+    }
+    assert!(state.gnss_pos_age_s < 0.1, "converged and freshly aided");
+
+    // Pin pos.z 40 m off with a collapsed variance: innovation 40,
+    // s ≈ 0.01 + 0.5 → hopelessly outside the 5σ gate.
+    state.pos.z = Meters(-40.0);
+    for r in 0..15 {
+        state.p_cov.set(r, 2, 0.0);
+        state.p_cov.set(2, r, 0.0);
+    }
+    state.p_cov.set(2, 2, 0.01);
+
+    for _ in 0..120 {
+        ekf.observe(&mut state, &sensors, None, 0.01);
+    }
+    assert!(
+        state.pos.z.0.abs() < 1.0,
+        "position block must snap back to the GNSS measurement, pos.z = {}",
+        state.pos.z.0
+    );
+    assert!(state.gnss_pos_age_s < 0.5, "aiding age recovered");
+}

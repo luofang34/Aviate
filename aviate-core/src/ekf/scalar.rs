@@ -210,7 +210,6 @@ impl Ekf {
         state.vel.x = MetersPerSecond(state.vel.x.0 + k_vector[IDX_VEL] * innov);
         state.vel.y = MetersPerSecond(state.vel.y.0 + k_vector[IDX_VEL + 1] * innov);
         state.vel.z = MetersPerSecond(state.vel.z.0 + k_vector[IDX_VEL + 2] * innov);
-
         // COV:EXCL_START(phantom DA + inlined-callee folds: rustc
         // scatters debug-info regions and folded callee branches
         // (clamp_biases, sanitize_quat, quaternion ops) across this
