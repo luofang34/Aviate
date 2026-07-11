@@ -65,6 +65,11 @@ estimator_status_hz = 4
 - `position_hz`: 4 Hz
 - `estimator_status_hz`: 4 Hz
 
+Rates are valid in `1..=255` Hz. Zero is a configuration error: telemetry
+is disabled with a startup error naming the field, never reinterpreted.
+A rate that does not divide the control-loop rate is rounded down to the
+nearest achievable rate, so the achieved rate never exceeds the request.
+
 ### `[security]` Section (Optional)
 
 Security profile selection. Defaults to "none" if omitted.

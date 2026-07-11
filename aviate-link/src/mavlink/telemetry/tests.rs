@@ -162,7 +162,11 @@ fn cycle_formatter_emits_status_at_configured_rate() {
         estimator_status_hz: 4,
         ..TelemetryConfig::default()
     };
-    let mut formatter = MavlinkCycleFormatter::new(&cfg, 100);
+    let formatter = MavlinkCycleFormatter::new(&cfg, 100);
+    assert!(formatter.is_ok());
+    let Ok(mut formatter) = formatter else {
+        return;
+    };
     let mut queue = DefaultTelemetryQueue::new();
     let mut snapshot = TelemetrySnapshot {
         iteration: 1,
@@ -196,7 +200,11 @@ fn each_numeric_snapshot_is_preceded_by_same_time_status() {
         estimator_status_hz: 4,
         ..TelemetryConfig::default()
     };
-    let mut formatter = MavlinkCycleFormatter::new(&cfg, 100);
+    let formatter = MavlinkCycleFormatter::new(&cfg, 100);
+    assert!(formatter.is_ok());
+    let Ok(mut formatter) = formatter else {
+        return;
+    };
     let mut queue = DefaultTelemetryQueue::new();
     let snapshot = TelemetrySnapshot {
         time_ms: 200,
@@ -235,7 +243,11 @@ fn each_numeric_snapshot_is_preceded_by_same_time_status() {
 #[test]
 fn estimate_group_is_dropped_whole_when_queue_has_no_room() {
     let cfg = TelemetryConfig::default();
-    let mut formatter = MavlinkCycleFormatter::new(&cfg, 100);
+    let formatter = MavlinkCycleFormatter::new(&cfg, 100);
+    assert!(formatter.is_ok());
+    let Ok(mut formatter) = formatter else {
+        return;
+    };
     let mut queue = DefaultTelemetryQueue::new();
     for _ in 0..30 {
         assert!(queue.push(&[0]).is_ok());
@@ -285,4 +297,68 @@ fn transmitted_estimator_status_matches_pymavlink() {
     let mut seq = 3;
     let len = format_estimator_status(&unusable, 17, 1, 1, &mut seq, &mut buf).unwrap_or_default();
     assert_eq!(&buf[..len], UNUSABLE_NO_FLAGS);
+}
+
+#[test]
+fn zero_rates_are_rejected_at_construction() {
+    type ZeroOut = fn(&mut TelemetryConfig);
+    let fields: [(&str, ZeroOut); 4] = [
+        ("heartbeat_hz", |c| c.heartbeat_hz = 0),
+        ("attitude_hz", |c| c.attitude_hz = 0),
+        ("position_hz", |c| c.position_hz = 0),
+        ("estimator_status_hz", |c| c.estimator_status_hz = 0),
+    ];
+    for (name, zero_out) in fields {
+        let mut cfg = TelemetryConfig::default();
+        zero_out(&mut cfg);
+        let result = MavlinkCycleFormatter::new(&cfg, 100);
+        assert!(
+            matches!(result, Err(TelemetryError::ZeroRate(field)) if field == name),
+            "{name} = 0 must be rejected"
+        );
+    }
+    assert!(matches!(
+        MavlinkCycleFormatter::new(&TelemetryConfig::default(), 0),
+        Err(TelemetryError::ZeroRate("loop_hz"))
+    ));
+}
+
+#[test]
+fn achieved_rate_never_exceeds_requested_rate() {
+    // 3 Hz does not divide the 400 Hz loop; flooring the divider would
+    // emit 4 heartbeats in the first second instead of 3.
+    let cfg = TelemetryConfig {
+        heartbeat_hz: 3,
+        ..TelemetryConfig::default()
+    };
+    let formatter = MavlinkCycleFormatter::with_ids(&cfg, 400, 1, 1);
+    assert!(formatter.is_ok());
+    let Ok(mut formatter) = formatter else {
+        return;
+    };
+
+    let seconds = 10u64;
+    let mut heartbeats = 0u64;
+    let mut queue = DefaultTelemetryQueue::new();
+    for iteration in 0..(400 * seconds) {
+        let snapshot = TelemetrySnapshot {
+            iteration: iteration as u32,
+            ..TelemetrySnapshot::default()
+        };
+        formatter.format_cycle(&snapshot, &mut queue);
+        while queue.pop_with(|frame| {
+            if let Some(message) = parsed_message(frame) {
+                if message.msg_id() == 0 {
+                    heartbeats = heartbeats.wrapping_add(1);
+                }
+            }
+        }) {}
+    }
+
+    assert!(
+        heartbeats <= 3 * seconds,
+        "requested 3 Hz, got {heartbeats} heartbeats in {seconds} s"
+    );
+    // The stream must still run close to the requested rate.
+    assert!(heartbeats >= 3 * seconds - 1);
 }
