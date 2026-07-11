@@ -1,5 +1,5 @@
 use super::*;
-use crate::mavlink::protocol::{parse_mavlink, serialize_mavlink};
+use crate::mavlink::protocol::{crc_accumulate, parse_mavlink, serialize_mavlink};
 
 #[test]
 fn standard_status_round_trips() {
@@ -178,4 +178,106 @@ fn aviate_unusable_serializer_truncates_to_pymavlink_frame() {
 
     assert_eq!(len, AVIATE_UNUSABLE.len());
     assert_eq!(&buf[..len], &AVIATE_UNUSABLE);
+}
+
+#[test]
+fn aviate_xml_wire_facts_match_rust_constants() {
+    // aviate.xml is the canonical wire contract. Folding its field list
+    // into the CRC seed here means an XML edit that changes the wire
+    // (field order, type, or name) fails cargo test instead of surfacing
+    // as silent CRC mismatches on a peer generated from the XML.
+    let xml = include_str!("../../../../message_definitions/aviate.xml");
+
+    let start = xml.find("name=\"AVIATE_ESTIMATOR_STATUS\"");
+    assert!(start.is_some(), "message block missing from aviate.xml");
+    let Some(start) = start else {
+        return;
+    };
+    let block_len = xml[start..].find("</message>");
+    assert!(block_len.is_some(), "unterminated message block");
+    let Some(block_len) = block_len else {
+        return;
+    };
+    let block = &xml[start..start + block_len];
+
+    // Collect (type, name, size) in declaration order.
+    let mut fields = [("", "", 0usize); 8];
+    let mut count = 0;
+    let mut rest = block;
+    while let Some(pos) = rest.find("<field type=\"") {
+        let after = &rest[pos + 13..];
+        let Some(type_end) = after.find('"') else {
+            break;
+        };
+        let field_type = &after[..type_end];
+        let Some(name_pos) = after[type_end..].find("name=\"") else {
+            break;
+        };
+        let name_rest = &after[type_end + name_pos + 6..];
+        let Some(name_end) = name_rest.find('"') else {
+            break;
+        };
+        let field_name = &name_rest[..name_end];
+        let size = match field_type {
+            "uint64_t" | "int64_t" | "double" => 8,
+            "uint32_t" | "int32_t" | "float" => 4,
+            "uint16_t" | "int16_t" => 2,
+            "uint8_t" | "int8_t" | "char" => 1,
+            _ => 0,
+        };
+        assert!(size != 0, "unhandled field type in aviate.xml");
+        fields[count] = (field_type, field_name, size);
+        count += 1;
+        rest = &name_rest[name_end..];
+    }
+    assert_eq!(count, 3);
+
+    let payload_len: usize = fields[..count].iter().map(|f| f.2).sum();
+    assert_eq!(payload_len, AviateEstimatorStatus::PAYLOAD_LEN);
+
+    // MAVLink reorders fields by size (descending, stable) on the wire.
+    let wire = &mut fields[..count];
+    let mut i = 1;
+    while i < wire.len() {
+        let mut j = i;
+        while j > 0 && wire[j - 1].2 < wire[j].2 {
+            wire.swap(j - 1, j);
+            j -= 1;
+        }
+        i += 1;
+    }
+
+    fn feed(crc: u16, text: &str) -> u16 {
+        let mut crc = crc;
+        for &byte in text.as_bytes() {
+            crc = crc_accumulate(byte, crc);
+        }
+        crc
+    }
+    let mut crc = feed(0xFFFF, "AVIATE_ESTIMATOR_STATUS ");
+    for (field_type, field_name, _) in wire.iter() {
+        crc = feed(crc, field_type);
+        crc = feed(crc, " ");
+        crc = feed(crc, field_name);
+        crc = feed(crc, " ");
+    }
+    let crc_extra = ((crc & 0xFF) ^ (crc >> 8)) as u8;
+    assert_eq!(crc_extra, AviateEstimatorStatus::CRC_EXTRA);
+
+    // Enum wire values are part of the contract.
+    assert!(xml.contains("value=\"0\" name=\"AVIATE_ESTIMATE_QUALITY_UNUSABLE\""));
+    assert!(xml.contains("value=\"1\" name=\"AVIATE_ESTIMATE_QUALITY_DEGRADED\""));
+    assert!(xml.contains("value=\"2\" name=\"AVIATE_ESTIMATE_QUALITY_GOOD\""));
+    assert_eq!(aviate_estimate_quality::UNUSABLE, 0);
+    assert_eq!(aviate_estimate_quality::DEGRADED, 1);
+    assert_eq!(aviate_estimate_quality::GOOD, 2);
+
+    assert!(xml.contains("value=\"1\" name=\"AVIATE_STATE_VALID_ATTITUDE\""));
+    assert!(xml.contains("value=\"2\" name=\"AVIATE_STATE_VALID_ANGULAR_RATE\""));
+    assert!(xml.contains("value=\"4\" name=\"AVIATE_STATE_VALID_POSITION\""));
+    assert!(xml.contains("value=\"8\" name=\"AVIATE_STATE_VALID_VELOCITY\""));
+    assert_eq!(aviate_state_valid_flags::ATTITUDE, 1);
+    assert_eq!(aviate_state_valid_flags::ANGULAR_RATE, 2);
+    assert_eq!(aviate_state_valid_flags::POSITION, 4);
+    assert_eq!(aviate_state_valid_flags::VELOCITY, 8);
 }

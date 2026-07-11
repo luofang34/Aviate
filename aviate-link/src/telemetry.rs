@@ -124,6 +124,12 @@ pub trait TelemetryBackend {
     /// Send state estimate (attitude, rates)
     ///
     /// Maps to MAVLink ATTITUDE_QUATERNION or similar messages.
+    ///
+    /// Emits a bare numeric frame with no estimator-status frame. The
+    /// same-timestamp status pairing contract in
+    /// `docs/ESTIMATOR_TELEMETRY.md` holds only on the cycle-formatter
+    /// path; a consumer applying its fail-closed rules discards frames
+    /// sent this way. Prefer the cycle formatter for GCS links.
     fn send_state(&mut self, state: &StateEstimate, time_ms: u32) -> TelemetryResult<()>;
 
     /// Send actuator commands (motor outputs)

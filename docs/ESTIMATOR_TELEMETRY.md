@@ -12,9 +12,11 @@ used.
 
 ## Status frames
 
-Aviate emits both status frames at least at `estimator_status_hz`. It also emits
-them immediately before every attitude or position snapshot, so each numeric
-frame has status with the same timestamp:
+On the cycle-formatter path — the path GCS links use — Aviate emits both
+status frames at least at `estimator_status_hz`, and immediately before every
+attitude or position snapshot, so each numeric frame has status with the same
+timestamp. The raw `TelemetryBackend::send_state` API bypasses this pairing
+and is not suitable for consumers applying the fail-closed rules below:
 
 - Standard MAVLink `ESTIMATOR_STATUS` (message 230) provides a conservative
   projection for common MAVLink consumers.
