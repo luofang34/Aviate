@@ -1,0 +1,46 @@
+# AirframePresetV1: PX4-gazebo-models X500 (gz SITL).
+#
+# The mixer geometry matters: the X500 spins CW on the FL+RR diagonal
+# — the generic quad-x mixer closes the yaw loop backwards on this
+# model.
+#
+# hover_thrust_seed is currently a SPEED-DOMAIN value (the gz rotor
+# boundary applies command linearly to rotor speed, so thrust goes as
+# the square — see #140). Once the NormalizedThrust contract lands,
+# this seed moves to the thrust domain (~0.59 for 20.25 N weight /
+# 34.19 N max) and actuator_curve drives the boundary conversion. Do
+# not "fix" the number before the contract; the formal trim sweep in
+# #140 re-derives it with saved evidence.
+
+schema_version = 1
+name = "x500"
+mixer = "quad-x-x500"
+motor_count = 4
+hover_thrust_seed = 0.77
+actuator_curve = "quadratic"
+
+[gains]
+pos_p = [0.5, 0.5, 0.5]
+pos_accel_limits = [2.0, 2.0, 1.0]
+pos_vel_caps = [2.0, 2.0, 1.5]
+vel_p = [1.2, 1.2, 0.4]
+vel_i = [0.05, 0.05, 0.05]
+vel_d = [0.0, 0.0, 0.0]
+vel_max_roll_pitch = 0.35
+vel_accel_ff = 0.0
+att_p = [3.5, 3.5, 2.5]
+rate_p = [0.30, 0.30, 0.60]
+rate_d = [0.0, 0.0, 0.05]
+rate_d_lpf_alpha = 0.5
+
+[limits]
+max_roll = 0.78
+max_pitch = 0.78
+max_roll_rate = 3.0
+max_pitch_rate = 3.0
+max_yaw_rate = 3.0
+max_horizontal_speed = 10.0
+max_climb_rate = 2.0
+max_descent_rate = 2.0
+max_altitude = 100.0
+min_altitude = 0.0
