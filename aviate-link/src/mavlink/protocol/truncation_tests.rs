@@ -291,3 +291,173 @@ fn test_round_trip_survives_zero_tail_truncation() {
     assert_eq!(&s.text[..5], b"READY");
     assert!(s.text[5..].iter().all(|&b| b == 0));
 }
+
+// MANUAL_CONTROL, seq=8, base-only values with a zero extension tail:
+// truncates from 30 to 11 bytes.
+const PYMAVLINK_MANUAL_CONTROL_BASE: &[u8] = &[
+    0xFD, 0x0B, 0x00, 0x00, 0x08, 0x01, 0x01, 0x45, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x01, 0x94, 0x37,
+];
+
+// RC_CHANNELS_OVERRIDE, seq=10: chan9..18 zero, truncates 38 -> 18.
+const PYMAVLINK_RC_OVERRIDE_TRUNCATED: &[u8] = &[
+    0xFD, 0x12, 0x00, 0x00, 0x0A, 0x01, 0x01, 0x46, 0x00, 0x00, 0xDC, 0x05, 0xDD, 0x05, 0xDE, 0x05,
+    0xDF, 0x05, 0xE0, 0x05, 0xE1, 0x05, 0xE2, 0x05, 0xE3, 0x05, 0x01, 0x01, 0x2C, 0xD0,
+];
+
+// SYS_STATUS, seq=11: extended sensor fields zero, truncates 43 -> 31.
+const PYMAVLINK_SYS_STATUS_TRUNCATED: &[u8] = &[
+    0xFD, 0x1F, 0x00, 0x00, 0x0B, 0x01, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+    0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xF4, 0x01, 0x5C, 0x2B, 0xDC, 0x05, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58, 0x65, 0xBA,
+];
+
+// SET_ATTITUDE_TARGET, seq=12: thrust_body extension zero, 51 -> 39.
+const PYMAVLINK_SET_ATT_TRUNCATED: &[u8] = &[
+    0xFD, 0x27, 0x00, 0x00, 0x0C, 0x01, 0x01, 0x52, 0x00, 0x00, 0xE8, 0x03, 0x00, 0x00, 0x00, 0x00,
+    0x80, 0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3F, 0x01, 0x01,
+    0x07, 0xB3, 0xAD,
+];
+
+// SET_POSITION_TARGET_LOCAL_NED, seq=13: coordinate_frame=1 keeps the
+// full 53-byte payload — the no-truncation anchor for setpoints.
+const PYMAVLINK_SET_POS_FULL: &[u8] = &[
+    0xFD, 0x35, 0x00, 0x00, 0x0D, 0x01, 0x01, 0x54, 0x00, 0x00, 0xD0, 0x07, 0x00, 0x00, 0x00, 0x00,
+    0x80, 0x3F, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x40, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x80, 0x3E, 0x00, 0x00, 0x00, 0x00, 0xF8, 0x0F, 0x01, 0x01, 0x01, 0x23,
+    0x01,
+];
+
+#[test]
+fn test_serializer_truncation_matches_pymavlink_remaining_messages() {
+    struct Case {
+        msg: MavMessage,
+        seq: u8,
+        expected: &'static [u8],
+    }
+    let cases = [
+        Case {
+            msg: MavMessage::ManualControl(ManualControl {
+                target: 1,
+                ..Default::default()
+            }),
+            seq: 8,
+            expected: PYMAVLINK_MANUAL_CONTROL_BASE,
+        },
+        Case {
+            msg: MavMessage::RcChannelsOverride(RcChannelsOverride {
+                chan1_raw: 1500,
+                chan2_raw: 1501,
+                chan3_raw: 1502,
+                chan4_raw: 1503,
+                chan5_raw: 1504,
+                chan6_raw: 1505,
+                chan7_raw: 1506,
+                chan8_raw: 1507,
+                target_system: 1,
+                target_component: 1,
+                ..Default::default()
+            }),
+            seq: 10,
+            expected: PYMAVLINK_RC_OVERRIDE_TRUNCATED,
+        },
+        Case {
+            msg: MavMessage::SysStatus(SysStatus {
+                onboard_control_sensors_present: 1,
+                onboard_control_sensors_enabled: 1,
+                onboard_control_sensors_health: 1,
+                load: 500,
+                voltage_battery: 11100,
+                current_battery: 1500,
+                battery_remaining: 88,
+                ..Default::default()
+            }),
+            seq: 11,
+            expected: PYMAVLINK_SYS_STATUS_TRUNCATED,
+        },
+        Case {
+            msg: MavMessage::SetAttitudeTarget(SetAttitudeTarget {
+                time_boot_ms: 1000,
+                target_system: 1,
+                target_component: 1,
+                type_mask: 7,
+                q: [1.0, 0.0, 0.0, 0.0],
+                thrust: 0.5,
+                ..Default::default()
+            }),
+            seq: 12,
+            expected: PYMAVLINK_SET_ATT_TRUNCATED,
+        },
+        Case {
+            msg: MavMessage::SetPositionTargetLocalNed(SetPositionTargetLocalNed {
+                time_boot_ms: 2000,
+                target_system: 1,
+                target_component: 1,
+                coordinate_frame: 1,
+                type_mask: 0x0FF8,
+                x: 1.0,
+                y: 2.0,
+                z: -3.0,
+                yaw: 0.25,
+                ..Default::default()
+            }),
+            seq: 13,
+            expected: PYMAVLINK_SET_POS_FULL,
+        },
+    ];
+
+    for case in &cases {
+        let mut buf = [0u8; 256];
+        let len = serialize_mavlink(&case.msg, case.seq, 1, 1, &mut buf);
+        assert_eq!(
+            len,
+            Some(case.expected.len()),
+            "Frame length mismatch for {:?}",
+            case.msg
+        );
+        let Some(len) = len else {
+            return;
+        };
+        assert_eq!(&buf[..len], case.expected, "Frame bytes for {:?}", case.msg);
+    }
+}
+
+// STATUSTEXT, seq=14: severity=6, text "READY", zero-padded tail and
+// extension fields truncate 54 -> 6.
+const PYMAVLINK_STATUSTEXT_TRUNCATED: &[u8] = &[
+    0xFD, 0x06, 0x00, 0x00, 0x0E, 0x01, 0x01, 0xFD, 0x00, 0x00, 0x06, 0x52, 0x45, 0x41, 0x44, 0x59,
+    0xD9, 0x08,
+];
+
+#[test]
+fn test_statustext_serializer_matches_pymavlink() {
+    let mut text = [0u8; 50];
+    text[..5].copy_from_slice(b"READY");
+    let msg = MavMessage::Statustext(Statustext {
+        severity: 6,
+        text,
+        ..Default::default()
+    });
+    let mut buf = [0u8; 256];
+    let len = serialize_mavlink(&msg, 14, 1, 1, &mut buf);
+    assert_eq!(len, Some(PYMAVLINK_STATUSTEXT_TRUNCATED.len()));
+    let Some(len) = len else {
+        return;
+    };
+    assert_eq!(&buf[..len], PYMAVLINK_STATUSTEXT_TRUNCATED);
+
+    let Some((parsed, _)) = parse_frame(PYMAVLINK_STATUSTEXT_TRUNCATED) else {
+        return;
+    };
+    assert!(matches!(&parsed, MavMessage::Statustext(_)));
+    let MavMessage::Statustext(st) = parsed else {
+        return;
+    };
+    assert_eq!(st.severity, 6);
+    assert_eq!(&st.text[..5], b"READY");
+    assert!(st.text[5..].iter().all(|&b| b == 0));
+    assert_eq!(st.id, 0);
+    assert_eq!(st.chunk_seq, 0);
+}
