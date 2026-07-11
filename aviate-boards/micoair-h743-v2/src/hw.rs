@@ -277,10 +277,11 @@ pub struct MicoAirBoard {
     /// Microsecond tick when a `SystemCommand::FlightControl`
     /// frame last refreshed the active command. `None` until the
     /// first uplink arrives; clamps `command_age_ms` to
-    /// `u32::MAX` while None so the timeout fires immediately —
-    /// failsafe before the first link, not COMMAND_RECENT-by-
-    /// default.
-    last_cmd_rx_ticks: Option<u64>,
+    /// Retained flight setpoint, replayed to the kernel every tick.
+    /// A replay is not a receive: command freshness/age is owned by
+    /// the runner (`CommandTick`), so a lost link ages out even
+    /// while this setpoint keeps the cascade fed (#133).
+    last_flight_cmd: Command,
     ekf_initialized: bool,
     iteration: u32,
     iwdg: Option<IWDG>,
@@ -519,7 +520,7 @@ impl MicoAirBoard {
             kernel,
             sensor_cache: SensorCache::new(),
             last_imu_time: None,
-            last_cmd_rx_ticks: None,
+            last_flight_cmd: default_command(),
             ekf_initialized: false,
             iteration: 0,
             iwdg,
@@ -572,7 +573,7 @@ impl BoardStep for MicoAirBoard {
         tick_us: u64,
         _now_us: u64,
         dt_us: u32,
-        sys_cmd: &SystemCommand,
+        cmd_tick: aviate_runtime::runner::CommandTick<'_, SystemCommand>,
         _link_ok: bool,
     ) {
         // COV:EXCL_START(STUB)
@@ -602,27 +603,32 @@ impl BoardStep for MicoAirBoard {
             tick_delta: dt_us as u64,
         };
 
-        let cmd: Command = match sys_cmd {
-            SystemCommand::Arm => {
-                if self.kernel.arm().is_ok() {
-                    self.board_hal.arm();
+        // Discrete commands fire exactly once, on the tick they
+        // arrive; the flight setpoint is retained across ticks but a
+        // replay never counts as a receive — command freshness is the
+        // runner's (see CommandTick).
+        if cmd_tick.fresh {
+            match cmd_tick.cmd {
+                SystemCommand::Arm => {
+                    if self.kernel.arm().is_ok() {
+                        self.board_hal.arm();
+                    }
                 }
-                default_command()
+                SystemCommand::Disarm => {
+                    self.kernel.disarm();
+                    self.board_hal.disarm();
+                }
+                SystemCommand::FlightControl(flight_cmd) => {
+                    self.kernel
+                        .state
+                        .checks
+                        .pre_arm
+                        .update_throttle(flight_cmd.setpoint.collective_thrust.0 < 0.1);
+                    self.last_flight_cmd = flight_cmd.clone();
+                }
             }
-            SystemCommand::Disarm => {
-                self.kernel.disarm();
-                self.board_hal.disarm();
-                default_command()
-            }
-            SystemCommand::FlightControl(flight_cmd) => {
-                self.kernel
-                    .state.checks
-                    .pre_arm
-                    .update_throttle(flight_cmd.setpoint.collective_thrust.0 < 0.1);
-                self.last_cmd_rx_ticks = Some(tick_us);
-                flight_cmd.clone()
-            }
-        };
+        }
+        let cmd: Command = self.last_flight_cmd.clone();
 
         if !self.ekf_initialized && self.sensor_cache.imu.is_some() {
             self.kernel.state.estimator.init(
@@ -646,20 +652,12 @@ impl BoardStep for MicoAirBoard {
             self.kernel.init_step(&sensors, ts);
         }
 
-        // command_age_ms is the time since the last
-        // SystemCommand::FlightControl frame refreshed `cmd`,
-        // measured in milliseconds against the board's
-        // microsecond tick. None (no command since power-on)
-        // clamps to u32::MAX so the kernel's command-timeout
-        // check fires immediately — failsafe before first link,
-        // not COMMAND_RECENT-by-default.
-        let command_age_ms = match self.last_cmd_rx_ticks {
-            Some(rx_ticks) => {
-                let age_us = tick_us.saturating_sub(rx_ticks);
-                u32::try_from(age_us / 1_000).unwrap_or(u32::MAX)
-            }
-            None => u32::MAX,
-        };
+        // Command age comes from the runner — the only place that
+        // observes actual receives. Deriving it here from replayed
+        // retained commands pinned the age near zero after link loss
+        // and the kernel's command-timeout terminal could never fire
+        // (#133).
+        let command_age_ms = cmd_tick.age_ms;
         let result = self.kernel.update(
             ChannelId(0),
             time_delta,

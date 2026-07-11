@@ -65,6 +65,11 @@ pub struct RunnerHealth {
     pub link_ok: bool,
     /// Timestamp of last valid command (microseconds)
     pub last_cmd_time_us: u64,
+    /// Whether any command has ever been received. Gates
+    /// `command_age_ms` to `u32::MAX` before first contact so a
+    /// fresh boot is command-stale (failsafe posture), not
+    /// age-zero-by-default.
+    pub ever_received: bool,
     /// Count of scheduler overruns (fell behind by >MAX_CATCH_UP ticks)
     pub overrun_count: u32,
 }
@@ -91,8 +96,38 @@ impl RunnerHealth {
     /// * `now_us` - Current time in microseconds
     pub fn command_received(&mut self, now_us: u64) {
         self.last_cmd_time_us = now_us;
+        self.ever_received = true;
         self.link_ok = true;
     }
+
+    /// Age of the last ACTUAL command receive in milliseconds —
+    /// `u32::MAX` before any command has arrived. This is the single
+    /// freshness primitive the kernel's command-timeout consumes;
+    /// boards must not derive their own age from replayed retained
+    /// commands (a retained setpoint replay is not a receive — doing
+    /// so pins the age near zero after link loss and the
+    /// command-timeout terminal can never fire).
+    pub fn command_age_ms(&self, now_us: u64) -> u32 {
+        if !self.ever_received {
+            return u32::MAX;
+        }
+        u32::try_from(now_us.wrapping_sub(self.last_cmd_time_us) / 1_000).unwrap_or(u32::MAX)
+    }
+}
+
+/// One tick's command view, owned by the runner: the retained command
+/// value plus runner-authoritative freshness. `fresh` is true only on
+/// the tick the command actually arrived — boards act on discrete
+/// events (arm/disarm) exactly once, and never treat a replayed
+/// retained setpoint as a receive.
+#[derive(Debug, Clone, Copy)]
+pub struct CommandTick<'a, C> {
+    /// Most recent command (retained between receives).
+    pub cmd: &'a C,
+    /// True only on the tick `cmd` was actually received.
+    pub fresh: bool,
+    /// Runner-owned receive age [ms]; `u32::MAX` before first contact.
+    pub age_ms: u32,
 }
 
 /// Trait for board-specific stepping logic
@@ -123,9 +158,17 @@ pub trait BoardStep {
     /// * `tick_us` - Scheduled tick time (deterministic timestamps)
     /// * `now_us` - Actual time (health/timeout calculations)
     /// * `dt_us` - Fixed period for controller math
-    /// * `cmd` - Last command (or default/failsafe)
+    /// * `cmd` - This tick's command view (retained value + runner-
+    ///   authoritative freshness and receive age)
     /// * `link_ok` - Whether link is healthy (for failsafe decisions)
-    fn board_step(&mut self, tick_us: u64, now_us: u64, dt_us: u32, cmd: &Self::Cmd, link_ok: bool);
+    fn board_step(
+        &mut self,
+        tick_us: u64,
+        now_us: u64,
+        dt_us: u32,
+        cmd: CommandTick<'_, Self::Cmd>,
+        link_ok: bool,
+    );
 
     /// Check if sensors are returning fresh data
     fn sensors_ok(&self) -> bool;
@@ -215,18 +258,29 @@ where
     /// * `now_us` - Actual monotonic time (for safety/health: link timeout)
     /// * `dt_us` - Fixed period for controller math (determinism)
     pub fn step(&mut self, tick_us: u64, now_us: u64, dt_us: u32) {
-        // 1. Poll transport for commands (non-blocking)
-        if let Some(cmd) = self.transport.try_recv_command() {
+        // 1. Poll transport for commands (non-blocking). Freshness is
+        // recorded here and ONLY here — the retained `last_cmd` is
+        // replayed to the board every tick, but a replay is not a
+        // receive.
+        let fresh = if let Some(cmd) = self.transport.try_recv_command() {
             self.last_cmd = cmd;
             self.health.command_received(now_us);
-        }
+            true
+        } else {
+            false
+        };
 
         // 2. Update link_ok from command timeout (wrapping-safe)
         self.health.update_link_status(now_us);
 
         // 3. Delegate to board for sensor/actuator handling
+        let cmd_tick = CommandTick {
+            cmd: &self.last_cmd,
+            fresh,
+            age_ms: self.health.command_age_ms(now_us),
+        };
         self.board
-            .board_step(tick_us, now_us, dt_us, &self.last_cmd, self.health.link_ok);
+            .board_step(tick_us, now_us, dt_us, cmd_tick, self.health.link_ok);
 
         // 4. Update health from board
         self.health.sensors_ok = self.board.sensors_ok();
