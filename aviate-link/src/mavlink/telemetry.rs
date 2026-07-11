@@ -35,7 +35,8 @@
 //! - ✅ No imports from `aviate-security`
 //! - ✅ No command parsing or reception logic
 //! - ✅ Format helpers are pure (no I/O, no side effects)
-
+mod estimator;
+pub use estimator::{format_aviate_estimator_status, format_estimator_status};
 // Conditionally use aviate_config for runtime config, or use local defaults
 #[cfg(feature = "config")]
 pub use aviate_config::TelemetryConfig;
@@ -53,6 +54,7 @@ pub struct TelemetryConfig {
     pub heartbeat_hz: u8,
     pub attitude_hz: u8,
     pub position_hz: u8,
+    pub estimator_status_hz: u8,
 }
 
 #[cfg(not(feature = "config"))]
@@ -64,6 +66,7 @@ impl Default for TelemetryConfig {
             heartbeat_hz: 1,
             attitude_hz: 10,
             position_hz: 4,
+            estimator_status_hz: 4,
         }
     }
 }
@@ -382,7 +385,7 @@ impl<T: FrameTx> TelemetryBackend for MavlinkTelemetry<T> {
 /// Message rates are configured via `TelemetryConfig`:
 /// - `heartbeat_hz`: HEARTBEAT rate (default 1 Hz)
 /// - `attitude_hz`: ATTITUDE_QUATERNION rate (default 10 Hz)
-/// - `position_hz`: LOCAL_POSITION_NED rate (default 4 Hz)
+/// - `position_hz` / `estimator_status_hz`: position and status rates (default 4 Hz)
 pub struct MavlinkCycleFormatter {
     /// Heartbeat rate divider (loop_hz / heartbeat_hz)
     heartbeat_div: u32,
@@ -390,6 +393,8 @@ pub struct MavlinkCycleFormatter {
     attitude_div: u32,
     /// Position rate divider (loop_hz / position_hz)
     position_div: u32,
+    /// Estimator-status rate divider (loop_hz / estimator_status_hz)
+    estimator_status_div: u32,
     /// MAVLink sequence counter
     seq: u8,
     /// MAVLink system ID
@@ -425,6 +430,7 @@ impl MavlinkCycleFormatter {
             heartbeat_div: to_div(loop_hz, cfg.heartbeat_hz),
             attitude_div: to_div(loop_hz, cfg.attitude_hz),
             position_div: to_div(loop_hz, cfg.position_hz),
+            estimator_status_div: to_div(loop_hz, cfg.estimator_status_hz),
             seq: 0,
             sys_id,
             comp_id,
@@ -476,5 +482,19 @@ impl TelemetryCycleFormatter for MavlinkCycleFormatter {
                 let _ = queue.push(&buf[..len]);
             }
         }
+
+        if snapshot.iteration.is_multiple_of(self.estimator_status_div) {
+            estimator::enqueue_estimator_status(
+                snapshot,
+                self.sys_id,
+                self.comp_id,
+                &mut self.seq,
+                queue,
+                &mut buf,
+            );
+        }
     }
 }
+
+#[cfg(test)]
+mod tests;

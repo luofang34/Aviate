@@ -26,6 +26,12 @@
 //! This module is used by `telemetry.rs` and `command.rs` for protocol translation.
 //! Applications should NOT use this module directly - use the link layer instead.
 
+mod estimator_status;
+
+pub use estimator_status::{
+    aviate_estimate_quality, estimator_status_flags, AviateEstimatorStatus, EstimatorStatus,
+};
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
@@ -473,6 +479,8 @@ pub enum MavMessage {
     SystemTime(SystemTime),
     AttitudeQuaternion(AttitudeQuaternion),
     LocalPositionNed(LocalPositionNed),
+    EstimatorStatus(EstimatorStatus),
+    AviateEstimatorStatus(AviateEstimatorStatus),
     SetAttitudeTarget(SetAttitudeTarget),
     SetPositionTargetLocalNed(SetPositionTargetLocalNed),
     CommandLong(CommandLong),
@@ -493,6 +501,8 @@ impl MavMessage {
             MavMessage::SystemTime(_) => SystemTime::MSG_ID,
             MavMessage::AttitudeQuaternion(_) => AttitudeQuaternion::MSG_ID,
             MavMessage::LocalPositionNed(_) => LocalPositionNed::MSG_ID,
+            MavMessage::EstimatorStatus(_) => EstimatorStatus::MSG_ID,
+            MavMessage::AviateEstimatorStatus(_) => AviateEstimatorStatus::MSG_ID,
             MavMessage::SetAttitudeTarget(_) => SetAttitudeTarget::MSG_ID,
             MavMessage::SetPositionTargetLocalNed(_) => SetPositionTargetLocalNed::MSG_ID,
             MavMessage::CommandLong(_) => CommandLong::MSG_ID,
@@ -686,6 +696,8 @@ fn parse_message_payload(msg_id: u32, payload: &[u8]) -> Result<MavMessage, Pars
         SystemTime::MSG_ID => parse_system_time(payload),
         AttitudeQuaternion::MSG_ID => parse_attitude_quaternion(payload),
         LocalPositionNed::MSG_ID => parse_local_position_ned(payload),
+        EstimatorStatus::MSG_ID => estimator_status::parse_estimator_status(payload),
+        AviateEstimatorStatus::MSG_ID => estimator_status::parse_aviate_estimator_status(payload),
         SetAttitudeTarget::MSG_ID => parse_set_attitude_target(payload),
         SetPositionTargetLocalNed::MSG_ID => parse_set_position_target_local_ned(payload),
         CommandLong::MSG_ID => parse_command_long(payload),
@@ -1076,19 +1088,21 @@ fn crc_accumulate(byte: u8, crc: u16) -> u16 {
 /// Get CRC extra byte for message ID (from MAVLink XML definitions)
 fn get_crc_extra(msg_id: u32) -> u8 {
     match msg_id {
-        0 => 50,   // HEARTBEAT
-        1 => 124,  // SYS_STATUS
-        2 => 137,  // SYSTEM_TIME
-        31 => 246, // ATTITUDE_QUATERNION
-        32 => 185, // LOCAL_POSITION_NED
-        69 => 243, // MANUAL_CONTROL
-        70 => 124, // RC_CHANNELS_OVERRIDE
-        76 => 152, // COMMAND_LONG
-        77 => 143, // COMMAND_ACK
-        82 => 49,  // SET_ATTITUDE_TARGET
-        84 => 143, // SET_POSITION_TARGET_LOCAL_NED
-        253 => 83, // STATUSTEXT
-        _ => 0,    // Unknown message
+        0 => 50,      // HEARTBEAT
+        1 => 124,     // SYS_STATUS
+        2 => 137,     // SYSTEM_TIME
+        31 => 246,    // ATTITUDE_QUATERNION
+        32 => 185,    // LOCAL_POSITION_NED
+        69 => 243,    // MANUAL_CONTROL
+        70 => 124,    // RC_CHANNELS_OVERRIDE
+        76 => 152,    // COMMAND_LONG
+        77 => 143,    // COMMAND_ACK
+        82 => 49,     // SET_ATTITUDE_TARGET
+        84 => 143,    // SET_POSITION_TARGET_LOCAL_NED
+        230 => 163,   // ESTIMATOR_STATUS
+        253 => 83,    // STATUSTEXT
+        20_000 => 50, // AVIATE_ESTIMATOR_STATUS
+        _ => 0,       // Unknown message
     }
 }
 
@@ -1143,6 +1157,12 @@ pub fn serialize_mavlink(
         }
         MavMessage::LocalPositionNed(m) => {
             serialize_local_position_ned(m, seq, sys_id, comp_id, buf)
+        }
+        MavMessage::EstimatorStatus(m) => {
+            estimator_status::serialize_estimator_status(m, seq, sys_id, comp_id, buf)
+        }
+        MavMessage::AviateEstimatorStatus(m) => {
+            estimator_status::serialize_aviate_estimator_status(m, seq, sys_id, comp_id, buf)
         }
         MavMessage::SetAttitudeTarget(m) => {
             serialize_set_attitude_target(m, seq, sys_id, comp_id, buf)

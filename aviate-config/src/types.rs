@@ -58,6 +58,9 @@ pub struct TelemetryConfig {
     /// Position message rate in Hz.
     #[serde(default = "default_position_hz")]
     pub position_hz: u8,
+    /// Estimator-status message rate in Hz.
+    #[serde(default = "default_estimator_status_hz")]
+    pub estimator_status_hz: u8,
 }
 
 fn default_heartbeat_hz() -> u8 {
@@ -69,6 +72,9 @@ fn default_attitude_hz() -> u8 {
 fn default_position_hz() -> u8 {
     4
 }
+fn default_estimator_status_hz() -> u8 {
+    4
+}
 
 impl Default for TelemetryConfig {
     fn default() -> Self {
@@ -78,6 +84,7 @@ impl Default for TelemetryConfig {
             heartbeat_hz: default_heartbeat_hz(),
             attitude_hz: default_attitude_hz(),
             position_hz: default_position_hz(),
+            estimator_status_hz: default_estimator_status_hz(),
         }
     }
 }
