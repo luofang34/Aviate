@@ -27,6 +27,22 @@ pub mod aviate_estimate_quality {
     pub const GOOD: u8 = 2;
 }
 
+/// Wire bits for `AVIATE_STATE_VALID_FLAGS`.
+///
+/// These values are fixed by `aviate.xml` and are the wire contract;
+/// internal `StateValidFlags` bit assignments map onto them explicitly and
+/// may diverge without changing the wire.
+pub mod aviate_state_valid_flags {
+    /// The attitude estimate is valid.
+    pub const ATTITUDE: u8 = 1;
+    /// The angular-rate estimate is valid.
+    pub const ANGULAR_RATE: u8 = 2;
+    /// The local NED position estimate is valid.
+    pub const POSITION: u8 = 4;
+    /// The local NED velocity estimate is valid.
+    pub const VELOCITY: u8 = 8;
+}
+
 /// Standard MAVLink `ESTIMATOR_STATUS` (message 230).
 #[derive(Copy, Clone, Debug, Default)]
 pub struct EstimatorStatus {
@@ -57,16 +73,20 @@ impl EstimatorStatus {
     pub const MSG_ID: u32 = 230;
     /// Wire payload length.
     pub const PAYLOAD_LEN: usize = 42;
+    /// CRC extra from the MAVLink common dialect.
+    pub const CRC_EXTRA: u8 = 163;
 }
 
 /// Aviate dialect estimator status (message 20000).
+///
+/// Carries the lossless quality and validity contract; the conservative
+/// standard projection is published separately in [`EstimatorStatus`] and
+/// deliberately not duplicated here.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct AviateEstimatorStatus {
     /// Time since system boot, in microseconds.
     pub time_usec: u64,
-    /// Conservative projection into standard estimator flags.
-    pub standard_flags: u16,
-    /// Raw `StateValidFlags` bits.
+    /// Per-dimension validity as `aviate_state_valid_flags` wire bits.
     pub valid_flags: u8,
     /// One of the `AVIATE_ESTIMATE_QUALITY` wire values.
     pub quality: u8,
@@ -76,7 +96,9 @@ impl AviateEstimatorStatus {
     /// Private Aviate dialect message ID.
     pub const MSG_ID: u32 = 20_000;
     /// Wire payload length.
-    pub const PAYLOAD_LEN: usize = 12;
+    pub const PAYLOAD_LEN: usize = 10;
+    /// CRC extra derived from the `aviate.xml` definition.
+    pub const CRC_EXTRA: u8 = 171;
 }
 
 pub(super) fn parse_estimator_status(payload: &[u8]) -> Result<MavMessage, ParseError> {
@@ -105,9 +127,8 @@ pub(super) fn parse_aviate_estimator_status(payload: &[u8]) -> Result<MavMessage
 
     Ok(MavMessage::AviateEstimatorStatus(AviateEstimatorStatus {
         time_usec: read_u64_le(payload, 0),
-        standard_flags: read_u16_le(payload, 8),
-        valid_flags: payload[10],
-        quality: payload[11],
+        valid_flags: payload[8],
+        quality: payload[9],
     }))
 }
 
@@ -140,7 +161,11 @@ pub(super) fn serialize_estimator_status(
     write_f32_le(buf, offset + 32, msg.pos_horiz_accuracy);
     write_f32_le(buf, offset + 36, msg.pos_vert_accuracy);
     write_u16_le(buf, offset + 40, msg.flags);
-    Some(write_crc(buf, offset + EstimatorStatus::PAYLOAD_LEN, 163))
+    Some(write_crc(
+        buf,
+        offset + EstimatorStatus::PAYLOAD_LEN,
+        EstimatorStatus::CRC_EXTRA,
+    ))
 }
 
 pub(super) fn serialize_aviate_estimator_status(
@@ -163,13 +188,12 @@ pub(super) fn serialize_aviate_estimator_status(
         AviateEstimatorStatus::MSG_ID,
     );
     write_u64_le(buf, offset, msg.time_usec);
-    write_u16_le(buf, offset + 8, msg.standard_flags);
-    buf[offset + 10] = msg.valid_flags;
-    buf[offset + 11] = msg.quality;
+    buf[offset + 8] = msg.valid_flags;
+    buf[offset + 9] = msg.quality;
     Some(write_crc(
         buf,
         offset + AviateEstimatorStatus::PAYLOAD_LEN,
-        50,
+        AviateEstimatorStatus::CRC_EXTRA,
     ))
 }
 

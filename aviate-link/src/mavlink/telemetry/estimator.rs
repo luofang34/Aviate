@@ -3,8 +3,8 @@
 use aviate_core::state::{EstimateQuality, StateEstimate, StateValidFlags};
 
 use super::super::protocol::{
-    aviate_estimate_quality, estimator_status_flags, serialize_mavlink, AviateEstimatorStatus,
-    EstimatorStatus, MavMessage,
+    aviate_estimate_quality, aviate_state_valid_flags, estimator_status_flags, serialize_mavlink,
+    AviateEstimatorStatus, EstimatorStatus, MavMessage,
 };
 use crate::errors::{TelemetryError, TelemetryResult};
 use crate::queue::{DefaultTelemetryQueue, TELEMETRY_MAX_FRAME};
@@ -32,6 +32,29 @@ pub fn standard_estimator_flags(state: &StateEstimate) -> u16 {
         flags |= estimator_status_flags::POS_HORIZ_REL;
     }
     flags
+}
+
+/// Map internal validity flags onto the `AVIATE_STATE_VALID_FLAGS` wire bits.
+///
+/// The wire values are fixed by `aviate.xml`. Mapping each flag explicitly
+/// keeps internal `StateValidFlags` bit assignments free to change without
+/// silently changing the wire contract; the pairing is enforced by the
+/// distinct-wire-bit test in this module's test suite.
+pub fn wire_valid_flags(flags: StateValidFlags) -> u8 {
+    let mut wire = 0;
+    if flags.contains(StateValidFlags::ATTITUDE) {
+        wire |= aviate_state_valid_flags::ATTITUDE;
+    }
+    if flags.contains(StateValidFlags::ANGULAR_RATE) {
+        wire |= aviate_state_valid_flags::ANGULAR_RATE;
+    }
+    if flags.contains(StateValidFlags::POSITION) {
+        wire |= aviate_state_valid_flags::POSITION;
+    }
+    if flags.contains(StateValidFlags::VELOCITY) {
+        wire |= aviate_state_valid_flags::VELOCITY;
+    }
+    wire
 }
 
 /// Format standard MAVLink `ESTIMATOR_STATUS`.
@@ -87,8 +110,7 @@ pub fn format_aviate_estimator_status(
     };
     let status = AviateEstimatorStatus {
         time_usec: u64::from(time_ms) * 1_000,
-        standard_flags: standard_estimator_flags(state),
-        valid_flags: state.valid_flags.bits(),
+        valid_flags: wire_valid_flags(state.valid_flags),
         quality,
     };
     let len = serialize_mavlink(

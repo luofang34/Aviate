@@ -39,8 +39,10 @@ fn aviate_quality_values_round_trip_losslessly() {
     ] {
         let source = AviateEstimatorStatus {
             time_usec: 99_000,
-            standard_flags: estimator_status_flags::POS_HORIZ_REL,
-            valid_flags: 0x0f,
+            valid_flags: aviate_state_valid_flags::ATTITUDE
+                | aviate_state_valid_flags::ANGULAR_RATE
+                | aviate_state_valid_flags::POSITION
+                | aviate_state_valid_flags::VELOCITY,
             quality,
         };
         let mut buf = [0u8; 32];
@@ -60,21 +62,24 @@ fn aviate_quality_values_round_trip_losslessly() {
         let parsed = parsed.unwrap_or_default();
 
         assert_eq!(parsed.time_usec, source.time_usec);
-        assert_eq!(parsed.standard_flags, source.standard_flags);
         assert_eq!(parsed.valid_flags, source.valid_flags);
         assert_eq!(parsed.quality, quality);
     }
 }
 
+// Golden frames produced by pymavlink 2.4.41 generated from aviate.xml
+// (srcSystem=1, srcComponent=1).
+
 #[test]
 fn aviate_status_matches_pymavlink_dialect_vector() {
-    const PYMAVLINK_FRAME: [u8; 24] = [
-        253, 12, 0, 0, 7, 1, 1, 32, 78, 0, 184, 130, 1, 0, 0, 0, 0, 0, 8, 0, 15, 2, 140, 7,
+    // GOOD with every validity bit set: the non-zero tail keeps the full
+    // 10-byte payload on the wire.
+    const PYMAVLINK_FRAME: [u8; 22] = [
+        253, 10, 0, 0, 7, 1, 1, 32, 78, 0, 184, 130, 1, 0, 0, 0, 0, 0, 15, 2, 238, 73,
     ];
     let status = AviateEstimatorStatus {
         time_usec: 99_000,
-        standard_flags: estimator_status_flags::POS_HORIZ_REL,
-        valid_flags: 0x0f,
+        valid_flags: 0x0F,
         quality: aviate_estimate_quality::GOOD,
     };
     let mut buf = [0u8; PYMAVLINK_FRAME.len()];
@@ -92,8 +97,44 @@ fn aviate_status_matches_pymavlink_dialect_vector() {
 }
 
 #[test]
+fn aviate_degraded_status_matches_pymavlink_dialect_vector() {
+    // DEGRADED with attitude and angular-rate valid; quality=1 in the last
+    // byte keeps the full payload.
+    const PYMAVLINK_FRAME: [u8; 22] = [
+        253, 10, 0, 0, 4, 1, 1, 32, 78, 0, 144, 208, 3, 0, 0, 0, 0, 0, 3, 1, 137, 232,
+    ];
+    let status = AviateEstimatorStatus {
+        time_usec: 250_000,
+        valid_flags: aviate_state_valid_flags::ATTITUDE | aviate_state_valid_flags::ANGULAR_RATE,
+        quality: aviate_estimate_quality::DEGRADED,
+    };
+    let mut buf = [0u8; PYMAVLINK_FRAME.len()];
+    let len = serialize_mavlink(
+        &MavMessage::AviateEstimatorStatus(status),
+        4,
+        1,
+        1,
+        &mut buf,
+    )
+    .unwrap_or_default();
+
+    assert_eq!(len, PYMAVLINK_FRAME.len());
+    assert_eq!(buf, PYMAVLINK_FRAME);
+
+    let parsed = match parse_mavlink(&PYMAVLINK_FRAME) {
+        Ok((MavMessage::AviateEstimatorStatus(status), _, _)) => Some(status),
+        _ => None,
+    }
+    .unwrap_or_default();
+    assert_eq!(parsed.valid_flags, 0x03);
+    assert_eq!(parsed.quality, aviate_estimate_quality::DEGRADED);
+}
+
+#[test]
 fn mavlink_two_zero_tail_truncation_is_restored() {
-    const AVIATE_UNUSABLE: [u8; 14] = [253, 2, 0, 0, 7, 1, 1, 32, 78, 0, 104, 66, 32, 235];
+    // Unusable with empty flags truncates to a 2-byte payload; the parser
+    // must restore the zero tail. Both frames are pymavlink output.
+    const AVIATE_UNUSABLE: [u8; 14] = [253, 2, 0, 0, 7, 1, 1, 32, 78, 0, 104, 66, 104, 226];
     const STANDARD_ZERO: [u8; 14] = [253, 2, 0, 0, 7, 1, 1, 230, 0, 0, 104, 66, 51, 209];
 
     let aviate = match parse_mavlink(&AVIATE_UNUSABLE) {
@@ -102,7 +143,6 @@ fn mavlink_two_zero_tail_truncation_is_restored() {
     }
     .unwrap_or_default();
     assert_eq!(aviate.time_usec, 17_000);
-    assert_eq!(aviate.standard_flags, 0);
     assert_eq!(aviate.valid_flags, 0);
     assert_eq!(aviate.quality, aviate_estimate_quality::UNUSABLE);
 
@@ -114,4 +154,28 @@ fn mavlink_two_zero_tail_truncation_is_restored() {
     assert_eq!(standard.time_usec, 17_000);
     assert_eq!(standard.flags, 0);
     assert_eq!(standard.pos_vert_accuracy, 0.0);
+}
+
+#[test]
+fn aviate_unusable_serializer_truncates_to_pymavlink_frame() {
+    // The serializer must emit the same truncated bytes pymavlink does for
+    // the fail-safe state, not a zero-padded full payload.
+    const AVIATE_UNUSABLE: [u8; 14] = [253, 2, 0, 0, 7, 1, 1, 32, 78, 0, 104, 66, 104, 226];
+    let status = AviateEstimatorStatus {
+        time_usec: 17_000,
+        valid_flags: 0,
+        quality: aviate_estimate_quality::UNUSABLE,
+    };
+    let mut buf = [0u8; 32];
+    let len = serialize_mavlink(
+        &MavMessage::AviateEstimatorStatus(status),
+        7,
+        1,
+        1,
+        &mut buf,
+    )
+    .unwrap_or_default();
+
+    assert_eq!(len, AVIATE_UNUSABLE.len());
+    assert_eq!(&buf[..len], &AVIATE_UNUSABLE);
 }

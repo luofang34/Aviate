@@ -35,18 +35,34 @@ fn quality_and_validity_are_lossless() {
         };
 
         assert_eq!(status.time_usec, 17_000);
-        assert_eq!(status.valid_flags, StateValidFlags::all().bits());
+        // 0x0F pins the AVIATE_STATE_VALID_FLAGS wire encoding of "all
+        // four dimensions valid" independently of internal bit layout.
+        assert_eq!(status.valid_flags, 0x0F);
         assert_eq!(status.quality, wire_quality);
-        let expected_standard = if quality == EstimateQuality::Good {
-            estimator_status_flags::ATTITUDE
-                | estimator_status_flags::VELOCITY_HORIZ
-                | estimator_status_flags::VELOCITY_VERT
-                | estimator_status_flags::POS_HORIZ_REL
-        } else {
-            0
-        };
-        assert_eq!(status.standard_flags, expected_standard);
     }
+}
+
+#[test]
+fn every_internal_validity_flag_has_a_distinct_wire_bit() {
+    // Forces a deliberate wire decision whenever StateValidFlags gains a
+    // flag: an unmapped flag would encode to 0 and fail here, instead of
+    // silently vanishing from telemetry.
+    let mut seen: u8 = 0;
+    let mut count = 0;
+    for flag in StateValidFlags::all().iter() {
+        let wire = estimator::wire_valid_flags(flag);
+        assert_ne!(
+            wire, 0,
+            "{flag:?} has no AVIATE_STATE_VALID_FLAGS wire mapping"
+        );
+        assert_eq!(wire.count_ones(), 1, "{flag:?} must map to a single bit");
+        assert_eq!(seen & wire, 0, "{flag:?} collides with another wire bit");
+        seen |= wire;
+        count += 1;
+    }
+    // One wire bit per aviate.xml AVIATE_STATE_VALID_FLAGS entry.
+    assert_eq!(count, 4);
+    assert_eq!(seen, 0x0F);
 }
 
 #[test]
