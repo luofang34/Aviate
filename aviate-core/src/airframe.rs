@@ -202,5 +202,20 @@ mod tests {
             BareQuad::cascade_gains(),
             "controller construction consumes the accessor"
         );
+
+        // Exercise the full construction surface: the mixer runs one
+        // hover mix (driving its timestamp source) and the mode
+        // config declares the expected empty sanitizer groups.
+        let mixer = BareQuad::create_mixer();
+        let cmd = mixer.mix(&crate::control::AxisCommand {
+            roll: crate::types::NormalizedSigned(0.0),
+            pitch: crate::types::NormalizedSigned(0.0),
+            yaw: crate::types::NormalizedSigned(0.0),
+            collective: crate::types::Normalized(0.5),
+        });
+        assert_eq!(cmd.active_mask, 0b1111);
+        assert!((cmd.outputs[0].0 - 0.5).abs() < 1e-5);
+        assert!(BareQuad::mode_config().groups.is_empty());
+        assert_eq!(BareQuad::MOTOR_COUNT, 4);
     }
 }
