@@ -385,7 +385,8 @@ impl<T: FrameTx> TelemetryBackend for MavlinkTelemetry<T> {
 /// Message rates are configured via `TelemetryConfig`:
 /// - `heartbeat_hz`: HEARTBEAT rate (default 1 Hz)
 /// - `attitude_hz`: ATTITUDE_QUATERNION rate (default 10 Hz)
-/// - `position_hz` / `estimator_status_hz`: position and status rates (default 4 Hz)
+/// - `position_hz`: LOCAL_POSITION_NED rate (default 4 Hz)
+/// - `estimator_status_hz`: minimum estimator-status rate (default 4 Hz)
 pub struct MavlinkCycleFormatter {
     /// Heartbeat rate divider (loop_hz / heartbeat_hz)
     heartbeat_div: u32,
@@ -455,44 +456,18 @@ impl TelemetryCycleFormatter for MavlinkCycleFormatter {
             }
         }
 
-        // ATTITUDE_QUATERNION at configured rate (default 10 Hz)
-        if snapshot.iteration.is_multiple_of(self.attitude_div) {
-            if let Ok(len) = format_attitude(
-                &snapshot.state,
-                snapshot.time_ms,
-                self.sys_id,
-                self.comp_id,
-                &mut self.seq,
-                &mut buf,
-            ) {
-                let _ = queue.push(&buf[..len]);
-            }
-        }
-
-        // LOCAL_POSITION_NED at configured rate (default 4 Hz)
-        if snapshot.iteration.is_multiple_of(self.position_div) {
-            if let Ok(len) = format_local_position(
-                &snapshot.state,
-                snapshot.time_ms,
-                self.sys_id,
-                self.comp_id,
-                &mut self.seq,
-                &mut buf,
-            ) {
-                let _ = queue.push(&buf[..len]);
-            }
-        }
-
-        if snapshot.iteration.is_multiple_of(self.estimator_status_div) {
-            estimator::enqueue_estimator_status(
-                snapshot,
-                self.sys_id,
-                self.comp_id,
-                &mut self.seq,
-                queue,
-                &mut buf,
-            );
-        }
+        let emit_attitude = snapshot.iteration.is_multiple_of(self.attitude_div);
+        let emit_position = snapshot.iteration.is_multiple_of(self.position_div);
+        let emit_status = snapshot.iteration.is_multiple_of(self.estimator_status_div);
+        estimator::enqueue_estimate_group(
+            snapshot,
+            emit_attitude,
+            emit_position,
+            emit_status,
+            (self.sys_id, self.comp_id),
+            &mut self.seq,
+            queue,
+        );
     }
 }
 

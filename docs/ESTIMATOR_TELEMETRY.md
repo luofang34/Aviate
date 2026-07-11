@@ -12,7 +12,9 @@ used.
 
 ## Status frames
 
-Aviate emits both status frames at `estimator_status_hz`:
+Aviate emits both status frames at least at `estimator_status_hz`. It also emits
+them immediately before every attitude or position snapshot, so each numeric
+frame has status with the same timestamp:
 
 - Standard MAVLink `ESTIMATOR_STATUS` (message 230) provides a conservative
   projection for common MAVLink consumers.
@@ -43,3 +45,7 @@ only dimensions whose Aviate validity bits are set.
 Innovation ratios and accuracy fields in standard `ESTIMATOR_STATUS` are NaN
 until Aviate exports those values. Consumers must not infer estimator quality
 from unavailable ratio or accuracy fields.
+
+The queue admits a same-timestamp status and numeric group together or drops the
+whole group under backpressure. Consumers must match status and numeric frames
+by timestamp and must not carry validity forward to a different timestamp.
