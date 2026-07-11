@@ -243,3 +243,79 @@ fn no_controller_state_reset_is_noop() {
     s.reset();
     assert_eq!(s, NoControllerState);
 }
+
+/// #141 guardrail: EVERY persistent field of `MultirotorRuntimeState`
+/// must change the canonical encoding when mutated — an omitted field
+/// lets two lockstep channels diverge in hidden state while comparing
+/// byte-equal. `last_vel_filt_ned` and `d_primed` were missing from
+/// the encoding when this test was written; a future field added to
+/// the struct without an encoding lane fails here.
+#[test]
+fn every_runtime_state_field_changes_the_canonical_encoding() {
+    use aviate_core::control::multirotor::MultirotorRuntimeState;
+    use aviate_core::math::Vector3;
+    use aviate_core::replicable::Replicable;
+    use aviate_core::types::{MetersPerSecond, RadiansPerSecond};
+
+    fn enc(s: &MultirotorRuntimeState) -> Vec<u8> {
+        let mut buf = [0u8; MultirotorRuntimeState::ENCODED_LEN];
+        let n = s.encode_canonical(&mut buf);
+        assert_eq!(n, MultirotorRuntimeState::ENCODED_LEN);
+        buf.to_vec()
+    }
+
+    let baseline = enc(&MultirotorRuntimeState::default());
+    let mut mutations: Vec<(&str, MutFn)> = Vec::new();
+    type MutFn = fn(&mut MultirotorRuntimeState);
+
+    mutations.push(("velocity_loop.integrator_ned", |s| {
+        s.velocity_loop.integrator_ned = Vector3::new(
+            MetersPerSecond(0.1),
+            MetersPerSecond(0.2),
+            MetersPerSecond(0.3),
+        );
+    }));
+    mutations.push(("velocity_loop.last_vel_filt_ned", |s| {
+        s.velocity_loop.last_vel_filt_ned = Vector3::new(
+            MetersPerSecond(0.4),
+            MetersPerSecond(0.5),
+            MetersPerSecond(0.6),
+        );
+    }));
+    mutations.push(("velocity_loop.d_primed", |s| {
+        s.velocity_loop.d_primed = true;
+    }));
+    mutations.push(("rate_loop.meas_filtered_prev", |s| {
+        s.rate_loop.meas_filtered_prev = Vector3::new(
+            RadiansPerSecond(0.7),
+            RadiansPerSecond(0.8),
+            RadiansPerSecond(0.9),
+        );
+    }));
+    mutations.push(("rate_loop.primed", |s| {
+        s.rate_loop.primed = true;
+    }));
+    mutations.push(("last_vel_sp_ned", |s| {
+        s.last_vel_sp_ned = Vector3::new(
+            MetersPerSecond(1.1),
+            MetersPerSecond(1.2),
+            MetersPerSecond(1.3),
+        );
+    }));
+    mutations.push(("vel_sp_primed", |s| {
+        s.vel_sp_primed = true;
+    }));
+    mutations.push(("dt_sec", |s| {
+        s.dt_sec = 0.001;
+    }));
+
+    for (name, mutate) in mutations {
+        let mut state = MultirotorRuntimeState::default();
+        mutate(&mut state);
+        assert_ne!(
+            enc(&state),
+            baseline,
+            "mutating {name} must change the canonical encoding"
+        );
+    }
+}
