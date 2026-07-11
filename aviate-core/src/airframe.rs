@@ -115,6 +115,22 @@ pub trait Airframe {
     /// to `Mixer::mix()`; the airframe does not own the clock.
     fn create_mixer() -> Self::Mixer;
 
+    /// Cascade tuning for this airframe — the single source both the
+    /// controller construction and the lockstep-hashed
+    /// `ResolvedKernelConfig` must draw from (#114): factories that
+    /// initialize the two sides independently drift apart silently.
+    /// Multirotor airframes override with measured gains; the default
+    /// is the validated baseline.
+    fn cascade_gains() -> crate::control::cascade_gains::CascadeGains {
+        crate::control::cascade_gains::CascadeGains::default()
+    }
+
+    /// Hover thrust trim \[normalized\] for this airframe. The same
+    /// single-source rule as `cascade_gains` applies.
+    fn hover_thrust_norm() -> crate::types::Scalar {
+        0.5
+    }
+
     /// Actuator-group configuration for this airframe's configuration
     /// mode.
     ///
@@ -129,4 +145,77 @@ pub trait Airframe {
     /// This method describes neither flight modes, per-mode setpoint
     /// types and limits, nor failsafe transitions.
     fn mode_config() -> ModeConfig;
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::control::cascade_gains::CascadeGains;
+    use crate::control::multirotor::MultirotorController;
+    use crate::control::ConfigMode;
+    use crate::mixer::QuadXMixer;
+    use crate::time::{TimeSource, Timestamp};
+
+    /// Minimal airframe that leans on the provided tuning defaults —
+    /// pins that the default accessors return the validated baseline
+    /// so an airframe that forgets to override still constructs a
+    /// coherent (if untuned) kernel.
+    struct BareQuad;
+
+    fn ts() -> Timestamp {
+        Timestamp {
+            ticks: 0,
+            source: TimeSource::Internal,
+        }
+    }
+
+    impl Airframe for BareQuad {
+        type Controller = MultirotorController;
+        type Mixer = QuadXMixer;
+        const MOTOR_COUNT: u8 = 4;
+        const AIRFRAME_ID: &'static str = "bare-quad";
+        const CATEGORY: &'static str = "multirotor";
+        fn create_controller() -> Self::Controller {
+            MultirotorController::from_gains(Self::cascade_gains(), Self::hover_thrust_norm())
+        }
+        fn create_mixer() -> Self::Mixer {
+            QuadXMixer {
+                timestamp_source: ts,
+            }
+        }
+        fn mode_config() -> ModeConfig {
+            ModeConfig {
+                mode: ConfigMode::Hover,
+                groups: &[],
+            }
+        }
+    }
+
+    #[test]
+    fn default_tuning_accessors_return_the_validated_baseline() {
+        assert_eq!(BareQuad::cascade_gains(), CascadeGains::default());
+        assert!((BareQuad::hover_thrust_norm() - 0.5).abs() < f32::EPSILON);
+        let ctrl = BareQuad::create_controller();
+        assert_eq!(
+            ctrl.vel_ctrl.gains,
+            BareQuad::cascade_gains(),
+            "controller construction consumes the accessor"
+        );
+
+        // Exercise the full construction surface: the mixer runs one
+        // hover mix (driving its timestamp source) and the mode
+        // config declares the expected empty sanitizer groups.
+        let mixer = BareQuad::create_mixer();
+        let cmd = mixer.mix(&crate::control::AxisCommand {
+            roll: crate::types::NormalizedSigned(0.0),
+            pitch: crate::types::NormalizedSigned(0.0),
+            yaw: crate::types::NormalizedSigned(0.0),
+            collective: crate::types::Normalized(0.5),
+        });
+        assert_eq!(cmd.active_mask, 0b1111);
+        assert!((cmd.outputs[0].0 - 0.5).abs() < 1e-5);
+        assert!(BareQuad::mode_config().groups.is_empty());
+        assert_eq!(BareQuad::MOTOR_COUNT, 4);
+    }
 }

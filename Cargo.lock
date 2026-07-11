@@ -239,6 +239,7 @@ dependencies = [
 name = "aviate-runtime"
 version = "0.0.0"
 dependencies = [
+ "aviate-airframe-multirotor",
  "aviate-config",
  "aviate-core",
  "aviate-hal-io",
