@@ -171,3 +171,65 @@ fn cycle_formatter_emits_status_at_configured_rate() {
     assert!(ids[..count].contains(&230));
     assert!(ids[..count].contains(&20_000));
 }
+
+#[test]
+fn each_numeric_snapshot_is_preceded_by_same_time_status() {
+    let cfg = TelemetryConfig {
+        attitude_hz: 10,
+        position_hz: 1,
+        estimator_status_hz: 4,
+        ..TelemetryConfig::default()
+    };
+    let mut formatter = MavlinkCycleFormatter::new(&cfg, 100);
+    let mut queue = DefaultTelemetryQueue::new();
+    let snapshot = TelemetrySnapshot {
+        time_ms: 200,
+        iteration: 20,
+        state: StateEstimate {
+            quality: EstimateQuality::Unusable,
+            valid_flags: StateValidFlags::empty(),
+            ..StateEstimate::default()
+        },
+        ..TelemetrySnapshot::default()
+    };
+
+    formatter.format_cycle(&snapshot, &mut queue);
+    let mut ids = [0u32; 3];
+    let mut times = [0u64; 3];
+    let mut count = 0;
+    while queue.pop_with(|frame| {
+        if let Some(message) = parsed_message(frame) {
+            ids[count] = message.msg_id();
+            times[count] = match message {
+                MavMessage::EstimatorStatus(status) => status.time_usec,
+                MavMessage::AviateEstimatorStatus(status) => status.time_usec,
+                MavMessage::AttitudeQuaternion(attitude) => {
+                    u64::from(attitude.time_boot_ms) * 1_000
+                }
+                _ => 0,
+            };
+            count = count.wrapping_add(1);
+        }
+    }) {}
+
+    assert_eq!(&ids[..count], &[230, 20_000, 31]);
+    assert_eq!(&times[..count], &[200_000; 3]);
+}
+
+#[test]
+fn estimate_group_is_dropped_whole_when_queue_has_no_room() {
+    let cfg = TelemetryConfig::default();
+    let mut formatter = MavlinkCycleFormatter::new(&cfg, 100);
+    let mut queue = DefaultTelemetryQueue::new();
+    for _ in 0..30 {
+        assert!(queue.push(&[0]).is_ok());
+    }
+    let snapshot = TelemetrySnapshot {
+        iteration: 10,
+        ..TelemetrySnapshot::default()
+    };
+
+    formatter.format_cycle(&snapshot, &mut queue);
+
+    assert_eq!(queue.len(), 30);
+}

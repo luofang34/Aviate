@@ -7,7 +7,7 @@ use super::super::protocol::{
     EstimatorStatus, MavMessage,
 };
 use crate::errors::{TelemetryError, TelemetryResult};
-use crate::queue::DefaultTelemetryQueue;
+use crate::queue::{DefaultTelemetryQueue, TELEMETRY_MAX_FRAME};
 use crate::telemetry::TelemetrySnapshot;
 
 /// Project Aviate validity into flags whose standard MAVLink semantics match.
@@ -103,21 +103,89 @@ pub fn format_aviate_estimator_status(
     Ok(len)
 }
 
-pub(super) fn enqueue_estimator_status(
+fn enqueue_estimator_status(
     snapshot: &TelemetrySnapshot,
     sys_id: u8,
     comp_id: u8,
     seq: &mut u8,
     queue: &mut DefaultTelemetryQueue,
     buf: &mut [u8],
-) {
+) -> bool {
     if let Ok(len) =
         format_estimator_status(&snapshot.state, snapshot.time_ms, sys_id, comp_id, seq, buf)
     {
-        queue.push(&buf[..len]).ok();
+        if queue.push(&buf[..len]).is_err() {
+            return false;
+        }
+    } else {
+        return false;
     }
     if let Ok(len) =
         format_aviate_estimator_status(&snapshot.state, snapshot.time_ms, sys_id, comp_id, seq, buf)
+    {
+        if queue.push(&buf[..len]).is_err() {
+            return false;
+        }
+    } else {
+        return false;
+    }
+    true
+}
+
+pub(super) fn enqueue_estimate_group(
+    snapshot: &TelemetrySnapshot,
+    emit_attitude: bool,
+    emit_position: bool,
+    emit_periodic_status: bool,
+    ids: (u8, u8),
+    seq: &mut u8,
+    queue: &mut DefaultTelemetryQueue,
+) {
+    let numeric_count = usize::from(emit_attitude) + usize::from(emit_position);
+    if numeric_count == 0 && !emit_periodic_status {
+        return;
+    }
+
+    // A status/numeric snapshot must not be partially admitted under backpressure.
+    if queue.remaining_capacity() < numeric_count + 2 {
+        return;
+    }
+
+    let mut buf = [0u8; TELEMETRY_MAX_FRAME];
+    if !enqueue_estimator_status(snapshot, ids.0, ids.1, seq, queue, &mut buf) {
+        return;
+    }
+    if emit_attitude {
+        enqueue_attitude(snapshot, ids, seq, queue, &mut buf);
+    }
+    if emit_position {
+        enqueue_position(snapshot, ids, seq, queue, &mut buf);
+    }
+}
+
+fn enqueue_attitude(
+    snapshot: &TelemetrySnapshot,
+    ids: (u8, u8),
+    seq: &mut u8,
+    queue: &mut DefaultTelemetryQueue,
+    buf: &mut [u8],
+) {
+    if let Ok(len) =
+        super::format_attitude(&snapshot.state, snapshot.time_ms, ids.0, ids.1, seq, buf)
+    {
+        queue.push(&buf[..len]).ok();
+    }
+}
+
+fn enqueue_position(
+    snapshot: &TelemetrySnapshot,
+    ids: (u8, u8),
+    seq: &mut u8,
+    queue: &mut DefaultTelemetryQueue,
+    buf: &mut [u8],
+) {
+    if let Ok(len) =
+        super::format_local_position(&snapshot.state, snapshot.time_ms, ids.0, ids.1, seq, buf)
     {
         queue.push(&buf[..len]).ok();
     }

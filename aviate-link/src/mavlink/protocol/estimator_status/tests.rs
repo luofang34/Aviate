@@ -90,3 +90,28 @@ fn aviate_status_matches_pymavlink_dialect_vector() {
     assert_eq!(len, PYMAVLINK_FRAME.len());
     assert_eq!(buf, PYMAVLINK_FRAME);
 }
+
+#[test]
+fn mavlink_two_zero_tail_truncation_is_restored() {
+    const AVIATE_UNUSABLE: [u8; 14] = [253, 2, 0, 0, 7, 1, 1, 32, 78, 0, 104, 66, 32, 235];
+    const STANDARD_ZERO: [u8; 14] = [253, 2, 0, 0, 7, 1, 1, 230, 0, 0, 104, 66, 51, 209];
+
+    let aviate = match parse_mavlink(&AVIATE_UNUSABLE) {
+        Ok((MavMessage::AviateEstimatorStatus(status), _, _)) => Some(status),
+        _ => None,
+    }
+    .unwrap_or_default();
+    assert_eq!(aviate.time_usec, 17_000);
+    assert_eq!(aviate.standard_flags, 0);
+    assert_eq!(aviate.valid_flags, 0);
+    assert_eq!(aviate.quality, aviate_estimate_quality::UNUSABLE);
+
+    let standard = match parse_mavlink(&STANDARD_ZERO) {
+        Ok((MavMessage::EstimatorStatus(status), _, _)) => Some(status),
+        _ => None,
+    }
+    .unwrap_or_default();
+    assert_eq!(standard.time_usec, 17_000);
+    assert_eq!(standard.flags, 0);
+    assert_eq!(standard.pos_vert_accuracy, 0.0);
+}

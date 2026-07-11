@@ -279,6 +279,12 @@ impl<const N: usize, const FRAME_SIZE: usize> TelemetryQueue<N, FRAME_SIZE> {
             N - (self.tail - self.head)
         }
     }
+
+    /// Get the number of frames that can be accepted without dropping.
+    #[inline]
+    pub fn remaining_capacity(&self) -> usize {
+        N - self.len()
+    }
 }
 
 #[cfg(test)]
@@ -292,11 +298,13 @@ mod tests {
         assert!(queue.is_empty());
         assert!(!queue.is_full());
         assert_eq!(queue.len(), 0);
+        assert_eq!(queue.remaining_capacity(), 4);
 
         // Push one frame
         let frame1 = b"test_frame_1";
         assert!(queue.push(frame1).is_ok());
         assert_eq!(queue.len(), 1);
+        assert_eq!(queue.remaining_capacity(), 3);
         assert!(!queue.is_empty());
 
         // Pop one frame
@@ -318,6 +326,7 @@ mod tests {
         assert!(queue.push(b"frame1").is_ok());
         assert!(queue.push(b"frame2").is_ok());
         assert!(queue.is_full());
+        assert_eq!(queue.remaining_capacity(), 0);
 
         // Try to push when full
         assert!(matches!(queue.push(b"frame3"), Err(QueueError::Full)));
