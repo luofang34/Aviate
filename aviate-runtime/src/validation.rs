@@ -96,6 +96,7 @@ mod tests {
             heartbeat_hz: 1,
             attitude_hz: 10,
             position_hz: 4,
+            estimator_status_hz: 4,
         };
         assert!(validate_telemetry_config(&cfg).is_ok());
     }
@@ -108,6 +109,7 @@ mod tests {
             heartbeat_hz: 1,
             attitude_hz: 10,
             position_hz: 4,
+            estimator_status_hz: 4,
         };
         assert!(validate_telemetry_config(&cfg).is_ok());
     }
@@ -120,6 +122,7 @@ mod tests {
             heartbeat_hz: 1,
             attitude_hz: 10,
             position_hz: 4,
+            estimator_status_hz: 4,
         };
         assert!(matches!(
             validate_telemetry_config(&cfg),
@@ -135,6 +138,7 @@ mod tests {
             heartbeat_hz: 1,
             attitude_hz: 10,
             position_hz: 4,
+            estimator_status_hz: 4,
         };
         assert!(matches!(
             validate_telemetry_config(&cfg),

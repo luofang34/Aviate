@@ -134,6 +134,8 @@
 //! | 0 | HEARTBEAT | FC status |
 //! | 31 | ATTITUDE_QUATERNION | Attitude telemetry |
 //! | 32 | LOCAL_POSITION_NED | Position telemetry |
+//! | 230 | ESTIMATOR_STATUS | Standard estimator-validity projection |
+//! | 20000 | AVIATE_ESTIMATOR_STATUS | Lossless Aviate quality and validity |
 //!
 //! ## NOT Supported
 //!
