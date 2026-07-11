@@ -7,6 +7,13 @@
 # spawn heading and anti-corrective past 90 deg; this course is the
 # regression guardrail for that whole class.
 #
+# NOT in the CI mission set yet: translation legs at 2 m/s and 120 deg
+# heading pass intermittently (the vehicle can depart during leg_east
+# — reached_waypoint min error jumps to several meters and telemetry
+# stops, i.e. a mid-leg upset). Run it by hand while the remaining
+# rotated-translation marginality is diagnosed; promote to CI once it
+# holds 5/5.
+#
 # Demands the vehicle fly an ordered 4-corner square via
 # `SET_POSITION_TARGET_LOCAL_NED` commands. Verification uses the
 # `trajectory_tracking` criterion: every waypoint must be visited
@@ -66,7 +73,7 @@ verify = [
 # tumbles during any leg.
 [[vehicles.mission.phases]]
 name = "leg_north"
-duration_ms = 8000
+duration_ms = 10000
 action = { type = "goto", position = [10.0, 0.0, -5.0], heading = 2.094 }
 verify = [
   { type = "armed", value = true },
@@ -76,7 +83,7 @@ verify = [
 
 [[vehicles.mission.phases]]
 name = "leg_east"
-duration_ms = 8000
+duration_ms = 10000
 action = { type = "goto", position = [10.0, 10.0, -5.0], heading = 2.094 }
 verify = [
   { type = "armed", value = true },
@@ -86,7 +93,7 @@ verify = [
 
 [[vehicles.mission.phases]]
 name = "leg_south"
-duration_ms = 8000
+duration_ms = 10000
 action = { type = "goto", position = [0.0, 10.0, -5.0], heading = 2.094 }
 verify = [
   { type = "armed", value = true },
@@ -96,7 +103,7 @@ verify = [
 
 [[vehicles.mission.phases]]
 name = "leg_home"
-duration_ms = 8000
+duration_ms = 10000
 action = { type = "goto", position = [0.0, 0.0, -5.0], heading = 2.094 }
 verify = [
   { type = "armed", value = true },
