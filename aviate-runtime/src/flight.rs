@@ -90,7 +90,7 @@ where
     Time: aviate_hal_io::TimeHal,
     Transport: aviate_hal_io::TransportHal<Cmd>,
     Watchdog: aviate_hal_io::WatchdogHal,
-    Cmd: Clone,
+    Cmd: Clone + crate::command_ingress::ClassifyCommand,
 {
     runner.run(period_us)
 }

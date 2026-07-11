@@ -277,11 +277,7 @@ pub struct MicoAirBoard {
     /// Microsecond tick when a `SystemCommand::FlightControl`
     /// frame last refreshed the active command. `None` until the
     /// first uplink arrives; clamps `command_age_ms` to
-    /// Retained flight setpoint, replayed to the kernel every tick.
-    /// A replay is not a receive: command freshness/age is owned by
-    /// the runner (`CommandTick`), so a lost link ages out even
-    /// while this setpoint keeps the cascade fed (#133).
-    last_flight_cmd: Command,
+
     ekf_initialized: bool,
     iteration: u32,
     iwdg: Option<IWDG>,
@@ -520,7 +516,6 @@ impl MicoAirBoard {
             kernel,
             sensor_cache: SensorCache::new(),
             last_imu_time: None,
-            last_flight_cmd: default_command(),
             ekf_initialized: false,
             iteration: 0,
             iwdg,
@@ -531,17 +526,15 @@ impl MicoAirBoard {
 
     pub fn try_into_runner(mut self) -> Result<HwFlightRunner, RunnerCreationError> {
         let time = Stm32h7Time::new(400, NoSleep);
-        let default_cmd = default_command();
         let transport = self.transport.take().ok_or(RunnerCreationError)?;
         let iwdg = self.iwdg.take().ok_or(RunnerCreationError)?;
         let watchdog = BoardWatchdog::new(iwdg, 500);
 
+        // No seeded default command: before the first real setpoint
+        // the ingress reports age u32::MAX (command-stale, failsafe
+        // posture) and the board flies default_command() itself.
         Ok(aviate_runtime::runner::FlightRunner::new(
-            self,
-            time,
-            transport,
-            watchdog,
-            SystemCommand::FlightControl(default_cmd),
+            self, time, transport, watchdog,
         ))
     }
 
@@ -604,11 +597,11 @@ impl BoardStep for MicoAirBoard {
         };
 
         // Discrete commands fire exactly once, on the tick they
-        // arrive; the flight setpoint is retained across ticks but a
-        // replay never counts as a receive — command freshness is the
-        // runner's (see CommandTick).
-        if cmd_tick.fresh {
-            match cmd_tick.cmd {
+        // arrive (CommandTick::event); the retained flight setpoint
+        // and its age are the runner's — a redundant Arm can never
+        // refresh setpoint freshness (#133).
+        if let Some(event) = cmd_tick.event {
+            match event {
                 SystemCommand::Arm => {
                     if self.kernel.arm().is_ok() {
                         self.board_hal.arm();
@@ -624,11 +617,13 @@ impl BoardStep for MicoAirBoard {
                         .checks
                         .pre_arm
                         .update_throttle(flight_cmd.setpoint.collective_thrust.0 < 0.1);
-                    self.last_flight_cmd = flight_cmd.clone();
                 }
             }
         }
-        let cmd: Command = self.last_flight_cmd.clone();
+        let cmd: Command = match cmd_tick.setpoint {
+            Some(SystemCommand::FlightControl(flight_cmd)) => flight_cmd.clone(),
+            _ => default_command(),
+        };
 
         if !self.ekf_initialized && self.sensor_cache.imu.is_some() {
             self.kernel.state.estimator.init(
@@ -652,12 +647,10 @@ impl BoardStep for MicoAirBoard {
             self.kernel.init_step(&sensors, ts);
         }
 
-        // Command age comes from the runner — the only place that
-        // observes actual receives. Deriving it here from replayed
-        // retained commands pinned the age near zero after link loss
-        // and the kernel's command-timeout terminal could never fire
-        // (#133).
-        let command_age_ms = cmd_tick.age_ms;
+        // Setpoint age comes from the runner's ingress — the only
+        // place that observes actual setpoint receives. Discrete
+        // events never refresh it (#133).
+        let command_age_ms = cmd_tick.setpoint_age_ms;
         let result = self.kernel.update(
             ChannelId(0),
             time_delta,

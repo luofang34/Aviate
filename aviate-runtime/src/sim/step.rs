@@ -109,18 +109,24 @@ impl SitlRunner {
             tick_delta: current_delta_us,
         };
 
-        // 4. Receive commands via transport
+        // 4. Receive commands via transport, routed through the same
+        // ingress state machine the hardware runner uses (#133).
+        // Discrete Arm/Disarm fire exactly once and never refresh the
+        // setpoint age; an armed vehicle with no commander is
+        // command-stale by definition — the CommandLoss terminal
+        // engages (safe: zero-collective on the ground) and releases
+        // on the first real setpoint per LLR-FLT-209. The old "anchor
+        // freshness on arm" hack was exactly the #133 defect.
         if let Some(sys_cmd) = self.transport.recv_command() {
-            match sys_cmd {
-                SystemCommand::FlightControl(cmd) => {
-                    self.kernel
-                        .state
-                        .checks
-                        .pre_arm
-                        .update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
-                    self.last_cmd = cmd;
-                    self.last_cmd_rx_ticks = Some(self.transport.now().ticks);
-                }
+            let now_ticks = self.transport.now().ticks;
+            if let SystemCommand::FlightControl(cmd) = &sys_cmd {
+                self.kernel
+                    .state
+                    .checks
+                    .pre_arm
+                    .update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
+            }
+            match &sys_cmd {
                 SystemCommand::Arm => {
                     info!("Arm command (state={:?})", self.kernel.state.init_state);
                     info!("Faults: {:?}", self.kernel.state.faults);
@@ -134,12 +140,6 @@ impl SitlRunner {
                         // Only arm HAL and transport if kernel arm succeeded
                         self.board_hal.arm();
                         self.transport.set_armed(true);
-                        // Arming is commanding activity on the same link:
-                        // anchor command freshness here, otherwise a
-                        // command-less arm reports u32::MAX age on the
-                        // first armed cycle and latches the CommandTimeout
-                        // terminal before any setpoint can arrive.
-                        self.last_cmd_rx_ticks = Some(self.transport.now().ticks);
                     }
                 }
                 SystemCommand::Disarm => {
@@ -149,7 +149,9 @@ impl SitlRunner {
                     self.board_hal.disarm();
                     self.transport.set_armed(false);
                 }
+                SystemCommand::FlightControl(_) => {}
             }
+            self.ingress.receive(sys_cmd, now_ticks);
         }
 
         // 4b. Sync Telemetry target address from SitlIO
@@ -238,25 +240,20 @@ impl SitlRunner {
 
         // 7. Step kernel.
         //
-        // command_age_ms is measured from the most recent
-        // SystemCommand::FlightControl arrival (last_cmd_rx_ticks)
-        // against the transport's microsecond clock. Until the
-        // first command lands the runner clamps to u32::MAX so the
-        // kernel's command-timeout check fires immediately —
-        // failsafe behavior, not COMMAND_RECENT-by-default.
-        let command_age_ms = match self.last_cmd_rx_ticks {
-            Some(rx_ticks) => {
-                let now_ticks = self.transport.now().ticks;
-                let age_us = now_ticks.saturating_sub(rx_ticks);
-                u32::try_from(age_us / 1_000).unwrap_or(u32::MAX)
-            }
-            None => u32::MAX,
+        // Setpoint age comes from the shared ingress: only a
+        // FlightControl receive refreshes it; u32::MAX before the
+        // first so a fresh boot is command-stale (failsafe posture).
+        let now_ticks = self.transport.now().ticks;
+        let command_age_ms = self.ingress.setpoint_age_ms(now_ticks);
+        let flight_cmd: aviate_core::control::Command = match self.ingress.setpoint() {
+            Some(aviate_hal_io::SystemCommand::FlightControl(c)) => c.clone(),
+            _ => crate::sim::default_command(),
         };
         let result = self.kernel.update(
             ChannelId(0),
             time_delta,
             &sensors,
-            &self.last_cmd,
+            &flight_cmd,
             command_age_ms,
             &aviate_core::mixer::ActuatorState::default(),
             None,

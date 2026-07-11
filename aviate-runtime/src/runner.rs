@@ -115,19 +115,21 @@ impl RunnerHealth {
     }
 }
 
-/// One tick's command view, owned by the runner: the retained command
-/// value plus runner-authoritative freshness. `fresh` is true only on
-/// the tick the command actually arrived — boards act on discrete
-/// events (arm/disarm) exactly once, and never treat a replayed
-/// retained setpoint as a receive.
+/// One tick's command view, owned by the runner (#133). Discrete
+/// events are delivered exactly once via `event`; the retained
+/// setpoint carries its OWN age, which only a setpoint-class receive
+/// refreshes — a redundant Arm on a link that stopped carrying
+/// setpoints can never un-stale the retained setpoint and release
+/// the kernel's CommandLoss terminal.
 #[derive(Debug, Clone, Copy)]
 pub struct CommandTick<'a, C> {
-    /// Most recent command (retained between receives).
-    pub cmd: &'a C,
-    /// True only on the tick `cmd` was actually received.
-    pub fresh: bool,
-    /// Runner-owned receive age \[ms\]; `u32::MAX` before first contact.
-    pub age_ms: u32,
+    /// The command received THIS tick, any class — consume once.
+    pub event: Option<&'a C>,
+    /// Retained last setpoint-class command, if any ever arrived.
+    pub setpoint: Option<&'a C>,
+    /// Age of the last setpoint-class receive \[ms\]; `u32::MAX`
+    /// before the first.
+    pub setpoint_age_ms: u32,
 }
 
 /// Trait for board-specific stepping logic
@@ -204,8 +206,12 @@ where
     pub transport: Transport,
     /// Hardware watchdog (kicked once per control tick)
     pub watchdog: Watchdog,
-    /// Last command received (or default/failsafe)
-    pub last_cmd: Cmd,
+    /// Shared command-ingress state machine (#133): retained
+    /// setpoint + its own receive timestamp.
+    pub ingress: crate::command_ingress::CommandIngress<Cmd>,
+    /// The command received THIS tick, delivered to the board once
+    /// via `CommandTick::event`; None on ticks with no receive.
+    last_event: Option<Cmd>,
     /// Health status for arming gates and failsafe
     pub health: RunnerHealth,
 }
@@ -216,7 +222,7 @@ where
     Time: TimeHal,
     Transport: TransportHal<Cmd>,
     Watchdog: WatchdogHal,
-    Cmd: Clone,
+    Cmd: Clone + crate::command_ingress::ClassifyCommand,
 {
     /// Create a new flight runner
     ///
@@ -226,20 +232,14 @@ where
     /// * `time` - Time source for scheduling
     /// * `transport` - Transport for commands and telemetry
     /// * `watchdog` - Hardware watchdog (kicked once per tick)
-    /// * `default_cmd` - Default/failsafe command when no input received
-    pub fn new(
-        board: Board,
-        time: Time,
-        transport: Transport,
-        watchdog: Watchdog,
-        default_cmd: Cmd,
-    ) -> Self {
+    pub fn new(board: Board, time: Time, transport: Transport, watchdog: Watchdog) -> Self {
         Self {
             board,
             time,
             transport,
             watchdog,
-            last_cmd: default_cmd,
+            ingress: crate::command_ingress::CommandIngress::default(),
+            last_event: None,
             health: RunnerHealth::new(),
         }
     }
@@ -258,26 +258,25 @@ where
     /// * `now_us` - Actual monotonic time (for safety/health: link timeout)
     /// * `dt_us` - Fixed period for controller math (determinism)
     pub fn step(&mut self, tick_us: u64, now_us: u64, dt_us: u32) {
-        // 1. Poll transport for commands (non-blocking). Freshness is
-        // recorded here and ONLY here — the retained `last_cmd` is
-        // replayed to the board every tick, but a replay is not a
-        // receive.
-        let fresh = if let Some(cmd) = self.transport.try_recv_command() {
-            self.last_cmd = cmd;
+        // 1. Poll transport (non-blocking) and route through the
+        // shared ingress: setpoints are retained and stamped; discrete
+        // events pass through once. link_ok tracks ANY traffic (the
+        // link-alive signal); the SETPOINT age is separate and only a
+        // setpoint receive refreshes it (#133).
+        self.last_event = self.transport.try_recv_command();
+        if let Some(cmd) = &self.last_event {
             self.health.command_received(now_us);
-            true
-        } else {
-            false
-        };
+            self.ingress.receive(cmd.clone(), now_us);
+        }
 
         // 2. Update link_ok from command timeout (wrapping-safe)
         self.health.update_link_status(now_us);
 
         // 3. Delegate to board for sensor/actuator handling
         let cmd_tick = CommandTick {
-            cmd: &self.last_cmd,
-            fresh,
-            age_ms: self.health.command_age_ms(now_us),
+            event: self.last_event.as_ref(),
+            setpoint: self.ingress.setpoint(),
+            setpoint_age_ms: self.ingress.setpoint_age_ms(now_us),
         };
         self.board
             .board_step(tick_us, now_us, dt_us, cmd_tick, self.health.link_ok);
