@@ -109,19 +109,27 @@ impl CascadeGains {
             // of the setpoint from full descent.
             pos_p: [0.5, 0.5, 0.5],
             pos_accel_limits: [2.0, 2.0, 1.0],
-            pos_vel_caps: [2.0, 2.0, 0.4],
-            vel_p: [0.3, 0.3, 0.4],
-            // Horizontal I-term stays off until the
-            // closed-loop-horizontal regression baseline lands —
-            // it was a candidate root cause of the drift mode
-            // and a clean P-only baseline is easier to compare
-            // against. Vertical I-term is on for hover trim
-            // bias rejection (the velocity loop's anti-windup
-            // freezes accumulation while the thrust output is
-            // clamped, so a saturated brake or climb doesn't
+            // Vertical cap sized for the brake authority of the
+            // vel-z loop (hover trim 0.77 leaves ~2.9 m/s² of climb
+            // margin; the loop demonstrably stops a 1.5 m/s rate
+            // within half a meter on the step rig).
+            pos_vel_caps: [2.0, 2.0, 1.5],
+            // Horizontal P sized so a 2 m/s velocity error commands
+            // ~2.4 m/s² (≈14° tilt) — enough to actually reach the
+            // position loop's 2 m/s cap against airframe drag. The
+            // old 0.3 gave a >3 s time constant and course legs
+            // crawled at half the commanded speed.
+            vel_p: [1.2, 1.2, 0.4],
+            // Horizontal I-term cancels the steady-state drag
+            // error a P-only loop carries at speed (the "drift
+            // mode" it was once suspected of causing was the
+            // heading-frame tilt bug). Vertical I-term is on for
+            // hover trim bias rejection. The loop's conditional
+            // anti-windup freezes accumulation while the output
+            // is saturated, so a saturated brake or climb doesn't
             // wind the integrator and cause the reverse-overshoot
-            // pathology).
-            vel_i: [0.0, 0.0, 0.05],
+            // pathology.
+            vel_i: [0.05, 0.05, 0.05],
             vel_max_roll_pitch: 0.35, // ~20°
             // Disabled. The current finite-difference accel_ff
             // (Δvel_sp / dt) is unfiltered, so any gz-side

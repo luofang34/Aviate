@@ -52,7 +52,12 @@ name = "level_hover"
 duration_ms = 3000
 action = { type = "attitude_target", q = [1.0, 0.0, 0.0, 0.0], thrust = 0.65 }
 verify = [
-    { type = "altitude_hold", target = 3.0, tolerance = 5.0 },
+    # Attitude mode flies fixed thrust: altitude is open-loop by
+    # design, so the honest check is "airborne and stable", not a
+    # specific height (the old 3 m +/- 5 m bound was calibrated to a
+    # slow-climbing vertical loop and fails now that climbs are
+    # prompt).
+    { type = "min_altitude", value = 1.0 },
     { type = "max_drift", value = 50.0 }
 ]
 

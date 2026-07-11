@@ -1,4 +1,18 @@
-# Aviate SITL: Closed-loop square course
+# Aviate SITL: Closed-loop square course at a rotated heading
+#
+# Identical to square_course but every goto commands heading 2.094
+# (120 deg). Three shipped defects — mixer yaw starvation, the ESKF
+# body-frame error application, and the velocity loop's unrotated
+# tilt mapping — were invisible to every mission that flies at the
+# spawn heading and anti-corrective past 90 deg; this course is the
+# regression guardrail for that whole class.
+#
+# NOT in the CI mission set yet: translation legs at 2 m/s and 120 deg
+# heading pass intermittently (the vehicle can depart during leg_east
+# — reached_waypoint min error jumps to several meters and telemetry
+# stops, i.e. a mid-leg upset). Run it by hand while the remaining
+# rotated-translation marginality is diagnosed; promote to CI once it
+# holds 5/5.
 #
 # Demands the vehicle fly an ordered 4-corner square via
 # `SET_POSITION_TARGET_LOCAL_NED` commands. Verification uses the
@@ -9,7 +23,7 @@
 # started.
 
 [test]
-name = "square_course"
+name = "rotated_course"
 description = "Closed-loop 10 m square via position-target"
 lockstep = false
 
@@ -21,7 +35,7 @@ spawn_position = [0.0, 0.0, 0.0]
 spawn_heading = 0.0
 
 [vehicles.mission]
-name = "square_course"
+name = "rotated_course"
 
 [[vehicles.mission.phases]]
 name = "arm"
@@ -43,7 +57,7 @@ verify = [
 [[vehicles.mission.phases]]
 name = "takeoff"
 duration_ms = 8000
-action = { type = "goto", position = [0.0, 0.0, -5.0], heading = 0.0 }
+action = { type = "goto", position = [0.0, 0.0, -5.0], heading = 2.094 }
 verify = [
   { type = "armed", value = true },
   { type = "reached_waypoint", position = [0.0, 0.0, -5.0], tolerance = 1.0 },
@@ -59,8 +73,8 @@ verify = [
 # tumbles during any leg.
 [[vehicles.mission.phases]]
 name = "leg_north"
-duration_ms = 8000
-action = { type = "goto", position = [10.0, 0.0, -5.0], heading = 0.0 }
+duration_ms = 10000
+action = { type = "goto", position = [10.0, 0.0, -5.0], heading = 2.094 }
 verify = [
   { type = "armed", value = true },
   { type = "reached_waypoint", position = [10.0, 0.0, -5.0], tolerance = 1.5 },
@@ -69,8 +83,8 @@ verify = [
 
 [[vehicles.mission.phases]]
 name = "leg_east"
-duration_ms = 8000
-action = { type = "goto", position = [10.0, 10.0, -5.0], heading = 0.0 }
+duration_ms = 10000
+action = { type = "goto", position = [10.0, 10.0, -5.0], heading = 2.094 }
 verify = [
   { type = "armed", value = true },
   { type = "reached_waypoint", position = [10.0, 10.0, -5.0], tolerance = 1.5 },
@@ -79,8 +93,8 @@ verify = [
 
 [[vehicles.mission.phases]]
 name = "leg_south"
-duration_ms = 8000
-action = { type = "goto", position = [0.0, 10.0, -5.0], heading = 0.0 }
+duration_ms = 10000
+action = { type = "goto", position = [0.0, 10.0, -5.0], heading = 2.094 }
 verify = [
   { type = "armed", value = true },
   { type = "reached_waypoint", position = [0.0, 10.0, -5.0], tolerance = 1.5 },
@@ -89,8 +103,8 @@ verify = [
 
 [[vehicles.mission.phases]]
 name = "leg_home"
-duration_ms = 8000
-action = { type = "goto", position = [0.0, 0.0, -5.0], heading = 0.0 }
+duration_ms = 10000
+action = { type = "goto", position = [0.0, 0.0, -5.0], heading = 2.094 }
 verify = [
   { type = "armed", value = true },
   { type = "reached_waypoint", position = [0.0, 0.0, -5.0], tolerance = 1.5 },

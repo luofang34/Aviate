@@ -52,8 +52,8 @@ name = "hold_origin"
 duration_ms = 5000
 action = { type = "goto", position = [0.0, 0.0, -10.0], heading = 0.0 }
 verify = [
-    { type = "position_hold", position = [0.0, 0.0, -10.0], tolerance = 100.0 },
-    { type = "altitude_hold", target = 3.0, tolerance = 5.0 }
+    { type = "position_hold", position = [0.0, 0.0, -10.0], tolerance = 3.0 },
+    { type = "altitude_hold", target = 10.0, tolerance = 2.0 }
 ]
 
 # Phase 4: Move North 5m
@@ -70,7 +70,10 @@ name = "hold_waypoint"
 duration_ms = 5000
 action = { type = "goto", position = [5.0, 0.0, -10.0], heading = 0.0 }
 verify = [
-    { type = "position_hold", position = [5.0, 0.0, -10.0], tolerance = 100.0 }
+    # 5.0 not 3.0: this phase's window opens while the vehicle is
+    # still completing the 5 m transit commanded by move_north, so
+    # the bound covers arrival + hold, not steady hold alone.
+    { type = "position_hold", position = [5.0, 0.0, -10.0], tolerance = 5.0 }
 ]
 
 # Phase 6: Return to origin

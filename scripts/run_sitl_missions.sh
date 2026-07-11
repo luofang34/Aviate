@@ -29,6 +29,7 @@ DEFAULT_MISSIONS=(
     hover_stability
     attitude_control
     position_hold
+    square_course
     gnss_dropout
     command_timeout
 )
@@ -54,7 +55,7 @@ for mission in "${MISSIONS[@]}"; do
         # expected here, so disable `set -e` for the run.
         set +e
         run_log=$(
-            timeout 60 cargo run --quiet -p gcs-test --features gazebo -- \
+            timeout 150 cargo run --quiet -p gcs-test --features gazebo -- \
                 run --xil --headless "${MISSIONS_DIR}/${mission}.toml" 2>&1
         )
         set -e
