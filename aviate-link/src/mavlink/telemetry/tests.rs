@@ -249,3 +249,40 @@ fn estimate_group_is_dropped_whole_when_queue_has_no_room() {
 
     assert_eq!(queue.len(), 30);
 }
+
+#[test]
+fn transmitted_estimator_status_matches_pymavlink() {
+    // pymavlink 2.4.41 golden frames for the exact standard frames Aviate
+    // transmits: NaN ratios and accuracies, validity only in flags.
+    // Round-trip tests cannot see a NaN bit-pattern or CRC divergence
+    // that only a cross-implementation comparison exposes.
+    const GOOD_ALL_VALID: &[u8] = &[
+        253, 41, 0, 0, 2, 1, 1, 230, 0, 0, 104, 66, 0, 0, 0, 0, 0, 0, 0, 0, 192, 127, 0, 0, 192,
+        127, 0, 0, 192, 127, 0, 0, 192, 127, 0, 0, 192, 127, 0, 0, 192, 127, 0, 0, 192, 127, 0, 0,
+        192, 127, 15, 200, 247,
+    ];
+    const UNUSABLE_NO_FLAGS: &[u8] = &[
+        253, 40, 0, 0, 3, 1, 1, 230, 0, 0, 104, 66, 0, 0, 0, 0, 0, 0, 0, 0, 192, 127, 0, 0, 192,
+        127, 0, 0, 192, 127, 0, 0, 192, 127, 0, 0, 192, 127, 0, 0, 192, 127, 0, 0, 192, 127, 0, 0,
+        192, 127, 223, 186,
+    ];
+
+    let good = StateEstimate {
+        quality: EstimateQuality::Good,
+        valid_flags: StateValidFlags::all(),
+        ..StateEstimate::default()
+    };
+    let mut seq = 2;
+    let mut buf = [0u8; 64];
+    let len = format_estimator_status(&good, 17, 1, 1, &mut seq, &mut buf).unwrap_or_default();
+    assert_eq!(&buf[..len], GOOD_ALL_VALID);
+
+    let unusable = StateEstimate {
+        quality: EstimateQuality::Unusable,
+        valid_flags: StateValidFlags::all(),
+        ..StateEstimate::default()
+    };
+    let mut seq = 3;
+    let len = format_estimator_status(&unusable, 17, 1, 1, &mut seq, &mut buf).unwrap_or_default();
+    assert_eq!(&buf[..len], UNUSABLE_NO_FLAGS);
+}

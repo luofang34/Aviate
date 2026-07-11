@@ -452,7 +452,7 @@ impl TelemetryCycleFormatter for MavlinkCycleFormatter {
                 &mut self.seq,
                 &mut buf,
             ) {
-                let _ = queue.push(&buf[..len]);
+                queue.push(&buf[..len]).ok();
             }
         }
 
