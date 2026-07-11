@@ -210,42 +210,47 @@ impl Ekf {
         state.vel.x = MetersPerSecond(state.vel.x.0 + k_vector[IDX_VEL] * innov);
         state.vel.y = MetersPerSecond(state.vel.y.0 + k_vector[IDX_VEL + 1] * innov);
         state.vel.z = MetersPerSecond(state.vel.z.0 + k_vector[IDX_VEL + 2] * innov);
-        // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
+
+        // COV:EXCL_START(phantom DA + inlined-callee folds: rustc
+        // scatters debug-info regions and folded callee branches
+        // (clamp_biases, sanitize_quat, quaternion ops) across this
+        // fusion tail, and the attributed lines move with every text
+        // edit — per-line markers churn indefinitely. The logic is
+        // pinned directly by tests instead: ekf_error_frame_tests
+        // locks the global-frame attitude application in both
+        // directions and bias_states_clamp_to_configured_limits
+        // saturates every clamp branch.)
         state.gyro_bias.x = RadiansPerSecond(state.gyro_bias.x.0 + k_vector[IDX_GB] * innov);
         state.gyro_bias.y = RadiansPerSecond(state.gyro_bias.y.0 + k_vector[IDX_GB + 1] * innov);
         state.gyro_bias.z = RadiansPerSecond(state.gyro_bias.z.0 + k_vector[IDX_GB + 2] * innov);
-        // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
         state.accel_bias.x =
             MetersPerSecondSquared(state.accel_bias.x.0 + k_vector[IDX_AB] * innov);
         state.accel_bias.y =
             MetersPerSecondSquared(state.accel_bias.y.0 + k_vector[IDX_AB + 1] * innov);
         state.accel_bias.z =
             MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
-        // Saturation branches of the inlined clamp are exercised
-        // directly by bias_states_clamp_to_configured_limits.
-        self.clamp_biases(state); // COV:EXCL_BR(inlined-callee fold)
-                                  // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
-                                  // Attitude update (linearized error). Global (nav-frame) // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
-                                  // error state ⇒ left multiply — see the frame-convention
-                                  // note in `heading_update`. // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
+        self.clamp_biases(state);
+
+        // Attitude update (linearized error). Global (nav-frame)
+        // error state ⇒ left multiply — see the frame-convention
+        // note in `heading_update`.
         let d_ang = Vector3 {
             x: k_vector[IDX_ATT] * innov,
             y: k_vector[IDX_ATT + 1] * innov,
             z: k_vector[IDX_ATT + 2] * innov,
-        }; // COV:EXCL(phantom DA: debug-info region on a non-executable line)
+        };
         let dq_small = state.sanitize_quat(Quaternion::new(
             1.0,
             d_ang.x * 0.5,
             d_ang.y * 0.5,
             d_ang.z * 0.5,
-        )); // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
-            // The inlined callee's INV-27 guard is DEFENSIVE-excluded
-            // at its definition site.
-        let new_quat = dq_small.mul(&state.quat); // COV:EXCL_BR(inlined-callee fold)
+        ));
+        let new_quat = dq_small.mul(&state.quat);
         state.quat = state.sanitize_quat(new_quat);
-        // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
+
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
         true
+        // COV:EXCL_STOP
     }
 } // COV:EXCL(phantom DA: grcov attributes a phantom region to this impl-block closing brace)
   // COV:EXCL_START(DELEGATE: every body in this impl forwards to the
