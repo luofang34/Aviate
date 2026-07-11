@@ -683,7 +683,13 @@ impl BoardStep for MicoAirBoard {
 }
 
 fn create_kernel() -> HwKernel {
-    let controller = MultirotorController::default();
+    // Single tuning source (#114): the same CascadeGains + hover
+    // trim construct the controller AND the lockstep-hashed config.
+    // (`MultirotorController::default()` previously flew hover trim
+    // 0.5 while the config hashed whatever its own Default said.)
+    let gains = aviate_core::control::cascade_gains::CascadeGains::x500_defaults();
+    let hover: f32 = 0.77;
+    let controller = MultirotorController::from_gains(gains, hover);
     let mixer = QuadXMixer {
         timestamp_source: hw_timestamp,
     };
@@ -698,6 +704,8 @@ fn create_kernel() -> HwKernel {
         Sanitizer,
         mode_config,
     );
+    kernel.cfg.cascade_gains = gains;
+    kernel.cfg.hover_thrust_norm = aviate_core::types::Normalized(hover);
     kernel.state.checks.pre_arm.update_throttle(true);
     kernel
 }

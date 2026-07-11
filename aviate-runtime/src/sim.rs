@@ -288,7 +288,13 @@ const X500_HOVER_THRUST_NORM: f32 = 0.77;
 
 /// Build the SITL kernel wired for the x500 airframe.
 pub fn create_kernel() -> SitlKernel {
-    let controller = MultirotorController::with_hover_thrust(X500_HOVER_THRUST_NORM);
+    // Single tuning source (#114): the same CascadeGains value and
+    // hover trim construct the flying controller AND land in the
+    // lockstep-hashed ResolvedKernelConfig. Two independently
+    // initialized copies can drift apart silently — the hash then
+    // vouches for tuning the cascade isn't actually flying.
+    let gains = aviate_core::control::cascade_gains::CascadeGains::x500_defaults();
+    let controller = MultirotorController::from_gains(gains, X500_HOVER_THRUST_NORM);
     let mixer = QuadXMixerX500 {
         timestamp_source: sitl_timestamp,
     };
@@ -298,9 +304,7 @@ pub fn create_kernel() -> SitlKernel {
     };
 
     let mut kernel = AviateKernel::new(Ekf::default(), controller, mixer, Sanitizer, mode_config);
-    // Mirror the controller's trim into ResolvedKernelConfig so the
-    // canonical hash includes it and a cross-channel mismatch in the
-    // tuning value is detected at lockstep entry.
+    kernel.cfg.cascade_gains = gains;
     kernel.cfg.hover_thrust_norm = aviate_core::types::Normalized(X500_HOVER_THRUST_NORM);
 
     // Initialize throttle check as satisfied (default command has low throttle)
