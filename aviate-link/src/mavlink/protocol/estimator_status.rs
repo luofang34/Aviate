@@ -80,42 +80,35 @@ impl AviateEstimatorStatus {
 }
 
 pub(super) fn parse_estimator_status(payload: &[u8]) -> Result<MavMessage, ParseError> {
-    let payload = zero_extend_payload::<{ EstimatorStatus::PAYLOAD_LEN }>(payload)?;
+    if payload.len() < EstimatorStatus::PAYLOAD_LEN {
+        return Err(ParseError::InvalidPayload);
+    }
 
     Ok(MavMessage::EstimatorStatus(EstimatorStatus {
-        time_usec: read_u64_le(&payload, 0),
-        vel_ratio: read_f32_le(&payload, 8),
-        pos_horiz_ratio: read_f32_le(&payload, 12),
-        pos_vert_ratio: read_f32_le(&payload, 16),
-        mag_ratio: read_f32_le(&payload, 20),
-        hagl_ratio: read_f32_le(&payload, 24),
-        tas_ratio: read_f32_le(&payload, 28),
-        pos_horiz_accuracy: read_f32_le(&payload, 32),
-        pos_vert_accuracy: read_f32_le(&payload, 36),
-        flags: read_u16_le(&payload, 40),
+        time_usec: read_u64_le(payload, 0),
+        vel_ratio: read_f32_le(payload, 8),
+        pos_horiz_ratio: read_f32_le(payload, 12),
+        pos_vert_ratio: read_f32_le(payload, 16),
+        mag_ratio: read_f32_le(payload, 20),
+        hagl_ratio: read_f32_le(payload, 24),
+        tas_ratio: read_f32_le(payload, 28),
+        pos_horiz_accuracy: read_f32_le(payload, 32),
+        pos_vert_accuracy: read_f32_le(payload, 36),
+        flags: read_u16_le(payload, 40),
     }))
 }
 
 pub(super) fn parse_aviate_estimator_status(payload: &[u8]) -> Result<MavMessage, ParseError> {
-    let payload = zero_extend_payload::<{ AviateEstimatorStatus::PAYLOAD_LEN }>(payload)?;
-
-    Ok(MavMessage::AviateEstimatorStatus(AviateEstimatorStatus {
-        time_usec: read_u64_le(&payload, 0),
-        standard_flags: read_u16_le(&payload, 8),
-        valid_flags: payload[10],
-        quality: payload[11],
-    }))
-}
-
-fn zero_extend_payload<const N: usize>(payload: &[u8]) -> Result<[u8; N], ParseError> {
-    if payload.is_empty() || payload.len() > N {
+    if payload.len() < AviateEstimatorStatus::PAYLOAD_LEN {
         return Err(ParseError::InvalidPayload);
     }
 
-    // MAVLink 2 removes zero bytes from the payload tail on the wire.
-    let mut full_payload = [0u8; N];
-    full_payload[..payload.len()].copy_from_slice(payload);
-    Ok(full_payload)
+    Ok(MavMessage::AviateEstimatorStatus(AviateEstimatorStatus {
+        time_usec: read_u64_le(payload, 0),
+        standard_flags: read_u16_le(payload, 8),
+        valid_flags: payload[10],
+        quality: payload[11],
+    }))
 }
 
 pub(super) fn serialize_estimator_status(
