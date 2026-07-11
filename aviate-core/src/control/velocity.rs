@@ -239,14 +239,24 @@ impl VelocityController {
             + accel_ff.accel_ned.y.0 * self.gains.vel_accel_ff;
         let acc_x_clamped = acc_x_cmd.clamp(-g_si, g_si);
         let acc_y_clamped = acc_y_cmd.clamp(-g_si, g_si);
-        // NED ZYX quaternion convention: thrust direction in
-        // world is `-R·body_z`. With yaw = 0 that resolves to
-        // `(-sin θ, sin φ, …)` — north push requires negative
-        // pitch (nose down), east push requires positive roll
-        // (right-wing-down). See the unit test for the assertion
-        // that pins these signs.
-        let pitch_sp_raw = -acc_x_clamped.atan2(g_si);
-        let roll_sp_raw = acc_y_clamped.atan2(g_si);
+        // The acceleration command is in NED, but roll/pitch are
+        // body-frame tilts composed AFTER the yaw quaternion — so
+        // the command must first rotate by −yaw into the vehicle's
+        // heading frame. Skipping that rotation is only correct at
+        // yaw = 0: at 90° a north push tilts the vehicle east, and
+        // past 90° the horizontal velocity feedback turns positive
+        // and holds spiral away (the #110 divergence).
+        let cur_yaw = (2.0 * (current_att.w * current_att.z + current_att.x * current_att.y))
+            .atan2(1.0 - 2.0 * (current_att.y * current_att.y + current_att.z * current_att.z));
+        let (sin_yaw, cos_yaw) = (cur_yaw.sin(), cur_yaw.cos());
+        let acc_fwd = cos_yaw * acc_x_clamped + sin_yaw * acc_y_clamped;
+        let acc_right = -sin_yaw * acc_x_clamped + cos_yaw * acc_y_clamped;
+        // Thrust direction in world is `-R·body_z`: a forward push
+        // requires negative pitch (nose down), a rightward push
+        // positive roll (right-wing-down). The unit tests pin these
+        // signs at yaw 0 and at ±90°.
+        let pitch_sp_raw = -acc_fwd.atan2(g_si);
+        let roll_sp_raw = acc_right.atan2(g_si);
         let pitch_sp = pitch_sp_raw.clamp(
             -self.gains.vel_max_roll_pitch,
             self.gains.vel_max_roll_pitch,
@@ -277,11 +287,13 @@ impl VelocityController {
         // would overshoot in the opposite direction once the input
         // returns to authority.
         if dt_sec > 0.0 {
-            if !x_saturated {
+            // The saturation flags live on the body-frame tilt axes
+            // while the integrators are NED; a saturated tilt axis is
+            // a mix of both NED axes, so freeze both rather than
+            // guessing an attribution.
+            if !x_saturated && !y_saturated {
                 state.integrator_ned.x =
                     MetersPerSecond(state.integrator_ned.x.0 + error.x * dt_sec);
-            }
-            if !y_saturated {
                 state.integrator_ned.y =
                     MetersPerSecond(state.integrator_ned.y.0 + error.y * dt_sec);
             }
@@ -300,8 +312,6 @@ impl VelocityController {
         // here: the velocity loop's tilt cap is in tens of degrees,
         // not hundreds.
         let yaw_quat = if let Some(heading) = heading_sp {
-            let cur_yaw = (2.0 * (current_att.w * current_att.z + current_att.x * current_att.y))
-                .atan2(1.0 - 2.0 * (current_att.y * current_att.y + current_att.z * current_att.z));
             let mut err = heading.0 - cur_yaw;
             const PI: Scalar = core::f32::consts::PI;
             while err > PI {

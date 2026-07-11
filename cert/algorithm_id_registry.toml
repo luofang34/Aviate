@@ -39,7 +39,11 @@
 # 0x4554_494D_454B_4631.
 
 [controller]
-"controller.multirotor.v1"  = 0x4354_4C4D_5552_5631  # MultirotorController
+"controller.multirotor.v2"  = 0x4354_4C4D_5552_5632  # MultirotorController
+# Retired: "controller.multirotor.v1" = 0x4354_4C4D_5552_5631. v1's
+# velocity loop mapped the NED acceleration command straight to
+# roll/pitch without rotating into the heading frame — correct only
+# at yaw 0, anti-corrective past 90° (#110). Never reuse the v1 ID.
 "controller.fixed_wing.v1"  = 0x4354_4C46_5747_5631  # FixedWingController
 "controller.vtol.v1"        = 0x4354_4C56_544F_4C31  # VtolController
 
