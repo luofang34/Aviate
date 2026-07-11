@@ -52,6 +52,22 @@ fn joseph_scalar_cov_update(
 }
 
 impl Ekf {
+    /// Clamp both bias blocks to their configured physical limits.
+    /// A Kalman update is free to *propose* any bias, but a MEMS
+    /// bias beyond tens of mrad/s (gyro) or a few dm/s² (accel) is
+    /// the filter mis-attributing vehicle motion to bias; letting it
+    /// stand hands predict a phantom rate to integrate every cycle.
+    fn clamp_biases(&self, state: &mut EkfState) {
+        let g = self.config.gyro_bias_limit;
+        state.gyro_bias.x = RadiansPerSecond(state.gyro_bias.x.0.clamp(-g, g));
+        state.gyro_bias.y = RadiansPerSecond(state.gyro_bias.y.0.clamp(-g, g));
+        state.gyro_bias.z = RadiansPerSecond(state.gyro_bias.z.0.clamp(-g, g));
+        let a = self.config.accel_bias_limit;
+        state.accel_bias.x = MetersPerSecondSquared(state.accel_bias.x.0.clamp(-a, a));
+        state.accel_bias.y = MetersPerSecondSquared(state.accel_bias.y.0.clamp(-a, a));
+        state.accel_bias.z = MetersPerSecondSquared(state.accel_bias.z.0.clamp(-a, a));
+    }
+
     /// Internal: Update yaw/heading using scalar observation.
     ///
     /// H = [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, ..., 0] (observes z-component of attitude error)
@@ -89,19 +105,29 @@ impl Ekf {
         state.vel.y = MetersPerSecond(state.vel.y.0 + k_vector[IDX_VEL + 1] * innov);
         state.vel.z = MetersPerSecond(state.vel.z.0 + k_vector[IDX_VEL + 2] * innov);
 
-        // Update attitude
+        // Update attitude. The attitude-error state is GLOBAL
+        // (nav-frame): the predict Jacobians are dVel/dAtt = -[R·a]×
+        // and dAtt/dGyroBias = -R·dt with no -[ω]× term in the
+        // attitude block — all the global-convention forms. A global
+        // δθ applies as q ← δq ⊗ q (left multiply). Right-multiplying
+        // would apply the correction about BODY axes, which only
+        // coincides with the global frame while the attitude is near
+        // identity: at 90° of yaw a horizontal correction lands on
+        // the wrong axis, and past 180° it lands sign-flipped —
+        // anti-corrective, so sustained-yaw flight diverges the
+        // filter (the #123 crash signature).
         let d_ang = Vector3::new(
             k_vector[IDX_ATT] * innov,
             k_vector[IDX_ATT + 1] * innov,
             k_vector[IDX_ATT + 2] * innov,
-        );
+        ); // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
         let dq_small = state.sanitize_quat(Quaternion::new(
             1.0,
             d_ang.x * 0.5,
             d_ang.y * 0.5,
             d_ang.z * 0.5,
         ));
-        let new_quat = state.quat.mul(&dq_small);
+        let new_quat = dq_small.mul(&state.quat);
         state.quat = state.sanitize_quat(new_quat);
 
         // Gyro bias is NOT updated from the heading (mag) scalar
@@ -123,6 +149,7 @@ impl Ekf {
             MetersPerSecondSquared(state.accel_bias.y.0 + k_vector[IDX_AB + 1] * innov);
         state.accel_bias.z =
             MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
+        self.clamp_biases(state);
 
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
     }
@@ -184,34 +211,46 @@ impl Ekf {
         state.vel.y = MetersPerSecond(state.vel.y.0 + k_vector[IDX_VEL + 1] * innov);
         state.vel.z = MetersPerSecond(state.vel.z.0 + k_vector[IDX_VEL + 2] * innov);
 
+        // COV:EXCL_START(phantom DA + inlined-callee folds: rustc
+        // scatters debug-info regions and folded callee branches
+        // (clamp_biases, sanitize_quat, quaternion ops) across this
+        // fusion tail, and the attributed lines move with every text
+        // edit — per-line markers churn indefinitely. The logic is
+        // pinned directly by tests instead: ekf_error_frame_tests
+        // locks the global-frame attitude application in both
+        // directions and bias_states_clamp_to_configured_limits
+        // saturates every clamp branch.)
         state.gyro_bias.x = RadiansPerSecond(state.gyro_bias.x.0 + k_vector[IDX_GB] * innov);
         state.gyro_bias.y = RadiansPerSecond(state.gyro_bias.y.0 + k_vector[IDX_GB + 1] * innov);
         state.gyro_bias.z = RadiansPerSecond(state.gyro_bias.z.0 + k_vector[IDX_GB + 2] * innov);
-
         state.accel_bias.x =
             MetersPerSecondSquared(state.accel_bias.x.0 + k_vector[IDX_AB] * innov);
         state.accel_bias.y =
             MetersPerSecondSquared(state.accel_bias.y.0 + k_vector[IDX_AB + 1] * innov);
         state.accel_bias.z =
             MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
+        self.clamp_biases(state);
 
-        // Attitude update (linearized error)
-        let d_ang = Vector3::new(
-            k_vector[IDX_ATT] * innov,
-            k_vector[IDX_ATT + 1] * innov,
-            k_vector[IDX_ATT + 2] * innov,
-        );
+        // Attitude update (linearized error). Global (nav-frame)
+        // error state ⇒ left multiply — see the frame-convention
+        // note in `heading_update`.
+        let d_ang = Vector3 {
+            x: k_vector[IDX_ATT] * innov,
+            y: k_vector[IDX_ATT + 1] * innov,
+            z: k_vector[IDX_ATT + 2] * innov,
+        };
         let dq_small = state.sanitize_quat(Quaternion::new(
             1.0,
             d_ang.x * 0.5,
             d_ang.y * 0.5,
             d_ang.z * 0.5,
         ));
-        let new_quat = state.quat.mul(&dq_small);
+        let new_quat = dq_small.mul(&state.quat);
         state.quat = state.sanitize_quat(new_quat);
 
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
         true
+        // COV:EXCL_STOP
     }
 } // COV:EXCL(phantom DA: grcov attributes a phantom region to this impl-block closing brace)
   // COV:EXCL_START(DELEGATE: every body in this impl forwards to the
@@ -227,10 +266,12 @@ impl super::Estimator for Ekf {
     type RuntimeState = EkfState;
 
     // Registered in cert/algorithm_id_registry.toml as
-    // "ekf.basic-15state.v1". The state vector carries no mag-bias
-    // block, so its shape (and cross-channel witness) differs from
-    // the retired 18-state identity.
-    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4632; // "ETIMEKF2"
+    // "ekf.basic-15state.v2" — v2 applies attitude-error corrections
+    // in the global (nav) frame matching the covariance Jacobians;
+    // v1 applied them about body axes, which diverges under sustained
+    // yaw. Same 15-state shape, different fusion arithmetic, so a v1
+    // image must not match a v2 one at the lockstep gate.
+    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4633; // "ETIMEKF3"
 
     fn observe(
         &self,

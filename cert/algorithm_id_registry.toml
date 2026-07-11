@@ -24,7 +24,13 @@
 ## change shipped — review carefully.
 
 [estimator]
-"ekf.basic-15state.v1" = 0x4554_494D_454B_4632  # Ekf
+"ekf.basic-15state.v2" = 0x4554_494D_454B_4633  # Ekf
+# Retired: "ekf.basic-15state.v1" = 0x4554_494D_454B_4632. v1 applied
+# attitude-error corrections about body axes while the covariance
+# Jacobians define a global (nav-frame) error — anti-corrective past
+# 180° of yaw, diverging the filter under sustained yaw (#123). v2
+# applies corrections in the global frame; same state shape, different
+# fusion arithmetic. Never reuse 0x4554_494D_454B_4632.
 # Retired: "ekf.basic-18state.v1" = 0x4554_494D_454B_4631 (18-state
 # ESKF with a mag-bias block). The mag-bias state was structurally
 # unobservable and has been removed; the state vector shape changed,

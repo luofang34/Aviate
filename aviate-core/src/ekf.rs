@@ -172,6 +172,14 @@ pub struct EkfConfig {
     pub process_noise_accel: Scalar,
     pub process_noise_gyro_bias: Scalar,
     pub process_noise_accel_bias: Scalar,
+    /// Hard bound on each gyro-bias state component \[rad/s\].
+    /// MEMS gyro bias is tens of mrad/s; any estimate beyond this is
+    /// the filter mis-attributing attitude motion to bias (the #123
+    /// pump: vehicle oscillation + GNSS innovations walked the bias
+    /// to whole rad/s, and predict then integrated the phantom rate).
+    pub gyro_bias_limit: Scalar,
+    /// Hard bound on each accel-bias state component \[m/s²\].
+    pub accel_bias_limit: Scalar,
     pub meas_noise_gnss_pos: Scalar,
     pub meas_noise_gnss_vel: Scalar,
     pub meas_noise_baro: Scalar,
@@ -196,8 +204,16 @@ impl Default for EkfConfig {
         Self {
             process_noise_gyro: 1e-3,
             process_noise_accel: 1e-2,
-            process_noise_gyro_bias: 1e-4,
-            process_noise_accel_bias: 1e-4,
+            // Bias states are slow random walks: covariance grows by
+            // `noise·dt` per cycle, so these are sized for drift over
+            // minutes (σ ≈ 8 mrad/s of gyro-bias walk per minute),
+            // not for tracking per-second dynamics — a bias state
+            // that can move fast enough to absorb attitude motion
+            // recreates the #123 pump.
+            process_noise_gyro_bias: 1e-6,
+            process_noise_accel_bias: 1e-5,
+            gyro_bias_limit: 0.1,
+            accel_bias_limit: 0.5,
             meas_noise_gnss_pos: 0.5, // m^2
             meas_noise_gnss_vel: 0.1, // (m/s)^2
             meas_noise_baro: 2.0,     // m^2
@@ -281,10 +297,26 @@ pub struct EkfState {
 }
 // COV:EXCL_STOP
 
+/// Initial covariance: position/velocity/attitude blocks start loose
+/// (0.1), bias blocks start at realistic MEMS scales — gyro
+/// (0.02 rad/s)², accel (0.2 m/s²)². Seeding the gyro-bias variance
+/// at 0.1 (σ ≈ 0.32 rad/s, ~30× a real bias) invites the filter to
+/// explain early attitude motion as bias: with oscillating flight
+/// the GNSS cross-terms walk the bias state to whole rad/s and
+/// predict integrates the phantom rate (the #123 pump).
+fn initial_covariance() -> Matrix<STATE_DIM, STATE_DIM> {
+    let mut p = Matrix::identity().mul_scalar(0.1);
+    for i in 0..3 {
+        p.set(IDX_GB + i, IDX_GB + i, 4e-4);
+        p.set(IDX_AB + i, IDX_AB + i, 0.04);
+    }
+    p
+}
+
 impl EkfState {
-    /// Construct a fresh state with the same initial-uncertainty
-    /// covariance the EKF used pre-Phase-4 (`I * 0.1`). All other
-    /// fields are zero / identity.
+    /// Construct a fresh state with the initial-uncertainty
+    /// covariance from `initial_covariance`. All other fields are
+    /// zero / identity.
     pub fn new() -> Self {
         Self {
             quat: Quaternion::IDENTITY,
@@ -309,7 +341,7 @@ impl EkfState {
                 RadiansPerSecond(0.0),
                 RadiansPerSecond(0.0),
             ),
-            p_cov: Matrix::identity().mul_scalar(0.1),
+            p_cov: initial_covariance(),
             initialized: false,
             quat_fault: false,
             baro_ref: None,
@@ -327,7 +359,7 @@ impl EkfState {
         self.vel = vel;
         self.quat = quat;
         self.gyro_bias = Vector3::new(
-            RadiansPerSecond(0.0),
+            RadiansPerSecond(0.0), // COV:EXCL_BR(inlined-callee fold)
             RadiansPerSecond(0.0),
             RadiansPerSecond(0.0),
         );
@@ -336,7 +368,7 @@ impl EkfState {
             MetersPerSecondSquared(0.0),
             MetersPerSecondSquared(0.0),
         );
-        self.p_cov = Matrix::identity().mul_scalar(0.1);
+        self.p_cov = initial_covariance();
         self.initialized = true;
         self.quat_fault = false;
         // A fresh init/arm re-latches the baro datum on the next
