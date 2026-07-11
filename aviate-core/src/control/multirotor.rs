@@ -151,10 +151,11 @@ impl MultirotorController {
         }
     }
 
-    /// Construct with X500 default gains and the supplied hover
-    /// thrust. Convenience for the X500 SITL board; production
-    /// integrators should call `from_gains` with the explicit
-    /// `ResolvedKernelConfig.cascade_gains`.
+    /// Test scaffolding: X500 default gains with the supplied hover
+    /// trim. Production construction goes through `from_gains` with
+    /// the SAME values that land in the lockstep-hashed
+    /// `ResolvedKernelConfig` (#114) — a controller built here
+    /// carries tuning the config hash does not vouch for.
     pub fn with_hover_thrust(hover_thrust_norm: Scalar) -> Self {
         Self::from_gains(CascadeGains::x500_defaults(), hover_thrust_norm)
     }

@@ -36,6 +36,22 @@ use aviate_core::types::Scalar;
 /// ```
 pub struct X500Airframe;
 
+impl X500Airframe {
+    /// Hover thrust trim. Newtonian estimate from base + rotor
+    /// masses; SITL rig evidence puts the true trim slightly lower
+    /// (~0.72–0.75 — the attitude-mode rig climbs at this setting).
+    /// The domain question (speed vs thrust) is #140; an online
+    /// estimator eventually supersedes the constant.
+    pub const HOVER_THRUST_NORM: Scalar = 0.77;
+
+    /// The measured x500 cascade tuning — inherent, not a generic
+    /// trait method: multirotor gains have no meaning on the shared
+    /// `Airframe` surface (#114).
+    pub fn cascade_gains() -> CascadeGains {
+        CascadeGains::x500_defaults()
+    }
+}
+
 /// Default timestamp function for X500 mixer
 fn x500_timestamp() -> Timestamp {
     Timestamp {
@@ -56,22 +72,13 @@ impl Airframe for X500Airframe {
     const AIRFRAME_ID: &'static str = "x500";
     const CATEGORY: &'static str = "multirotor";
 
-    fn cascade_gains() -> CascadeGains {
-        CascadeGains::x500_defaults()
-    }
-
-    fn hover_thrust_norm() -> Scalar {
-        // Newtonian estimate from base + rotor masses. SITL rig
-        // evidence puts the true trim slightly lower (~0.72–0.75:
-        // the attitude-mode rig climbs at this setting); an online
-        // hover-thrust estimator supersedes the constant eventually.
-        0.77
-    }
-
     fn create_controller() -> Self::Controller {
         // Single tuning source: the same values the kernel config
         // hashes (#114).
-        MultirotorController::from_gains(Self::cascade_gains(), Self::hover_thrust_norm())
+        MultirotorController::from_gains(
+            X500Airframe::cascade_gains(),
+            X500Airframe::HOVER_THRUST_NORM,
+        )
     }
 
     fn create_mixer() -> Self::Mixer {
