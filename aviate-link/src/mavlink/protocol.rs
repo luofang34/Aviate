@@ -1117,6 +1117,8 @@ fn declared_payload_len(msg_id: u32) -> Option<usize> {
         SystemTime::MSG_ID => Some(SystemTime::PAYLOAD_LEN),
         AttitudeQuaternion::MSG_ID => Some(AttitudeQuaternion::PAYLOAD_LEN),
         LocalPositionNed::MSG_ID => Some(LocalPositionNed::PAYLOAD_LEN),
+        EstimatorStatus::MSG_ID => Some(EstimatorStatus::PAYLOAD_LEN),
+        AviateEstimatorStatus::MSG_ID => Some(AviateEstimatorStatus::PAYLOAD_LEN),
         ManualControl::MSG_ID => Some(ManualControl::PAYLOAD_LEN),
         RcChannelsOverride::MSG_ID => Some(RcChannelsOverride::PAYLOAD_LEN),
         CommandLong::MSG_ID => Some(CommandLong::PAYLOAD_LEN),
