@@ -1,10 +1,14 @@
-//! Reset-to-measurement recovery (#80): a diverged state block whose
-//! innovations the gate keeps rejecting must snap back to a healthy
-//! measurement once its aiding age goes stale, instead of being
-//! rejected forever. Without this, a braked climb that outruns the
-//! vertical-velocity estimate leaves the filter permanently pinned
-//! (collapsed covariance → tight gate → every innovation rejected)
-//! and the controller flies the phantom velocity into the ground.
+//! #135 guardrails: elapsed time is never a reason to trust a source.
+//!
+//! PR #132 briefly carried an age-triggered reset-to-measurement:
+//! once a channel's aiding age went stale, the whole block snapped to
+//! the current reading. That let a previously aided but persistently
+//! bad GNSS source (step fault, multipath jump, well-formed spoof —
+//! all still marked `Good`) wait out the timer and capture the state
+//! past the innovation gate. The branch is removed; these tests pin
+//! the properties that must survive any future recovery design (which
+//! per #135 requires an independently qualified trusted reference and
+//! the #81 reset events).
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -13,6 +17,7 @@ use aviate_core::math::{Quaternion, Vector3};
 use aviate_core::sensor::{
     GnssData, GnssFix, GnssHealth, ImuData, SensorHealth, SensorReading, SensorSet,
 };
+use aviate_core::state::StateValidFlags;
 use aviate_core::time::{TimeSource, Timestamp};
 use aviate_core::types::{Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond};
 
@@ -70,12 +75,7 @@ fn resting_sensors(vel_d: f32) -> SensorSet {
     }
 }
 
-/// Diverge vz far past the gate with a collapsed variance, then feed
-/// healthy GNSS through `observe` for just over the reset age: the
-/// velocity block must snap to the measurement and validity recover.
-#[test]
-fn stale_rejected_velocity_snaps_back_to_gnss() {
-    let ekf = Ekf::new(EkfConfig::default());
+fn converged_state(ekf: &Ekf) -> EkfState {
     let mut state = EkfState::default();
     state.init(
         Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
@@ -86,51 +86,66 @@ fn stale_rejected_velocity_snaps_back_to_gnss() {
         ),
         Quaternion::IDENTITY,
     );
-
-    // Converge once so the aiding ages leave their "never fused" seed.
     let sensors = resting_sensors(0.0);
     for _ in 0..50 {
         ekf.observe(&mut state, &sensors, None, 0.01);
     }
     assert!(state.gnss_vel_age_s < 0.1, "converged and freshly aided");
-
-    // Force the divergence shape: vz pinned far from truth with a
-    // collapsed variance so the 5σ gate rejects the ~6 m/s innovation
-    // (s ≈ P_vv + 0.1; even P_vv = 0.01 needs |innov| < ~1.7).
-    state.vel.z = MetersPerSecond(-6.0);
-    for r in 0..15 {
-        state.p_cov.set(r, 5, 0.0);
-        state.p_cov.set(5, r, 0.0);
-    }
-    state.p_cov.set(5, 5, 0.01);
-
-    // Under the reset age the gate must still reject — the estimate
-    // stays wrong and the aiding age climbs.
-    for _ in 0..50 {
-        ekf.observe(&mut state, &sensors, None, 0.01);
-    }
-    assert!(
-        state.vel.z.0 < -5.0,
-        "gate still rejecting inside the reset window, vz = {}",
-        state.vel.z.0
-    );
-
-    // Past the reset age the healthy measurement must win.
-    for _ in 0..60 {
-        ekf.observe(&mut state, &sensors, None, 0.01);
-    }
-    assert!(
-        state.vel.z.0.abs() < 0.5,
-        "velocity block must snap back to the GNSS measurement, vz = {}",
-        state.vel.z.0
-    );
-    assert!(state.gnss_vel_age_s < 0.5, "aiding age recovered");
+    state
 }
 
-/// The recovery must not weaken the outlier gate for a filter that
-/// has never been aided: the first reading after init still fuses
-/// through the ordinary gate, so a wild outlier cannot capture the
-/// state wholesale.
+/// #135 acceptance: valid aiding first, then a persistent large but
+/// finite jump still flagged `Good`. The bad source must NEVER
+/// capture the state merely because time elapsed — and the honest
+/// consequence of rejecting it is that velocity validity drops, so
+/// the failsafe path (not a silent state capture) owns the outcome.
+#[test]
+fn previously_aided_bad_source_never_captures_the_state() {
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = converged_state(&ekf);
+
+    // The source jumps to a persistent 40 m/s vertical velocity while
+    // staying healthy and well-formed. 10 s of insistence.
+    let bad = resting_sensors(40.0);
+    for _ in 0..1_000 {
+        ekf.observe(&mut state, &bad, None, 0.01);
+    }
+    assert!(
+        state.vel.z.0.abs() < 1.0,
+        "persistent bad source must not capture vz, got {}",
+        state.vel.z.0
+    );
+    let est = ekf.estimate(&state);
+    assert!(
+        !est.valid_flags.contains(StateValidFlags::VELOCITY),
+        "rejected aiding must surface as lost validity, not silence"
+    );
+}
+
+/// An isolated outlier is rejected and stays rejected — one bad
+/// sample among good ones triggers no recovery behavior.
+#[test]
+fn isolated_outlier_is_rejected_without_side_effects() {
+    let ekf = Ekf::new(EkfConfig::default());
+    let mut state = converged_state(&ekf);
+
+    ekf.update_gnss_state(&mut state, &gnss(35.0));
+    assert!(
+        state.vel.z.0.abs() < 0.5,
+        "outlier must not move the state, got vz {}",
+        state.vel.z.0
+    );
+
+    // Good aiding continues unharmed.
+    let sensors = resting_sensors(0.0);
+    for _ in 0..20 {
+        ekf.observe(&mut state, &sensors, None, 0.01);
+    }
+    assert!(state.gnss_vel_age_s < 0.1, "good aiding still fuses");
+}
+
+/// A never-aided filter keeps the ordinary outlier gate: the first
+/// reading cannot capture the state wholesale either.
 #[test]
 fn never_aided_filter_keeps_the_outlier_gate() {
     let ekf = Ekf::new(EkfConfig::default());
@@ -145,55 +160,10 @@ fn never_aided_filter_keeps_the_outlier_gate() {
         Quaternion::IDENTITY,
     );
 
-    // First-ever reading is a 50 m/s outlier: must be gate-rejected,
-    // not snapped to.
     ekf.update_gnss_state(&mut state, &gnss(50.0));
     assert!(
         state.vel.z.0.abs() < 1.0,
         "outlier must not capture a never-aided filter, vz = {}",
         state.vel.z.0
     );
-}
-
-/// Same recovery for the position block: a pinned, gate-rejected
-/// position must snap back to healthy GNSS once its aiding age goes
-/// stale.
-#[test]
-fn stale_rejected_position_snaps_back_to_gnss() {
-    let ekf = Ekf::new(EkfConfig::default());
-    let mut state = EkfState::default();
-    state.init(
-        Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-        Vector3::new(
-            MetersPerSecond(0.0),
-            MetersPerSecond(0.0),
-            MetersPerSecond(0.0),
-        ),
-        Quaternion::IDENTITY,
-    );
-
-    let sensors = resting_sensors(0.0);
-    for _ in 0..50 {
-        ekf.observe(&mut state, &sensors, None, 0.01);
-    }
-    assert!(state.gnss_pos_age_s < 0.1, "converged and freshly aided");
-
-    // Pin pos.z 40 m off with a collapsed variance: innovation 40,
-    // s ≈ 0.01 + 0.5 → hopelessly outside the 5σ gate.
-    state.pos.z = Meters(-40.0);
-    for r in 0..15 {
-        state.p_cov.set(r, 2, 0.0);
-        state.p_cov.set(2, r, 0.0);
-    }
-    state.p_cov.set(2, 2, 0.01);
-
-    for _ in 0..120 {
-        ekf.observe(&mut state, &sensors, None, 0.01);
-    }
-    assert!(
-        state.pos.z.0.abs() < 1.0,
-        "position block must snap back to the GNSS measurement, pos.z = {}",
-        state.pos.z.0
-    );
-    assert!(state.gnss_pos_age_s < 0.5, "aiding age recovered");
 }

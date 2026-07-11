@@ -24,46 +24,7 @@ const BARO_DATUM_INIT_VAR: Scalar = 4.0;
 /// without chasing high-rate vehicle height motion.
 const BARO_DATUM_PROCESS_VAR: Scalar = 1e-4;
 
-/// Aiding age \[s\] past which a HEALTHY GNSS channel earns a hard
-/// reset-to-measurement instead of another gated fusion attempt.
-/// Once the state diverges past the innovation gate, the collapsed
-/// covariance keeps the gate tight and every later innovation is
-/// rejected — the filter can never re-converge *through* the gate
-/// (measured crash chain: a braked climb outran the vertical-velocity
-/// estimate, GNSS-vel innovations were rejected from then on, and the
-/// controller flew the phantom climb into the ground). Well under the
-/// 5 s validity timeout so recovery precedes any failsafe.
-const AIDING_RESET_AGE_S: Scalar = 1.0;
-
-/// Variance the reset re-seeds on each snapped state's diagonal —
-/// the post-`init()` value, loose enough that fusion re-locks fast.
-const AIDING_RESET_VAR: Scalar = 0.1;
-
 impl Ekf {
-    /// Hard reset of a 3-state block to a measured value: snap the
-    /// states, re-seed the block's diagonal variance, and drop the
-    /// block's cross-covariances (they encode the correlations of the
-    /// diverged estimate, which are exactly what kept it pinned).
-    fn reset_block_to_measurement(state: &mut EkfState, base_idx: usize, meas: [Scalar; 3]) {
-        for (i, m) in meas.iter().enumerate() {
-            match base_idx + i {
-                0 => state.pos.x = crate::types::Meters(*m),
-                1 => state.pos.y = crate::types::Meters(*m),
-                2 => state.pos.z = crate::types::Meters(*m),
-                3 => state.vel.x = crate::types::MetersPerSecond(*m),
-                4 => state.vel.y = crate::types::MetersPerSecond(*m),
-                5 => state.vel.z = crate::types::MetersPerSecond(*m),
-                _ => {} // COV:EXCL(DEFENSIVE: callers pass IDX_POS or IDX_VEL)
-            }
-            let idx = base_idx + i;
-            for r in 0..super::STATE_DIM {
-                state.p_cov.set(r, idx, 0.0);
-                state.p_cov.set(idx, r, 0.0);
-            }
-            state.p_cov.set(idx, idx, AIDING_RESET_VAR);
-        }
-    }
-
     pub fn update_gnss_state(&self, state: &mut EkfState, gnss_reading: &SensorReading<GnssData>) {
         // 0. Health gate
         match gnss_reading.health {
@@ -95,39 +56,17 @@ impl Ekf {
             }
         }
 
-        // Reset-to-measurement recovery: a healthy channel that WAS
-        // aided (age below the "never fused" saturation seed) and has
-        // gone stale is stale *because* the gate keeps rejecting it —
-        // snap the block to the measurement so fusion re-locks,
-        // instead of rejecting forever. A never-aided filter keeps
-        // ordinary gated fusion so a first reading cannot bypass the
-        // outlier gate.
-        let was_aided =
-            |age: Scalar| age > AIDING_RESET_AGE_S && age < super::validity::AGE_SATURATION_S;
-        if state.initialized && was_aided(state.gnss_pos_age_s) {
-            Self::reset_block_to_measurement(
-                state,
-                IDX_POS,
-                [
-                    gnss.position_ned[0].0,
-                    gnss.position_ned[1].0,
-                    gnss.position_ned[2].0,
-                ],
-            );
-            state.gnss_pos_age_s = 0.0;
-        }
-        if state.initialized && was_aided(state.gnss_vel_age_s) {
-            Self::reset_block_to_measurement(
-                state,
-                IDX_VEL,
-                [
-                    gnss.velocity_ned[0].0,
-                    gnss.velocity_ned[1].0,
-                    gnss.velocity_ned[2].0,
-                ],
-            );
-            state.gnss_vel_age_s = 0.0;
-        }
+        // There is deliberately NO age-triggered reset-to-measurement
+        // here (#135): inferring source trust from elapsed time lets a
+        // previously aided but persistently bad GNSS source (step
+        // fault, multipath jump, well-formed spoof — all still marked
+        // Good) wait out a timer and capture the state past the
+        // innovation gate. Persistent rejection stales the aiding age
+        // honestly (the `&=` below), validity drops, and the failsafe
+        // path handles a genuinely diverged filter. A future recovery
+        // must require an independently qualified trusted reference
+        // and publish the discontinuity (#81); acceptance criteria
+        // live in #135.
 
         // Update Position NED. The freshness age resets only when ALL
         // three axes fused — `&=` so a single persistently-rejected
