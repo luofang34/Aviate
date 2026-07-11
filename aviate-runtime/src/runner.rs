@@ -126,7 +126,7 @@ pub struct CommandTick<'a, C> {
     pub cmd: &'a C,
     /// True only on the tick `cmd` was actually received.
     pub fresh: bool,
-    /// Runner-owned receive age [ms]; `u32::MAX` before first contact.
+    /// Runner-owned receive age \[ms\]; `u32::MAX` before first contact.
     pub age_ms: u32,
 }
 
