@@ -551,6 +551,14 @@ impl MavHeader {
 ///
 /// Returns the parsed message, optional signature, and the number of bytes consumed.
 ///
+/// ## MAVLink 2.0 Payload Truncation
+///
+/// Compliant senders strip trailing zero bytes from the payload. The CRC
+/// is verified against the on-wire (possibly truncated) payload; the
+/// omitted tail bytes then decode as zeros. Payload bytes beyond the
+/// declared layout of a known message are unknown extensions and are
+/// ignored.
+///
 /// ## MAVLink 2.0 Signature Support
 ///
 /// When the MAVLINK_IFLAG_SIGNED flag is set, the frame includes a 13-byte
@@ -618,8 +626,21 @@ pub fn parse_mavlink(buf: &[u8]) -> Result<(MavMessage, Option<MavSignature>, us
         None
     };
 
-    // Parse message based on ID
-    let msg = parse_message_payload(header.msgid, payload)?;
+    // MAVLink 2 removes trailing zero payload bytes on the wire; restore
+    // them before field decoding. Bytes beyond the declared layout belong
+    // to extensions this dialect does not know and are ignored.
+    let msg = if let Some(declared) = declared_payload_len(header.msgid) {
+        // The truncation rule always retains at least one payload byte.
+        if payload.is_empty() {
+            return Err(ParseError::InvalidPayload);
+        }
+        let mut full = [0u8; MAX_PAYLOAD_LEN];
+        let copy_len = payload.len().min(declared);
+        full[..copy_len].copy_from_slice(&payload[..copy_len]);
+        parse_message_payload(header.msgid, &full[..declared])?
+    } else {
+        parse_message_payload(header.msgid, payload)?
+    };
 
     Ok((msg, signature, frame_size))
 }
@@ -1071,6 +1092,28 @@ fn get_crc_extra(msg_id: u32) -> u8 {
     }
 }
 
+/// Declared payload length (base fields plus extensions) for known messages.
+///
+/// This is the length a MAVLink 2 truncated payload is zero-extended to
+/// before field decoding.
+fn declared_payload_len(msg_id: u32) -> Option<usize> {
+    match msg_id {
+        Heartbeat::MSG_ID => Some(Heartbeat::PAYLOAD_LEN),
+        SysStatus::MSG_ID => Some(SysStatus::PAYLOAD_LEN),
+        SystemTime::MSG_ID => Some(SystemTime::PAYLOAD_LEN),
+        AttitudeQuaternion::MSG_ID => Some(AttitudeQuaternion::PAYLOAD_LEN),
+        LocalPositionNed::MSG_ID => Some(LocalPositionNed::PAYLOAD_LEN),
+        ManualControl::MSG_ID => Some(ManualControl::PAYLOAD_LEN),
+        RcChannelsOverride::MSG_ID => Some(RcChannelsOverride::PAYLOAD_LEN),
+        CommandLong::MSG_ID => Some(CommandLong::PAYLOAD_LEN),
+        CommandAck::MSG_ID => Some(CommandAck::PAYLOAD_LEN),
+        SetAttitudeTarget::MSG_ID => Some(SetAttitudeTarget::PAYLOAD_LEN),
+        SetPositionTargetLocalNed::MSG_ID => Some(SetPositionTargetLocalNed::PAYLOAD_LEN),
+        Statustext::MSG_ID => Some(Statustext::PAYLOAD_LEN),
+        _ => None,
+    }
+}
+
 // ============================================================================
 // SERIALIZER (MAVLink Messages → Bytes)
 // ============================================================================
@@ -1140,11 +1183,23 @@ fn write_header(
     MavHeader::SIZE
 }
 
+/// Finalize a MAVLink 2 frame: truncate trailing zero payload bytes, patch
+/// the header length byte, and append the checksum.
+///
+/// MAVLink 2 requires trailing zero bytes to be removed from the payload
+/// before transmission, always retaining at least one payload byte. The
+/// CRC covers the truncated frame, so `offset` (the untruncated payload
+/// end) may exceed the returned frame end.
 fn write_crc(buf: &mut [u8], offset: usize, crc_extra: u8) -> usize {
-    let crc = compute_crc(&buf[1..offset], crc_extra);
-    buf[offset] = (crc & 0xFF) as u8;
-    buf[offset + 1] = ((crc >> 8) & 0xFF) as u8;
-    offset + 2
+    let mut payload_end = offset;
+    while payload_end > MavHeader::SIZE + 1 && buf[payload_end - 1] == 0 {
+        payload_end -= 1;
+    }
+    buf[1] = (payload_end - MavHeader::SIZE) as u8;
+    let crc = compute_crc(&buf[1..payload_end], crc_extra);
+    buf[payload_end] = (crc & 0xFF) as u8;
+    buf[payload_end + 1] = ((crc >> 8) & 0xFF) as u8;
+    payload_end + 2
 }
 
 fn serialize_heartbeat(
@@ -1655,6 +1710,9 @@ fn write_f32_le(buf: &mut [u8], offset: usize, val: f32) {
 
 #[cfg(test)]
 mod interop_tests;
+
+#[cfg(test)]
+mod truncation_tests;
 
 #[cfg(test)]
 mod tests {
