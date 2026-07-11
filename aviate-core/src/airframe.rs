@@ -146,3 +146,61 @@ pub trait Airframe {
     /// types and limits, nor failsafe transitions.
     fn mode_config() -> ModeConfig;
 }
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::control::cascade_gains::CascadeGains;
+    use crate::control::multirotor::MultirotorController;
+    use crate::control::ConfigMode;
+    use crate::mixer::QuadXMixer;
+    use crate::time::{TimeSource, Timestamp};
+
+    /// Minimal airframe that leans on the provided tuning defaults —
+    /// pins that the default accessors return the validated baseline
+    /// so an airframe that forgets to override still constructs a
+    /// coherent (if untuned) kernel.
+    struct BareQuad;
+
+    fn ts() -> Timestamp {
+        Timestamp {
+            ticks: 0,
+            source: TimeSource::Internal,
+        }
+    }
+
+    impl Airframe for BareQuad {
+        type Controller = MultirotorController;
+        type Mixer = QuadXMixer;
+        const MOTOR_COUNT: u8 = 4;
+        const AIRFRAME_ID: &'static str = "bare-quad";
+        const CATEGORY: &'static str = "multirotor";
+        fn create_controller() -> Self::Controller {
+            MultirotorController::from_gains(Self::cascade_gains(), Self::hover_thrust_norm())
+        }
+        fn create_mixer() -> Self::Mixer {
+            QuadXMixer {
+                timestamp_source: ts,
+            }
+        }
+        fn mode_config() -> ModeConfig {
+            ModeConfig {
+                mode: ConfigMode::Hover,
+                groups: &[],
+            }
+        }
+    }
+
+    #[test]
+    fn default_tuning_accessors_return_the_validated_baseline() {
+        assert_eq!(BareQuad::cascade_gains(), CascadeGains::default());
+        assert!((BareQuad::hover_thrust_norm() - 0.5).abs() < f32::EPSILON);
+        let ctrl = BareQuad::create_controller();
+        assert_eq!(
+            ctrl.vel_ctrl.gains,
+            BareQuad::cascade_gains(),
+            "controller construction consumes the accessor"
+        );
+    }
+}
