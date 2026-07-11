@@ -29,7 +29,8 @@
 mod estimator_status;
 
 pub use estimator_status::{
-    aviate_estimate_quality, estimator_status_flags, AviateEstimatorStatus, EstimatorStatus,
+    aviate_estimate_quality, aviate_state_valid_flags, estimator_status_flags,
+    AviateEstimatorStatus, EstimatorStatus,
 };
 
 // ============================================================================
@@ -1088,21 +1089,21 @@ fn crc_accumulate(byte: u8, crc: u16) -> u16 {
 /// Get CRC extra byte for message ID (from MAVLink XML definitions)
 fn get_crc_extra(msg_id: u32) -> u8 {
     match msg_id {
-        0 => 50,      // HEARTBEAT
-        1 => 124,     // SYS_STATUS
-        2 => 137,     // SYSTEM_TIME
-        31 => 246,    // ATTITUDE_QUATERNION
-        32 => 185,    // LOCAL_POSITION_NED
-        69 => 243,    // MANUAL_CONTROL
-        70 => 124,    // RC_CHANNELS_OVERRIDE
-        76 => 152,    // COMMAND_LONG
-        77 => 143,    // COMMAND_ACK
-        82 => 49,     // SET_ATTITUDE_TARGET
-        84 => 143,    // SET_POSITION_TARGET_LOCAL_NED
-        230 => 163,   // ESTIMATOR_STATUS
-        253 => 83,    // STATUSTEXT
-        20_000 => 50, // AVIATE_ESTIMATOR_STATUS
-        _ => 0,       // Unknown message
+        0 => 50,                                    // HEARTBEAT
+        1 => 124,                                   // SYS_STATUS
+        2 => 137,                                   // SYSTEM_TIME
+        31 => 246,                                  // ATTITUDE_QUATERNION
+        32 => 185,                                  // LOCAL_POSITION_NED
+        69 => 243,                                  // MANUAL_CONTROL
+        70 => 124,                                  // RC_CHANNELS_OVERRIDE
+        76 => 152,                                  // COMMAND_LONG
+        77 => 143,                                  // COMMAND_ACK
+        82 => 49,                                   // SET_ATTITUDE_TARGET
+        84 => 143,                                  // SET_POSITION_TARGET_LOCAL_NED
+        230 => EstimatorStatus::CRC_EXTRA,          // ESTIMATOR_STATUS
+        253 => 83,                                  // STATUSTEXT
+        20_000 => AviateEstimatorStatus::CRC_EXTRA, // AVIATE_ESTIMATOR_STATUS
+        _ => 0,                                     // Unknown message
     }
 }
 
