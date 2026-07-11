@@ -20,6 +20,22 @@ jobs:
       - name: Enforce 500-line (and 100-line lib.rs) caps
         run: ./scripts/check_file_sizes.sh
 
+  dialect-generation:
+    name: Dialect (mavgen)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned pymavlink
+        run: pip install pymavlink==2.4.41
+
+      - name: Generate dialect and verify wire facts
+        run: ./scripts/generate_mavlink_dialect.sh --check
+
   runtime-boundary:
     name: Runtime Boundary
     runs-on: ubuntu-latest

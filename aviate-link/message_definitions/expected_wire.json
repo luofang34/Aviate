@@ -1,0 +1,72 @@
+{
+  "HEARTBEAT": {
+    "id": 0,
+    "crc_extra": 50,
+    "payload_len": 9
+  },
+  "SYS_STATUS": {
+    "id": 1,
+    "crc_extra": 124,
+    "payload_len": 43
+  },
+  "SYSTEM_TIME": {
+    "id": 2,
+    "crc_extra": 137,
+    "payload_len": 12
+  },
+  "ATTITUDE_QUATERNION": {
+    "id": 31,
+    "crc_extra": 246,
+    "payload_len": 48
+  },
+  "LOCAL_POSITION_NED": {
+    "id": 32,
+    "crc_extra": 185,
+    "payload_len": 28
+  },
+  "MANUAL_CONTROL": {
+    "id": 69,
+    "crc_extra": 243,
+    "payload_len": 30
+  },
+  "RC_CHANNELS_OVERRIDE": {
+    "id": 70,
+    "crc_extra": 124,
+    "payload_len": 38
+  },
+  "COMMAND_LONG": {
+    "id": 76,
+    "crc_extra": 152,
+    "payload_len": 33
+  },
+  "COMMAND_ACK": {
+    "id": 77,
+    "crc_extra": 143,
+    "payload_len": 10
+  },
+  "SET_ATTITUDE_TARGET": {
+    "id": 82,
+    "crc_extra": 49,
+    "payload_len": 51
+  },
+  "SET_POSITION_TARGET_LOCAL_NED": {
+    "id": 84,
+    "crc_extra": 143,
+    "payload_len": 53
+  },
+  "ESTIMATOR_STATUS": {
+    "id": 230,
+    "crc_extra": 163,
+    "payload_len": 42
+  },
+  "STATUSTEXT": {
+    "id": 253,
+    "crc_extra": 83,
+    "payload_len": 54
+  },
+  "AVIATE_ESTIMATOR_STATUS": {
+    "id": 20000,
+    "crc_extra": 171,
+    "payload_len": 10
+  }
+}
