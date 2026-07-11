@@ -261,15 +261,16 @@ use aviate_core::types::Normalized;
 
 /// Build the SITL kernel wired for the x500 airframe.
 pub fn create_kernel() -> SitlKernel {
-    // Single tuning source (#114/#120): the airframe owns the truth.
-    // The same CascadeGains value and hover trim construct the flying
-    // controller AND land in the lockstep-hashed ResolvedKernelConfig
-    // — two independently initialized copies can drift apart
-    // silently, with the hash vouching for tuning the cascade isn't
-    // actually flying.
-    use aviate_airframe_multirotor::{Airframe as _, X500Airframe};
-    let gains = X500Airframe::cascade_gains();
-    let hover = X500Airframe::hover_thrust_norm();
+    // Single tuning source (#114): the same CascadeGains value and
+    // hover trim construct the flying controller AND land in the
+    // lockstep-hashed ResolvedKernelConfig — two independently
+    // initialized copies can drift apart silently, with the hash
+    // vouching for tuning the cascade isn't actually flying. The
+    // runtime deliberately does NOT depend on a concrete airframe
+    // crate; airframe selection moves to the app layer with #120's
+    // preset loading (this factory retires then).
+    let gains = aviate_core::control::cascade_gains::CascadeGains::x500_defaults();
+    let hover: f32 = 0.77;
     let controller = MultirotorController::from_gains(gains, hover);
     let mixer = QuadXMixerX500 {
         timestamp_source: sitl_timestamp,
