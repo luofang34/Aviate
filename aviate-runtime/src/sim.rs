@@ -157,14 +157,12 @@ pub struct SitlRunner {
     pub kernel: SitlKernel,
 
     /// Last command received
-    pub last_cmd: Command,
-
-    /// Microsecond tick when `last_cmd` was last refreshed by an
-    /// uplink `SystemCommand::FlightControl` frame. `None` until
-    /// the first command lands; `command_age_ms` clamps to
-    /// `u32::MAX` while None so `update_command_status` enforces
-    /// the timeout immediately.
-    pub last_cmd_rx_ticks: Option<u64>,
+    /// Shared command-ingress state machine (#133) — the same
+    /// freshness implementation the hardware FlightRunner uses, so
+    /// the two environments cannot drift: setpoints are retained
+    /// with their OWN receive timestamp; discrete Arm/Disarm are
+    /// one-shot and never refresh setpoint age.
+    pub ingress: crate::command_ingress::CommandIngress<aviate_hal_io::SystemCommand>,
 
     /// Last IMU timestamp for dt calculation
     pub last_imu_time: Option<u64>,
@@ -185,12 +183,7 @@ pub struct SitlRunner {
 
 impl SitlRunner {
     /// Create a new SITL runner
-    pub fn new(
-        transport: SitlIO,
-        board_hal: SitlBoardHal,
-        kernel: SitlKernel,
-        default_command: Command,
-    ) -> Self {
+    pub fn new(transport: SitlIO, board_hal: SitlBoardHal, kernel: SitlKernel) -> Self {
         // Best-effort: bind the per-instance fault command port. If
         // the bind fails (port in use, instance mismatch), continue
         // without a fault controller — missions that don't inject
@@ -203,8 +196,7 @@ impl SitlRunner {
             fault_ctrl,
             board_hal,
             kernel,
-            last_cmd: default_command,
-            last_cmd_rx_ticks: None,
+            ingress: crate::command_ingress::CommandIngress::default(),
             last_imu_time: None,
             sensor_cache: SensorCache::new(),
             ekf_initialized: false,

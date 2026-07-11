@@ -47,9 +47,8 @@ compile_error!("env-flight cannot be combined with env-sitl/env-hitl");
 #[cfg(all(feature = "env-sitl", feature = "env-hitl"))]
 compile_error!("env-sitl and env-hitl are mutually exclusive");
 
-// Module Structure
-
 // Core modules (always available)
+pub mod command_ingress;
 pub mod flight;
 pub mod runner;
 

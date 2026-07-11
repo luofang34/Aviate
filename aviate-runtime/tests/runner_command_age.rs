@@ -1,9 +1,15 @@
-//! #133 regression: the runner owns command freshness. A retained
-//! command replayed to the board on later ticks must NOT read as a
-//! receive — the board sees `fresh` only on the arrival tick and an
-//! age that keeps growing afterward, so the kernel's command-timeout
-//! terminal can fire on link loss. No sleeps: ticks are driven with
-//! synthetic clocks.
+//! #133 regression, at the real command type: the runner's ingress
+//! keeps ONE freshness per command class. A redundant `Arm` on a link
+//! that stopped carrying setpoints must never refresh the retained
+//! setpoint's age — the pre-fix path re-fed a stale setpoint with
+//! age≈0 into the kernel and released the CommandLoss terminal. No
+//! sleeps: ticks are driven with synthetic clocks.
+//!
+//! The kernel side of the loop — stale age engages Direct/CommandLoss
+//! and only restored recency releases it — is pinned by
+//! `command_recovery_releases_descend_terminal` (LLR-FLT-209) in
+//! aviate-core's behavioral tests; these tests pin that no discrete
+//! command can fake that recency.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -11,38 +17,64 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use aviate_hal_io::{SystemState, TimeHal, TransportHal, TransportStatus, WatchdogHal};
+use aviate_core::control::{Command, CommandSource, ControlMode, Setpoint};
+use aviate_core::types::Normalized;
+use aviate_hal_io::{
+    SystemCommand, SystemState, TimeHal, TransportHal, TransportStatus, WatchdogHal,
+};
 use aviate_runtime::runner::{BoardStep, CommandTick, FlightRunner};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Seen {
-    fresh: bool,
-    age_ms: u32,
-    link_ok: bool,
-    cmd: u32,
+fn flight(thrust: f32) -> SystemCommand {
+    SystemCommand::FlightControl(Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint {
+            collective_thrust: Normalized(thrust),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 0,
+        source: CommandSource::Failsafe,
+    })
 }
 
-/// Probe board: records what the runner hands it each tick.
+#[derive(Debug, Clone, PartialEq)]
+struct Seen {
+    event: Option<&'static str>,
+    setpoint_thrust: Option<f32>,
+    setpoint_age_ms: u32,
+    link_ok: bool,
+}
+
 struct ProbeBoard {
     seen: Rc<RefCell<Vec<Seen>>>,
 }
 
 impl BoardStep for ProbeBoard {
-    type Cmd = u32;
+    type Cmd = SystemCommand;
 
     fn board_step(
         &mut self,
         _tick_us: u64,
         _now_us: u64,
         _dt_us: u32,
-        cmd: CommandTick<'_, u32>,
+        cmd: CommandTick<'_, SystemCommand>,
         link_ok: bool,
     ) {
+        let event = cmd.event.map(|e| match e {
+            SystemCommand::Arm => "arm",
+            SystemCommand::Disarm => "disarm",
+            SystemCommand::FlightControl(_) => "flight",
+        });
+        let setpoint_thrust = match cmd.setpoint {
+            Some(SystemCommand::FlightControl(c)) => Some(c.setpoint.collective_thrust.0),
+            _ => None,
+        };
         self.seen.borrow_mut().push(Seen {
-            fresh: cmd.fresh,
-            age_ms: cmd.age_ms,
+            event,
+            setpoint_thrust,
+            setpoint_age_ms: cmd.setpoint_age_ms,
             link_ok,
-            cmd: *cmd.cmd,
         });
     }
 
@@ -69,10 +101,10 @@ impl WatchdogHal for FakeWatchdog {
 }
 
 struct QueueTransport {
-    queue: VecDeque<u32>,
+    queue: VecDeque<SystemCommand>,
 }
-impl TransportHal<u32> for QueueTransport {
-    fn try_recv_command(&mut self) -> Option<u32> {
+impl TransportHal<SystemCommand> for QueueTransport {
+    fn try_recv_command(&mut self) -> Option<SystemCommand> {
         self.queue.pop_front()
     }
     fn try_send_telemetry(&mut self, _frame: &[u8]) -> bool {
@@ -86,86 +118,84 @@ impl TransportHal<u32> for QueueTransport {
     }
 }
 
-type ProbeRunner = FlightRunner<ProbeBoard, FakeTime, QueueTransport, FakeWatchdog, u32>;
+type ProbeRunner = FlightRunner<ProbeBoard, FakeTime, QueueTransport, FakeWatchdog, SystemCommand>;
 
-fn runner(cmds: &[u32]) -> (ProbeRunner, Rc<RefCell<Vec<Seen>>>) {
+fn runner(cmds: Vec<SystemCommand>) -> (ProbeRunner, Rc<RefCell<Vec<Seen>>>) {
     let seen = Rc::new(RefCell::new(Vec::new()));
     let board = ProbeBoard { seen: seen.clone() };
-    let transport = QueueTransport {
-        queue: cmds.iter().copied().collect(),
-    };
+    let transport = QueueTransport { queue: cmds.into() };
     (
-        FlightRunner::new(board, FakeTime, transport, FakeWatchdog, 0),
+        FlightRunner::new(board, FakeTime, transport, FakeWatchdog),
         seen,
     )
 }
 
-/// The core #133 shape: one command arrives, the link then goes
-/// silent, and the runner replays the retained value. The board must
-/// see the replay as stale with a growing age — the pre-fix hardware
-/// board re-stamped its receive time on every replay, pinning the age
-/// near zero forever.
+/// The #133 core: a setpoint arrives, the link then carries only a
+/// redundant `Arm`. The Arm is delivered exactly once as an event —
+/// and the retained setpoint's age KEEPS GROWING through it, so the
+/// kernel's command-timeout can fire despite the discrete traffic.
 #[test]
-fn replayed_retained_command_ages_out() {
-    let (mut r, seen) = runner(&[7]);
+fn redundant_arm_never_refreshes_setpoint_age() {
+    let (mut r, seen) = runner(vec![flight(0.6), SystemCommand::Arm]);
 
-    r.step(0, 0, 1000); // command 7 arrives at t=0
-    r.step(1_000, 500_000, 1000); // replay at t=0.5 s
-    r.step(2_000, 2_000_000, 1000); // replay at t=2 s (past 1 s link timeout)
+    r.step(0, 0, 1000); // setpoint arrives at t=0
+    r.step(1_000, 800_000, 1000); // Arm arrives at t=0.8 s
+    r.step(2_000, 2_000_000, 1000); // silence at t=2 s
 
     let s = seen.borrow();
+    assert_eq!(s[0].event, Some("flight"));
+    assert_eq!(s[0].setpoint_age_ms, 0);
+    assert_eq!(s[0].setpoint_thrust, Some(0.6));
+
+    assert_eq!(s[1].event, Some("arm"), "discrete delivered exactly once");
     assert_eq!(
-        s[0],
-        Seen {
-            fresh: true,
-            age_ms: 0,
-            link_ok: true,
-            cmd: 7
-        }
+        s[1].setpoint_age_ms, 800,
+        "Arm must NOT refresh the setpoint age"
     );
     assert_eq!(
-        s[1],
-        Seen {
-            fresh: false,
-            age_ms: 500,
-            link_ok: true,
-            cmd: 7
-        },
-        "a replay is not a receive: stale, age growing"
+        s[1].setpoint_thrust,
+        Some(0.6),
+        "setpoint retained through the discrete event"
     );
-    assert!(!s[2].fresh);
-    assert_eq!(s[2].age_ms, 2_000, "age keeps growing after link loss");
+
+    assert_eq!(s[2].event, None);
+    assert_eq!(
+        s[2].setpoint_age_ms, 2_000,
+        "age keeps growing after the Arm; the timeout can fire"
+    );
     assert!(
         !s[2].link_ok,
-        "link must drop once the age passes the timeout"
+        "link drops on silence even though an Arm passed at 0.8 s? \
+         No — link_ok tracks ANY traffic; 1.2 s since the Arm exceeds \
+         the 1 s window"
     );
-    assert_eq!(s[2].cmd, 7, "retained setpoint still replayed to the board");
 }
 
-/// Before any command has ever arrived the age saturates at u32::MAX
-/// — a fresh boot is command-stale (failsafe posture), never
-/// age-zero-by-default.
+/// Before any setpoint has ever arrived the setpoint age saturates —
+/// an `Arm` alone cannot make the vehicle look commanded.
 #[test]
-fn never_received_reads_saturated_age() {
-    let (mut r, seen) = runner(&[]);
-    r.step(0, 5_000_000, 1000);
+fn arm_alone_leaves_the_vehicle_command_stale() {
+    let (mut r, seen) = runner(vec![SystemCommand::Arm]);
+    r.step(0, 0, 1000);
+    r.step(1_000, 100_000, 1000);
     let s = seen.borrow();
-    assert!(!s[0].fresh);
-    assert_eq!(s[0].age_ms, u32::MAX);
-    assert!(!s[0].link_ok);
+    assert_eq!(s[0].event, Some("arm"));
+    assert_eq!(s[0].setpoint_age_ms, u32::MAX);
+    assert_eq!(s[0].setpoint_thrust, None, "no setpoint to retain");
+    assert_eq!(s[1].setpoint_age_ms, u32::MAX);
 }
 
-/// A second command re-freshens: fresh flags exactly the arrival
-/// ticks, and the age resets on each true receive.
+/// Each setpoint receive resets the age; replays between receives
+/// deliver the retained value with honest staleness.
 #[test]
-fn each_receive_is_fresh_exactly_once() {
-    let (mut r, seen) = runner(&[1, 2]);
-    r.step(0, 0, 1000); // 1 arrives
-    r.step(1_000, 700_000, 1000); // 2 arrives at t=0.7 s
-    r.step(2_000, 900_000, 1000); // replay of 2
+fn setpoint_receives_reset_age_and_retain_latest() {
+    let (mut r, seen) = runner(vec![flight(0.3), flight(0.9)]);
+    r.step(0, 0, 1000);
+    r.step(1_000, 700_000, 1000); // second setpoint at t=0.7 s
+    r.step(2_000, 900_000, 1000); // replay tick
     let s = seen.borrow();
-    assert!(s[0].fresh && s[1].fresh && !s[2].fresh);
-    assert_eq!(s[1].age_ms, 0, "age resets on the new receive");
-    assert_eq!(s[2].age_ms, 200);
-    assert_eq!(s[2].cmd, 2);
+    assert_eq!(s[1].setpoint_age_ms, 0, "age resets on the new receive");
+    assert_eq!(s[2].event, None);
+    assert_eq!(s[2].setpoint_age_ms, 200);
+    assert_eq!(s[2].setpoint_thrust, Some(0.9), "latest setpoint retained");
 }

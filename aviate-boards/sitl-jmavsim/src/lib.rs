@@ -49,14 +49,12 @@ use aviate_core::control::Command;
 use aviate_core::mixer::{ActuatorCmd, QuadXMixerX500};
 use aviate_core::{ArmError, DefaultAviateKernel, InitState};
 
-use aviate_core::hal::ActuatorHal;
+use aviate_core::hal::{ActuatorHal, SystemHal};
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{
     SimBaroData, SimGnssData, SimImuData, SimMagData, SimSensorPacket, SitlConfig, SitlIO,
 };
-use aviate_runtime::{
-    create_kernel, default_command, loop_periods, SitlBoardInfo, SitlRunner, SitlTime,
-};
+use aviate_runtime::{create_kernel, loop_periods, SitlBoardInfo, SitlRunner, SitlTime};
 
 /// jMAVSim board configuration
 ///
@@ -151,10 +149,9 @@ impl JmavSimBoard {
         );
 
         let kernel = create_kernel();
-        let default_cmd = default_command();
 
         // Create SitlRunner with all components
-        let runner = SitlRunner::new(transport, board_hal, kernel, default_cmd);
+        let runner = SitlRunner::new(transport, board_hal, kernel);
 
         Ok(Self {
             hil_backend,
@@ -279,7 +276,9 @@ impl JmavSimBoard {
         self.armed = false;
     }
 
-    /// Set the flight command (attitude/thrust setpoint)
+    /// Set the flight command (attitude/thrust setpoint), routed
+    /// through the shared ingress so the setpoint carries a real
+    /// receive timestamp (#133).
     pub fn set_command(&mut self, cmd: Command) {
         self.runner
             .kernel
@@ -287,7 +286,10 @@ impl JmavSimBoard {
             .checks
             .pre_arm
             .update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
-        self.runner.last_cmd = cmd;
+        let now_ticks = self.runner.transport.now().ticks;
+        self.runner
+            .ingress
+            .receive(aviate_hal_io::SystemCommand::FlightControl(cmd), now_ticks);
     }
 
     /// Check if the kernel is ready for flight

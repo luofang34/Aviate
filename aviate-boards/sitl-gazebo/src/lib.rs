@@ -44,7 +44,7 @@ use aviate_core::DefaultAviateKernel;
 
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{SitlConfig, SitlIO};
-use aviate_runtime::{create_kernel, default_command, loop_periods, SitlBoardInfo, SitlRunner};
+use aviate_runtime::{create_kernel, loop_periods, SitlBoardInfo, SitlRunner};
 
 /// Gazebo SITL board configuration
 ///
@@ -89,10 +89,9 @@ impl GazeboSitlBoard {
 
         // Use shared factory functions from aviate-runtime
         let kernel = create_kernel();
-        let default_cmd = default_command();
 
         // Create SitlRunner with all components
-        let runner = SitlRunner::new(transport, board_hal, kernel, default_cmd);
+        let runner = SitlRunner::new(transport, board_hal, kernel);
 
         Ok(Self { runner })
     }
