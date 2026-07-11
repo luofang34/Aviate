@@ -24,7 +24,46 @@ const BARO_DATUM_INIT_VAR: Scalar = 4.0;
 /// without chasing high-rate vehicle height motion.
 const BARO_DATUM_PROCESS_VAR: Scalar = 1e-4;
 
+/// Aiding age \[s\] past which a HEALTHY GNSS channel earns a hard
+/// reset-to-measurement instead of another gated fusion attempt.
+/// Once the state diverges past the innovation gate, the collapsed
+/// covariance keeps the gate tight and every later innovation is
+/// rejected — the filter can never re-converge *through* the gate
+/// (measured crash chain: a braked climb outran the vertical-velocity
+/// estimate, GNSS-vel innovations were rejected from then on, and the
+/// controller flew the phantom climb into the ground). Well under the
+/// 5 s validity timeout so recovery precedes any failsafe.
+const AIDING_RESET_AGE_S: Scalar = 1.0;
+
+/// Variance the reset re-seeds on each snapped state's diagonal —
+/// the post-`init()` value, loose enough that fusion re-locks fast.
+const AIDING_RESET_VAR: Scalar = 0.1;
+
 impl Ekf {
+    /// Hard reset of a 3-state block to a measured value: snap the
+    /// states, re-seed the block's diagonal variance, and drop the
+    /// block's cross-covariances (they encode the correlations of the
+    /// diverged estimate, which are exactly what kept it pinned).
+    fn reset_block_to_measurement(state: &mut EkfState, base_idx: usize, meas: [Scalar; 3]) {
+        for (i, m) in meas.iter().enumerate() {
+            match base_idx + i {
+                0 => state.pos.x = crate::types::Meters(*m),
+                1 => state.pos.y = crate::types::Meters(*m),
+                2 => state.pos.z = crate::types::Meters(*m),
+                3 => state.vel.x = crate::types::MetersPerSecond(*m),
+                4 => state.vel.y = crate::types::MetersPerSecond(*m),
+                5 => state.vel.z = crate::types::MetersPerSecond(*m),
+                _ => {} // COV:EXCL(DEFENSIVE: callers pass IDX_POS or IDX_VEL)
+            }
+            let idx = base_idx + i;
+            for r in 0..super::STATE_DIM {
+                state.p_cov.set(r, idx, 0.0);
+                state.p_cov.set(idx, r, 0.0);
+            }
+            state.p_cov.set(idx, idx, AIDING_RESET_VAR);
+        }
+    }
+
     pub fn update_gnss_state(&self, state: &mut EkfState, gnss_reading: &SensorReading<GnssData>) {
         // 0. Health gate
         match gnss_reading.health {
@@ -56,26 +95,61 @@ impl Ekf {
             }
         }
 
-        // Update Position NED. The freshness age resets only if at
-        // least one axis was actually fused — `|=` (not `||`) so all
-        // three axes still get their own gate check even once one has
-        // already accepted, matching the per-axis innovation gating
-        // `scalar_update` already does.
+        // Reset-to-measurement recovery: a healthy channel that WAS
+        // aided (age below the "never fused" saturation seed) and has
+        // gone stale is stale *because* the gate keeps rejecting it —
+        // snap the block to the measurement so fusion re-locks,
+        // instead of rejecting forever. A never-aided filter keeps
+        // ordinary gated fusion so a first reading cannot bypass the
+        // outlier gate.
+        let was_aided =
+            |age: Scalar| age > AIDING_RESET_AGE_S && age < super::validity::AGE_SATURATION_S;
+        if state.initialized && was_aided(state.gnss_pos_age_s) {
+            Self::reset_block_to_measurement(
+                state,
+                IDX_POS,
+                [
+                    gnss.position_ned[0].0,
+                    gnss.position_ned[1].0,
+                    gnss.position_ned[2].0,
+                ],
+            );
+            state.gnss_pos_age_s = 0.0;
+        }
+        if state.initialized && was_aided(state.gnss_vel_age_s) {
+            Self::reset_block_to_measurement(
+                state,
+                IDX_VEL,
+                [
+                    gnss.velocity_ned[0].0,
+                    gnss.velocity_ned[1].0,
+                    gnss.velocity_ned[2].0,
+                ],
+            );
+            state.gnss_vel_age_s = 0.0;
+        }
+
+        // Update Position NED. The freshness age resets only when ALL
+        // three axes fused — `&=` so a single persistently-rejected
+        // axis (a diverged state pinned behind its own gate) stales
+        // the channel age and earns the reset above, instead of
+        // hiding behind two healthy siblings forever. Each axis still
+        // gets its own gate check regardless.
         let r_pos = self.config.meas_noise_gnss_pos;
-        let mut pos_accepted = false;
-        pos_accepted |= self.scalar_update(state, IDX_POS, gnss.position_ned[0].0, r_pos);
-        pos_accepted |= self.scalar_update(state, IDX_POS + 1, gnss.position_ned[1].0, r_pos);
-        pos_accepted |= self.scalar_update(state, IDX_POS + 2, gnss.position_ned[2].0, r_pos);
+        let mut pos_accepted = true;
+        pos_accepted &= self.scalar_update(state, IDX_POS, gnss.position_ned[0].0, r_pos);
+        pos_accepted &= self.scalar_update(state, IDX_POS + 1, gnss.position_ned[1].0, r_pos);
+        pos_accepted &= self.scalar_update(state, IDX_POS + 2, gnss.position_ned[2].0, r_pos);
         if pos_accepted {
             state.gnss_pos_age_s = 0.0;
         }
 
         // Update Velocity NED
         let r_vel = self.config.meas_noise_gnss_vel;
-        let mut vel_accepted = false;
-        vel_accepted |= self.scalar_update(state, IDX_VEL, gnss.velocity_ned[0].0, r_vel);
-        vel_accepted |= self.scalar_update(state, IDX_VEL + 1, gnss.velocity_ned[1].0, r_vel);
-        vel_accepted |= self.scalar_update(state, IDX_VEL + 2, gnss.velocity_ned[2].0, r_vel);
+        let mut vel_accepted = true;
+        vel_accepted &= self.scalar_update(state, IDX_VEL, gnss.velocity_ned[0].0, r_vel);
+        vel_accepted &= self.scalar_update(state, IDX_VEL + 1, gnss.velocity_ned[1].0, r_vel);
+        vel_accepted &= self.scalar_update(state, IDX_VEL + 2, gnss.velocity_ned[2].0, r_vel);
         if vel_accepted {
             state.gnss_vel_age_s = 0.0;
         }
