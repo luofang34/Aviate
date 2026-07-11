@@ -174,19 +174,27 @@ pub fn synthesize_packet(
         _ => [0.0; 3],
     };
 
-    // Inertial acceleration is held at zero: the IMU reports just
-    // gravity. A double-finite-difference (pos → vel → accel) is
-    // a delta-function over a 1-ms tick and corrupts the EKF
-    // predict step on every cycle. The EKF compensates: with
-    // `accel_inertial = 0` and `gnss.velocity_ned` carrying the
-    // true velocity (derived above from `Δposition / Δt`), the
-    // GNSS scalar update closes the velocity loop directly
-    // rather than relying on accel integration. This is the
-    // same pattern real GPS-aided multirotors use when an IMU
-    // is missing or untrusted — the EKF just runs on GNSS-side
-    // pos/vel measurements.
-    let _ = prev_ned_vel;
-    let accel_inertial_ned = [0.0, 0.0, 0.0];
+    // Inertial acceleration from the velocity finite difference —
+    // the same baseline the velocity above is derived over. gz
+    // positions are exact doubles (no measurement noise), so the
+    // second difference is clean; the ±3 g clamp guards the spikes
+    // a physics-step time hiccup can produce. Feeding zero here
+    // instead (gravity-only IMU) starves the EKF predict step of
+    // every vertical transient: the velocity estimate then moves
+    // only at the GNSS fusion gain, lags hard braking by seconds,
+    // and a braked climb descends into the ground while the filter
+    // still believes it is climbing.
+    let accel_inertial_ned = match prev {
+        Some(_) if dt > 1e-6 => {
+            let lim = 3.0 * GRAVITY;
+            [
+                ((now_ned_vel[0] - prev_ned_vel[0]) / dt).clamp(-lim, lim),
+                ((now_ned_vel[1] - prev_ned_vel[1]) / dt).clamp(-lim, lim),
+                ((now_ned_vel[2] - prev_ned_vel[2]) / dt).clamp(-lim, lim),
+            ]
+        }
+        _ => [0.0, 0.0, 0.0],
+    };
     // q_ned was computed above for the gyro conversion; re-use it.
     let accel_ned = [
         accel_inertial_ned[0],
