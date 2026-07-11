@@ -235,7 +235,7 @@ impl SitlRunner {
                     let formatter = match MavlinkCycleFormatter::new(telem_cfg, loop_hz) {
                         Ok(formatter) => formatter,
                         Err(e) => {
-                            error!("Telemetry disabled: {:?}", e);
+                            error!("Telemetry disabled: {}", e);
                             return;
                         }
                     };
