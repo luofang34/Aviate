@@ -15,10 +15,14 @@ pinned upstream definitions are vendored in `upstream/` (see its README
 for provenance) and generation goes through one entry point:
 
 ```sh
-pip install pymavlink==2.4.41
+python3 -m pip install --require-hashes -r scripts/mavlink-requirements.txt
 scripts/generate_mavlink_dialect.sh          # writes target/mavlink-dialect/aviate_dialect.py
 scripts/generate_mavlink_dialect.sh --check  # also verifies expected_wire.json
 ```
+
+The requirements file hash-locks the generator and its transitive
+dependencies against the published PyPI artifacts; a bare version pin
+does not survive a republished artifact.
 
 The script refuses to run against any other pymavlink version.
 `expected_wire.json` pins the message id, CRC_EXTRA, and full payload

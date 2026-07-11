@@ -30,8 +30,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install pinned pymavlink
-        run: pip install pymavlink==2.4.41
+      - name: Install hash-locked generator toolchain
+        run: python3 -m pip install --require-hashes -r scripts/mavlink-requirements.txt
 
       - name: Generate dialect and verify wire facts
         run: ./scripts/generate_mavlink_dialect.sh --check
