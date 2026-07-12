@@ -51,14 +51,6 @@ impl PositionController {
     /// X500's measured ~2.9 m/s² max upward braking authority at
     /// thrust=1.0; `vel_cap_z = 3.0` is above `a/p = 2.5` so the
     /// sqrt branch actually engages during cruise descent.
-    pub fn new(gains: [Scalar; 3]) -> Self {
-        Self {
-            gains,
-            accel_limits: [1.5, 1.5, 1.5],
-            vel_caps: [2.0, 2.0, 3.0],
-        }
-    }
-
     /// Explicit per-axis tuning. Reach for this when the airframe's
     /// brake authority differs from the X500 defaults (heavier
     /// payload, lower max thrust, etc).
@@ -313,7 +305,8 @@ mod tests {
         // `touchdown_velocity ≤ 1 m/s` criterion. Within the
         // linear region (err < a/p²), vel_sp = p · err, so
         // vel_sp at err=0.30m = 0.18 m/s. Well under 1 m/s.
-        let ctrl = PositionController::new([0.3, 0.3, 0.6]);
+        let ctrl =
+            PositionController::with_limits([0.3, 0.3, 0.6], [1.5, 1.5, 1.5], [2.0, 2.0, 3.0]);
         let setpoint = Vector3 {
             x: Meters(0.0),
             y: Meters(0.0),
