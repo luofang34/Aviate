@@ -67,7 +67,7 @@ fn main() {
     println!("  Aviate jMAVSim SITL - Generic Quad-X");
     println!("===========================================");
     println!();
-    println!("Board: {}", JmavSimBoard::board_id());
+    println!("Board: {}", aviate_board_sitl_jmavsim::board_id());
     println!("Airframe: {}", GenericQuadX::AIRFRAME_ID);
     println!("Simulator port: {}", port);
     println!();
@@ -114,7 +114,15 @@ fn main() {
     };
 
     // Create board
-    let mut board = match JmavSimBoard::with_config(config) {
+    let kernel = match aviate_app_sitl_jmavsim_generic_quad_x::build_x500_kernel() {
+        Ok(kernel) => kernel,
+        Err(e) => {
+            eprintln!("[ERROR] Kernel construction refused: {e:?}");
+            cleanup_jmavsim(&mut jmavsim_process);
+            std::process::exit(1);
+        }
+    };
+    let mut board = match JmavSimBoard::with_config(kernel, config) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("[ERROR] Failed to create board: {}", e);

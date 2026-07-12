@@ -52,9 +52,11 @@ echo "Runtime boundary: OK ($(echo "$DEPS" | wc -l | tr -d ' ') deps under env-f
 # Airframe selection belongs to the app layer: the runtime provides
 # the generic runner and must not name a concrete controller/mixer or
 # airframe tuning set.
-if grep -rEn "MultirotorController|QuadXMixerX500|x500_defaults" aviate-runtime/src > /dev/null; then
-  echo "FAIL: concrete airframe types in aviate-runtime/src" >&2
-  grep -rEn "MultirotorController|QuadXMixerX500|x500_defaults" aviate-runtime/src >&2
-  exit 1
-fi
-echo "Runtime airframe boundary: OK"
+for tree in aviate-runtime/src aviate-boards/sitl-gazebo/src aviate-boards/sitl-jmavsim/src; do
+  if grep -rEn "MultirotorController|QuadXMixerX500|x500_defaults" "$tree" > /dev/null; then
+    echo "FAIL: concrete airframe types in $tree" >&2
+    grep -rEn "MultirotorController|QuadXMixerX500|x500_defaults" "$tree" >&2
+    exit 1
+  fi
+done
+echo "Runtime/board airframe boundary: OK (apps own airframe selection)"

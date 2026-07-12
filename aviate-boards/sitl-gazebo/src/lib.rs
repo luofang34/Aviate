@@ -38,56 +38,13 @@ use std::io;
 
 use log::warn;
 
-use aviate_core::control::multirotor::MultirotorController;
-use aviate_core::mixer::{ActuatorCmd, QuadXMixerX500};
+use aviate_core::mixer::ActuatorCmd;
 use aviate_core::DefaultAviateKernel;
 
-use aviate_core::control::cascade_gains::CascadeGains;
-use aviate_core::control::ConfigMode;
-use aviate_core::mixer::ModeConfig;
-use aviate_core::AviateKernel;
+use aviate_core::kernel::builder::KernelBuildError;
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{SitlConfig, SitlIO};
-use aviate_runtime::{loop_periods, sitl_timestamp, SitlBoardInfo, SitlRunner};
-
-/// X500 kernel construction, owned by this app.
-///
-/// Airframe selection is an application decision: the runtime provides
-/// only the generic `SitlRunner`, and this board states visibly that
-/// it flies the X500 controller/mixer pair. One tuning source: the
-/// same `CascadeGains` value and hover trim construct the flying
-/// controller AND land in the lockstep-hashed `ResolvedKernelConfig`;
-/// the builder-level binding check makes a divergent pair
-/// unconstructible. Preset-file loading replaces these literals with
-/// configuration when app-owned preset construction lands.
-pub fn create_x500_kernel() -> DefaultAviateKernel<MultirotorController, QuadXMixerX500> {
-    let gains = CascadeGains::x500_defaults();
-    let hover: f32 = 0.77;
-    let controller = MultirotorController::from_gains(gains, hover);
-    let mixer = QuadXMixerX500 {
-        timestamp_source: sitl_timestamp,
-    };
-    let mode_config = ModeConfig {
-        mode: ConfigMode::Hover,
-        groups: &[],
-    };
-
-    let mut kernel = AviateKernel::new(
-        aviate_core::ekf::Ekf::default(),
-        controller,
-        mixer,
-        aviate_core::mixer::Sanitizer,
-        mode_config,
-    );
-    kernel.cfg.cascade_gains = gains;
-    kernel.cfg.hover_thrust_norm = aviate_core::types::Normalized(hover);
-
-    // Default command carries low throttle, so the throttle pre-arm
-    // check starts satisfied.
-    kernel.state.checks.pre_arm.update_throttle(true);
-
-    kernel
-}
+use aviate_runtime::{loop_periods, SitlBoardInfo, SitlRunner};
 
 /// Gazebo SITL board configuration
 ///
@@ -96,19 +53,29 @@ pub fn create_x500_kernel() -> DefaultAviateKernel<MultirotorController, QuadXMi
 ///
 /// **Phase 1**: Delegates to SitlRunner for control loop execution.
 /// This eliminates ~165 lines of duplication from the board implementation.
-pub struct GazeboSitlBoard {
+pub struct GazeboSitlBoard<C, M>
+where
+    C: aviate_core::control::VehicleController,
+    M: aviate_core::mixer::Mixer,
+{
     /// SITL runner (encapsulates transport, board HAL, and kernel)
-    runner: SitlRunner<MultirotorController, QuadXMixerX500>,
+    runner: SitlRunner<C, M>,
 }
 
-impl GazeboSitlBoard {
-    /// Create a new X500 SITL board with default configuration
-    pub fn new() -> io::Result<Self> {
-        Self::with_config(SitlConfig::default())
+impl<C, M> GazeboSitlBoard<C, M>
+where
+    C: aviate_core::control::VehicleController,
+    M: aviate_core::mixer::Mixer,
+{
+    /// Create a SITL board around an app-built kernel with default
+    /// configuration. Airframe selection is the injecting app's
+    /// decision; this board never chooses a controller or mixer.
+    pub fn new(kernel: DefaultAviateKernel<C, M>) -> io::Result<Self> {
+        Self::with_config(kernel, SitlConfig::default())
     }
 
-    /// Create a new X500 SITL board with custom configuration
-    pub fn with_config(config: SitlConfig) -> io::Result<Self> {
+    /// Create a SITL board around an app-built kernel.
+    pub fn with_config(kernel: DefaultAviateKernel<C, M>, config: SitlConfig) -> io::Result<Self> {
         let transport = SitlIO::new(config)?;
 
         // Create fake sensors and actuator - same interface as real hardware drivers
@@ -130,28 +97,38 @@ impl GazeboSitlBoard {
             fake_actuator,
         );
 
-        // Use shared factory functions from aviate-runtime
-        let kernel = create_x500_kernel();
-
-        // Create SitlRunner with all components
+        // Create SitlRunner around the injected kernel
         let runner = SitlRunner::new(transport, board_hal, kernel);
 
         Ok(Self { runner })
     }
 
-    /// Create a new X500 SITL board with retry on port binding
-    pub fn new_with_retry(max_retries: u32, retry_delay_ms: u64) -> io::Result<Self> {
-        Self::with_config_retry(SitlConfig::default(), max_retries, retry_delay_ms)
+    /// Create a SITL board with retry on port binding. Each attempt
+    /// consumes a fresh app-built kernel from `make_kernel`.
+    pub fn new_with_retry(
+        make_kernel: impl FnMut() -> Result<DefaultAviateKernel<C, M>, KernelBuildError>,
+        max_retries: u32,
+        retry_delay_ms: u64,
+    ) -> io::Result<Self> {
+        Self::with_config_retry(
+            make_kernel,
+            SitlConfig::default(),
+            max_retries,
+            retry_delay_ms,
+        )
     }
 
-    /// Create a new X500 SITL board with custom config and retry on port binding
+    /// Create a SITL board with custom config and retry on port binding.
     pub fn with_config_retry(
+        mut make_kernel: impl FnMut() -> Result<DefaultAviateKernel<C, M>, KernelBuildError>,
         config: SitlConfig,
         max_retries: u32,
         retry_delay_ms: u64,
     ) -> io::Result<Self> {
         for i in 0..max_retries {
-            match Self::with_config(config.clone()) {
+            let kernel = make_kernel()
+                .map_err(|e| io::Error::other(format!("kernel construction refused: {e:?}")))?;
+            match Self::with_config(kernel, config.clone()) {
                 Ok(board) => return Ok(board),
                 Err(e) => {
                     if i < max_retries - 1 {
@@ -199,12 +176,12 @@ impl GazeboSitlBoard {
     }
 
     /// Get a reference to the kernel
-    pub fn kernel(&self) -> &DefaultAviateKernel<MultirotorController, QuadXMixerX500> {
+    pub fn kernel(&self) -> &DefaultAviateKernel<C, M> {
         &self.runner.kernel
     }
 
     /// Get a mutable reference to the kernel
-    pub fn kernel_mut(&mut self) -> &mut DefaultAviateKernel<MultirotorController, QuadXMixerX500> {
+    pub fn kernel_mut(&mut self) -> &mut DefaultAviateKernel<C, M> {
         &mut self.runner.kernel
     }
 
@@ -224,11 +201,6 @@ impl GazeboSitlBoard {
     /// read actuator commands for forwarding to the simulator.
     pub fn transport_mut(&mut self) -> &mut SitlIO {
         self.runner.transport_mut()
-    }
-
-    /// Get board ID
-    pub fn board_id() -> &'static str {
-        "sitl-gazebo"
     }
 
     /// Initialize telemetry from application config
@@ -252,6 +224,11 @@ pub const BOARD_INFO: SitlBoardInfo = SitlBoardInfo {
 /// Re-export BoardInfo type for backwards compatibility
 pub type BoardInfo = SitlBoardInfo;
 
+/// Board identifier, independent of the injected kernel type.
+pub fn board_id() -> &'static str {
+    "sitl-gazebo"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,6 +240,6 @@ mod tests {
 
     #[test]
     fn test_board_id() {
-        assert_eq!(GazeboSitlBoard::board_id(), "sitl-gazebo");
+        assert_eq!(board_id(), "sitl-gazebo");
     }
 }
