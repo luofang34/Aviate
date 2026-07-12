@@ -376,7 +376,7 @@ impl<T: FrameTx> TelemetryBackend for MavlinkTelemetry<T> {
 /// use aviate_link::mavlink::MavlinkCycleFormatter;
 /// use aviate_runtime::TelemetryTask;
 ///
-/// let formatter = MavlinkCycleFormatter::new(&telem_cfg, 1000);
+/// let formatter = MavlinkCycleFormatter::new(&telem_cfg, 1000)?;
 /// let task = TelemetryTask::new(udp_tx, formatter);
 /// ```
 ///
@@ -387,6 +387,12 @@ impl<T: FrameTx> TelemetryBackend for MavlinkTelemetry<T> {
 /// - `attitude_hz`: ATTITUDE_QUATERNION rate (default 10 Hz)
 /// - `position_hz`: LOCAL_POSITION_NED rate (default 4 Hz)
 /// - `estimator_status_hz`: minimum estimator-status rate (default 4 Hz)
+///
+/// Valid rates are 1..=255 Hz; a zero rate is a configuration error and
+/// construction fails rather than reinterpreting it. Each stream emits
+/// every `ceil(loop_hz / rate_hz)` iterations, so the achieved rate never
+/// exceeds the requested rate; a rate above `loop_hz` is capped at one
+/// emission per loop iteration.
 pub struct MavlinkCycleFormatter {
     /// Heartbeat rate divider (loop_hz / heartbeat_hz)
     heartbeat_div: u32,
@@ -410,7 +416,12 @@ impl MavlinkCycleFormatter {
     /// # Parameters
     /// - `cfg`: Telemetry configuration (rates)
     /// - `loop_hz`: Control loop frequency in Hz
-    pub fn new(cfg: &TelemetryConfig, loop_hz: u32) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TelemetryError::ZeroRate`] when `loop_hz` or any
+    /// configured message rate is zero.
+    pub fn new(cfg: &TelemetryConfig, loop_hz: u32) -> Result<Self, TelemetryError> {
         Self::with_ids(cfg, loop_hz, 1, 1)
     }
 
@@ -421,13 +432,41 @@ impl MavlinkCycleFormatter {
     /// - `loop_hz`: Control loop frequency in Hz
     /// - `sys_id`: MAVLink system ID (1-255)
     /// - `comp_id`: MAVLink component ID (1-255)
-    pub fn with_ids(cfg: &TelemetryConfig, loop_hz: u32, sys_id: u8, comp_id: u8) -> Self {
-        fn to_div(loop_hz: u32, msg_hz: u8) -> u32 {
-            let hz = msg_hz.max(1) as u32; // Guard against zero
-            (loop_hz / hz).max(1)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TelemetryError::ZeroRate`] when `loop_hz` or any
+    /// configured message rate is zero. A zero rate has no defined
+    /// meaning; rejecting it keeps a typo from silently running a stream
+    /// at a rate the config never requested.
+    pub fn with_ids(
+        cfg: &TelemetryConfig,
+        loop_hz: u32,
+        sys_id: u8,
+        comp_id: u8,
+    ) -> Result<Self, TelemetryError> {
+        if loop_hz == 0 {
+            return Err(TelemetryError::ZeroRate("loop_hz"));
+        }
+        for (field, hz) in [
+            ("heartbeat_hz", cfg.heartbeat_hz),
+            ("attitude_hz", cfg.attitude_hz),
+            ("position_hz", cfg.position_hz),
+            ("estimator_status_hz", cfg.estimator_status_hz),
+        ] {
+            if hz == 0 {
+                return Err(TelemetryError::ZeroRate(field));
+            }
         }
 
-        Self {
+        // Ceiling division keeps the achieved rate at or below the
+        // requested rate; flooring would overshoot every rate that does
+        // not divide loop_hz.
+        fn to_div(loop_hz: u32, msg_hz: u8) -> u32 {
+            loop_hz.div_ceil(u32::from(msg_hz))
+        }
+
+        Ok(Self {
             heartbeat_div: to_div(loop_hz, cfg.heartbeat_hz),
             attitude_div: to_div(loop_hz, cfg.attitude_hz),
             position_div: to_div(loop_hz, cfg.position_hz),
@@ -435,7 +474,7 @@ impl MavlinkCycleFormatter {
             seq: 0,
             sys_id,
             comp_id,
-        }
+        })
     }
 }
 

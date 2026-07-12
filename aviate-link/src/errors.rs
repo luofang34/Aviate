@@ -17,6 +17,8 @@ pub enum TelemetryError {
     Transport(TransportError),
     /// Protocol-level formatting error
     Protocol,
+    /// A configured rate is zero; carries the offending config field name
+    ZeroRate(&'static str),
 }
 
 /// Result type for telemetry operations

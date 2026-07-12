@@ -23,6 +23,12 @@ pub enum TelemetryConfigError {
         /// Compile-time maximum queue length.
         max: usize,
     },
+    /// A message rate is zero; zero has no defined semantics and is
+    /// rejected instead of being silently reinterpreted
+    ZeroRate {
+        /// Name of the offending config field.
+        field: &'static str,
+    },
 }
 
 impl core::fmt::Display for TelemetryConfigError {
@@ -41,6 +47,9 @@ impl core::fmt::Display for TelemetryConfigError {
                     "telemetry queue_len {} exceeds maximum {}",
                     requested, max
                 )
+            }
+            TelemetryConfigError::ZeroRate { field } => {
+                write!(f, "telemetry {} is zero; rates must be 1-255 Hz", field)
             }
         }
     }
@@ -79,6 +88,17 @@ pub fn validate_telemetry_config(cfg: &TelemetryConfig) -> Result<(), TelemetryC
             requested: cfg.queue_len,
             max: TELEMETRY_MAX_QUEUE,
         });
+    }
+
+    for (field, hz) in [
+        ("heartbeat_hz", cfg.heartbeat_hz),
+        ("attitude_hz", cfg.attitude_hz),
+        ("position_hz", cfg.position_hz),
+        ("estimator_status_hz", cfg.estimator_status_hz),
+    ] {
+        if hz == 0 {
+            return Err(TelemetryConfigError::ZeroRate { field });
+        }
     }
 
     Ok(())
@@ -143,6 +163,33 @@ mod tests {
         assert!(matches!(
             validate_telemetry_config(&cfg),
             Err(TelemetryConfigError::QueueLenTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn test_zero_rate_rejected_with_field_name() {
+        let mut cfg = TelemetryConfig {
+            frame_size: 256,
+            queue_len: 16,
+            heartbeat_hz: 1,
+            attitude_hz: 10,
+            position_hz: 4,
+            estimator_status_hz: 0,
+        };
+        assert!(matches!(
+            validate_telemetry_config(&cfg),
+            Err(TelemetryConfigError::ZeroRate {
+                field: "estimator_status_hz"
+            })
+        ));
+
+        cfg.estimator_status_hz = 4;
+        cfg.heartbeat_hz = 0;
+        assert!(matches!(
+            validate_telemetry_config(&cfg),
+            Err(TelemetryConfigError::ZeroRate {
+                field: "heartbeat_hz"
+            })
         ));
     }
 }
