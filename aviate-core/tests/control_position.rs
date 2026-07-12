@@ -18,13 +18,24 @@
 //! - the sqrt branch undershoots the linear extrapolation `p·err`
 //! - output is monotonic non-decreasing in error magnitude
 //!
-//! `PositionController::new([p,p,p])` ships the X500 defaults
-//! `accel_limits = [1.5,1.5,1.5]`, `vel_caps = [2.0,2.0,3.0]`; tests
-//! that need a different braking/cap envelope use `with_limits`.
+//! Constructed via the explicit-limits path: `test_controller` names
+//! this suite's fixture limits; tests that need a different
+//! braking/cap envelope call `with_limits` directly.
 
 use aviate_core::control::position::PositionController;
 use aviate_core::math::Vector3;
 use aviate_core::types::Meters;
+
+/// Test-only limits, stated explicitly at every construction site's
+/// fixture rather than hidden inside a production constructor. These
+/// are the values this suite's step-response expectations were tuned
+/// against; they are not a production tuning source.
+const TEST_ACCEL_LIMITS: [f32; 3] = [1.5, 1.5, 1.5];
+const TEST_VEL_CAPS: [f32; 3] = [2.0, 2.0, 3.0];
+
+fn test_controller(gains: [f32; 3]) -> PositionController {
+    PositionController::with_limits(gains, TEST_ACCEL_LIMITS, TEST_VEL_CAPS)
+}
 
 fn pos(x: f32, y: f32, z: f32) -> Vector3<Meters> {
     Vector3::new(Meters(x), Meters(y), Meters(z))
@@ -42,7 +53,7 @@ const ORIGIN: Vector3<Meters> = Vector3 {
 
 #[test]
 fn zero_error_produces_zero_velocity() {
-    let ctrl = PositionController::new([1.0, 1.0, 1.0]);
+    let ctrl = test_controller([1.0, 1.0, 1.0]);
     let vel_sp = ctrl.step(ORIGIN, ORIGIN);
 
     assert!((vel_sp.x.0).abs() < 1e-6);
@@ -52,7 +63,7 @@ fn zero_error_produces_zero_velocity() {
 
 #[test]
 fn at_setpoint_produces_zero_velocity() {
-    let ctrl = PositionController::new([0.5, 0.5, 0.5]);
+    let ctrl = test_controller([0.5, 0.5, 0.5]);
     let position = pos(10.0, -5.0, -20.0);
 
     let vel_sp = ctrl.step(position, position);
@@ -71,7 +82,7 @@ fn at_setpoint_produces_zero_velocity() {
 
 #[test]
 fn positive_x_error_produces_positive_x_velocity() {
-    let ctrl = PositionController::new([0.5, 0.5, 0.5]);
+    let ctrl = test_controller([0.5, 0.5, 0.5]);
     let vel_sp = ctrl.step(pos(2.0, 0.0, 0.0), ORIGIN);
 
     // 2 m error < d_lin (6 m): vel = 0.5 · 2 = 1.0 m/s.
@@ -83,7 +94,7 @@ fn positive_x_error_produces_positive_x_velocity() {
 
 #[test]
 fn negative_x_error_produces_negative_x_velocity() {
-    let ctrl = PositionController::new([0.5, 0.5, 0.5]);
+    let ctrl = test_controller([0.5, 0.5, 0.5]);
     let vel_sp = ctrl.step(pos(-2.0, 0.0, 0.0), ORIGIN);
 
     assert!(vel_sp.x.0 < 0.0, "negative error → negative velocity");
@@ -92,7 +103,7 @@ fn negative_x_error_produces_negative_x_velocity() {
 
 #[test]
 fn positive_y_error_produces_positive_y_velocity() {
-    let ctrl = PositionController::new([1.0, 0.8, 1.0]);
+    let ctrl = test_controller([1.0, 0.8, 1.0]);
     // d_lin_y = 1.5/0.64 ≈ 2.34 m; a 1 m error is linear: 0.8 · 1.
     let vel_sp = ctrl.step(pos(0.0, 1.0, 0.0), ORIGIN);
 
@@ -107,7 +118,7 @@ fn positive_y_error_produces_positive_y_velocity() {
 
 #[test]
 fn altitude_error_produces_z_velocity() {
-    let ctrl = PositionController::new([1.0, 1.0, 0.5]);
+    let ctrl = test_controller([1.0, 1.0, 0.5]);
     // Want to climb 2 m (more negative Z). err = -12 - (-10) = -2,
     // inside d_lin_z = 6 m: vel = 0.5 · -2 = -1.0 m/s (climb).
     let vel_sp = ctrl.step(pos(0.0, 0.0, -12.0), pos(0.0, 0.0, -10.0));
@@ -118,7 +129,7 @@ fn altitude_error_produces_z_velocity() {
 
 #[test]
 fn descent_command() {
-    let ctrl = PositionController::new([1.0, 1.0, 0.5]);
+    let ctrl = test_controller([1.0, 1.0, 0.5]);
     // Want to descend 2 m (less negative Z). err = -13 - (-15) = +2,
     // linear: vel = 0.5 · 2 = +1.0 m/s (descend).
     let vel_sp = ctrl.step(pos(0.0, 0.0, -13.0), pos(0.0, 0.0, -15.0));
@@ -139,7 +150,7 @@ fn descent_command() {
 
 #[test]
 fn large_error_clamps_velocity_positive() {
-    let ctrl = PositionController::new([1.0, 1.0, 1.0]); // cap_x = 2.0
+    let ctrl = test_controller([1.0, 1.0, 1.0]); // cap_x = 2.0
     let vel_sp = ctrl.step(pos(100.0, 0.0, 0.0), ORIGIN);
 
     assert!(
@@ -151,7 +162,7 @@ fn large_error_clamps_velocity_positive() {
 
 #[test]
 fn large_error_clamps_velocity_negative() {
-    let ctrl = PositionController::new([1.0, 1.0, 1.0]); // cap_x = 2.0
+    let ctrl = test_controller([1.0, 1.0, 1.0]); // cap_x = 2.0
     let vel_sp = ctrl.step(pos(-100.0, 0.0, 0.0), ORIGIN);
 
     assert!(
@@ -163,7 +174,7 @@ fn large_error_clamps_velocity_negative() {
 
 #[test]
 fn clamping_per_axis() {
-    let ctrl = PositionController::new([1.0, 1.0, 1.0]); // caps = [2,2,3]
+    let ctrl = test_controller([1.0, 1.0, 1.0]); // caps = [2,2,3]
     let vel_sp = ctrl.step(pos(50.0, -50.0, 50.0), ORIGIN);
 
     assert!((vel_sp.x.0 - 2.0).abs() < 1e-6, "x saturates at +2.0");
@@ -182,8 +193,8 @@ fn gain_affects_output_linearly() {
     // ratio is exactly the gain ratio.
     let setpoint = pos(4.0, 0.0, 0.0);
 
-    let ctrl_low = PositionController::new([0.25, 0.25, 0.25]);
-    let ctrl_high = PositionController::new([0.5, 0.5, 0.5]);
+    let ctrl_low = test_controller([0.25, 0.25, 0.25]);
+    let ctrl_high = test_controller([0.5, 0.5, 0.5]);
 
     let vel_low = ctrl_low.step(setpoint, ORIGIN);
     let vel_high = ctrl_high.step(setpoint, ORIGIN);
@@ -195,7 +206,7 @@ fn gain_affects_output_linearly() {
 
 #[test]
 fn different_gains_per_axis() {
-    let ctrl = PositionController::new([0.1, 0.2, 0.4]);
+    let ctrl = test_controller([0.1, 0.2, 0.4]);
     // err = 5 m is linear on every axis (d_lin = 1.5/p²: 150, 37.5,
     // 9.375 m); outputs are p·err and stay under the caps.
     let vel_sp = ctrl.step(pos(5.0, 5.0, 5.0), ORIGIN);
@@ -211,7 +222,7 @@ fn different_gains_per_axis() {
 
 #[test]
 fn diagonal_error_produces_diagonal_velocity() {
-    let ctrl = PositionController::new([1.0, 1.0, 1.0]);
+    let ctrl = test_controller([1.0, 1.0, 1.0]);
     // 1 m per axis is inside d_lin (1.5 m): vel = 1·err per axis.
     let vel_sp = ctrl.step(pos(1.0, 1.0, -1.0), ORIGIN);
 
@@ -269,7 +280,7 @@ fn sqrt_region_undershoots_linear_extrapolation() {
 
 #[test]
 fn output_monotonic_in_error_magnitude() {
-    let ctrl = PositionController::new([1.0, 1.0, 1.0]); // cap_x = 2.0
+    let ctrl = test_controller([1.0, 1.0, 1.0]); // cap_x = 2.0
     let mut prev = 0.0;
     for e in [0.1_f32, 0.5, 1.0, 2.0, 5.0, 50.0] {
         let v = ctrl.step(pos(e, 0.0, 0.0), ORIGIN).x.0;
@@ -288,7 +299,7 @@ fn output_monotonic_in_error_magnitude() {
 
 #[test]
 fn very_small_error() {
-    let ctrl = PositionController::new([1.0, 1.0, 1.0]);
+    let ctrl = test_controller([1.0, 1.0, 1.0]);
     let vel_sp = ctrl.step(pos(0.001, 0.0, 0.0), ORIGIN);
 
     // Deep in the linear region: vel = 1.0 · 0.001.
@@ -297,7 +308,7 @@ fn very_small_error() {
 
 #[test]
 fn zero_gain_produces_zero_output() {
-    let ctrl = PositionController::new([0.0, 0.0, 0.0]);
+    let ctrl = test_controller([0.0, 0.0, 0.0]);
     let vel_sp = ctrl.step(pos(100.0, 100.0, 100.0), ORIGIN);
 
     assert!((vel_sp.x.0).abs() < 1e-6);
@@ -324,7 +335,7 @@ fn zero_gain_produces_zero_output() {
 /// (`tests/missions/hover_stability.toml`).
 #[test]
 fn position_hold_closed_loop_stays_within_bounds() {
-    let ctrl = PositionController::new([1.0, 1.0, 1.0]);
+    let ctrl = test_controller([1.0, 1.0, 1.0]);
     let setpoint = ORIGIN;
 
     let mut p = pos(1.0, 0.0, -0.5);
