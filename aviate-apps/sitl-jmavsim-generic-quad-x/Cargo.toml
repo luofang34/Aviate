@@ -10,10 +10,10 @@ name = "sitl-jmavsim-generic-quad-x"
 path = "src/main.rs"
 
 [dependencies]
-# Kernel construction is app-owned: the app names the airframe,
-# builds the resolved config, and injects through the board.
-aviate-core = { path = "../../aviate-core" }
-aviate-runtime = { path = "../../aviate-runtime", features = ["env-sitl"] }
+# Kernel construction is app-owned: the kernel subcrate names the
+# airframe, builds the resolved config through the checked builder,
+# and this binary injects the result into the board.
+aviate-app-sitl-jmavsim-generic-quad-x-kernel = { path = "kernel" }
 # Board (brings in aviate-core, aviate-runtime, aviate-hal-xil, backends, etc.)
 aviate-board-sitl-jmavsim = { path = "../../aviate-boards/sitl-jmavsim" }
 

@@ -44,6 +44,7 @@ use aviate_core::DefaultAviateKernel;
 use aviate_core::kernel::builder::KernelBuildError;
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{SitlConfig, SitlIO};
+pub use aviate_runtime::sitl_timestamp;
 use aviate_runtime::{loop_periods, SitlBoardInfo, SitlRunner};
 
 /// Gazebo SITL board configuration

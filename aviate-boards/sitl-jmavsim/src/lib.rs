@@ -53,6 +53,7 @@ use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag
 use aviate_hal_xil::{
     SimBaroData, SimGnssData, SimImuData, SimMagData, SimSensorPacket, SitlConfig, SitlIO,
 };
+pub use aviate_runtime::sitl_timestamp;
 use aviate_runtime::{loop_periods, SitlBoardInfo, SitlRunner, SitlTime};
 
 /// jMAVSim board configuration

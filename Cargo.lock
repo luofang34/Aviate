@@ -113,13 +113,20 @@ name = "aviate-app-sitl-gazebo-x500"
 version = "0.0.0"
 dependencies = [
  "aviate-airframe-multirotor",
+ "aviate-app-sitl-gazebo-x500-kernel",
  "aviate-backend-gz",
  "aviate-board-sitl-gazebo",
- "aviate-core",
  "aviate-hal-xil",
- "aviate-runtime",
  "env_logger",
  "log",
+]
+
+[[package]]
+name = "aviate-app-sitl-gazebo-x500-kernel"
+version = "0.1.0"
+dependencies = [
+ "aviate-core",
+ "aviate-runtime",
 ]
 
 [[package]]
@@ -127,7 +134,14 @@ name = "aviate-app-sitl-jmavsim-generic-quad-x"
 version = "0.0.0"
 dependencies = [
  "aviate-airframe-multirotor",
+ "aviate-app-sitl-jmavsim-generic-quad-x-kernel",
  "aviate-board-sitl-jmavsim",
+]
+
+[[package]]
+name = "aviate-app-sitl-jmavsim-generic-quad-x-kernel"
+version = "0.1.0"
+dependencies = [
  "aviate-core",
  "aviate-runtime",
 ]

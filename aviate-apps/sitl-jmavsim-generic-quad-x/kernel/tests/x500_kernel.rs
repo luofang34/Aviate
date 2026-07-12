@@ -6,7 +6,7 @@
 
 #![allow(clippy::expect_used, clippy::panic)]
 
-use aviate_app_sitl_gazebo_x500::build_x500_kernel;
+use aviate_app_sitl_jmavsim_generic_quad_x_kernel::build_x500_kernel;
 
 #[test]
 fn config_and_controller_share_one_gains_source() {
