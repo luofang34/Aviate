@@ -27,7 +27,7 @@
 
 mod step;
 
-use log::info;
+use log::{error, info};
 
 use crate::sensor_cache::SensorCache;
 use crate::telemetry::{FrameTx, TelemetryTask};
@@ -211,6 +211,13 @@ impl SitlRunner {
     /// If found, creates a TelemetryTask for GCS communication.
     pub fn init_telemetry(&mut self, cfg: &AppConfig, loop_hz: u32) {
         if let Some(telem_cfg) = &cfg.telemetry {
+            // Refuse an invalid config loudly; running with silently
+            // reinterpreted rates would ship a telemetry contract the
+            // config never requested.
+            if let Err(e) = crate::validation::validate_telemetry_config(telem_cfg) {
+                error!("Telemetry disabled: {}", e);
+                return;
+            }
             // Find transport with "telemetry" role and endpoint
             if let Some(t) = cfg.transports.iter().find(|t| {
                 t.roles.iter().any(|r| r == "telemetry" || r == "gcs") && t.endpoint.is_some()
@@ -225,7 +232,13 @@ impl SitlRunner {
                     let tx = UdpFrameTx::new(sock, addr);
 
                     // Create protocol-specific formatter (from aviate-link)
-                    let formatter = MavlinkCycleFormatter::new(telem_cfg, loop_hz);
+                    let formatter = match MavlinkCycleFormatter::new(telem_cfg, loop_hz) {
+                        Ok(formatter) => formatter,
+                        Err(e) => {
+                            error!("Telemetry disabled: {}", e);
+                            return;
+                        }
+                    };
                     // Create protocol-agnostic task (from aviate-runtime)
                     self.telemetry = Some(TelemetryTask::new(tx, formatter));
                     info!("Telemetry enabled: {} via {}", endpoint, t.protocol);

@@ -82,8 +82,7 @@ use super::protocol::{
 };
 
 use crate::errors::{TelemetryError, TelemetryResult};
-use crate::queue::{DefaultTelemetryQueue, TELEMETRY_MAX_FRAME};
-use crate::telemetry::{TelemetryBackend, TelemetryCycleFormatter, TelemetrySnapshot};
+use crate::telemetry::TelemetryBackend;
 
 /// Pure helper - format heartbeat message (safe for high-DAL)
 ///
@@ -360,116 +359,8 @@ impl<T: FrameTx> TelemetryBackend for MavlinkTelemetry<T> {
     }
 }
 
-// ============================================================================
-// MavlinkCycleFormatter (for TelemetryTask in aviate-runtime)
-// ============================================================================
-
-/// MAVLink cycle formatter for protocol-agnostic telemetry
-///
-/// This struct implements `TelemetryCycleFormatter` and is used by `TelemetryTask`
-/// in aviate-runtime. It formats MAVLink messages at configured rates and pushes
-/// them to the telemetry queue.
-///
-/// ## Usage
-///
-/// ```ignore
-/// use aviate_link::mavlink::MavlinkCycleFormatter;
-/// use aviate_runtime::TelemetryTask;
-///
-/// let formatter = MavlinkCycleFormatter::new(&telem_cfg, 1000);
-/// let task = TelemetryTask::new(udp_tx, formatter);
-/// ```
-///
-/// ## Rate Configuration
-///
-/// Message rates are configured via `TelemetryConfig`:
-/// - `heartbeat_hz`: HEARTBEAT rate (default 1 Hz)
-/// - `attitude_hz`: ATTITUDE_QUATERNION rate (default 10 Hz)
-/// - `position_hz`: LOCAL_POSITION_NED rate (default 4 Hz)
-/// - `estimator_status_hz`: minimum estimator-status rate (default 4 Hz)
-pub struct MavlinkCycleFormatter {
-    /// Heartbeat rate divider (loop_hz / heartbeat_hz)
-    heartbeat_div: u32,
-    /// Attitude rate divider (loop_hz / attitude_hz)
-    attitude_div: u32,
-    /// Position rate divider (loop_hz / position_hz)
-    position_div: u32,
-    /// Estimator-status rate divider (loop_hz / estimator_status_hz)
-    estimator_status_div: u32,
-    /// MAVLink sequence counter
-    seq: u8,
-    /// MAVLink system ID
-    sys_id: u8,
-    /// MAVLink component ID
-    comp_id: u8,
-}
-
-impl MavlinkCycleFormatter {
-    /// Create a new MAVLink cycle formatter
-    ///
-    /// # Parameters
-    /// - `cfg`: Telemetry configuration (rates)
-    /// - `loop_hz`: Control loop frequency in Hz
-    pub fn new(cfg: &TelemetryConfig, loop_hz: u32) -> Self {
-        Self::with_ids(cfg, loop_hz, 1, 1)
-    }
-
-    /// Create a new MAVLink cycle formatter with custom system/component IDs
-    ///
-    /// # Parameters
-    /// - `cfg`: Telemetry configuration (rates)
-    /// - `loop_hz`: Control loop frequency in Hz
-    /// - `sys_id`: MAVLink system ID (1-255)
-    /// - `comp_id`: MAVLink component ID (1-255)
-    pub fn with_ids(cfg: &TelemetryConfig, loop_hz: u32, sys_id: u8, comp_id: u8) -> Self {
-        fn to_div(loop_hz: u32, msg_hz: u8) -> u32 {
-            let hz = msg_hz.max(1) as u32; // Guard against zero
-            (loop_hz / hz).max(1)
-        }
-
-        Self {
-            heartbeat_div: to_div(loop_hz, cfg.heartbeat_hz),
-            attitude_div: to_div(loop_hz, cfg.attitude_hz),
-            position_div: to_div(loop_hz, cfg.position_hz),
-            estimator_status_div: to_div(loop_hz, cfg.estimator_status_hz),
-            seq: 0,
-            sys_id,
-            comp_id,
-        }
-    }
-}
-
-impl TelemetryCycleFormatter for MavlinkCycleFormatter {
-    fn format_cycle(&mut self, snapshot: &TelemetrySnapshot, queue: &mut DefaultTelemetryQueue) {
-        let mut buf = [0u8; TELEMETRY_MAX_FRAME];
-
-        // HEARTBEAT at configured rate (default 1 Hz)
-        if snapshot.iteration.is_multiple_of(self.heartbeat_div) {
-            if let Ok(len) = format_heartbeat(
-                &snapshot.status,
-                self.sys_id,
-                self.comp_id,
-                &mut self.seq,
-                &mut buf,
-            ) {
-                queue.push(&buf[..len]).ok();
-            }
-        }
-
-        let emit_attitude = snapshot.iteration.is_multiple_of(self.attitude_div);
-        let emit_position = snapshot.iteration.is_multiple_of(self.position_div);
-        let emit_status = snapshot.iteration.is_multiple_of(self.estimator_status_div);
-        estimator::enqueue_estimate_group(
-            snapshot,
-            emit_attitude,
-            emit_position,
-            emit_status,
-            (self.sys_id, self.comp_id),
-            &mut self.seq,
-            queue,
-        );
-    }
-}
+mod cycle_formatter;
+pub use cycle_formatter::MavlinkCycleFormatter;
 
 #[cfg(test)]
 mod tests;

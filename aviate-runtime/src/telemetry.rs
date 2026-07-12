@@ -25,7 +25,7 @@
 //! use aviate_runtime::telemetry::{FrameTx, TelemetryTask};
 //!
 //! // Create formatter (protocol-specific, from aviate-link)
-//! let formatter = MavlinkCycleFormatter::new(&telem_cfg, 1000);
+//! let formatter = MavlinkCycleFormatter::new(&telem_cfg, 1000)?;
 //!
 //! // Create task (protocol-agnostic, from aviate-runtime)
 //! let task = TelemetryTask::new(udp_tx, formatter);
