@@ -435,23 +435,11 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-sitl-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Validate SITL shard configuration
+      - name: Validate mission manifest and emit shard matrix
         id: shards
         run: |
-          jq -e '.include | type == "array" and length > 0' \
-            tests/missions/ci-shards.json > /dev/null
-          matrix=$(jq -c . tests/missions/ci-shards.json)
-          missions=$(jq -r '.include[].missions' tests/missions/ci-shards.json \
-            | tr ' ' '\n' | sed '/^$/d')
-          duplicates=$(printf '%s\n' "$missions" | sort | uniq -d)
-          if [ -n "$duplicates" ]; then
-            printf 'Duplicate SITL missions:\n%s\n' "$duplicates"
-            exit 1
-          fi
-          while IFS= read -r mission; do
-            test -f "tests/missions/${mission}.toml"
-          done <<< "$missions"
-          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          ./scripts/check_mission_manifest.py
+          echo "matrix=$(./scripts/check_mission_manifest.py --emit-shard-matrix)" >> "$GITHUB_OUTPUT"
 
       - name: Build shared SITL artifact
         run: |
@@ -522,27 +510,67 @@ jobs:
           test -x target/debug/gcs-test
           test -x target/debug/sitl-gazebo-x500
 
-      # Each mission runs 3× behind a 2/3 reliability bar
-      # (run_sitl_missions.sh exits non-zero if any mission misses it, and
-      # prints the failing phase). These are the XIL-tier witnesses for
-      # arm/takeoff/hover/land (FLT-201), hover-position stability
-      # (CTL-203), GNSS-dropout dead reckoning (EST-206), position
-      # convergence (EST-203), command-timeout failsafe (FLT-204), and
-      # IMU-NaN numeric-fault isolation (EST-204), end-to-end through the
-      # FC↔Gazebo control loop.
-      #
-      # `attitude_control` is intentionally excluded: it is an open-loop
-      # thrust sequence whose `level_hover` phase expects ~3 m while its
-      # own takeoff overshoots past 10 m, so it diverges deterministically
-      # (the closed-loop holds in hover_stability / position_hold pass).
-      # Recalibrating that mission's altitude profile is a follow-up; the
-      # attitude loop itself is witnessed in-process by TST-CTL-202.
+      # Each mission runs behind the reliability bar the manifest
+      # assigns it (run_sitl_missions.sh exits non-zero if any mission
+      # misses its bar, and prints the failing phase). These are the
+      # XIL-tier witnesses for arm/takeoff/hover/land (FLT-201),
+      # hover-position stability (CTL-203), GNSS-dropout dead reckoning
+      # (EST-206), position convergence (EST-203), command-timeout
+      # failsafe (FLT-204), and IMU-NaN numeric-fault isolation
+      # (EST-204), end-to-end through the FC↔Gazebo control loop.
+      # Gate membership and quarantine live in
+      # tests/missions/manifest.json, not here.
       - name: Run SITL mission shard
         env:
           GCS_TEST_BIN: ./target/debug/gcs-test
-          RUNS_PER_MISSION: 3
           LIBGL_ALWAYS_SOFTWARE: 1
         run: xvfb-run -a ./scripts/run_sitl_missions.sh ${{ matrix.missions }}
+
+  # Quarantined missions run visibly but never feed CI Success: a red
+  # here is truth about the quarantine, not a merge gate. Runs on main
+  # pushes to bound per-PR minutes; membership and tracking issues live
+  # in tests/missions/manifest.json.
+  sitl_quarantine:
+    name: SITL Quarantine (non-blocking)
+    needs: sitl_build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Gazebo Harmonic runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl lsb-release gnupg \
+            xvfb libgl1-mesa-dri libegl1 mesa-utils
+          sudo curl https://packages.osrfoundation.org/gazebo.gpg \
+            --output /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
+            | sudo tee /etc/apt/sources.list.d/gazebo-stable.list
+          sudo apt-get update
+          sudo apt-get install -y gz-harmonic
+
+      - name: Download shared SITL artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: sitl-linux-x64
+
+      - name: Unpack shared SITL artifact
+        run: |
+          tar -xf sitl-artifact.tar
+          sha256sum --check sitl-artifact.sha256
+          test -x target/debug/gcs-test
+          test -x target/debug/sitl-gazebo-x500
+
+      - name: Run quarantined missions
+        env:
+          GCS_TEST_BIN: ./target/debug/gcs-test
+          LIBGL_ALWAYS_SOFTWARE: 1
+        run: |
+          missions=$(./scripts/check_mission_manifest.py --emit-quarantine-missions)
+          xvfb-run -a ./scripts/run_sitl_missions.sh $missions
 
   ci-success:
     name: CI Success
