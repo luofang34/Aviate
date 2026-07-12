@@ -9,12 +9,13 @@
 //! MultirotorController, QuadXMixer, Sanitizer>`, the production
 //! algorithm bundle.
 
-use aviate_core::checks::{KernelChecks, PreArmFlags};
+#![allow(clippy::expect_used, clippy::panic)]
+
+use aviate_core::checks::PreArmFlags;
 use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::ekf::Ekf;
 use aviate_core::fault::FaultFlags;
 use aviate_core::kernel::config::ResolvedKernelConfig;
-use aviate_core::kernel::pipeline::KernelPipeline;
 use aviate_core::kernel::state::KernelState;
 use aviate_core::kernel::AviateKernelImpl;
 use aviate_core::mixer::{ModeConfig, QuadXMixer, Sanitizer};
@@ -34,24 +35,23 @@ type ProdState =
     KernelState<aviate_core::ekf::EkfState, aviate_core::control::runtime::NoControllerState>;
 
 fn make_kernel() -> ProdKernel {
-    AviateKernelImpl {
-        pipeline: KernelPipeline::new(
-            Ekf::default(),
-            MultirotorController::default(),
-            QuadXMixer {
-                timestamp_source: fake_ts,
-            },
-            Sanitizer,
-        ),
-        state: KernelState::new(KernelChecks::with_pre_arm_required(PreArmFlags::empty())),
-        cfg: ResolvedKernelConfig {
+    aviate_core::kernel::builder::AviateKernelBuilder::new()
+        .estimator(Ekf::default())
+        .controller(MultirotorController::default())
+        .mixer(QuadXMixer {
+            timestamp_source: fake_ts,
+        })
+        .sanitizer(Sanitizer)
+        .pre_arm_required(PreArmFlags::empty())
+        .config(ResolvedKernelConfig {
             mode_config: ModeConfig {
                 mode: aviate_core::control::ConfigMode::Hover,
                 groups: &[],
             },
             ..Default::default()
-        },
-    }
+        })
+        .build()
+        .expect("checked construction must accept the default binding")
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn algorithm_hash_matches_pipeline() {
     let snap = k.project_for_cross_channel(7, ChannelId::PRIMARY, &mut buf);
     assert_eq!(
         snap.algorithm_identity_hash,
-        k.pipeline.algorithm_identity_hash(),
+        k.pipeline().algorithm_identity_hash(),
         "ChannelSnapshot's identity hash must match the pipeline's"
     );
 }
@@ -165,7 +165,8 @@ fn check_lockstep_agreement_refuses_when_peer_config_diverges() {
     use aviate_core::kernel::snapshot::LockstepDecision;
     let k_local = make_kernel();
     let mut k_peer = make_kernel();
-    k_peer.cfg.command_timeout_ms = k_local.cfg.command_timeout_ms.wrapping_add(1);
+    k_peer.cfg_scenario_override().command_timeout_ms =
+        k_local.cfg().command_timeout_ms.wrapping_add(1);
 
     let mut buf_peer = [0u8; <ProdState as Replicable>::ENCODED_LEN];
     let snap_peer = k_peer.project_for_cross_channel(0, ChannelId::SECONDARY, &mut buf_peer);

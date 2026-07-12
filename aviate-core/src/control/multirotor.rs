@@ -122,10 +122,10 @@ pub struct MultirotorController {
     /// controller copied at construction; the builder compares it
     /// against the resolved configuration before a kernel exists.
     tuning_identity: u64,
-    pub pos_ctrl: PositionController,
-    pub vel_ctrl: VelocityController,
-    pub rate_ctrl: RateController,
-    pub att_ctrl: AttitudeController,
+    pub(crate) pos_ctrl: PositionController,
+    pub(crate) vel_ctrl: VelocityController,
+    pub(crate) rate_ctrl: RateController,
+    pub(crate) att_ctrl: AttitudeController,
 }
 
 impl Default for MultirotorController {
@@ -135,6 +135,29 @@ impl Default for MultirotorController {
 }
 
 impl MultirotorController {
+    /// Gains the velocity loop actually flies. Read-only: tuning is
+    /// fixed at construction together with the identity the builder
+    /// verifies, and cannot be edited apart from it afterwards.
+    ///
+    /// ```compile_fail
+    /// let mut c = aviate_core::control::multirotor::MultirotorController::default();
+    /// c.vel_ctrl.gains = aviate_core::control::cascade_gains::CascadeGains::x500_defaults();
+    /// ```
+    pub fn velocity_gains(&self) -> &crate::control::cascade_gains::CascadeGains {
+        &self.vel_ctrl.gains
+    }
+
+    /// Gains the rate loop actually flies (read-only; see
+    /// [`Self::velocity_gains`]).
+    pub fn rate_gains(&self) -> &crate::control::cascade_gains::CascadeGains {
+        &self.rate_ctrl.gains
+    }
+
+    /// Hover trim the velocity loop actually flies (read-only).
+    pub fn hover_thrust_norm(&self) -> Scalar {
+        self.vel_ctrl.hover_thrust_norm
+    }
+
     /// Construct from explicit tuning. The single authoritative
     /// source of gains is `CascadeGains` (mirrored from
     /// `ResolvedKernelConfig`); the four sub-controllers carry

@@ -583,7 +583,7 @@ fn altitude_ok_flag_tracks_geofence_through_update() {
 
     // Raise the floor above the vehicle → measured altitude is now below
     // the band and the flag clears.
-    kernel.cfg.limits.min_altitude = Meters(50.0);
+    kernel.cfg_scenario_override().limits.min_altitude = Meters(50.0);
     let _ = step(&mut kernel, &cmd, &sensors, 0);
     assert!(
         !kernel

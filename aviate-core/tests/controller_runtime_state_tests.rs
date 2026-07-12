@@ -8,8 +8,10 @@
 //! exactly the transitions LLR-CTL-101 enumerates — and not on
 //! transitions outside that set.
 
+#![allow(clippy::expect_used, clippy::panic)]
+
 use aviate_core::checks::in_flight::DegradationReason;
-use aviate_core::checks::{KernelChecks, PreArmFlags};
+use aviate_core::checks::PreArmFlags;
 use aviate_core::control::runtime::ControllerRuntimeState;
 use aviate_core::control::{
     AxisCommand, Command, CommandSource, ConfigMode, ControlLawV1, ControlMode, Limits, Setpoint,
@@ -17,7 +19,6 @@ use aviate_core::control::{
 };
 use aviate_core::ekf::Ekf;
 use aviate_core::fault::FaultFlags;
-use aviate_core::kernel::pipeline::KernelPipeline;
 use aviate_core::kernel::AviateKernelImpl;
 use aviate_core::math::Quaternion;
 use aviate_core::mixer::{ModeConfig, QuadXMixer, Sanitizer};
@@ -87,26 +88,23 @@ fn dummy_ts() -> Timestamp {
 }
 
 fn make_kernel() -> AviateKernelImpl<Ekf, TestStatefulController, QuadXMixer, Sanitizer> {
-    AviateKernelImpl {
-        pipeline: KernelPipeline::new(
-            Ekf::default(),
-            TestStatefulController,
-            QuadXMixer {
-                timestamp_source: dummy_ts,
-            },
-            Sanitizer,
-        ),
-        state: aviate_core::kernel::state::KernelState::new(KernelChecks::with_pre_arm_required(
-            PreArmFlags::empty(),
-        )),
-        cfg: aviate_core::kernel::config::ResolvedKernelConfig {
+    aviate_core::kernel::builder::AviateKernelBuilder::new()
+        .estimator(Ekf::default())
+        .controller(TestStatefulController)
+        .mixer(QuadXMixer {
+            timestamp_source: dummy_ts,
+        })
+        .sanitizer(Sanitizer)
+        .pre_arm_required(PreArmFlags::empty())
+        .config(aviate_core::kernel::config::ResolvedKernelConfig {
             mode_config: ModeConfig {
                 mode: ConfigMode::Hover,
                 groups: &[],
             },
             ..Default::default()
-        },
-    }
+        })
+        .build()
+        .expect("checked construction must accept the stateful test bundle")
 }
 
 fn placeholder_state() -> StateEstimate {

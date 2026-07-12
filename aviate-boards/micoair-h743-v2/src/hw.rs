@@ -674,29 +674,42 @@ impl BoardStep for MicoAirBoard {
 }
 
 fn create_kernel() -> HwKernel {
-    // Single tuning source (#114): the same CascadeGains + hover
-    // trim construct the controller AND the lockstep-hashed config.
-    // (`MultirotorController::default()` previously flew hover trim
-    // 0.5 while the config hashed whatever its own Default said.)
+    // Single tuning source: the same CascadeGains + hover trim land in
+    // the lockstep-hashed config AND construct the controller, and the
+    // checked builder refuses the kernel if they ever disagree — the
+    // hardware path takes the same verified construction road as the
+    // SITL apps.
     let gains = aviate_core::control::cascade_gains::CascadeGains::x500_defaults();
     let hover: f32 = 0.77;
-    let controller = MultirotorController::from_gains(gains, hover);
-    let mixer = QuadXMixer {
-        timestamp_source: hw_timestamp,
+    let cfg = aviate_core::kernel::config::ResolvedKernelConfig {
+        cascade_gains: gains,
+        hover_thrust_norm: aviate_core::types::Normalized(hover),
+        mode_config: ModeConfig {
+            mode: ConfigMode::Hover,
+            groups: &[],
+        },
+        ..aviate_core::kernel::config::ResolvedKernelConfig::default()
     };
-    let mode_config = ModeConfig {
-        mode: ConfigMode::Hover,
-        groups: &[],
+
+    let kernel = aviate_core::kernel::builder::AviateKernelBuilder::new()
+        .estimator(Ekf::default())
+        .controller(MultirotorController::from_gains(gains, hover))
+        .mixer(QuadXMixer {
+            timestamp_source: hw_timestamp,
+        })
+        .sanitizer(Sanitizer)
+        .config(cfg)
+        .build();
+    let mut kernel = match kernel {
+        Ok(kernel) => kernel,
+        // The builder rejects only a controller/config mismatch or a
+        // missing component; both are impossible with the single
+        // tuning source above, and a flight board has no error
+        // channel at init — fail safe by constructing nothing.
+        Err(_) => loop {
+            cortex_m::asm::wfi();
+        },
     };
-    let mut kernel = AviateKernel::new(
-        Ekf::default(),
-        controller,
-        mixer,
-        Sanitizer,
-        mode_config,
-    );
-    kernel.cfg.cascade_gains = gains;
-    kernel.cfg.hover_thrust_norm = aviate_core::types::Normalized(hover);
     kernel.state.checks.pre_arm.update_throttle(true);
     kernel
 }

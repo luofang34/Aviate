@@ -71,3 +71,17 @@ for tree in aviate-runtime/src aviate-boards/sitl-gazebo/src aviate-boards/sitl-
   fi
 done
 echo "Runtime/board airframe boundary: OK (apps own airframe selection)"
+
+# cfg_scenario_override is test scaffolding: a production call would
+# desynchronize the canonical config hash and the verified controller
+# binding from the flying values.
+if grep -rn "cfg_scenario_override" --include="*.rs" \
+    aviate-core/src aviate-runtime/src aviate-boards aviate-apps aviate-hal 2>/dev/null \
+    | grep -vE "/tests/|tests\.rs|aviate-core/src/kernel.rs" > /dev/null; then
+  echo "FAIL: cfg_scenario_override used outside a tests tree" >&2
+  grep -rn "cfg_scenario_override" --include="*.rs" \
+    aviate-core/src aviate-runtime/src aviate-boards aviate-apps aviate-hal 2>/dev/null \
+    | grep -vE "/tests/|tests\.rs|aviate-core/src/kernel.rs" >&2
+  exit 1
+fi
+echo "Scenario-override boundary: OK (tests only)"

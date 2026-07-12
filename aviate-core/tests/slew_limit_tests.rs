@@ -218,7 +218,7 @@ fn zero_limit_preserves_baseline_outputs() {
 
     // Kernel B explicitly sets the slew limit to zero (same as
     // default, but pinning the contract).
-    kernel_b.cfg.slew_limit_per_cycle = [Normalized(0.0); MAX_ACTUATORS];
+    kernel_b.cfg_scenario_override().slew_limit_per_cycle = [Normalized(0.0); MAX_ACTUATORS];
 
     let sensors = make_valid_sensors();
     let cmd = full_throttle_cmd();
@@ -249,7 +249,7 @@ fn positive_limit_caps_first_cycle_delta() {
     arm_kernel(&mut kernel);
 
     let limit = 0.05;
-    kernel.cfg.slew_limit_per_cycle = [Normalized(limit); MAX_ACTUATORS];
+    kernel.cfg_scenario_override().slew_limit_per_cycle = [Normalized(limit); MAX_ACTUATORS];
 
     let sensors = make_valid_sensors();
     let cmd = full_throttle_cmd();
@@ -284,7 +284,7 @@ fn slew_limited_output_converges_over_cycles() {
     arm_kernel(&mut baseline);
 
     let limit = 0.05;
-    limited.cfg.slew_limit_per_cycle = [Normalized(limit); MAX_ACTUATORS];
+    limited.cfg_scenario_override().slew_limit_per_cycle = [Normalized(limit); MAX_ACTUATORS];
 
     let sensors = make_valid_sensors();
     let cmd = full_throttle_cmd();
