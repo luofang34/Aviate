@@ -1,0 +1,77 @@
+{
+  "_doc": "Single source of truth for SITL mission orchestration. Every tests/missions/*.toml must have an entry here and vice versa (scripts/check_mission_manifest.py enforces the bijection). gate=blocking: runs in the required CI shard lane and feeds CI Success. gate=quarantined: runs visibly in the non-blocking quarantine lane on pushes to main and must link a tracking issue; quarantine is never a passing gate. gate=manual: run on demand for evidence campaigns and must state a reason. runs/pass_threshold define each mission's reliability bar.",
+  "missions": {
+    "attitude_control": {
+      "gate": "quarantined",
+      "shard": "quarantine",
+      "runs": 3,
+      "pass_threshold": 2,
+      "tracking_issue": 115,
+      "reason": "open-loop thrust sequence overshoots its own level_hover altitude expectation; needs profile recalibration before it can gate"
+    },
+    "basic_flight": {
+      "gate": "blocking",
+      "shard": "gnss-hover-basic",
+      "runs": 3,
+      "pass_threshold": 2
+    },
+    "closed_loop_landing": {
+      "gate": "manual",
+      "reason": "strict-lane witness; adjudicated through the mission-quality campaign, not the per-PR gate"
+    },
+    "command_timeout": {
+      "gate": "blocking",
+      "shard": "position-numeric-timeout",
+      "runs": 3,
+      "pass_threshold": 2
+    },
+    "gnss_dropout": {
+      "gate": "blocking",
+      "shard": "gnss-hover-basic",
+      "runs": 3,
+      "pass_threshold": 2
+    },
+    "hover_stability": {
+      "gate": "blocking",
+      "shard": "gnss-hover-basic",
+      "runs": 3,
+      "pass_threshold": 2
+    },
+    "hover_trim_check": {
+      "gate": "manual",
+      "reason": "hover-trim measurement harness, run on demand for actuator-domain evidence"
+    },
+    "numeric_fault_inject": {
+      "gate": "blocking",
+      "shard": "position-numeric-timeout",
+      "runs": 3,
+      "pass_threshold": 2
+    },
+    "position_hold": {
+      "gate": "blocking",
+      "shard": "position-numeric-timeout",
+      "runs": 3,
+      "pass_threshold": 2
+    },
+    "rotated_course": {
+      "gate": "manual",
+      "reason": "rotated-heading soak evidence for the PositionHold family, run on demand"
+    },
+    "square_course": {
+      "gate": "quarantined",
+      "shard": "quarantine",
+      "runs": 3,
+      "pass_threshold": 2,
+      "tracking_issue": 115,
+      "reason": "course-tracking tolerances not yet adjudicated against the strict lane"
+    },
+    "static_hover": {
+      "gate": "manual",
+      "reason": "long-duration soak, run on demand"
+    },
+    "two_vehicle_formation": {
+      "gate": "manual",
+      "reason": "needs a multi-instance spawner that gcs-test does not drive; single-vehicle harness cannot execute it"
+    }
+  }
+}

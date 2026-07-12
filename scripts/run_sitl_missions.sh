@@ -23,29 +23,27 @@
 
 set -euo pipefail
 
-RUNS_PER_MISSION="${RUNS_PER_MISSION:-3}"
 MISSIONS_DIR="${MISSIONS_DIR:-tests/missions}"
+MANIFEST_QUERY="scripts/check_mission_manifest.py"
 
-# Single-vehicle missions only — two_vehicle_formation needs a
-# multi-instance spawner that gcs-test doesn't drive today.
-DEFAULT_MISSIONS=(
-    basic_flight
-    hover_stability
-    attitude_control
-    position_hold
-    square_course
-    gnss_dropout
-    command_timeout
-)
+# The manifest is the single mission list; hand-written duplicates in
+# this script or workflow YAML are exactly what let a mission vanish
+# from orchestration silently. RUNS_PER_MISSION, when set, overrides
+# the per-mission plan for local experimentation.
+DEFAULT_MISSIONS=($("${MANIFEST_QUERY}" --emit-default-missions))
 
 MISSIONS=("${@:-${DEFAULT_MISSIONS[@]}}")
 overall_fail=0
 
 for mission in "${MISSIONS[@]}"; do
-    echo "=== ${mission} (${RUNS_PER_MISSION} runs) ==="
+    plan=$("${MANIFEST_QUERY}" --mission-plan "${mission}")
+    plan_runs=${plan%% *}
+    plan_threshold=${plan##* }
+    runs="${RUNS_PER_MISSION:-${plan_runs}}"
+    echo "=== ${mission} (${runs} runs, bar ${plan_threshold}) ==="
     pass=0
     fail=0
-    for ((r = 1; r <= RUNS_PER_MISSION; r++)); do
+    for ((r = 1; r <= runs; r++)); do
         # Reclaim orphaned gz / FC processes + shared memory left by a
         # prior run (or an earlier CI step) before starting, so a crash
         # cannot poison its successors. gcs-test does this on a clean
@@ -82,9 +80,9 @@ for mission in "${MISSIONS[@]}"; do
             printf '%s\n' "${run_log}" | tail -40 | sed 's/^/    | /'
         fi
     done
-    echo "  -> ${pass}/${RUNS_PER_MISSION} PASS"
-    if [[ "${pass}" -lt 2 && "${RUNS_PER_MISSION}" -ge 3 ]]; then
-        echo "  !! ${mission} fell below 2/${RUNS_PER_MISSION} reliability bar"
+    echo "  -> ${pass}/${runs} PASS"
+    if [[ "${pass}" -lt "${plan_threshold}" ]]; then
+        echo "  !! ${mission} fell below ${plan_threshold}/${runs} reliability bar"
         overall_fail=1
     fi
 done
