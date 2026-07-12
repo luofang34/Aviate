@@ -527,3 +527,30 @@ jobs:
           RUNS_PER_MISSION: 3
           LIBGL_ALWAYS_SOFTWARE: 1
         run: xvfb-run -a ./scripts/run_sitl_missions.sh ${{ matrix.missions }}
+
+  ci-success:
+    name: CI Success
+    if: always()
+    needs:
+      - file-sizes
+      - dialect-generation
+      - runtime-boundary
+      - floors-lower-lint
+      - check
+      - test
+      - coverage
+      - format
+      - doc
+      - build-release
+      - evidence
+      - sitl_build
+      - sitl_missions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless every blocking gate succeeded
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: |
+          echo "A blocking gate did not succeed: ${{ toJSON(needs.*.result) }}"
+          exit 1
+      - name: All blocking gates green
+        run: echo "All blocking gates succeeded"
