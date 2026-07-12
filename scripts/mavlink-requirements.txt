@@ -1,0 +1,22 @@
+# Hash-locked generator toolchain for scripts/generate_mavlink_dialect.sh.
+#
+# Every artifact pip may select is pinned by its PyPI sha256, so
+# `python3 -m pip install --require-hashes -r` reproduces the exact
+# toolchain and rejects anything else — a version pin alone does not
+# survive an index compromise or a republished artifact.
+#
+# To bump: change the versions, then record the sha256 digests of the
+# published artifacts from https://pypi.org/pypi/<pkg>/<ver>/json
+# (sdist plus the wheels CI and developer platforms select).
+
+pymavlink==2.4.41 \
+    --hash=sha256:5cbc975a1192359d60ea75bede789486a84e50d2ea07435b33a32ee5cb13c11f \
+    --hash=sha256:ed3225ce985d06103aab251afc883d04a98a1d6db5c73995e7de4caacb1f66cd
+future==1.0.0 \
+    --hash=sha256:929292d34f5872e70396626ef385ec22355a1fae8ad29e1a734c3e43f9fbc216 \
+    --hash=sha256:bd2968309307861edae1458a4f8a4f3598c03be43b97521076aebf5d94c07b05
+lxml==5.2.1 \
+    --hash=sha256:abc25c3cab9ec7fcd299b9bcb3b8d4a1231877e425c650fa1c7576c5107ab851 \
+    --hash=sha256:59689a75ba8d7ffca577aefd017d08d659d86ad4585ccc73e43edbfc7476781a \
+    --hash=sha256:f0a1bc63a465b6d72569a9bba9f2ef0334c4e03958e043da1920299100bc7c08 \
+    --hash=sha256:3f7765e69bbce0906a7c74d5fe46d2c7a7596147318dbc08e4a2431f3060e306

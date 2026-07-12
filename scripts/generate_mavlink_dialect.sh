@@ -46,8 +46,8 @@ for arg in "$@"; do
 done
 
 version="$(python3 -c 'import pymavlink; print(pymavlink.__version__)' 2>/dev/null)" || {
-    echo "pymavlink $PYMAVLINK_PIN is not importable;" >&2
-    echo "run: pip install pymavlink==$PYMAVLINK_PIN" >&2
+    echo "pymavlink $PYMAVLINK_PIN is not importable; run:" >&2
+    echo "  python3 -m pip install --require-hashes -r scripts/mavlink-requirements.txt" >&2
     exit 1
 }
 if [[ "$version" != "$PYMAVLINK_PIN" ]]; then
