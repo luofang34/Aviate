@@ -172,7 +172,6 @@ version = "0.0.0"
 name = "aviate-board-sitl-gazebo"
 version = "0.0.0"
 dependencies = [
- "aviate-airframe-multirotor",
  "aviate-backend-gz",
  "aviate-config",
  "aviate-core",
@@ -186,7 +185,6 @@ dependencies = [
 name = "aviate-board-sitl-jmavsim"
 version = "0.0.0"
 dependencies = [
- "aviate-airframe-multirotor",
  "aviate-backend-mavlink-hil",
  "aviate-core",
  "aviate-hal-io",

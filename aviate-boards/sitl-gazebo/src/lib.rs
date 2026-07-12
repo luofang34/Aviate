@@ -146,7 +146,9 @@ where
                 }
             }
         }
-        unreachable!()
+        Err(io::Error::other(
+            "port binding retries exhausted (max_retries may be zero)",
+        ))
     }
 
     /// Run one iteration of the control loop

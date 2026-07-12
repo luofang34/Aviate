@@ -53,7 +53,7 @@ static RUNNING: AtomicBool = AtomicBool::new(true);
 /// Default jMAVSim location
 const JMAVSIM_DIR: &str = concat!(env!("HOME"), "/jMAVSim");
 
-fn main() {
+fn main() -> std::process::ExitCode {
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
     let port = parse_port(&args).unwrap_or(14560);
@@ -93,7 +93,7 @@ fn main() {
                     jmavsim_dir, port
                 );
                 eprintln!("[INFO] Or run with --no-sim to connect to an existing simulator");
-                std::process::exit(1);
+                return std::process::ExitCode::FAILURE;
             }
         }
     } else {
@@ -118,7 +118,7 @@ fn main() {
         Err(e) => {
             eprintln!("[ERROR] Kernel construction refused: {e:?}");
             cleanup_jmavsim(&mut jmavsim_process);
-            std::process::exit(1);
+            return std::process::ExitCode::FAILURE;
         }
     };
     let mut board = match JmavSimBoard::with_config(kernel, config) {
@@ -126,7 +126,7 @@ fn main() {
         Err(e) => {
             eprintln!("[ERROR] Failed to create board: {}", e);
             cleanup_jmavsim(&mut jmavsim_process);
-            std::process::exit(1);
+            return std::process::ExitCode::FAILURE;
         }
     };
 
@@ -244,6 +244,7 @@ fn main() {
     board.disarm();
     cleanup_jmavsim(&mut jmavsim_process);
     println!("[INFO] Goodbye!");
+    std::process::ExitCode::SUCCESS
 }
 
 /// Start jMAVSim as a subprocess

@@ -3,7 +3,8 @@
 
 set -e
 
-cd /home/fang/Aviate
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
 
 echo "=== Generating hardware app from template ==="
 rm -rf aviate-apps/test-hw-app
