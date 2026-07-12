@@ -20,6 +20,21 @@ use super::ResolvedKernelConfig;
 /// FNV-1a 64-bit fold over the entire flight-period configuration.
 /// Same constants as `KernelPipeline::algorithm_identity_hash`
 /// (LLR-PIPE-103).
+/// Canonical identity over exactly the configuration values a
+/// multirotor controller copies: every `CascadeGains` field followed
+/// by the hover-thrust seed, using the same FNV-1a fold and field
+/// order as `canonical_hash`. The controller stores this value at
+/// construction and the builder compares it against
+/// `ResolvedKernelConfig::controller_tuning_identity`; both sides
+/// call this one function, so the encodings cannot drift.
+pub(crate) fn controller_tuning_identity(gains: &CascadeGains, hover_thrust_norm: f32) -> u64 {
+    let mut h = Fnv1a64::new();
+    feed_cascade_gains(&mut h, gains);
+    h.feed_separator();
+    h.feed_f32(hover_thrust_norm);
+    h.finish()
+}
+
 pub(super) fn canonical_hash(cfg: &ResolvedKernelConfig) -> u64 {
     let mut h = Fnv1a64::new();
     feed_limits(&mut h, &cfg.limits);

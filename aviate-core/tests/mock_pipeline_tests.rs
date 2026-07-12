@@ -140,6 +140,14 @@ impl VehicleController for MockController {
 
     const ALGORITHM_ID: u64 = 0x4354_4C4D_4F43_4B00; // "CTLMOCK\0"
 
+    // Mock consumes no tuning from the resolved configuration.
+    fn verify_config_binding(
+        &self,
+        _cfg: &aviate_core::kernel::config::ResolvedKernelConfig,
+    ) -> Result<(), aviate_core::control::ControllerConfigMismatch> {
+        Ok(())
+    }
+
     fn step(
         &self,
         runtime: &mut MockControllerRuntime,

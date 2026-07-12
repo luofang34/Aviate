@@ -172,6 +172,14 @@ impl ResolvedKernelConfig {
     pub fn canonical_hash(&self) -> u64 {
         canonical::canonical_hash(self)
     }
+
+    /// Canonical identity over the slice of this configuration a
+    /// multirotor controller copies (`cascade_gains` plus
+    /// `hover_thrust_norm`). The builder rejects a kernel whose
+    /// controller reports a different value (LLR-CFG-103 binding).
+    pub fn controller_tuning_identity(&self) -> u64 {
+        canonical::controller_tuning_identity(&self.cascade_gains, self.hover_thrust_norm.0)
+    }
 }
 
 /// Default flight-envelope limits used by the builder when the caller
@@ -194,4 +202,14 @@ fn default_limits() -> Limits {
         max_load_factor: 2.0,
         min_load_factor: 0.0,
     }
+}
+
+/// Canonical identity over a gains/hover pair. Controller
+/// construction and `ResolvedKernelConfig::controller_tuning_identity`
+/// both call this one function, so their encodings cannot drift.
+pub(crate) fn canonical_controller_tuning_identity(
+    gains: &CascadeGains,
+    hover_thrust_norm: crate::types::Scalar,
+) -> u64 {
+    canonical::controller_tuning_identity(gains, hover_thrust_norm)
 }

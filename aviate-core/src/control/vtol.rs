@@ -14,6 +14,18 @@ impl VehicleController for VtolController {
     // "controller.vtol.v1".
     const ALGORITHM_ID: u64 = 0x4354_4C56_544F_4C31; // "CTLVTOL1"
 
+    // Copies no tuning from the resolved configuration: every value
+    // this stub uses is compiled in, so there is nothing the config
+    // hash could vouch for or contradict. Stated explicitly rather
+    // than inherited — a future tunable version must replace this
+    // with a real identity comparison.
+    fn verify_config_binding(
+        &self,
+        _cfg: &crate::kernel::config::ResolvedKernelConfig,
+    ) -> Result<(), crate::control::ControllerConfigMismatch> {
+        Ok(())
+    }
+
     fn step(
         &self,
         _runtime: &mut NoControllerState,

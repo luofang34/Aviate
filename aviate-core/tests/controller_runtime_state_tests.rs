@@ -52,6 +52,14 @@ impl VehicleController for TestStatefulController {
 
     const ALGORITHM_ID: u64 = 0x4354_4C54_4553_5431; // "CTLTEST1"
 
+    // Mock consumes no tuning from the resolved configuration.
+    fn verify_config_binding(
+        &self,
+        _cfg: &aviate_core::kernel::config::ResolvedKernelConfig,
+    ) -> Result<(), aviate_core::control::ControllerConfigMismatch> {
+        Ok(())
+    }
+
     fn step(
         &self,
         runtime: &mut TestRuntime,

@@ -4,6 +4,7 @@
 //! - Position control path (lines 42-55)
 //! - Velocity control path (lines 57-65)
 
+use aviate_core::control::cascade_gains::CascadeGains;
 use aviate_core::control::multirotor::{MultirotorController, MultirotorRuntimeState};
 use aviate_core::control::{
     Command, CommandSource, ConfigMode, ControlMode, Limits, Setpoint, VehicleControlMode,
@@ -526,7 +527,7 @@ fn altitude_mode_climb_rate_drives_collective_not_passthrough() {
     // descent, and neither must equal the raw manual collective_thrust —
     // proving the vertical loop is engaged rather than passing thrust
     // straight through.
-    let controller = MultirotorController::with_hover_thrust(0.5);
+    let controller = MultirotorController::from_gains(CascadeGains::x500_defaults(), 0.5);
     let state = make_state();
     let limits = make_limits();
     let manual = 0.3;
@@ -568,7 +569,7 @@ fn altitude_mode_altitude_error_drives_thrust() {
     // Vehicle sits at 10 m (NED z = -10). Commanding a higher altitude
     // must climb (collective above hover trim); a lower altitude must
     // descend (below trim). Exercises the altitude→climb-rate shaper.
-    let controller = MultirotorController::with_hover_thrust(0.5);
+    let controller = MultirotorController::from_gains(CascadeGains::x500_defaults(), 0.5);
     let state = make_state();
     let limits = make_limits();
 
@@ -608,7 +609,7 @@ fn altitude_mode_keeps_manual_roll_pitch() {
     // In AltitudeHold the horizontal attitude stays manual: a tilted
     // manual attitude setpoint must still produce roll torque even while
     // the vertical loop owns collective.
-    let controller = MultirotorController::with_hover_thrust(0.5);
+    let controller = MultirotorController::from_gains(CascadeGains::x500_defaults(), 0.5);
     let state = make_state();
     let limits = make_limits();
     let tilted = Quaternion::from_axis_angle(aviate_core::math::Vector3::new(1.0, 0.0, 0.0), 0.2);
@@ -646,7 +647,7 @@ fn altitude_mode_keeps_manual_roll_pitch() {
 fn altitude_mode_slaves_yaw_to_heading() {
     // With the vehicle at yaw 0 and a level manual attitude, a heading
     // setpoint must drive a yaw command; without it, yaw stays zero.
-    let controller = MultirotorController::with_hover_thrust(0.5);
+    let controller = MultirotorController::from_gains(CascadeGains::x500_defaults(), 0.5);
     let state = make_state();
     let limits = make_limits();
 
@@ -724,7 +725,7 @@ fn altitude_hold_tracks_commanded_altitude_in_sim() {
     let hover = 0.5_f32;
     let g = 9.81_f32;
     let dt = 0.01_f32;
-    let controller = MultirotorController::with_hover_thrust(hover);
+    let controller = MultirotorController::from_gains(CascadeGains::x500_defaults(), hover);
     let limits = make_limits();
 
     let mut runtime = MultirotorRuntimeState {
