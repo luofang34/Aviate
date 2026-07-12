@@ -7,9 +7,13 @@ below holds.
 ## Ruleset policy for `main`
 
 - Changes land through pull requests only; direct pushes are refused.
-- At least one approving review; approvals are dismissed when new
-  commits materially change the PR, and every review conversation must
-  be resolved before merge.
+- Review approval is not required while the project has a single
+  developer. Re-enable it by setting
+  `required_approving_review_count: 1`,
+  `dismiss_stale_reviews_on_push: true`, and
+  `required_review_thread_resolution: true` on the ruleset's
+  `pull_request` rule, and restoring the matching checks in
+  `scripts/check_branch_protection.sh`.
 - The required status check is the single aggregate `CI Success` job,
   which fails unless every blocking gate in `.github/workflows/ci.yml`
   succeeds. Individual matrix names (for example the SITL missions)

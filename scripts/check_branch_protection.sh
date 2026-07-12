@@ -57,13 +57,9 @@ else:
         if required not in rules:
             failures.append(f"missing rule: {required}")
 
-    pr = rules.get("pull_request", {}).get("parameters", {})
-    if pr.get("required_approving_review_count", 0) < 1:
-        failures.append("approving review count < 1")
-    if not pr.get("dismiss_stale_reviews_on_push"):
-        failures.append("stale reviews not dismissed on push")
-    if not pr.get("required_review_thread_resolution"):
-        failures.append("review thread resolution not required")
+    # Review approval is deliberately not required while the project has
+    # a single developer; the pull_request rule still forces PR-based
+    # flow so the CI Success gate applies to every change.
 
     checks = rules.get("required_status_checks", {}).get("parameters", {})
     contexts = [c.get("context") for c in checks.get("required_status_checks", [])]
