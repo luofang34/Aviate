@@ -76,13 +76,14 @@ pub mod telemetry;
 
 // Re-export protocol types for convenience
 pub use protocol::{
-    mav_cmd, mav_result, parse_mavlink, serialize_mavlink, MavAutopilot, MavComponent, MavMessage,
-    MavModeFlag, MavState, MavType,
+    aviate_estimate_quality, aviate_state_valid_flags, estimator_status_flags, mav_cmd, mav_result,
+    parse_mavlink, serialize_mavlink, AviateEstimatorStatus, EstimatorStatus, MavAutopilot,
+    MavComponent, MavMessage, MavModeFlag, MavState, MavType,
 };
 
 // Re-export link implementations
 pub use command::MavlinkCommandLink;
 pub use telemetry::{
-    format_actuators, format_attitude, format_heartbeat, format_local_position,
-    MavlinkCycleFormatter, MavlinkTelemetry,
+    format_actuators, format_attitude, format_aviate_estimator_status, format_estimator_status,
+    format_heartbeat, format_local_position, MavlinkCycleFormatter, MavlinkTelemetry,
 };

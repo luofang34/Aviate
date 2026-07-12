@@ -51,11 +51,19 @@ Telemetry queue configuration. Defaults provided if omitted.
 [telemetry]
 frame_size = 280  # Maximum frame size in bytes
 queue_len = 32    # Queue depth (number of frames)
+heartbeat_hz = 1
+attitude_hz = 10
+position_hz = 4
+estimator_status_hz = 4
 ```
 
 **Defaults:**
 - `frame_size`: 280 bytes
 - `queue_len`: 32 frames
+- `heartbeat_hz`: 1 Hz
+- `attitude_hz`: 10 Hz
+- `position_hz`: 4 Hz
+- `estimator_status_hz`: 4 Hz
 
 ### `[security]` Section (Optional)
 

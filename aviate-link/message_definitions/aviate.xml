@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<mavlink>
+  <include>common.xml</include>
+  <enums>
+    <enum name="AVIATE_ESTIMATE_QUALITY">
+      <entry value="0" name="AVIATE_ESTIMATE_QUALITY_UNUSABLE">
+        <description>The estimate must not be used for control or navigation.</description>
+      </entry>
+      <entry value="1" name="AVIATE_ESTIMATE_QUALITY_DEGRADED">
+        <description>The valid dimensions remain usable with degraded quality.</description>
+      </entry>
+      <entry value="2" name="AVIATE_ESTIMATE_QUALITY_GOOD">
+        <description>The valid dimensions meet nominal quality criteria.</description>
+      </entry>
+    </enum>
+    <enum name="AVIATE_STATE_VALID_FLAGS" bitmask="true">
+      <entry value="1" name="AVIATE_STATE_VALID_ATTITUDE">
+        <description>The attitude estimate is valid.</description>
+      </entry>
+      <entry value="2" name="AVIATE_STATE_VALID_ANGULAR_RATE">
+        <description>The angular-rate estimate is valid.</description>
+      </entry>
+      <entry value="4" name="AVIATE_STATE_VALID_POSITION">
+        <description>The local NED position estimate is valid.</description>
+      </entry>
+      <entry value="8" name="AVIATE_STATE_VALID_VELOCITY">
+        <description>The local NED velocity estimate is valid.</description>
+      </entry>
+    </enum>
+  </enums>
+  <messages>
+    <message id="20000" name="AVIATE_ESTIMATOR_STATUS">
+      <description>Lossless Aviate estimator quality and per-dimension validity. WIP: this is a private-dialect message and not a stable ABI; the layout may change until Aviate declares it stable, and a dedicated message-id range must be requested upstream before the dialect is published. The conservative standard projection is carried by ESTIMATOR_STATUS, not duplicated here.</description>
+      <field type="uint64_t" name="time_usec" units="us">Time since system boot.</field>
+      <field type="uint8_t" name="valid_flags" enum="AVIATE_STATE_VALID_FLAGS" display="bitmask">Per-dimension validity as AVIATE_STATE_VALID_FLAGS.</field>
+      <field type="uint8_t" name="quality" enum="AVIATE_ESTIMATE_QUALITY">Aviate estimate quality.</field>
+    </message>
+  </messages>
+</mavlink>
