@@ -45,3 +45,13 @@ env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
 echo ""
 echo "PASSED: All static analysis checks passed."
+
+# Position-controller limits stay hash-covered: the only constructor
+# takes explicit limits, so an implicit-default constructor cannot
+# reappear unreviewed (one production tuning source; see
+# cert/trace DRQ-CTL-001).
+if grep -En "pub fn (new|default)\b" aviate-core/src/control/position.rs > /dev/null; then
+    echo "FAIL: implicit-default constructor reintroduced in control/position.rs" >&2
+    echo "Position controllers must take explicit limits from the hash-covered config." >&2
+    exit 1
+fi
