@@ -67,6 +67,19 @@ the following holds:
 - the `quality` value is unknown to the consumer,
 - the status frame fails to parse.
 
+Bits in `valid_flags` outside the `AVIATE_STATE_VALID_FLAGS` definition
+never authorize anything: a consumer masks to the defined bits and
+ignores the rest, so a newer sender cannot accidentally authorize a
+dimension an older consumer knows under a different bit.
+
+A newer status supersedes all older telemetry immediately. On receiving
+`Unusable`, or a status with a validity bit cleared, the consumer
+revokes authorization for the affected dimensions across every
+previously received numeric frame — it does not wait for a numeric
+frame with a matching timestamp. Aviate emits the status pair at
+`estimator_status_hz` even when no numeric stream is due in that cycle,
+so revocation never depends on a coincident numeric emission.
+
 Standard `ESTIMATOR_STATUS` remains a conservative projection for common
 consumers and must not be used as the lossless authorization source.
 

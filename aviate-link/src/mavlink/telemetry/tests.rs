@@ -286,3 +286,64 @@ fn transmitted_estimator_status_matches_pymavlink() {
     let len = format_estimator_status(&unusable, 17, 1, 1, &mut seq, &mut buf).unwrap_or_default();
     assert_eq!(&buf[..len], UNUSABLE_NO_FLAGS);
 }
+
+#[test]
+fn status_only_cycle_revokes_without_numeric_frames() {
+    // Revocation must not depend on a coincident numeric emission: at an
+    // iteration where only the periodic status refresh is due, the
+    // Unusable status pair goes out alone.
+    let cfg = TelemetryConfig {
+        heartbeat_hz: 1,
+        attitude_hz: 10,
+        position_hz: 10,
+        estimator_status_hz: 25,
+        ..TelemetryConfig::default()
+    };
+    let mut formatter = MavlinkCycleFormatter::new(&cfg, 100);
+    let mut queue = DefaultTelemetryQueue::new();
+    let snapshot = TelemetrySnapshot {
+        time_ms: 300,
+        iteration: 4, // divides status_div=4 only; not 10, not 100
+        state: StateEstimate {
+            quality: EstimateQuality::Unusable,
+            valid_flags: StateValidFlags::empty(),
+            ..StateEstimate::default()
+        },
+        ..TelemetrySnapshot::default()
+    };
+
+    formatter.format_cycle(&snapshot, &mut queue);
+
+    let mut ids = [0u32; 4];
+    let mut count = 0;
+    let mut unusable_seen = false;
+    while queue.pop_with(|frame| {
+        if let Some(message) = parsed_message(frame) {
+            ids[count] = message.msg_id();
+            if let MavMessage::AviateEstimatorStatus(status) = message {
+                unusable_seen = status.quality == aviate_estimate_quality::UNUSABLE
+                    && status.valid_flags == 0
+                    && status.time_usec == 300_000;
+            }
+            count = count.wrapping_add(1);
+        }
+    }) {}
+
+    assert_eq!(
+        &ids[..count],
+        &[230, 20_000],
+        "status pair only, no numerics"
+    );
+    assert!(unusable_seen, "standalone revocation must carry Unusable");
+}
+
+#[test]
+fn emitted_valid_flags_never_carry_unknown_bits() {
+    // The producer must never place a bit outside AVIATE_STATE_VALID_FLAGS
+    // on the wire, whatever the internal flag set becomes.
+    for bits in 0..=u8::MAX {
+        let flags = StateValidFlags::from_bits_truncate(bits);
+        let wire = estimator::wire_valid_flags(flags);
+        assert_eq!(wire & !0x0F, 0, "unknown wire bit for internal {bits:#04x}");
+    }
+}
