@@ -25,13 +25,24 @@ command -v cargo-generate > /dev/null 2>&1 || {
     exit 2
 }
 
+# Never destroy state this run did not create: refuse a pre-existing
+# generation directory, and restore the workspace manifest from a
+# byte-precise backup instead of `git checkout`, which would discard a
+# user's uncommitted Cargo.toml edits.
+if [ -e "$APP_DIR" ]; then
+    echo "refusing to overwrite existing $APP_DIR; remove it first" >&2
+    exit 2
+fi
+
+MANIFEST_BACKUP="$(mktemp)"
+cp Cargo.toml "$MANIFEST_BACKUP"
+
 cleanup() {
-    git checkout --quiet -- Cargo.toml 2>/dev/null || true
+    cp "$MANIFEST_BACKUP" Cargo.toml
+    rm -f "$MANIFEST_BACKUP"
     rm -rf "$APP_DIR"
 }
 trap cleanup EXIT
-
-rm -rf "$APP_DIR"
 cargo generate --path aviate-app-template --name "$APP" --destination aviate-apps \
     -d board=sitl-gazebo -d model=x500 -d airframe=x500 -d env=sitl
 
