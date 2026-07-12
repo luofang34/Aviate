@@ -10,7 +10,9 @@
 //! or any other internal kernel module — only the type parameter.
 //! This file is the structural witness for that property.
 
-use aviate_core::checks::{KernelChecks, PreArmFlags};
+#![allow(clippy::expect_used, clippy::panic)]
+
+use aviate_core::checks::PreArmFlags;
 use aviate_core::control::runtime::ControllerRuntimeState;
 use aviate_core::control::{
     AxisCommand, Command, CommandSource, ConfigMode, ControlMode, Limits, Setpoint,
@@ -19,8 +21,6 @@ use aviate_core::control::{
 use aviate_core::ekf::runtime::EstimatorRuntimeState;
 use aviate_core::ekf::Estimator;
 use aviate_core::kernel::config::ResolvedKernelConfig;
-use aviate_core::kernel::pipeline::KernelPipeline;
-use aviate_core::kernel::state::KernelState;
 use aviate_core::kernel::AviateKernelImpl;
 use aviate_core::mixer::{
     ActuatorCmd, ActuatorFallbackState, ActuatorSanitizer, ActuatorState, Mixer, ModeConfig,
@@ -246,11 +246,15 @@ fn make_command() -> Command {
 }
 
 fn make_kernel() -> AviateKernelImpl<MockEstimator, MockController, MockMixer, MockSanitizer> {
-    AviateKernelImpl {
-        pipeline: KernelPipeline::new(MockEstimator, MockController, MockMixer, MockSanitizer),
-        state: KernelState::new(KernelChecks::with_pre_arm_required(PreArmFlags::empty())),
-        cfg: ResolvedKernelConfig::default(),
-    }
+    aviate_core::kernel::builder::AviateKernelBuilder::new()
+        .estimator(MockEstimator)
+        .controller(MockController)
+        .mixer(MockMixer)
+        .sanitizer(MockSanitizer)
+        .pre_arm_required(PreArmFlags::empty())
+        .config(ResolvedKernelConfig::default())
+        .build()
+        .expect("mock bundle declares no binding and must be accepted")
 }
 
 // ----- Tests -----

@@ -8,6 +8,7 @@
 //! controller built from the resolved config is accepted.
 
 use aviate_core::control::multirotor::MultirotorController;
+use aviate_core::control::VehicleController;
 use aviate_core::ekf::Ekf;
 use aviate_core::kernel::builder::{AviateKernelBuilder, KernelBuildError};
 use aviate_core::kernel::config::ResolvedKernelConfig;
@@ -101,4 +102,36 @@ fn every_gains_and_hover_field_mismatch_is_rejected() {
     // the hover seed. Adding a field without extending the sweep
     // fails here instead of silently escaping coverage.
     assert_eq!(mutations.len(), 13);
+}
+
+#[test]
+fn built_kernel_binding_cannot_be_separated_afterwards() {
+    // pipeline and cfg are private with read-only accessors and the
+    // controller's tuning fields are crate-private, so no caller can
+    // retune either side of a built kernel; re-verifying on the built
+    // kernel therefore always agrees with what build() verified.
+    let cfg = ResolvedKernelConfig::default();
+    let controller = MultirotorController::from_gains(cfg.cascade_gains, cfg.hover_thrust_norm.0);
+    let kernel = AviateKernelBuilder::new()
+        .estimator(Ekf::default())
+        .controller(controller)
+        .mixer(QuadXMixer {
+            timestamp_source: fake_ts,
+        })
+        .sanitizer(Sanitizer)
+        .config(cfg)
+        .build();
+    assert!(kernel.is_ok());
+    let Ok(kernel) = kernel else {
+        return;
+    };
+    assert!(kernel
+        .pipeline()
+        .controller
+        .verify_config_binding(kernel.cfg())
+        .is_ok());
+    assert_eq!(
+        *kernel.pipeline().controller.velocity_gains(),
+        kernel.cfg().cascade_gains
+    );
 }

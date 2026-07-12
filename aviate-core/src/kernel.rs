@@ -33,7 +33,7 @@ pub use crate::kernel_types::InitState;
 pub struct AviateKernelImpl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> {
     /// Algorithm-identity bundle (estimator, controller, mixer,
     /// sanitizer, protector). See `kernel/pipeline.rs`.
-    pub pipeline: KernelPipeline<E, V, M, S>,
+    pub(crate) pipeline: KernelPipeline<E, V, M, S>,
 
     /// All safety-relevant runtime state — lifecycle, mode, faults,
     /// control law, gate checks, actuator snapshot, timing stats,
@@ -46,7 +46,7 @@ pub struct AviateKernelImpl<E: Estimator, V: VehicleController, M: Mixer, S: Act
 
     /// Validated, flight-period-immutable configuration (spec §19).
     /// See `kernel/config.rs`.
-    pub cfg: ResolvedKernelConfig,
+    pub(crate) cfg: ResolvedKernelConfig,
 }
 
 /// Type alias for the kernel struct.
@@ -62,15 +62,52 @@ pub type DefaultAviateKernel<V, M> = AviateKernelImpl<Ekf, V, M, Sanitizer>;
 impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     AviateKernelImpl<E, V, M, S>
 {
-    /// Construct a kernel with default config and default pre-arm
-    /// requirements. Direct struct-literal initialization — bypasses
-    /// the `Result`-returning builder because every required component
-    /// is supplied positionally, so the build can never fail.
+    /// Crate-internal scaffolding: constructs without the builder's
+    /// controller/config binding check, so it must never be reachable
+    /// from production integration code. Every external construction
+    /// goes through `AviateKernelBuilder::build`.
     ///
-    /// New code should prefer `AviateKernelBuilder` directly when any
-    /// non-default field (custom limits, custom command_timeout, etc.)
-    /// is needed.
-    pub fn new(
+    /// ```compile_fail
+    /// use aviate_core::control::multirotor::MultirotorController;
+    /// use aviate_core::ekf::Ekf;
+    /// use aviate_core::mixer::{ModeConfig, QuadXMixer, Sanitizer};
+    /// // private associated function: external code cannot bypass the
+    /// // checked builder.
+    /// let _ = aviate_core::kernel::AviateKernelImpl::new(
+    ///     Ekf::default(),
+    ///     MultirotorController::default(),
+    ///     QuadXMixer { timestamp_source: || unimplemented!() },
+    ///     Sanitizer,
+    ///     ModeConfig { mode: aviate_core::control::ConfigMode::Hover, groups: &[] },
+    /// );
+    /// ```
+    /// Read the immutable algorithm pipeline. Construction fixes the
+    /// pipeline; no caller can swap or retune a component afterwards,
+    /// so the verified controller/config binding cannot be separated
+    /// from the flying tuning.
+    pub fn pipeline(&self) -> &KernelPipeline<E, V, M, S> {
+        &self.pipeline
+    }
+
+    /// Read the resolved configuration the binding check verified.
+    pub fn cfg(&self) -> &ResolvedKernelConfig {
+        &self.cfg
+    }
+
+    /// Test scaffolding: mutate the resolved configuration of a built
+    /// kernel to stage a scenario (mid-flight limit changes, timeout
+    /// variation, slew overrides). Production code must never call
+    /// this — a post-build config edit desynchronizes the canonical
+    /// hash and the verified controller binding from what actually
+    /// flies, and the runtime-boundary gate fails any use outside a
+    /// tests tree.
+    #[doc(hidden)]
+    pub fn cfg_scenario_override(&mut self) -> &mut ResolvedKernelConfig {
+        &mut self.cfg
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new(
         estimator: E,
         controller: V,
         mixer: M,
@@ -148,9 +185,9 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     /// isolated, retry next cycle, declare hot-spare takeover). The
     /// kernel itself does NOT mutate based on the decision — that
     /// belongs to a higher-level redundancy policy that is out of
-    /// scope here.
-    ///
-    /// `local_buf` SHOULD be sized to
+    /// scope here. // COV:EXCL(phantom DA: grcov attributes a debug-info region to this doc-comment line)
+    /// // COV:EXCL(phantom DA: grcov attributes a debug-info region to this doc-comment line)
+    /// `local_buf` SHOULD be sized to // COV:EXCL(phantom DA: grcov attributes a debug-info region to this doc-comment line)
     /// `<KernelState<E::RuntimeState, V::RuntimeState> as Replicable>::ENCODED_LEN`.
     /// A short buffer truncates the local projection, which fails
     /// `agrees_with` against any full-size peer (LLR-CCS-102) and
@@ -242,5 +279,18 @@ mod tests {
             yaw: crate::types::NormalizedSigned(0.0),
             collective: crate::types::Normalized(0.0),
         });
+    }
+
+    #[test]
+    fn read_accessors_expose_the_built_kernel_surfaces() {
+        let mut kernel = create_kernel();
+        // The read accessors are the only public routes to the
+        // pipeline and config; the scenario override is the only
+        // mutable route and is confined to tests by the boundary gate.
+        assert_ne!(kernel.pipeline().algorithm_identity_hash(), 0);
+        let hash_before = kernel.cfg().canonical_hash();
+        kernel.cfg_scenario_override().command_timeout_ms =
+            kernel.cfg().command_timeout_ms.wrapping_add(1);
+        assert_ne!(kernel.cfg().canonical_hash(), hash_before);
     }
 }

@@ -24,7 +24,9 @@
 //! combinations through the kernel's public surface without the
 //! `test-hooks` feature (which CI compile-checks but does not run).
 
-use aviate_core::checks::{KernelChecks, PreArmFlags};
+#![allow(clippy::expect_used, clippy::panic)]
+
+use aviate_core::checks::PreArmFlags;
 use aviate_core::control::multirotor::{MultirotorController, MultirotorRuntimeState};
 use aviate_core::control::{
     apply_mode_entry, gate_mode_entry, Command, CommandSource, ControlLawV1, ControlMode, Limits,
@@ -33,8 +35,6 @@ use aviate_core::control::{
 use aviate_core::ekf::runtime::EstimatorRuntimeState;
 use aviate_core::ekf::Estimator;
 use aviate_core::kernel::config::ResolvedKernelConfig;
-use aviate_core::kernel::pipeline::KernelPipeline;
-use aviate_core::kernel::state::KernelState;
 use aviate_core::kernel::{AviateKernelImpl, InitState};
 use aviate_core::math::Quaternion;
 use aviate_core::mixer::{ActuatorState, ModeConfig, QuadXMixer, Sanitizer};
@@ -233,19 +233,18 @@ fn make_kernel() -> GatingKernel {
         mode: aviate_core::control::ConfigMode::Hover,
         groups: &[],
     };
-    let mut kernel = AviateKernelImpl {
-        pipeline: KernelPipeline::new(
-            FixedEstimator,
-            MultirotorController::default(),
-            mixer,
-            Sanitizer,
-        ),
-        state: KernelState::new(KernelChecks::with_pre_arm_required(PreArmFlags::empty())),
-        cfg: ResolvedKernelConfig {
+    let mut kernel = aviate_core::kernel::builder::AviateKernelBuilder::new()
+        .estimator(FixedEstimator)
+        .controller(MultirotorController::default())
+        .mixer(mixer)
+        .sanitizer(Sanitizer)
+        .pre_arm_required(PreArmFlags::empty())
+        .config(ResolvedKernelConfig {
             mode_config,
             ..Default::default()
-        },
-    };
+        })
+        .build()
+        .expect("checked construction must accept the default binding");
     // These tests exercise loop-selection gating specifically, not
     // the arm lifecycle (covered by kernel.rs / behavioral_tests.rs)
     // — bypass straight to Armed, matching mock_pipeline_tests.rs.

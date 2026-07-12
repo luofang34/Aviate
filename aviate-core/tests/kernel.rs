@@ -3233,7 +3233,7 @@ fn update_command_age_gates_command_recent_flag() {
     let sensors = make_valid_sensors();
 
     // Build a kernel with a 100ms command-timeout for the test.
-    kernel.cfg.command_timeout_ms = 100;
+    kernel.cfg_scenario_override().command_timeout_ms = 100;
 
     // Spin through init to reach Ready, then arm.
     kernel.state.estimator.init(
