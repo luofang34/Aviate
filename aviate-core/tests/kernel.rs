@@ -7,6 +7,8 @@
 //! - Safe output when not armed
 //! - Spec types (ChannelId, ChannelHealthV1, ChannelStatus, etc.)
 
+#![allow(clippy::expect_used, clippy::panic)]
+
 use aviate_core::checks::PreArmFlags;
 use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::{
@@ -90,6 +92,12 @@ fn dummy_time_delta() -> aviate_core::time::TimeDelta {
 type TestKernel = aviate_core::DefaultAviateKernel<MultirotorController, QuadXMixer>;
 
 fn make_kernel() -> TestKernel {
+    make_kernel_with_timeout(
+        aviate_core::kernel::config::ResolvedKernelConfig::default().command_timeout_ms,
+    )
+}
+
+fn make_kernel_with_timeout(timeout_ms: u32) -> TestKernel {
     let mixer = QuadXMixer {
         timestamp_source: dummy_timestamp,
     };
@@ -103,14 +111,16 @@ fn make_kernel() -> TestKernel {
         | PreArmFlags::EKF_CONVERGED
         | PreArmFlags::THROTTLE_LOW
         | PreArmFlags::CONFIG_VALID;
-    let mut kernel = AviateKernel::with_pre_arm_required(
-        Ekf::default(),
-        MultirotorController::default(),
-        mixer,
-        Sanitizer,
-        mode_config,
-        test_required,
-    );
+    let mut kernel = aviate_core::kernel::builder::AviateKernelBuilder::new()
+        .estimator(Ekf::default())
+        .controller(MultirotorController::default())
+        .mixer(mixer)
+        .sanitizer(Sanitizer)
+        .pre_arm_required(test_required)
+        .command_timeout_ms(timeout_ms)
+        .mode_config(mode_config)
+        .build()
+        .expect("checked construction must accept the default binding");
     // Set throttle low for tests
     kernel.state.checks.pre_arm.update_throttle(true);
     kernel
@@ -1074,14 +1084,18 @@ fn kernel_requires_all_pre_arm_flags() {
         groups: &[],
     };
     let full_required = PreArmFlags::QUAD_WITH_GPS;
-    let mut kernel = AviateKernel::with_pre_arm_required(
-        Ekf::default(),
-        MultirotorController::default(),
-        mixer,
-        Sanitizer,
-        mode_config,
-        full_required,
-    );
+    let mut kernel = aviate_core::kernel::builder::AviateKernelBuilder::new()
+        .estimator(Ekf::default())
+        .controller(MultirotorController::default())
+        .mixer(mixer)
+        .sanitizer(Sanitizer)
+        .pre_arm_required(full_required)
+        .config(aviate_core::kernel::config::ResolvedKernelConfig {
+            mode_config,
+            ..Default::default()
+        })
+        .build()
+        .expect("checked construction must accept the default binding");
     kernel.state.checks.pre_arm.update_throttle(true);
 
     // Use sensors WITHOUT GPS
@@ -1448,14 +1462,18 @@ fn production_config_quad_minimum_arms_with_minimal_sensors() {
         mode: ConfigMode::Hover,
         groups: &[],
     };
-    let mut kernel = AviateKernel::with_pre_arm_required(
-        Ekf::default(),
-        MultirotorController::default(),
-        mixer,
-        Sanitizer,
-        mode_config,
-        test_required,
-    );
+    let mut kernel = aviate_core::kernel::builder::AviateKernelBuilder::new()
+        .estimator(Ekf::default())
+        .controller(MultirotorController::default())
+        .mixer(mixer)
+        .sanitizer(Sanitizer)
+        .pre_arm_required(test_required)
+        .config(aviate_core::kernel::config::ResolvedKernelConfig {
+            mode_config,
+            ..Default::default()
+        })
+        .build()
+        .expect("checked construction must accept the default binding");
     kernel.state.checks.pre_arm.update_throttle(true);
 
     let sensors = make_valid_sensors(); // Use full sensors to avoid fault triggers
@@ -3229,11 +3247,8 @@ fn update_degrades_on_in_flight_trigger() {
 #[test]
 fn update_command_age_gates_command_recent_flag() {
     use aviate_core::checks::InFlightFlags;
-    let mut kernel = make_kernel();
+    let mut kernel = make_kernel_with_timeout(100);
     let sensors = make_valid_sensors();
-
-    // Build a kernel with a 100ms command-timeout for the test.
-    kernel.cfg_scenario_override().command_timeout_ms = 100;
 
     // Spin through init to reach Ready, then arm.
     kernel.state.estimator.init(

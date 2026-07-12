@@ -122,10 +122,10 @@ pub struct MultirotorController {
     /// controller copied at construction; the builder compares it
     /// against the resolved configuration before a kernel exists.
     tuning_identity: u64,
-    pub(crate) pos_ctrl: PositionController,
-    pub(crate) vel_ctrl: VelocityController,
-    pub(crate) rate_ctrl: RateController,
-    pub(crate) att_ctrl: AttitudeController,
+    pos_ctrl: PositionController,
+    vel_ctrl: VelocityController,
+    rate_ctrl: RateController,
+    att_ctrl: AttitudeController,
 }
 
 impl Default for MultirotorController {

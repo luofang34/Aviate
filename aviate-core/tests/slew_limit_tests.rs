@@ -31,7 +31,7 @@ use aviate_core::types::{
     Celsius, Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Normalized, Pascals,
     RadiansPerSecond, Seconds,
 };
-use aviate_core::{AviateKernel, ChannelId, InitState};
+use aviate_core::{ChannelId, InitState};
 
 fn timestamp() -> Timestamp {
     Timestamp {
@@ -47,7 +47,9 @@ fn dt_100hz() -> TimeDelta {
     }
 }
 
-fn make_kernel() -> aviate_core::DefaultAviateKernel<MultirotorController, QuadXMixer> {
+fn make_kernel_with_slew(
+    slew: [Normalized; MAX_ACTUATORS],
+) -> aviate_core::DefaultAviateKernel<MultirotorController, QuadXMixer> {
     let mixer = QuadXMixer {
         timestamp_source: timestamp,
     };
@@ -60,16 +62,27 @@ fn make_kernel() -> aviate_core::DefaultAviateKernel<MultirotorController, QuadX
         | PreArmFlags::EKF_CONVERGED
         | PreArmFlags::THROTTLE_LOW
         | PreArmFlags::CONFIG_VALID;
-    let mut kernel = AviateKernel::with_pre_arm_required(
-        Ekf::default(),
-        MultirotorController::default(),
-        mixer,
-        Sanitizer,
-        mode_config,
-        required,
-    );
+    let mut kernel = aviate_core::kernel::builder::AviateKernelBuilder::new()
+        .estimator(Ekf::default())
+        .controller(MultirotorController::default())
+        .mixer(mixer)
+        .sanitizer(Sanitizer)
+        .pre_arm_required(required)
+        .config(aviate_core::kernel::config::ResolvedKernelConfig {
+            mode_config,
+            slew_limit_per_cycle: slew,
+            ..Default::default()
+        })
+        .build()
+        .expect("checked construction must accept the default binding");
     kernel.state.checks.pre_arm.update_throttle(true);
     kernel
+}
+
+fn make_kernel() -> aviate_core::DefaultAviateKernel<MultirotorController, QuadXMixer> {
+    make_kernel_with_slew(
+        aviate_core::kernel::config::ResolvedKernelConfig::default().slew_limit_per_cycle,
+    )
 }
 
 fn make_valid_sensors() -> SensorSet {
@@ -212,13 +225,11 @@ fn step(
 #[test]
 fn zero_limit_preserves_baseline_outputs() {
     let mut kernel_a = make_kernel();
-    let mut kernel_b = make_kernel();
-    arm_kernel(&mut kernel_a);
-    arm_kernel(&mut kernel_b);
-
     // Kernel B explicitly sets the slew limit to zero (same as
     // default, but pinning the contract).
-    kernel_b.cfg_scenario_override().slew_limit_per_cycle = [Normalized(0.0); MAX_ACTUATORS];
+    let mut kernel_b = make_kernel_with_slew([Normalized(0.0); MAX_ACTUATORS]);
+    arm_kernel(&mut kernel_a);
+    arm_kernel(&mut kernel_b);
 
     let sensors = make_valid_sensors();
     let cmd = full_throttle_cmd();
@@ -245,11 +256,9 @@ fn zero_limit_preserves_baseline_outputs() {
 /// slew limit, not the controller's larger target.
 #[test]
 fn positive_limit_caps_first_cycle_delta() {
-    let mut kernel = make_kernel();
-    arm_kernel(&mut kernel);
-
     let limit = 0.05;
-    kernel.cfg_scenario_override().slew_limit_per_cycle = [Normalized(limit); MAX_ACTUATORS];
+    let mut kernel = make_kernel_with_slew([Normalized(limit); MAX_ACTUATORS]);
+    arm_kernel(&mut kernel);
 
     let sensors = make_valid_sensors();
     let cmd = full_throttle_cmd();
@@ -278,13 +287,11 @@ fn positive_limit_caps_first_cycle_delta() {
 /// no permanent authority cost.
 #[test]
 fn slew_limited_output_converges_over_cycles() {
-    let mut limited = make_kernel();
+    let limit = 0.05;
+    let mut limited = make_kernel_with_slew([Normalized(limit); MAX_ACTUATORS]);
     let mut baseline = make_kernel();
     arm_kernel(&mut limited);
     arm_kernel(&mut baseline);
-
-    let limit = 0.05;
-    limited.cfg_scenario_override().slew_limit_per_cycle = [Normalized(limit); MAX_ACTUATORS];
 
     let sensors = make_valid_sensors();
     let cmd = full_throttle_cmd();

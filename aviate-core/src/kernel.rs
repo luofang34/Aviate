@@ -20,13 +20,16 @@ pub mod slew;
 pub mod snapshot;
 pub mod state;
 
-use crate::checks::{KernelChecks, PreArmFlags};
+#[cfg(test)]
+use crate::checks::KernelChecks;
 use crate::control::VehicleController;
 use crate::ekf::{Ekf, Estimator};
 use crate::kernel::config::ResolvedKernelConfig;
 use crate::kernel::pipeline::KernelPipeline;
 use crate::kernel::state::KernelState;
-use crate::mixer::{ActuatorSanitizer, Mixer, ModeConfig, Sanitizer};
+#[cfg(test)]
+use crate::mixer::ModeConfig;
+use crate::mixer::{ActuatorSanitizer, Mixer, Sanitizer};
 
 pub use crate::kernel_types::InitState;
 
@@ -90,20 +93,38 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     }
 
     /// Read the resolved configuration the binding check verified.
+    /// There is no mutable counterpart: a post-build config edit would
+    /// desynchronize the canonical hash and the verified controller
+    /// binding from what actually flies.
+    ///
+    /// ```compile_fail
+    /// // No mutable access to a built kernel's configuration exists.
+    /// fn edit(k: &mut aviate_core::kernel::AviateKernelImpl<
+    ///     aviate_core::ekf::Ekf,
+    ///     aviate_core::control::multirotor::MultirotorController,
+    ///     aviate_core::mixer::QuadXMixer,
+    ///     aviate_core::mixer::Sanitizer,
+    /// >) {
+    ///     k.cfg_scenario_override().command_timeout_ms = 1;
+    /// }
+    /// ```
+    ///
+    /// ```compile_fail
+    /// // The unchecked multi-argument constructor is gone: production
+    /// // construction goes through AviateKernelBuilder::build.
+    /// use aviate_core::control::multirotor::MultirotorController;
+    /// use aviate_core::mixer::{ModeConfig, QuadXMixer, Sanitizer};
+    /// let _ = aviate_core::kernel::AviateKernelImpl::with_pre_arm_required(
+    ///     aviate_core::ekf::Ekf::default(),
+    ///     MultirotorController::default(),
+    ///     QuadXMixer { timestamp_source: || unimplemented!() },
+    ///     Sanitizer,
+    ///     ModeConfig { mode: aviate_core::control::ConfigMode::Hover, groups: &[] },
+    ///     aviate_core::checks::PreArmFlags::empty(),
+    /// );
+    /// ```
     pub fn cfg(&self) -> &ResolvedKernelConfig {
         &self.cfg
-    }
-
-    /// Test scaffolding: mutate the resolved configuration of a built
-    /// kernel to stage a scenario (mid-flight limit changes, timeout
-    /// variation, slew overrides). Production code must never call
-    /// this — a post-build config edit desynchronizes the canonical
-    /// hash and the verified controller binding from what actually
-    /// flies, and the runtime-boundary gate fails any use outside a
-    /// tests tree.
-    #[doc(hidden)]
-    pub fn cfg_scenario_override(&mut self) -> &mut ResolvedKernelConfig {
-        &mut self.cfg
     }
 
     #[cfg(test)]
@@ -117,27 +138,6 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         Self {
             pipeline: KernelPipeline::new(estimator, controller, mixer, sanitizer),
             state: KernelState::new(KernelChecks::new()),
-            cfg: ResolvedKernelConfig {
-                mode_config,
-                ..Default::default()
-            },
-        }
-    }
-
-    /// Create a kernel with custom pre-arm requirements. Same direct
-    /// struct-literal pattern as `new()` — every required component is
-    /// supplied positionally, so this constructor cannot fail.
-    pub fn with_pre_arm_required(
-        estimator: E,
-        controller: V,
-        mixer: M,
-        sanitizer: S,
-        mode_config: ModeConfig,
-        required: PreArmFlags,
-    ) -> Self {
-        Self {
-            pipeline: KernelPipeline::new(estimator, controller, mixer, sanitizer),
-            state: KernelState::new(KernelChecks::with_pre_arm_required(required)),
             cfg: ResolvedKernelConfig {
                 mode_config,
                 ..Default::default()
@@ -288,9 +288,9 @@ mod tests {
         // pipeline and config; the scenario override is the only
         // mutable route and is confined to tests by the boundary gate.
         assert_ne!(kernel.pipeline().algorithm_identity_hash(), 0);
-        let hash_before = kernel.cfg().canonical_hash();
-        kernel.cfg_scenario_override().command_timeout_ms =
-            kernel.cfg().command_timeout_ms.wrapping_add(1);
-        assert_ne!(kernel.cfg().canonical_hash(), hash_before);
+        // The canonical hash of a built kernel is stable: no mutable
+        // config route exists (see the compile_fail doctests on cfg()).
+        assert_eq!(kernel.cfg().canonical_hash(), kernel.cfg().canonical_hash());
+        let _ = &mut kernel;
     }
 }

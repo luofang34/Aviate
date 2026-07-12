@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::panic)]
 #![forbid(unsafe_code)]
 
 #[cfg(test)]
@@ -317,14 +318,18 @@ mod tests {
             | PreArmFlags::THROTTLE_LOW
             | PreArmFlags::CONFIG_VALID;
 
-        let mut kernel = AviateKernel::with_pre_arm_required(
-            Ekf::default(),
-            MultirotorController::default(),
-            mixer,
-            Sanitizer,
-            mode_config,
-            test_required,
-        );
+        let mut kernel = aviate_core::kernel::builder::AviateKernelBuilder::new()
+            .estimator(Ekf::default())
+            .controller(MultirotorController::default())
+            .mixer(mixer)
+            .sanitizer(Sanitizer)
+            .pre_arm_required(test_required)
+            .config(aviate_core::kernel::config::ResolvedKernelConfig {
+                mode_config,
+                ..Default::default()
+            })
+            .build()
+            .expect("checked construction must accept the default binding");
 
         // Initialize EKF
         kernel.state.estimator.init(
@@ -421,14 +426,18 @@ mod tests {
             | PreArmFlags::THROTTLE_LOW
             | PreArmFlags::CONFIG_VALID;
 
-        let mut kernel = AviateKernel::with_pre_arm_required(
-            Ekf::default(),
-            FixedWingController,
-            mixer,
-            Sanitizer,
-            mode_config,
-            test_required,
-        );
+        let mut kernel = aviate_core::kernel::builder::AviateKernelBuilder::new()
+            .estimator(Ekf::default())
+            .controller(FixedWingController)
+            .mixer(mixer)
+            .sanitizer(Sanitizer)
+            .pre_arm_required(test_required)
+            .config(aviate_core::kernel::config::ResolvedKernelConfig {
+                mode_config,
+                ..Default::default()
+            })
+            .build()
+            .expect("checked construction must accept the stub binding");
 
         // Init EKF
         kernel.state.estimator.init(
