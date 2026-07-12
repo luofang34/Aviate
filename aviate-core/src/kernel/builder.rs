@@ -34,6 +34,17 @@ use crate::kernel::AviateKernelImpl;
 use crate::mixer::{ActuatorSanitizer, Mixer, ModeConfig};
 
 /// Builder for `AviateKernelImpl<E, V, M, S>`. See module docs for usage.
+/// Reasons `AviateKernelBuilder::build` refuses to construct a kernel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KernelBuildError {
+    /// A required component (estimator / controller / mixer /
+    /// sanitizer) was not supplied.
+    MissingComponent(&'static str),
+    /// The controller's effective tuning disagrees with the
+    /// canonical-hashed configuration; both identities included.
+    ControllerConfigMismatch(crate::control::ControllerConfigMismatch),
+}
+
 pub struct AviateKernelBuilder<E, V, M, S>
 where
     E: Estimator,
@@ -133,16 +144,29 @@ where
         self
     }
 
-    /// Build the kernel. Returns the name of the first missing
-    /// required component (estimator / controller / mixer / sanitizer)
-    /// as `Err(&'static str)` instead of panicking — flight builds
-    /// must surface caller misuse through the typed error path,
-    /// because the workspace lint policy denies `clippy::panic`.
-    pub fn build(self) -> Result<AviateKernelImpl<E, V, M, S>, &'static str> {
-        let estimator = self.estimator.ok_or("estimator")?;
-        let controller = self.controller.ok_or("controller")?;
-        let mixer = self.mixer.ok_or("mixer")?;
-        let sanitizer = self.sanitizer.ok_or("sanitizer")?;
+    /// Build the kernel. Surfaces caller misuse through the typed
+    /// error path instead of panicking — the workspace lint policy
+    /// denies `clippy::panic` — and refuses a controller whose
+    /// effective tuning disagrees with the canonical-hashed
+    /// configuration, so the two cannot be supplied independently
+    /// and drift silently.
+    pub fn build(self) -> Result<AviateKernelImpl<E, V, M, S>, KernelBuildError> {
+        let estimator = self
+            .estimator
+            .ok_or(KernelBuildError::MissingComponent("estimator"))?;
+        let controller = self
+            .controller
+            .ok_or(KernelBuildError::MissingComponent("controller"))?;
+        let mixer = self
+            .mixer
+            .ok_or(KernelBuildError::MissingComponent("mixer"))?;
+        let sanitizer = self
+            .sanitizer
+            .ok_or(KernelBuildError::MissingComponent("sanitizer"))?;
+
+        controller
+            .verify_config_binding(&self.cfg)
+            .map_err(KernelBuildError::ControllerConfigMismatch)?;
 
         let checks = match self.pre_arm_required {
             Some(required) => KernelChecks::with_pre_arm_required(required),
@@ -200,19 +224,28 @@ mod tests {
     #[test]
     fn new_returns_empty_builder_that_fails_to_build() {
         let result = TestBuilder::new().build();
-        assert_eq!(result.err(), Some("estimator"));
+        assert_eq!(
+            result.err(),
+            Some(KernelBuildError::MissingComponent("estimator"))
+        );
     }
 
     #[test]
     fn default_impl_matches_new() {
         let result = TestBuilder::default().build();
-        assert_eq!(result.err(), Some("estimator"));
+        assert_eq!(
+            result.err(),
+            Some(KernelBuildError::MissingComponent("estimator"))
+        );
     }
 
     #[test]
     fn partial_through_estimator_fails_at_controller() {
         let result = TestBuilder::new().estimator(Ekf::default()).build();
-        assert_eq!(result.err(), Some("controller"));
+        assert_eq!(
+            result.err(),
+            Some(KernelBuildError::MissingComponent("controller"))
+        );
     }
 
     #[test]
@@ -221,7 +254,10 @@ mod tests {
             .estimator(Ekf::default())
             .controller(MultirotorController::default())
             .build();
-        assert_eq!(result.err(), Some("mixer"));
+        assert_eq!(
+            result.err(),
+            Some(KernelBuildError::MissingComponent("mixer"))
+        );
     }
 
     #[test]
@@ -231,11 +267,14 @@ mod tests {
             .controller(MultirotorController::default())
             .mixer(fake_mixer())
             .build();
-        assert_eq!(result.err(), Some("sanitizer"));
+        assert_eq!(
+            result.err(),
+            Some(KernelBuildError::MissingComponent("sanitizer"))
+        );
     }
 
     #[test]
-    fn full_chain_builds_kernel_with_default_cfg() -> Result<(), &'static str> {
+    fn full_chain_builds_kernel_with_default_cfg() -> Result<(), KernelBuildError> {
         let kernel = full_pipeline_builder().build()?;
         assert_eq!(kernel.state.init_state, InitState::PowerOn);
         Ok(())
@@ -246,7 +285,7 @@ mod tests {
     /// stored but never dereferenced, leaving the function body
     /// uncovered.
     #[test]
-    fn full_chain_kernel_mixer_invokes_timestamp_source() -> Result<(), &'static str> {
+    fn full_chain_kernel_mixer_invokes_timestamp_source() -> Result<(), KernelBuildError> {
         let kernel = full_pipeline_builder().build()?;
         let cmd = kernel.pipeline.mixer.mix(&AxisCommand {
             roll: NormalizedSigned(0.0),
@@ -262,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn mode_config_override_propagates_to_cfg() -> Result<(), &'static str> {
+    fn mode_config_override_propagates_to_cfg() -> Result<(), KernelBuildError> {
         let custom_mc = ModeConfig {
             mode: ConfigMode::Cruise,
             groups: &[],
@@ -273,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn limits_override_propagates_to_cfg() -> Result<(), &'static str> {
+    fn limits_override_propagates_to_cfg() -> Result<(), KernelBuildError> {
         let custom_limits = Limits {
             max_roll: Radians(1.0),
             ..ResolvedKernelConfig::default().limits
@@ -284,14 +323,14 @@ mod tests {
     }
 
     #[test]
-    fn command_timeout_ms_override_propagates_to_cfg() -> Result<(), &'static str> {
+    fn command_timeout_ms_override_propagates_to_cfg() -> Result<(), KernelBuildError> {
         let kernel = full_pipeline_builder().command_timeout_ms(1234).build()?;
         assert_eq!(kernel.cfg.command_timeout_ms, 1234);
         Ok(())
     }
 
     #[test]
-    fn config_replace_overrides_entire_cfg() -> Result<(), &'static str> {
+    fn config_replace_overrides_entire_cfg() -> Result<(), KernelBuildError> {
         let custom = ResolvedKernelConfig {
             command_timeout_ms: 4321,
             ..ResolvedKernelConfig::default()
@@ -302,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn pre_arm_required_propagates_to_checks() -> Result<(), &'static str> {
+    fn pre_arm_required_propagates_to_checks() -> Result<(), KernelBuildError> {
         let required = PreArmFlags::IMU_HEALTHY | PreArmFlags::THROTTLE_LOW;
         let kernel = full_pipeline_builder().pre_arm_required(required).build()?;
         // Kernel built without pre-arm-satisfied state must report

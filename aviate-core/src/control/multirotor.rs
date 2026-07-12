@@ -118,6 +118,10 @@ impl crate::replicable::Replicable for MultirotorRuntimeState {
 }
 
 pub struct MultirotorController {
+    /// Canonical identity over the gains and hover seed this
+    /// controller copied at construction; the builder compares it
+    /// against the resolved configuration before a kernel exists.
+    tuning_identity: u64,
     pub pos_ctrl: PositionController,
     pub vel_ctrl: VelocityController,
     pub rate_ctrl: RateController,
@@ -126,7 +130,7 @@ pub struct MultirotorController {
 
 impl Default for MultirotorController {
     fn default() -> Self {
-        Self::with_hover_thrust(0.5)
+        Self::from_gains(CascadeGains::x500_defaults(), 0.5)
     }
 }
 
@@ -140,6 +144,10 @@ impl MultirotorController {
     /// by construction.
     pub fn from_gains(gains: CascadeGains, hover_thrust_norm: Scalar) -> Self {
         Self {
+            tuning_identity: crate::kernel::config::canonical_controller_tuning_identity(
+                &gains,
+                hover_thrust_norm,
+            ),
             pos_ctrl: PositionController::with_limits(
                 gains.pos_p,
                 gains.pos_accel_limits,
@@ -149,15 +157,6 @@ impl MultirotorController {
             rate_ctrl: RateController::new(gains),
             att_ctrl: AttitudeController::new(gains.att_p),
         }
-    }
-
-    /// Test scaffolding: X500 default gains with the supplied hover
-    /// trim. Production construction goes through `from_gains` with
-    /// the SAME values that land in the lockstep-hashed
-    /// `ResolvedKernelConfig` (#114) — a controller built here
-    /// carries tuning the config hash does not vouch for.
-    pub fn with_hover_thrust(hover_thrust_norm: Scalar) -> Self {
-        Self::from_gains(CascadeGains::x500_defaults(), hover_thrust_norm)
     }
 
     /// Vertical velocity command for the altitude / climb-rate hold.
@@ -245,6 +244,20 @@ impl VehicleController for MultirotorController {
     // control arithmetic, so a v1 image must not match a v2 one at
     // the lockstep gate.
     const ALGORITHM_ID: u64 = 0x4354_4C4D_5552_5632; // "CTLMURV2"
+
+    fn verify_config_binding(
+        &self,
+        cfg: &crate::kernel::config::ResolvedKernelConfig,
+    ) -> Result<(), crate::control::ControllerConfigMismatch> {
+        let config_identity = cfg.controller_tuning_identity();
+        if self.tuning_identity != config_identity {
+            return Err(crate::control::ControllerConfigMismatch {
+                controller_identity: self.tuning_identity,
+                config_identity,
+            });
+        }
+        Ok(())
+    }
 
     fn step(
         &self,

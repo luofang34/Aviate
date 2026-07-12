@@ -128,6 +128,18 @@ diverging in flight. Closing this requires moving the P-gain
 arrays out of the controller structs into a new
 `ResolvedKernelConfig.controller_gains: ControllerGains` field,
 indexed in some way the controller can read deterministically.
+
+Builder invariant: `AviateKernelBuilder::build` enforces
+`VehicleController::verify_config_binding` — the controller's
+canonical tuning identity (the same FNV fold
+`ResolvedKernelConfig::controller_tuning_identity` produces over
+`cascade_gains` + `hover_thrust_norm`) must equal the resolved
+configuration's, or construction fails with a typed
+`ControllerConfigMismatch` carrying both identities. A controller
+and a config supplied independently therefore cannot disagree in
+a built kernel; the per-field mutation sweep in
+`aviate-core/tests/config_binding_tests.rs` pins every gains and
+hover field to this rejection path.
 """
 rationale = """
 Deferred for now because (a) today's gains are hardcoded

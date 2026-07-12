@@ -190,6 +190,17 @@ pub struct AxisCommand {
 /// implementation delegates to `runtime.reset()`. Override only if
 /// the controller needs to reset additional state beyond the
 /// runtime struct itself (rare).
+/// A controller's effective tuning disagrees with the tuning the
+/// canonical-hashed configuration vouches for. Carries both canonical
+/// identities so the mismatch can be diagnosed from the error alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControllerConfigMismatch {
+    /// Identity over the values the controller actually copied.
+    pub controller_identity: u64,
+    /// Identity over the corresponding resolved-config slice.
+    pub config_identity: u64,
+}
+
 pub trait VehicleController {
     /// Persistent runtime state owned by `KernelState.control`.
     type RuntimeState: runtime::ControllerRuntimeState;
@@ -198,6 +209,20 @@ pub trait VehicleController {
     /// See `Estimator::ALGORITHM_ID` for the contract — same scope
     /// (controller-class identity) and same lockstep gating role.
     const ALGORITHM_ID: u64;
+
+    /// Prove that this controller's effective tuning is the tuning the
+    /// canonical-hashed configuration vouches for. The builder refuses
+    /// to construct a kernel when this fails, so a controller and a
+    /// config supplied independently cannot disagree silently.
+    ///
+    /// Required, with no default: every controller states explicitly
+    /// which configuration values it copies — a controller that copies
+    /// none declares that fact here rather than inheriting an
+    /// unchecked pass.
+    fn verify_config_binding(
+        &self,
+        cfg: &crate::kernel::config::ResolvedKernelConfig,
+    ) -> Result<(), ControllerConfigMismatch>;
 
     fn step(
         &self,
