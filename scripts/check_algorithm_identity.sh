@@ -25,8 +25,8 @@ set -euo pipefail
 PROD_PATTERNS=(
     'aviate-core/src/ekf.rs'
     'aviate-core/src/ekf/'
-    'aviate-core/src/control/multirotor.rs'
-    'aviate-core/src/control/multirotor/'
+    'aviate-core/src/control.rs'
+    'aviate-core/src/control/'
     'aviate-core/src/mixer.rs'
     'aviate-core/src/mixer/'
 )
@@ -109,6 +109,13 @@ self_test() {
         echo "SELF-TEST FAIL: non-production change rejected" >&2
         failures=1
     }
+
+    # The cascade sub-controllers are production control law: a change
+    # under control/ without adjudication fails.
+    if adjudicate 'aviate-core/src/control/position.rs' '' > /dev/null 2>&1; then
+        echo "SELF-TEST FAIL: control-tree change escaped adjudication" >&2
+        failures=1
+    fi
 
     if [[ $failures -ne 0 ]]; then
         return 1
