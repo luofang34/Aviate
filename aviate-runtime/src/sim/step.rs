@@ -19,7 +19,11 @@ use aviate_core::ChannelId;
 use aviate_hal_io::{CommandHal, SystemCommand};
 use aviate_hal_xil::SimActuatorCmd;
 
-impl SitlRunner {
+impl<C, M> SitlRunner<C, M>
+where
+    C: aviate_core::control::VehicleController,
+    M: aviate_core::mixer::Mixer,
+{
     /// Step the flight controller (extracted from GazeboSitlBoard::step)
     ///
     /// This is the ~165 lines of stepping logic that was duplicated across SITL boards.

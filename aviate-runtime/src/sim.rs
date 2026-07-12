@@ -7,7 +7,6 @@
 //! ## Shared Components
 //!
 //! This module provides factory functions and types that are shared across all SITL boards:
-//! - `create_kernel()` - Creates an AviateKernel with MultirotorController + QuadXMixerX500
 //! - `default_command()` - Creates a safe failsafe command with zero thrust
 //! - `sitl_timestamp()` - Returns a SITL timestamp
 //! - `BoardInfo` - Common board information structure
@@ -35,13 +34,9 @@ use crate::telemetry::{FrameTx, TelemetryTask};
 use aviate_link::mavlink::{MavState, MavlinkCycleFormatter};
 
 use aviate_config::AppConfig;
-use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::Command;
-use aviate_core::ekf::Ekf;
 use aviate_core::hal::SystemHal;
-use aviate_core::mixer::QuadXMixerX500;
-use aviate_core::mixer::Sanitizer;
-use aviate_core::{AviateKernel, DefaultAviateKernel, InitState};
+use aviate_core::{DefaultAviateKernel, InitState};
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::SitlIO;
 
@@ -96,9 +91,6 @@ impl aviate_hal_io::TimeHal for SitlTime {
 /// SITL Board HAL type (Gazebo/SitlIO)
 pub type SitlBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, SitlTime, FakeActuator>;
 
-/// SITL Kernel type
-pub type SitlKernel = DefaultAviateKernel<MultirotorController, QuadXMixerX500>;
-
 // ============================================================================
 // UDP Telemetry Transport (SITL-only)
 // ============================================================================
@@ -140,7 +132,11 @@ impl FrameTx for UdpFrameTx {
 /// stepping logic that was previously duplicated in GazeboSitlBoard.
 ///
 /// **Future**: Make this generic over transport types to support both SitlIO and HilBackend.
-pub struct SitlRunner {
+pub struct SitlRunner<C, M>
+where
+    C: aviate_core::control::VehicleController,
+    M: aviate_core::mixer::Mixer,
+{
     /// Simulator transport (SitlIO for Gazebo)
     pub transport: SitlIO,
 
@@ -154,7 +150,7 @@ pub struct SitlRunner {
     pub board_hal: SitlBoardHal,
 
     /// Flight controller kernel
-    pub kernel: SitlKernel,
+    pub kernel: DefaultAviateKernel<C, M>,
 
     /// Last command received
     /// Shared command-ingress state machine (#133) — the same
@@ -181,9 +177,17 @@ pub struct SitlRunner {
     pub(crate) iteration: u32,
 }
 
-impl SitlRunner {
+impl<C, M> SitlRunner<C, M>
+where
+    C: aviate_core::control::VehicleController,
+    M: aviate_core::mixer::Mixer,
+{
     /// Create a new SITL runner
-    pub fn new(transport: SitlIO, board_hal: SitlBoardHal, kernel: SitlKernel) -> Self {
+    pub fn new(
+        transport: SitlIO,
+        board_hal: SitlBoardHal,
+        kernel: DefaultAviateKernel<C, M>,
+    ) -> Self {
         // Best-effort: bind the per-instance fault command port. If
         // the bind fails (port in use, instance mismatch), continue
         // without a fault controller — missions that don't inject
@@ -267,41 +271,9 @@ impl SitlRunner {
 // Shared Factory Functions (used by all SITL boards)
 // ============================================================================
 
-use aviate_core::control::{CommandSource, ConfigMode, ControlMode, Setpoint};
-use aviate_core::mixer::ModeConfig;
+use aviate_core::control::{CommandSource, ControlMode, Setpoint};
 use aviate_core::time::{TimeSource, Timestamp};
 use aviate_core::types::Normalized;
-
-/// Build the SITL kernel wired for the x500 airframe.
-pub fn create_kernel() -> SitlKernel {
-    // Single tuning source (#114): the same CascadeGains value and
-    // hover trim construct the flying controller AND land in the
-    // lockstep-hashed ResolvedKernelConfig — two independently
-    // initialized copies can drift apart silently, with the hash
-    // vouching for tuning the cascade isn't actually flying. The
-    // runtime deliberately does NOT depend on a concrete airframe
-    // crate; airframe selection moves to the app layer with #120's
-    // preset loading (this factory retires then).
-    let gains = aviate_core::control::cascade_gains::CascadeGains::x500_defaults();
-    let hover: f32 = 0.77;
-    let controller = MultirotorController::from_gains(gains, hover);
-    let mixer = QuadXMixerX500 {
-        timestamp_source: sitl_timestamp,
-    };
-    let mode_config = ModeConfig {
-        mode: ConfigMode::Hover,
-        groups: &[],
-    };
-
-    let mut kernel = AviateKernel::new(Ekf::default(), controller, mixer, Sanitizer, mode_config);
-    kernel.cfg.cascade_gains = gains;
-    kernel.cfg.hover_thrust_norm = aviate_core::types::Normalized(hover);
-
-    // Initialize throttle check as satisfied (default command has low throttle)
-    kernel.state.checks.pre_arm.update_throttle(true);
-
-    kernel
-}
 
 /// Create a safe default/failsafe command with zero thrust
 ///
@@ -366,7 +338,11 @@ pub struct SitlBoardInfo {
 /// # Arguments
 /// * `runner` - The SitlRunner to step
 /// * `loop_period_us` - Control loop period in microseconds
-pub fn run_control_loop(runner: &mut SitlRunner, loop_period_us: u64) -> ! {
+pub fn run_control_loop<C, M>(runner: &mut SitlRunner<C, M>, loop_period_us: u64) -> !
+where
+    C: aviate_core::control::VehicleController,
+    M: aviate_core::mixer::Mixer,
+{
     let mut last_tick = runner.now_us();
 
     loop {

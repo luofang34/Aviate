@@ -48,3 +48,13 @@ if [[ $violations -gt 0 ]]; then
 fi
 
 echo "Runtime boundary: OK ($(echo "$DEPS" | wc -l | tr -d ' ') deps under env-flight, all in allowlist)"
+
+# Airframe selection belongs to the app layer: the runtime provides
+# the generic runner and must not name a concrete controller/mixer or
+# airframe tuning set.
+if grep -rEn "MultirotorController|QuadXMixerX500|x500_defaults" aviate-runtime/src > /dev/null; then
+  echo "FAIL: concrete airframe types in aviate-runtime/src" >&2
+  grep -rEn "MultirotorController|QuadXMixerX500|x500_defaults" aviate-runtime/src >&2
+  exit 1
+fi
+echo "Runtime airframe boundary: OK"
