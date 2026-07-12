@@ -36,6 +36,22 @@ jobs:
       - name: Generate dialect and verify wire facts
         run: ./scripts/generate_mavlink_dialect.sh --check
 
+  identity-adjudication:
+    name: Identity Adjudication
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Guard self-test
+        run: ./scripts/check_algorithm_identity.sh --self-test
+
+      - name: Adjudicate production algorithm changes
+        if: github.event_name == 'pull_request'
+        run: |
+          ./scripts/check_algorithm_identity.sh             "${{ github.event.pull_request.base.sha }}"             "${{ github.event.pull_request.head.sha }}"
+
   runtime-boundary:
     name: Runtime Boundary
     runs-on: ubuntu-latest
@@ -534,6 +550,7 @@ jobs:
     needs:
       - file-sizes
       - dialect-generation
+      - identity-adjudication
       - runtime-boundary
       - floors-lower-lint
       - check

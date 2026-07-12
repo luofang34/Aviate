@@ -24,7 +24,15 @@
 ## change shipped — review carefully.
 
 [estimator]
-"ekf.basic-15state.v2" = 0x4554_494D_454B_4633  # Ekf
+"ekf.basic-15state.v3" = 0x4554_494D_454B_4634  # Ekf
+# Retired: "ekf.basic-15state.v2" = 0x4554_494D_454B_4633. v2 allowed
+# an age-triggered reset that adopted a persistently rejected aiding
+# source after a fixed timeout, and its rejection path did not stale
+# aiding ages or drop validity on sustained rejection. v3 never adopts
+# a rejected source by timeout and surfaces sustained rejection as
+# lost validity. Same 15-state shape, different observable recovery
+# behavior, so a v2 image must not match a v3 one at the lockstep
+# gate.
 # Retired: "ekf.basic-15state.v1" = 0x4554_494D_454B_4632. v1 applied
 # attitude-error corrections about body axes while the covariance
 # Jacobians define a global (nav-frame) error — anti-corrective past
