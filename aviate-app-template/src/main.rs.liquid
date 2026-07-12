@@ -69,6 +69,51 @@ impl Options {
     }
 }
 
+
+/// Kernel construction, owned by this app: the airframe pair is named
+/// here, the full resolved configuration is assembled, and the checked
+/// builder refuses a controller/config mismatch. Preset-file loading
+/// replaces these literals when configuration-driven construction
+/// lands.
+fn build_kernel() -> Result<
+    aviate_core::DefaultAviateKernel<
+        aviate_core::control::multirotor::MultirotorController,
+        aviate_core::mixer::QuadXMixerX500,
+    >,
+    aviate_core::kernel::builder::KernelBuildError,
+> {
+    use aviate_core::control::cascade_gains::CascadeGains;
+    use aviate_core::control::multirotor::MultirotorController;
+    use aviate_core::kernel::builder::AviateKernelBuilder;
+    use aviate_core::kernel::config::ResolvedKernelConfig;
+    use aviate_core::mixer::{ModeConfig, QuadXMixerX500, Sanitizer};
+    use aviate_core::types::Normalized;
+
+    let gains = CascadeGains::x500_defaults();
+    let hover = Normalized(0.77);
+    let cfg = ResolvedKernelConfig {
+        cascade_gains: gains,
+        hover_thrust_norm: hover,
+        mode_config: ModeConfig {
+            mode: aviate_core::control::ConfigMode::Hover,
+            groups: &[],
+        },
+        ..ResolvedKernelConfig::default()
+    };
+
+    let mut kernel = AviateKernelBuilder::new()
+        .estimator(aviate_core::ekf::Ekf::default())
+        .controller(MultirotorController::from_gains(gains, hover.0))
+        .mixer(QuadXMixerX500 {
+            timestamp_source: sitl_timestamp,
+        })
+        .sanitizer(Sanitizer)
+        .config(cfg)
+        .build()?;
+    kernel.state.checks.pre_arm.update_throttle(true);
+    Ok(kernel)
+}
+
 fn main() -> ExitCode {
     let opts = Options::parse();
     let instance = opts.instance;
@@ -194,7 +239,7 @@ fn run_interactive(headless: bool, instance: u8, connect: bool, app_config: &avi
     }
     info!("Gazebo ready");
 
-    let mut board = match GazeboSitlBoard::with_config_retry(config, 5, 1000) {
+    let mut board = match GazeboSitlBoard::with_config_retry(build_kernel, config, 5, 1000) {
         Ok(b) => b,
         Err(e) => {
             warn!("Failed to initialize board: {}", e);
@@ -409,7 +454,13 @@ fn wait_for_shm(timeout: std::time::Duration) -> bool {
 }
 
 #[cfg(feature = "gz-plugin")]
-fn run_control_loop(board: &mut GazeboSitlBoard, plugin: &aviate_backend_gz::GzPluginBridge) {
+fn run_control_loop(
+    board: &mut GazeboSitlBoard<
+        aviate_core::control::multirotor::MultirotorController,
+        aviate_core::mixer::QuadXMixerX500,
+    >,
+    plugin: &aviate_backend_gz::GzPluginBridge,
+) {
     use aviate_backend_gz::{enu_to_ned_f32, enu_vel_to_ned_f32};
     use aviate_hal_xil::{SimBaroData, SimGnssData, SimGnssFix, SimImuData, SimMagData, SimSensorPacket};
 
@@ -447,6 +498,7 @@ fn run_control_loop(board: &mut GazeboSitlBoard, plugin: &aviate_backend_gz::GzP
                     lat_deg: ned_pos[0] as f64 / 111000.0,
                     lon_deg: ned_pos[1] as f64 / 111000.0,
                     alt_m: -ned_pos[2],
+                    position_ned: ned_pos,
                     vel_ned: ned_vel,
                     fix: SimGnssFix::ThreeD,
                     h_acc: 1.0,

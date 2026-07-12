@@ -52,6 +52,17 @@ echo "Runtime boundary: OK ($(echo "$DEPS" | wc -l | tr -d ' ') deps under env-f
 # Airframe selection belongs to the app layer: the runtime provides
 # the generic runner and must not name a concrete controller/mixer or
 # airframe tuning set.
+# Manifest-level: a generic board/runtime crate must not even depend
+# on an airframe crate — src-level greps cannot see Cargo.toml.
+for manifest in aviate-runtime/Cargo.toml \
+    aviate-boards/sitl-gazebo/Cargo.toml aviate-boards/sitl-jmavsim/Cargo.toml; do
+  if grep -En "aviate-airframe" "$manifest" > /dev/null; then
+    echo "FAIL: airframe crate dependency in $manifest" >&2
+    grep -En "aviate-airframe" "$manifest" >&2
+    exit 1
+  fi
+done
+
 for tree in aviate-runtime/src aviate-boards/sitl-gazebo/src aviate-boards/sitl-jmavsim/src; do
   if grep -rEn "MultirotorController|QuadXMixerX500|x500_defaults" "$tree" > /dev/null; then
     echo "FAIL: concrete airframe types in $tree" >&2
