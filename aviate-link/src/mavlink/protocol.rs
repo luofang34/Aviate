@@ -398,6 +398,8 @@ pub struct ManualControl {
     pub r: i16,
     pub buttons: u16,
     pub target: u8,
+    pub buttons2: u16,
+    pub enabled_extensions: u8,
     pub s: i16,
     pub t: i16,
     pub aux1: i16,
@@ -410,7 +412,7 @@ pub struct ManualControl {
 
 impl ManualControl {
     pub const MSG_ID: u32 = 69;
-    pub const PAYLOAD_LEN: usize = 33; // 11 basic + 22 extension
+    pub const PAYLOAD_LEN: usize = 30; // 11 basic + 19 extension
 }
 
 /// SYS_STATUS (MAVLink #1)
@@ -904,30 +906,36 @@ fn parse_manual_control(payload: &[u8]) -> Result<MavMessage, ParseError> {
         ..Default::default()
     };
 
-    let ext_start = 11;
-    if payload.len() >= ext_start + 2 {
-        msg.s = read_i16_le(payload, ext_start);
+    // Extensions follow in common.xml declaration order.
+    if payload.len() >= 13 {
+        msg.buttons2 = read_u16_le(payload, 11);
     }
-    if payload.len() >= ext_start + 4 {
-        msg.t = read_i16_le(payload, ext_start + 2);
+    if payload.len() >= 14 {
+        msg.enabled_extensions = payload[13];
     }
-    if payload.len() >= ext_start + 6 {
-        msg.aux1 = read_i16_le(payload, ext_start + 4);
+    if payload.len() >= 16 {
+        msg.s = read_i16_le(payload, 14);
     }
-    if payload.len() >= ext_start + 8 {
-        msg.aux2 = read_i16_le(payload, ext_start + 6);
+    if payload.len() >= 18 {
+        msg.t = read_i16_le(payload, 16);
     }
-    if payload.len() >= ext_start + 10 {
-        msg.aux3 = read_i16_le(payload, ext_start + 8);
+    if payload.len() >= 20 {
+        msg.aux1 = read_i16_le(payload, 18);
     }
-    if payload.len() >= ext_start + 12 {
-        msg.aux4 = read_i16_le(payload, ext_start + 10);
+    if payload.len() >= 22 {
+        msg.aux2 = read_i16_le(payload, 20);
     }
-    if payload.len() >= ext_start + 14 {
-        msg.aux5 = read_i16_le(payload, ext_start + 12);
+    if payload.len() >= 24 {
+        msg.aux3 = read_i16_le(payload, 22);
     }
-    if payload.len() >= ext_start + 16 {
-        msg.aux6 = read_i16_le(payload, ext_start + 14);
+    if payload.len() >= 26 {
+        msg.aux4 = read_i16_le(payload, 24);
+    }
+    if payload.len() >= 28 {
+        msg.aux5 = read_i16_le(payload, 26);
+    }
+    if payload.len() >= 30 {
+        msg.aux6 = read_i16_le(payload, 28);
     }
 
     Ok(MavMessage::ManualControl(msg))
@@ -1502,16 +1510,17 @@ fn serialize_manual_control(
     write_u16_le(buf, offset + 8, msg.buttons);
     buf[offset + 10] = msg.target;
 
-    // Extensions
-    let ext_offset = offset + 11;
-    write_i16_le(buf, ext_offset, msg.s);
-    write_i16_le(buf, ext_offset + 2, msg.t);
-    write_i16_le(buf, ext_offset + 4, msg.aux1);
-    write_i16_le(buf, ext_offset + 6, msg.aux2);
-    write_i16_le(buf, ext_offset + 8, msg.aux3);
-    write_i16_le(buf, ext_offset + 10, msg.aux4);
-    write_i16_le(buf, ext_offset + 12, msg.aux5);
-    write_i16_le(buf, ext_offset + 14, msg.aux6);
+    // Extensions follow in common.xml declaration order.
+    write_u16_le(buf, offset + 11, msg.buttons2);
+    buf[offset + 13] = msg.enabled_extensions;
+    write_i16_le(buf, offset + 14, msg.s);
+    write_i16_le(buf, offset + 16, msg.t);
+    write_i16_le(buf, offset + 18, msg.aux1);
+    write_i16_le(buf, offset + 20, msg.aux2);
+    write_i16_le(buf, offset + 22, msg.aux3);
+    write_i16_le(buf, offset + 24, msg.aux4);
+    write_i16_le(buf, offset + 26, msg.aux5);
+    write_i16_le(buf, offset + 28, msg.aux6);
 
     Some(write_crc(buf, offset + ManualControl::PAYLOAD_LEN, 243))
 }
@@ -1643,6 +1652,9 @@ fn write_f32_le(buf: &mut [u8], offset: usize, val: f32) {
 }
 
 // Note: CRC functions are defined in the parser section above (lines 929-946)
+
+#[cfg(test)]
+mod interop_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1884,17 +1896,9 @@ mod tests {
                     x: 100,
                     y: -100,
                     z: 500,
-                    r: 0,
                     buttons: 1,
                     target: 1,
-                    s: 0,
-                    t: 0,
-                    aux1: 0,
-                    aux2: 0,
-                    aux3: 0,
-                    aux4: 0,
-                    aux5: 0,
-                    aux6: 0,
+                    ..Default::default()
                 })
             },
             |m| {
