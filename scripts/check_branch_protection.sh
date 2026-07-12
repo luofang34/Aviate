@@ -18,13 +18,20 @@ set -euo pipefail
 
 REPO="${REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
 
-gh api "repos/$REPO/rulesets" --jq '.' | python3 - "$REPO" <<'PY'
+python3 - "$REPO" <<'PY'
 import json
 import subprocess
 import sys
 
 repo = sys.argv[1]
-rulesets = json.load(sys.stdin)
+# Fetched here rather than piped in: a heredoc replaces stdin, so a
+# pipeline into this script would silently starve json.load.
+rulesets = json.loads(
+    subprocess.run(
+        ["gh", "api", f"repos/{repo}/rulesets"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+)
 
 failures = []
 active = None
