@@ -42,9 +42,52 @@ use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::mixer::{ActuatorCmd, QuadXMixerX500};
 use aviate_core::DefaultAviateKernel;
 
+use aviate_core::control::cascade_gains::CascadeGains;
+use aviate_core::control::ConfigMode;
+use aviate_core::mixer::ModeConfig;
+use aviate_core::AviateKernel;
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{SitlConfig, SitlIO};
-use aviate_runtime::{create_kernel, loop_periods, SitlBoardInfo, SitlRunner};
+use aviate_runtime::{loop_periods, sitl_timestamp, SitlBoardInfo, SitlRunner};
+
+/// X500 kernel construction, owned by this app.
+///
+/// Airframe selection is an application decision: the runtime provides
+/// only the generic `SitlRunner`, and this board states visibly that
+/// it flies the X500 controller/mixer pair. One tuning source: the
+/// same `CascadeGains` value and hover trim construct the flying
+/// controller AND land in the lockstep-hashed `ResolvedKernelConfig`;
+/// the builder-level binding check makes a divergent pair
+/// unconstructible. Preset-file loading replaces these literals with
+/// configuration when app-owned preset construction lands.
+pub fn create_x500_kernel() -> DefaultAviateKernel<MultirotorController, QuadXMixerX500> {
+    let gains = CascadeGains::x500_defaults();
+    let hover: f32 = 0.77;
+    let controller = MultirotorController::from_gains(gains, hover);
+    let mixer = QuadXMixerX500 {
+        timestamp_source: sitl_timestamp,
+    };
+    let mode_config = ModeConfig {
+        mode: ConfigMode::Hover,
+        groups: &[],
+    };
+
+    let mut kernel = AviateKernel::new(
+        aviate_core::ekf::Ekf::default(),
+        controller,
+        mixer,
+        aviate_core::mixer::Sanitizer,
+        mode_config,
+    );
+    kernel.cfg.cascade_gains = gains;
+    kernel.cfg.hover_thrust_norm = aviate_core::types::Normalized(hover);
+
+    // Default command carries low throttle, so the throttle pre-arm
+    // check starts satisfied.
+    kernel.state.checks.pre_arm.update_throttle(true);
+
+    kernel
+}
 
 /// Gazebo SITL board configuration
 ///
@@ -55,7 +98,7 @@ use aviate_runtime::{create_kernel, loop_periods, SitlBoardInfo, SitlRunner};
 /// This eliminates ~165 lines of duplication from the board implementation.
 pub struct GazeboSitlBoard {
     /// SITL runner (encapsulates transport, board HAL, and kernel)
-    runner: SitlRunner,
+    runner: SitlRunner<MultirotorController, QuadXMixerX500>,
 }
 
 impl GazeboSitlBoard {
@@ -88,7 +131,7 @@ impl GazeboSitlBoard {
         );
 
         // Use shared factory functions from aviate-runtime
-        let kernel = create_kernel();
+        let kernel = create_x500_kernel();
 
         // Create SitlRunner with all components
         let runner = SitlRunner::new(transport, board_hal, kernel);

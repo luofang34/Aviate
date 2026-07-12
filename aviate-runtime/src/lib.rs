@@ -83,7 +83,6 @@ pub use flight::{
 #[cfg(any(feature = "env-sitl", feature = "env-hitl"))]
 pub use sim::{
     // Shared factory functions for SITL boards
-    create_kernel,
     default_command,
     loop_periods,
     // Control loop utilities
@@ -93,7 +92,6 @@ pub use sim::{
     SitlBoardHal,
     // Shared types
     SitlBoardInfo,
-    SitlKernel,
     SitlRunner,
     SitlTime,
 };
