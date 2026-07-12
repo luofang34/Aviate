@@ -199,15 +199,15 @@ mod tests {
         // exactly what spec §16 cross-channel firmware verification
         // exists to catch.
         //
-        // This value reflects the Ekf identity `ETIMEKF3`
-        // ("ekf.basic-15state.v2", global-frame attitude-error
-        // corrections), the controller identity `CTLMURV2`
-        // ("controller.multirotor.v2", heading-frame tilt mapping),
-        // and the mixer identity `MIXQUAD2` ("mixer.quad_x.v2",
-        // priority desaturation): each moved deliberately off its
-        // retired v1 identity because its numerical behavior changed
-        // while its state shape did not.
-        const EXPECTED: u64 = 0x0d08_c65b_500f_2247;
+        // This value reflects the Ekf identity `ETIMEKF4`
+        // ("ekf.basic-15state.v3", no timeout adoption of rejected
+        // aiding, sustained rejection surfaces as lost validity), the
+        // controller identity `CTLMURV2` ("controller.multirotor.v2",
+        // heading-frame tilt mapping), and the mixer identity
+        // `MIXQUAD2` ("mixer.quad_x.v2", priority desaturation): each
+        // moved deliberately off its retired predecessor because its
+        // observable behavior changed while its state shape did not.
+        const EXPECTED: u64 = 0x646b_55c0_745d_ab84;
         let actual = make_pipeline().algorithm_identity_hash();
         assert_eq!(
             actual, EXPECTED,

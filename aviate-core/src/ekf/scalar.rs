@@ -265,12 +265,13 @@ impl super::Estimator for Ekf {
     type RuntimeState = EkfState;
 
     // Registered in cert/algorithm_id_registry.toml as
-    // "ekf.basic-15state.v2" — v2 applies attitude-error corrections
-    // in the global (nav) frame matching the covariance Jacobians;
-    // v1 applied them about body axes, which diverges under sustained
-    // yaw. Same 15-state shape, different fusion arithmetic, so a v1
-    // image must not match a v2 one at the lockstep gate.
-    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4633; // "ETIMEKF3"
+    // "ekf.basic-15state.v3" — v3 never adopts a persistently rejected
+    // aiding source by timeout and surfaces sustained rejection as
+    // lost validity; v2 carried an age-triggered reset-to-measurement
+    // and kept aiding ages fresh through rejection. Same 15-state
+    // shape, different observable recovery behavior, so a v2 image
+    // must not match a v3 one at the lockstep gate.
+    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4634; // "ETIMEKF4"
 
     fn observe(
         &self,
