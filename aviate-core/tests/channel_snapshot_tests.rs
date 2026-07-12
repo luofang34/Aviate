@@ -54,6 +54,27 @@ fn make_kernel() -> ProdKernel {
         .expect("checked construction must accept the default binding")
 }
 
+fn make_kernel_with_timeout(timeout_ms: u32) -> ProdKernel {
+    aviate_core::kernel::builder::AviateKernelBuilder::new()
+        .estimator(Ekf::default())
+        .controller(MultirotorController::default())
+        .mixer(QuadXMixer {
+            timestamp_source: fake_ts,
+        })
+        .sanitizer(Sanitizer)
+        .pre_arm_required(PreArmFlags::empty())
+        .config(ResolvedKernelConfig {
+            mode_config: ModeConfig {
+                mode: aviate_core::control::ConfigMode::Hover,
+                groups: &[],
+            },
+            ..Default::default()
+        })
+        .command_timeout_ms(timeout_ms)
+        .build()
+        .expect("checked construction must accept the default binding")
+}
+
 #[test]
 fn project_byte_stable_across_two_default_kernels() {
     // TST-CCS-101: two pipelines built identically with identical
@@ -164,9 +185,7 @@ fn check_lockstep_agreement_refuses_when_peer_config_diverges() {
     // (different command_timeout_ms) — gate surfaces RefuseConfigMismatch.
     use aviate_core::kernel::snapshot::LockstepDecision;
     let k_local = make_kernel();
-    let mut k_peer = make_kernel();
-    k_peer.cfg_scenario_override().command_timeout_ms =
-        k_local.cfg().command_timeout_ms.wrapping_add(1);
+    let k_peer = make_kernel_with_timeout(k_local.cfg().command_timeout_ms.wrapping_add(1));
 
     let mut buf_peer = [0u8; <ProdState as Replicable>::ENCODED_LEN];
     let snap_peer = k_peer.project_for_cross_channel(0, ChannelId::SECONDARY, &mut buf_peer);

@@ -14,6 +14,7 @@
 
 use aviate_core::checks::{DegradationReason, InFlightFlags, PreArmFlags};
 use aviate_core::control::multirotor::MultirotorController;
+use aviate_core::control::Limits;
 use aviate_core::control::{
     Command, CommandSource, ConfigMode, ControlLawV1, ControlMode, Setpoint,
 };
@@ -30,7 +31,7 @@ use aviate_core::types::{
     Celsius, Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Normalized, Pascals,
     Radians, RadiansPerSecond, Scalar, Seconds,
 };
-use aviate_core::{AviateKernel, ChannelId, InitState, TransitionError};
+use aviate_core::{ChannelId, InitState, TransitionError};
 
 // --- fixtures ---------------------------------------------------------------
 
@@ -48,7 +49,9 @@ fn dt_100hz() -> TimeDelta {
     }
 }
 
-fn make_kernel() -> aviate_core::DefaultAviateKernel<MultirotorController, QuadXMixer> {
+fn make_kernel_with_limits(
+    limits: Limits,
+) -> aviate_core::DefaultAviateKernel<MultirotorController, QuadXMixer> {
     let mixer = QuadXMixer {
         timestamp_source: timestamp,
     };
@@ -61,16 +64,25 @@ fn make_kernel() -> aviate_core::DefaultAviateKernel<MultirotorController, QuadX
         | PreArmFlags::EKF_CONVERGED
         | PreArmFlags::THROTTLE_LOW
         | PreArmFlags::CONFIG_VALID;
-    let mut kernel = AviateKernel::with_pre_arm_required(
-        Ekf::default(),
-        MultirotorController::default(),
-        mixer,
-        Sanitizer,
-        mode_config,
-        required,
-    );
+    let mut kernel = aviate_core::kernel::builder::AviateKernelBuilder::new()
+        .estimator(Ekf::default())
+        .controller(MultirotorController::default())
+        .mixer(mixer)
+        .sanitizer(Sanitizer)
+        .pre_arm_required(required)
+        .config(aviate_core::kernel::config::ResolvedKernelConfig {
+            mode_config,
+            limits,
+            ..Default::default()
+        })
+        .build()
+        .expect("checked construction must accept the default binding");
     kernel.state.checks.pre_arm.update_throttle(true);
     kernel
+}
+
+fn make_kernel() -> aviate_core::DefaultAviateKernel<MultirotorController, QuadXMixer> {
+    make_kernel_with_limits(aviate_core::kernel::config::ResolvedKernelConfig::default().limits)
 }
 
 fn make_valid_sensors() -> SensorSet {
@@ -581,12 +593,17 @@ fn altitude_ok_flag_tracks_geofence_through_update() {
         "altitude within the geofence must set ALTITUDE_OK"
     );
 
-    // Raise the floor above the vehicle → measured altitude is now below
-    // the band and the flag clears.
-    kernel.cfg_scenario_override().limits.min_altitude = Meters(50.0);
-    let _ = step(&mut kernel, &cmd, &sensors, 0);
+    // Same flight against a floor raised above the vehicle: the flag
+    // is recomputed each cycle from the configured band, so a kernel
+    // whose floor sits above the estimate never sets it.
+    let mut floored = make_kernel_with_limits(Limits {
+        min_altitude: Meters(50.0),
+        ..aviate_core::kernel::config::ResolvedKernelConfig::default().limits
+    });
+    arm_kernel(&mut floored);
+    let _ = step(&mut floored, &cmd, &sensors, 0);
     assert!(
-        !kernel
+        !floored
             .state
             .checks
             .in_flight

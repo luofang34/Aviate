@@ -183,7 +183,7 @@ mod tests {
     fn construction_surface_is_exercisable() {
         let ctrl = BareQuad::create_controller();
         assert_eq!(
-            ctrl.vel_ctrl.gains,
+            *ctrl.velocity_gains(),
             crate::control::cascade_gains::CascadeGains::default()
         );
         let mixer = BareQuad::create_mixer();
