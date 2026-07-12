@@ -68,7 +68,8 @@ estimator_status_hz = 4
 Rates are valid in `1..=255` Hz. Zero is a configuration error: telemetry
 is disabled with a startup error naming the field, never reinterpreted.
 A rate that does not divide the control-loop rate is rounded down to the
-nearest achievable rate, so the achieved rate never exceeds the request.
+nearest achievable rate, so the achieved rate never exceeds the request
+outside the loop-counter wrap interval (once per ~124 days at 400 Hz).
 
 ### `[security]` Section (Optional)
 

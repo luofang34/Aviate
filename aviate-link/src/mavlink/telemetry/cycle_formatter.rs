@@ -38,7 +38,9 @@ use crate::telemetry::{TelemetryCycleFormatter, TelemetrySnapshot};
 /// construction fails rather than reinterpreting it. Each stream emits
 /// every `ceil(loop_hz / rate_hz)` iterations, so the achieved rate never
 /// exceeds the requested rate; a rate above `loop_hz` is capped at one
-/// emission per loop iteration.
+/// emission per loop iteration. The iteration counter wraps at `u32::MAX`
+/// (about 124 days at 400 Hz), and the one-second window containing the
+/// wrap may carry a single extra frame per stream.
 pub struct MavlinkCycleFormatter {
     /// Heartbeat rate divider (loop_hz / heartbeat_hz)
     heartbeat_div: u32,
@@ -94,29 +96,23 @@ impl MavlinkCycleFormatter {
         if loop_hz == 0 {
             return Err(TelemetryError::ZeroRate("loop_hz"));
         }
-        for (field, hz) in [
-            ("heartbeat_hz", cfg.heartbeat_hz),
-            ("attitude_hz", cfg.attitude_hz),
-            ("position_hz", cfg.position_hz),
-            ("estimator_status_hz", cfg.estimator_status_hz),
-        ] {
-            if hz == 0 {
-                return Err(TelemetryError::ZeroRate(field));
-            }
-        }
 
         // Ceiling division keeps the achieved rate at or below the
         // requested rate; flooring would overshoot every rate that does
-        // not divide loop_hz.
-        fn to_div(loop_hz: u32, msg_hz: u8) -> u32 {
-            loop_hz.div_ceil(u32::from(msg_hz))
+        // not divide loop_hz. The zero check lives in the same call so
+        // no divider can ever be computed from an unvalidated rate.
+        fn to_div(loop_hz: u32, msg_hz: u8, field: &'static str) -> Result<u32, TelemetryError> {
+            if msg_hz == 0 {
+                return Err(TelemetryError::ZeroRate(field));
+            }
+            Ok(loop_hz.div_ceil(u32::from(msg_hz)))
         }
 
         Ok(Self {
-            heartbeat_div: to_div(loop_hz, cfg.heartbeat_hz),
-            attitude_div: to_div(loop_hz, cfg.attitude_hz),
-            position_div: to_div(loop_hz, cfg.position_hz),
-            estimator_status_div: to_div(loop_hz, cfg.estimator_status_hz),
+            heartbeat_div: to_div(loop_hz, cfg.heartbeat_hz, "heartbeat_hz")?,
+            attitude_div: to_div(loop_hz, cfg.attitude_hz, "attitude_hz")?,
+            position_div: to_div(loop_hz, cfg.position_hz, "position_hz")?,
+            estimator_status_div: to_div(loop_hz, cfg.estimator_status_hz, "estimator_status_hz")?,
             seq: 0,
             sys_id,
             comp_id,

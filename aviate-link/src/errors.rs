@@ -17,8 +17,22 @@ pub enum TelemetryError {
     Transport(TransportError),
     /// Protocol-level formatting error
     Protocol,
-    /// A configured rate is zero; carries the offending config field name
+    /// A configured rate is zero; carries the offending config field or
+    /// runtime parameter name
     ZeroRate(&'static str),
+}
+
+impl core::fmt::Display for TelemetryError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            TelemetryError::BufferTooSmall => write!(f, "output buffer too small"),
+            TelemetryError::Transport(e) => write!(f, "transport error: {:?}", e),
+            TelemetryError::Protocol => write!(f, "protocol formatting error"),
+            TelemetryError::ZeroRate(field) => {
+                write!(f, "{} is zero; rates must be 1-255 Hz", field)
+            }
+        }
+    }
 }
 
 /// Result type for telemetry operations
