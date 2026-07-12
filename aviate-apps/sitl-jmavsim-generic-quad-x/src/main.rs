@@ -39,7 +39,6 @@
 //! - `--headless`: Run jMAVSim without GUI window
 //! - `--auto-arm [SECONDS]`: Auto-arm after delay (default: 5 seconds)
 //! - `--jmavsim-dir <PATH>`: Path to jMAVSim directory (default: ~/jMAVSim)
-
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -67,7 +66,7 @@ fn main() {
     println!("  Aviate jMAVSim SITL - Generic Quad-X");
     println!("===========================================");
     println!();
-    println!("Board: {}", JmavSimBoard::board_id());
+    println!("Board: {}", aviate_board_sitl_jmavsim::board_id());
     println!("Airframe: {}", GenericQuadX::AIRFRAME_ID);
     println!("Simulator port: {}", port);
     println!();
@@ -114,7 +113,15 @@ fn main() {
     };
 
     // Create board
-    let mut board = match JmavSimBoard::with_config(config) {
+    let kernel = match aviate_app_sitl_jmavsim_generic_quad_x_kernel::build_x500_kernel() {
+        Ok(kernel) => kernel,
+        Err(e) => {
+            eprintln!("[ERROR] Kernel construction refused: {e:?}");
+            cleanup_jmavsim(&mut jmavsim_process);
+            std::process::exit(1);
+        }
+    };
+    let mut board = match JmavSimBoard::with_config(kernel, config) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("[ERROR] Failed to create board: {}", e);

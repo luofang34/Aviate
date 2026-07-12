@@ -27,7 +27,7 @@
 //! ## Usage
 //!
 //! ```ignore
-//! let mut board = JmavSimBoard::new()?;
+//! let mut board = JmavSimBoard::new(app_built_kernel)?;
 //! board.arm()?;  // Arm manually after init
 //! loop {
 //!     board.step();
@@ -44,60 +44,17 @@ use std::io;
 use log::info;
 
 use aviate_backend_mavlink_hil::{HilBackend, HilBackendConfig};
-use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::Command;
-use aviate_core::mixer::{ActuatorCmd, QuadXMixerX500};
+use aviate_core::mixer::ActuatorCmd;
 use aviate_core::{ArmError, DefaultAviateKernel, InitState};
 
-use aviate_core::control::cascade_gains::CascadeGains;
-use aviate_core::control::ConfigMode;
 use aviate_core::hal::{ActuatorHal, SystemHal};
-use aviate_core::mixer::ModeConfig;
-use aviate_core::AviateKernel;
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{
     SimBaroData, SimGnssData, SimImuData, SimMagData, SimSensorPacket, SitlConfig, SitlIO,
 };
-use aviate_runtime::{loop_periods, sitl_timestamp, SitlBoardInfo, SitlRunner, SitlTime};
-
-/// X500 kernel construction, owned by this app.
-///
-/// Airframe selection is an application decision: the runtime provides
-/// only the generic `SitlRunner`, and this board states visibly that
-/// it flies the X500 controller/mixer pair. One tuning source: the
-/// same `CascadeGains` value and hover trim construct the flying
-/// controller AND land in the lockstep-hashed `ResolvedKernelConfig`;
-/// the builder-level binding check makes a divergent pair
-/// unconstructible. Preset-file loading replaces these literals with
-/// configuration when app-owned preset construction lands.
-pub fn create_x500_kernel() -> DefaultAviateKernel<MultirotorController, QuadXMixerX500> {
-    let gains = CascadeGains::x500_defaults();
-    let hover: f32 = 0.77;
-    let controller = MultirotorController::from_gains(gains, hover);
-    let mixer = QuadXMixerX500 {
-        timestamp_source: sitl_timestamp,
-    };
-    let mode_config = ModeConfig {
-        mode: ConfigMode::Hover,
-        groups: &[],
-    };
-
-    let mut kernel = AviateKernel::new(
-        aviate_core::ekf::Ekf::default(),
-        controller,
-        mixer,
-        aviate_core::mixer::Sanitizer,
-        mode_config,
-    );
-    kernel.cfg.cascade_gains = gains;
-    kernel.cfg.hover_thrust_norm = aviate_core::types::Normalized(hover);
-
-    // Default command carries low throttle, so the throttle pre-arm
-    // check starts satisfied.
-    kernel.state.checks.pre_arm.update_throttle(true);
-
-    kernel
-}
+pub use aviate_runtime::sitl_timestamp;
+use aviate_runtime::{loop_periods, SitlBoardInfo, SitlRunner, SitlTime};
 
 /// jMAVSim board configuration
 ///
@@ -138,25 +95,39 @@ impl Default for JmavSimConfig {
 ///
 /// Uses MAVLink HIL protocol to communicate with jMAVSim simulator.
 /// Delegates control loop to `SitlRunner` from `aviate-runtime`.
-pub struct JmavSimBoard {
+pub struct JmavSimBoard<C, M>
+where
+    C: aviate_core::control::VehicleController,
+    M: aviate_core::mixer::Mixer,
+{
     /// MAVLink HIL backend for communication with jMAVSim
     hil_backend: HilBackend,
 
     /// SITL runner (encapsulates transport, board HAL, and kernel)
-    runner: SitlRunner<MultirotorController, QuadXMixerX500>,
+    runner: SitlRunner<C, M>,
 
     /// Armed state (for MAVLink heartbeat)
     armed: bool,
 }
 
-impl JmavSimBoard {
-    /// Create a new jMAVSim board with default configuration
-    pub fn new() -> io::Result<Self> {
-        Self::with_config(JmavSimConfig::default())
+impl<C, M> JmavSimBoard<C, M>
+where
+    C: aviate_core::control::VehicleController,
+    M: aviate_core::mixer::Mixer,
+{
+    /// Create a board around an app-built kernel with default
+    /// configuration. Airframe selection is the injecting app's
+    /// decision; this board never chooses a controller or mixer.
+    pub fn new(kernel: DefaultAviateKernel<C, M>) -> io::Result<Self> {
+        Self::with_config(kernel, JmavSimConfig::default())
     }
 
-    /// Create a new jMAVSim board with custom configuration
-    pub fn with_config(config: JmavSimConfig) -> io::Result<Self> {
+    /// Create a board around an app-built kernel with custom
+    /// configuration.
+    pub fn with_config(
+        kernel: DefaultAviateKernel<C, M>,
+        config: JmavSimConfig,
+    ) -> io::Result<Self> {
         // Create HilBackend for MAVLink HIL communication with jMAVSim
         let hil_config = HilBackendConfig {
             local_port: config.local_port,
@@ -191,9 +162,7 @@ impl JmavSimBoard {
             fake_actuator,
         );
 
-        let kernel = create_x500_kernel();
-
-        // Create SitlRunner with all components
+        // Create SitlRunner around the injected kernel
         let runner = SitlRunner::new(transport, board_hal, kernel);
 
         Ok(Self {
@@ -346,12 +315,12 @@ impl JmavSimBoard {
     }
 
     /// Get a reference to the kernel
-    pub fn kernel(&self) -> &DefaultAviateKernel<MultirotorController, QuadXMixerX500> {
+    pub fn kernel(&self) -> &DefaultAviateKernel<C, M> {
         &self.runner.kernel
     }
 
     /// Get a mutable reference to the kernel
-    pub fn kernel_mut(&mut self) -> &mut DefaultAviateKernel<MultirotorController, QuadXMixerX500> {
+    pub fn kernel_mut(&mut self) -> &mut DefaultAviateKernel<C, M> {
         &mut self.runner.kernel
     }
 
@@ -386,11 +355,11 @@ impl JmavSimBoard {
         // Send HEARTBEAT - required by jMAVSim to initialize
         self.send_heartbeat();
     }
+}
 
-    /// Get board ID
-    pub fn board_id() -> &'static str {
-        "sitl-jmavsim"
-    }
+/// Board identifier, independent of the injected kernel type.
+pub fn board_id() -> &'static str {
+    "sitl-jmavsim"
 }
 
 /// Board info for jMAVSim SITL
@@ -413,7 +382,7 @@ mod tests {
 
     #[test]
     fn test_board_id() {
-        assert_eq!(JmavSimBoard::board_id(), "sitl-jmavsim");
+        assert_eq!(board_id(), "sitl-jmavsim");
     }
 
     #[test]

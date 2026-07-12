@@ -44,3 +44,17 @@ impl VehicleController for FixedWingController {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::control::VehicleController;
+
+    #[test]
+    fn stub_declares_no_config_binding() {
+        // The stub copies nothing from the resolved configuration, so
+        // binding verification accepts any config — including default.
+        let cfg = crate::kernel::config::ResolvedKernelConfig::default();
+        assert!(FixedWingController.verify_config_binding(&cfg).is_ok());
+    }
+}

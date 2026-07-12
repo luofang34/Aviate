@@ -1,0 +1,11 @@
+[package]
+name = "aviate-app-sitl-jmavsim-generic-quad-x-kernel"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aviate-core = { path = "../../../aviate-core" }
+aviate-runtime = { path = "../../../aviate-runtime", features = ["env-sitl"] }
+
+[lints]
+workspace = true

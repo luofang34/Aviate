@@ -15,7 +15,9 @@ members = [
     "aviate-boards/*",
     # SITL apps only - flight apps have separate workspaces (different target).
     "aviate-apps/sitl-jmavsim-generic-quad-x",
+    "aviate-apps/sitl-jmavsim-generic-quad-x/kernel",
     "aviate-apps/sitl-gazebo-x500",
+    "aviate-apps/sitl-gazebo-x500/kernel",
 
     "tests/lint-verification",
     "tests/gcs-test",

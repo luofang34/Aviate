@@ -24,7 +24,6 @@
 //!
 //! The sensor synthesis, frame conversion math, and noise model live
 //! in `synthesize.rs` and `noise.rs`; main.rs owns only the FC loop.
-
 mod noise;
 mod synthesize;
 
@@ -44,7 +43,11 @@ fn main() -> std::io::Result<()> {
 
     log::info!("aviate sitl-gazebo-x500 starting");
 
-    let mut board = GazeboSitlBoard::new_with_retry(10, 200)?;
+    let mut board = GazeboSitlBoard::new_with_retry(
+        aviate_app_sitl_gazebo_x500_kernel::build_x500_kernel,
+        10,
+        200,
+    )?;
     log::info!("board constructed");
 
     // Connect to the gz-sim system plugin via shared memory. The plugin
