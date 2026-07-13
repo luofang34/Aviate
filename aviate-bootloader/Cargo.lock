@@ -77,7 +77,6 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-bus",
  "embedded-hal-compat",
- "fugit",
  "qmc5883l",
  "spl06-007",
  "stm32h7xx-hal",
