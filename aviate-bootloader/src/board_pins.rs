@@ -1,34 +1,49 @@
-//! Board pin selection based on feature flags
-//!
-//! This module provides the LED pin metadata for the selected board.
-//! Each board crate must export its LED pin definitions.
+//! LED metadata selection for bootloader-supported boards.
 
-#[cfg(feature = "board-micoair-h743-v2")]
-pub use aviate_board_micoair_h743_v2::leds as board_leds;
-
-// Import the chip's LedMetadata type from chip_select
-// NOTE: Use crate::, not super::, since both modules are siblings in src/
 use crate::chip_select::LedMetadata;
 
-/// Board-specific LED pins (converted to chip's LedMetadata format)
+#[cfg(feature = "board-micoair-h743-v2")]
+use aviate_board_micoair_h743_v2_metadata::{GpioPin, GpioPort, STATUS_LEDS};
+#[cfg(feature = "board-micoair-h743-v2")]
+use aviate_chip_stm32h743::Port;
+
+#[cfg(feature = "board-micoair-h743-v2")]
+const fn stm32_port(port: GpioPort) -> Port {
+    match port {
+        GpioPort::A => Port::A,
+        GpioPort::B => Port::B,
+        GpioPort::C => Port::C,
+        GpioPort::D => Port::D,
+        GpioPort::E => Port::E,
+        GpioPort::F => Port::F,
+        GpioPort::G => Port::G,
+        GpioPort::H => Port::H,
+        GpioPort::I => Port::I,
+        GpioPort::J => Port::J,
+        GpioPort::K => Port::K,
+    }
+}
+
+#[cfg(feature = "board-micoair-h743-v2")]
+const fn stm32_pin(pin: GpioPin) -> (Port, u8) {
+    (stm32_port(pin.port), pin.number)
+}
+
+/// LED pins for the selected MicoAir board.
 #[cfg(feature = "board-micoair-h743-v2")]
 pub const SELECTED_BOARD_PINS: LedMetadata = LedMetadata {
-    red: board_leds::RED,
-    green: board_leds::GREEN,
-    blue: board_leds::BLUE,
+    red: stm32_pin(STATUS_LEDS.red),
+    green: stm32_pin(STATUS_LEDS.green),
+    blue: stm32_pin(STATUS_LEDS.blue),
 };
 
-/// Pico 2 - onboard LED on GPIO25
+/// LED pins for Pico 2.
 #[cfg(feature = "pico2")]
 pub const SELECTED_BOARD_PINS: LedMetadata = LedMetadata {
-    red: Some(aviate_chip_rp2350::GpioPin(25)), // Use onboard LED as "red"
+    red: Some(aviate_chip_rp2350::GpioPin(25)),
     green: None,
     blue: None,
 };
 
-// Compile-time check: exactly one board must be selected
-#[cfg(not(any(
-    feature = "board-micoair-h743-v2",
-    feature = "pico2",
-)))]
+#[cfg(not(any(feature = "board-micoair-h743-v2", feature = "pico2",)))]
 compile_error!("No board selected! Enable exactly one board-* feature.");

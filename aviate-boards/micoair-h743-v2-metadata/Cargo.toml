@@ -1,0 +1,13 @@
+[package]
+name = "aviate-board-micoair-h743-v2-metadata"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Dependency-free hardware metadata for the MicoAir H743-V2 board"
+
+[lib]
+name = "aviate_board_micoair_h743_v2_metadata"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

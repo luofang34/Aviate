@@ -39,7 +39,7 @@ chip-stm32h743 = ["dep:aviate-chip-stm32h743"]
 chip-rp2350 = ["dep:aviate-chip-rp2350", "dep:rp235x-hal"]
 
 # Internal: board selection (enables optional board crates)
-board-micoair-h743-v2 = ["dep:aviate-board-micoair-h743-v2"]
+board-micoair-h743-v2 = ["dep:aviate-board-micoair-h743-v2-metadata"]
 
 [dependencies]
 aviate-boot-core = { path = "../aviate-boot-core" }
@@ -51,8 +51,8 @@ aviate-chip-rp2350 = { path = "../aviate-chips/rp2350", optional = true }
 # RP2350 HAL for ImageDef (required for Boot ROM)
 rp235x-hal = { version = "0.3", optional = true, default-features = false }
 
-# Board crates (optional, selected by features)
-aviate-board-micoair-h743-v2 = { path = "../aviate-boards/micoair-h743-v2", features = ["aviate-chip-stm32h743"], optional = true }
+# Board metadata (optional, selected by features)
+aviate-board-micoair-h743-v2-metadata = { path = "../aviate-boards/micoair-h743-v2-metadata", optional = true }
 
 # Architecture-specific runtime dependencies (optional)
 # critical-section is controlled per-arch feature, not here
