@@ -16,7 +16,7 @@ cortex-m = { version = "0.7", default-features = false }
 cortex-m-rt = "0.7"
 
 # RP2350 HAL - provides critical-section-impl
-rp235x-hal = { version = "0.3", features = ["rt", "critical-section-impl"] }
+rp235x-hal = { version = "0.4", features = ["rt", "critical-section-impl"] }
 
 panic-halt = "1.0"
 embedded-hal = "1.0"
