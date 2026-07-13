@@ -25,9 +25,7 @@
 //! ```
 
 use aviate_hal_io::error::{SensorError, SensorResult};
-use aviate_hal_io::traits::{
-    BaroDriver, ImuDriver, MagDriver, RawBaroReading, RawImuReading, RawMagReading,
-};
+use aviate_hal_io::traits::{ImuDriver, RawImuReading};
 
 use crate::Rotation;
 

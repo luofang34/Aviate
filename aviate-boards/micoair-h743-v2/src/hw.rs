@@ -18,12 +18,12 @@ use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
 use aviate_core::ekf::Ekf;
 use aviate_core::hal::{ActuatorHal, SensorHal};
-use aviate_hal_io::SystemCommand;
 use aviate_core::math::{Quaternion, Vector3};
 use aviate_core::mixer::{ModeConfig, QuadXMixer, Sanitizer};
 use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
 use aviate_core::types::{Meters, MetersPerSecond, Normalized, Seconds};
-use aviate_core::{AviateKernel, ChannelId, DefaultAviateKernel, InitState};
+use aviate_core::{ChannelId, DefaultAviateKernel, InitState};
+use aviate_hal_io::SystemCommand;
 
 use aviate_hal_io::traits::{BaroDriver, ImuDriver, MagDriver};
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeImu, FakeMag};
@@ -45,9 +45,6 @@ use aviate_runtime::runner::BoardStep;
 #[cfg(feature = "env-flight")]
 use embedded_hal_compat::ForwardCompat;
 
-// Real sensor drivers
-#[cfg(all(feature = "env-flight", not(feature = "env-hitl")))]
-use crate::drivers::Bmi088Imu;
 #[cfg(all(feature = "env-flight", not(feature = "env-hitl")))]
 use alloc::boxed::Box;
 
@@ -277,7 +274,6 @@ pub struct MicoAirBoard {
     /// Microsecond tick when a `SystemCommand::FlightControl`
     /// frame last refreshed the active command. `None` until the
     /// first uplink arrives; clamps `command_age_ms` to
-
     ekf_initialized: bool,
     iteration: u32,
     iwdg: Option<IWDG>,
@@ -463,18 +459,21 @@ impl MicoAirBoard {
             use embedded_hal::delay::DelayNs;
             delay.delay_ms(100);
 
-            // SPI Device wrappers (RefCellDevice)
-            let accel_dev = RefCellDevice::new(spi2_bus, accel_cs, delay.clone())
-                .expect("Failed to create accel device");
-            let gyro_dev = RefCellDevice::new(spi2_bus, gyro_cs, delay.clone())
-                .expect("Failed to create gyro device");
-
-            // Step 1: Real BMI088
-            let boxed_imu =
-                match Bmi088Imu::new(accel_dev, gyro_dev, &mut delay, crate::Rotation::None) {
-                    Ok(dev) => BoxedImu(Box::new(dev)),
-                    Err(_) => BoxedImu(Box::new(FakeImu::new())),
-                };
+            // SPI device wrappers (RefCellDevice). A failure here means the
+            // CS pin is stuck asserted; fall back to the fake IMU like a
+            // failed BMI088 probe rather than halting the whole board.
+            let boxed_imu = match (
+                RefCellDevice::new(spi2_bus, accel_cs, delay),
+                RefCellDevice::new(spi2_bus, gyro_cs, delay),
+            ) {
+                (Ok(accel_dev), Ok(gyro_dev)) => {
+                    match Bmi088Imu::new(accel_dev, gyro_dev, &mut delay, crate::Rotation::None) {
+                        Ok(dev) => BoxedImu(Box::new(dev)),
+                        Err(_) => BoxedImu(Box::new(FakeImu::new())),
+                    }
+                }
+                _ => BoxedImu(Box::new(FakeImu::new())),
+            };
 
             // Step 2: Fake SPL06 (Baro) - embedded-hal version mismatch
             let _i2c2 = i2c2;
@@ -740,7 +739,8 @@ impl MicoAirBoard {
         match sys_cmd {
             SystemCommand::FlightControl(cmd) => {
                 self.kernel
-                    .state.checks
+                    .state
+                    .checks
                     .pre_arm
                     .update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
             }

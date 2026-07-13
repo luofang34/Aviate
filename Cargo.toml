@@ -30,8 +30,6 @@ exclude = [
     "aviate-bootloader",        # Bootloader has separate workspace (different target/memory layout)
     "aviate-boot-core",         # Bootloader-specific protocol layer
     "aviate-chips",             # Bootloader-specific chip backends
-    "aviate-apps/micoair-h743-v2-quad-x",  # Flight app (separate workspace, different target)
-    "aviate-apps/micoair-h743-v2-x500",
     # Hardware-only crates. Transitively pull in the stm32h7 PAC whose
     # interrupt vector table uses a section attribute that Mach-O/LLVM
     # rejects for host codegen (`cargo test --workspace` links). Excluded

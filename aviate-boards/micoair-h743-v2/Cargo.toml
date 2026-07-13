@@ -1,8 +1,11 @@
 [package]
 name = "aviate-board-micoair-h743-v2"
-edition.workspace = true
-version.workspace = true
-license.workspace = true
+# Explicit fields, not workspace inheritance: the parent workspace
+# excludes this crate (thumbv7em-only), so a standalone
+# `cargo check --manifest-path` has no workspace root to inherit from.
+edition = "2021"
+version = "0.0.0"
+license = "MIT OR Apache-2.0"
 description = "MicoAir H743-V2 flight controller board family for Aviate"
 
 [lib]
