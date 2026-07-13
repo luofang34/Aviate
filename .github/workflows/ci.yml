@@ -267,6 +267,16 @@ jobs:
       - name: Build RP2350 bootloader release on thumbv8m
         run: cargo build --manifest-path aviate-bootloader/Cargo.toml --target thumbv8m.main-none-eabihf --no-default-features --features pico2 --locked --release
 
+      # The test app links into the application partition (0x1001_0000) and
+      # shares the bootloader workspace lockfile. Build it before the ELF
+      # guard so the verifier can prove the handoff artifact, not just the
+      # bootloader.
+      - name: Clippy RP2350 test-app on thumbv8m
+        run: cargo clippy --manifest-path aviate-bootloader/test-app-rp2350/Cargo.toml --target thumbv8m.main-none-eabihf --locked --release -- -D warnings
+
+      - name: Build RP2350 test-app release on thumbv8m
+        run: cargo build --manifest-path aviate-bootloader/test-app-rp2350/Cargo.toml --target thumbv8m.main-none-eabihf --locked --release
+
       - name: Verify bootloader ELF layout
         run: bash scripts/check_bootloader_images.sh
 

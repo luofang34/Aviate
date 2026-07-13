@@ -8,12 +8,10 @@
 #![no_std]
 #![no_main]
 
+use aviate_boot_core::magic::BOOT_TO_BOOTLOADER;
+use embedded_hal::digital::OutputPin;
 use panic_halt as _;
 use rp235x_hal as hal;
-use embedded_hal::digital::OutputPin;
-
-/// Boot magic constant (must match bootloader)
-const BOOT_TO_BOOTLOADER: u32 = 0xb0_07_b0_07;
 
 #[hal::entry]
 fn main() -> ! {
@@ -43,7 +41,9 @@ fn main() -> ! {
 
     // Set want_bootloader flag in watchdog scratch register
     // This tells the bootloader to enter update mode on next boot
-    pac.WATCHDOG.scratch0().write(|w| unsafe { w.bits(BOOT_TO_BOOTLOADER) });
+    pac.WATCHDOG
+        .scratch0()
+        .write(|w| unsafe { w.bits(BOOT_TO_BOOTLOADER) });
 
     // LED on to indicate we're about to reset
     led.set_high().ok();
