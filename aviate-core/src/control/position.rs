@@ -51,12 +51,21 @@ impl PositionController {
     /// tuning identity (one production tuning source; cert/trace
     /// DRQ-CTL-001).
     ///
-    /// A zero-argument constructor must not reappear; both routes
-    /// are pinned uncompilable from outside the crate:
+    /// A defaulting constructor must not reappear; every route is
+    /// pinned uncompilable from outside the crate. The gains-only
+    /// form gets its own pin because a reintroduced
+    /// `new(gains: [Scalar; 3])` would keep the zero-argument
+    /// doctest failing (wrong arity) while defaulting the limits —
+    /// exactly the drift these guards exist to catch:
     ///
     /// ```compile_fail
     /// // No `new()`: limits are explicit, never defaulted.
     /// let _ = aviate_core::control::position::PositionController::new();
+    /// ```
+    ///
+    /// ```compile_fail
+    /// // No gains-only `new` that would default the limits.
+    /// let _ = aviate_core::control::position::PositionController::new([0.0; 3]);
     /// ```
     ///
     /// ```compile_fail
