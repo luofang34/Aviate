@@ -161,6 +161,38 @@ require_load_footprint_below() {
     return $violations
 }
 
+# Read a linker/global symbol's value (hex, no 0x prefix) from the ELF
+# symbol table.
+symbol_value() {
+    local elf=$1
+    local sym=$2
+
+    "$READELF" --syms --wide "$elf" | awk -v s="$sym" '$8 == s { print $2; exit }'
+}
+
+# Assert the linker's FLASH region end stays within the boundary. This
+# checks the actual linker geometry, not the current image: build.rs
+# exports `__aviate_bootloader_flash_region_end = ORIGIN(FLASH) +
+# LENGTH(FLASH)`, so a region sized past the application start fails here
+# even when the (small) image footprint still fits below the boundary.
+require_region_end_within() {
+    local elf=$1
+    local boundary=$2
+    local sym=__aviate_bootloader_flash_region_end
+    local value
+
+    value="$(symbol_value "$elf" "$sym")"
+    if [[ -z "$value" ]]; then
+        echo "FAIL: $elf is missing linker symbol $sym (build.rs must export the FLASH region end)" >&2
+        return 1
+    fi
+    if (( 16#$value > boundary )); then
+        printf 'FAIL: %s FLASH region ends at 0x%08x, past application boundary 0x%08x\n' \
+            "$elf" "$((16#$value))" "$boundary" >&2
+        return 1
+    fi
+}
+
 verify_stm32h743() {
     local elf="$REPO_ROOT/aviate-bootloader/target/thumbv7em-none-eabihf/release/aviate-bootloader"
 
@@ -220,7 +252,25 @@ assert_guard_rejects_crossing() {
             "$decoy_boundary" >&2
         return 1
     fi
-    printf 'RP2350 partition guard self-test: OK (rejects a crossing at 0x%08x)\n' \
+    printf 'RP2350 image-footprint self-test: OK (rejects a crossing at 0x%08x)\n' \
+        "$decoy_boundary"
+}
+
+# Independent negative proof for the region-end guard: re-run it with the
+# boundary lowered below the real FLASH region end. The linker region
+# genuinely extends past that decoy, so a correct guard MUST reject it.
+# This proves the region-capacity check binds to the boundary, distinct
+# from the image-footprint proof above.
+assert_region_guard_rejects_oversize() {
+    local elf=$1
+    local decoy_boundary=$RP2350_VECTOR_TABLE
+
+    if require_region_end_within "$elf" "$decoy_boundary" 2>/dev/null; then
+        printf 'FAIL: region guard accepted a FLASH region past 0x%08x — guard is not effective\n' \
+            "$decoy_boundary" >&2
+        return 1
+    fi
+    printf 'RP2350 region-capacity self-test: OK (rejects a region past 0x%08x)\n' \
         "$decoy_boundary"
 }
 
@@ -241,9 +291,11 @@ verify_rp2350() {
     require_section "$elf" .vector_table "$RP2350_VECTOR_TABLE"
     require_nonempty_section "$elf" .text
     require_load_footprint_below "$elf" "$RP2350_FLASH_BASE" "$boundary" "$RP2350_RAM_BASE"
+    require_region_end_within "$elf" "$boundary"
     assert_guard_rejects_crossing "$elf"
+    assert_region_guard_rejects_oversize "$elf"
 
-    printf 'RP2350 bootloader image: OK (all flash below 0x%08x)\n' "$boundary"
+    printf 'RP2350 bootloader image: OK (image and linker region below 0x%08x)\n' "$boundary"
 }
 
 verify_stm32h743
