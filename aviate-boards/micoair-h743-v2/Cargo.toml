@@ -45,7 +45,7 @@ cortex-m = "0.7"
 cortex-m-rt = "0.7"
 embedded-hal = "1.0"
 
-embedded-alloc = "0.5"
+embedded-alloc = "0.7"
 # USB device stack
 
 
