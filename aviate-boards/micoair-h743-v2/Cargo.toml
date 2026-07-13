@@ -59,7 +59,7 @@ qmc5883l = { path = "../../external/qmc5883l" }
 
 # embedded-hal 0.2 → 1.0 compatibility layer
 embedded-hal-compat = "0.13"
-embedded-hal-bus = "0.2"
+embedded-hal-bus = "0.3"
 
 [package.metadata.aviate-board]
 chip = "STM32H743VITx"        # probe-rs target name
