@@ -82,6 +82,16 @@ require_nonempty_section() {
     fi
 }
 
+require_absent_section() {
+    local elf=$1
+    local section=$2
+
+    if [[ -n "$(section_fields "$elf" "$section")" ]]; then
+        printf 'FAIL: %s must not contain %s\n' "$elf" "$section" >&2
+        return 1
+    fi
+}
+
 require_entry_in_range() {
     local elf=$1
     local range_start=$2
@@ -212,6 +222,9 @@ readonly RP2350_FLASH_BASE=0x10000000
 readonly RP2350_RAM_BASE=0x20000000
 readonly RP2350_START_BLOCK=0x10000000
 readonly RP2350_VECTOR_TABLE=0x10000100
+# Top of the XIP flash window (16 MiB max) — upper bound for the
+# application entry-point range.
+readonly RP2350_FLASH_TOP=0x11000000
 
 # The bootloader/application partition boundary, read from its single
 # source of truth (the backend handoff constant). The test-app origin,
@@ -298,5 +311,30 @@ verify_rp2350() {
     printf 'RP2350 bootloader image: OK (image and linker region below 0x%08x)\n' "$boundary"
 }
 
+verify_test_app_rp2350() {
+    local elf="$REPO_ROOT/aviate-bootloader/target/thumbv8m.main-none-eabihf/release/test-app-rp2350"
+    local boundary
+
+    [[ -f "$elf" ]] || {
+        echo "FAIL: RP2350 test-app ELF not found: $elf" >&2
+        return 1
+    }
+
+    boundary="$(rp2350_boundary)" || return 1
+
+    # The application vector table sits exactly at the partition boundary,
+    # where the bootloader hands off. The entry must be nonzero and inside
+    # the application region, .text must be present, and there must be no
+    # .start_block — the Boot ROM validates only the bootloader image.
+    require_section "$elf" .vector_table "$boundary"
+    require_nonempty_section "$elf" .text
+    require_entry_in_range "$elf" "$boundary" "$RP2350_FLASH_TOP"
+    require_absent_section "$elf" .start_block
+
+    printf 'RP2350 test-app image: OK (vector and entry in the application region above 0x%08x)\n' \
+        "$boundary"
+}
+
 verify_stm32h743
 verify_rp2350
+verify_test_app_rp2350

@@ -1,5 +1,8 @@
 # Standalone bootloader package (not part of main workspace due to different target/memory layout)
 [workspace]
+# The RP2350 test app shares this workspace's lockfile so the bootloader,
+# the chip backend, and the test app resolve one rp235x-hal/PAC version.
+members = ["test-app-rp2350"]
 
 [package]
 name = "aviate-bootloader"
@@ -49,7 +52,7 @@ aviate-chip-stm32h743 = { path = "../aviate-chips/stm32h743", optional = true }
 aviate-chip-rp2350 = { path = "../aviate-chips/rp2350", optional = true }
 
 # RP2350 HAL for ImageDef (required for Boot ROM)
-rp235x-hal = { version = "0.3", optional = true, default-features = false }
+rp235x-hal = { version = "0.4", optional = true, default-features = false }
 
 # Board metadata (optional, selected by features)
 aviate-board-micoair-h743-v2-metadata = { path = "../aviate-boards/micoair-h743-v2-metadata", optional = true }
