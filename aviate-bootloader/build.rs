@@ -109,8 +109,8 @@ fn get_flash_region(
 
     // Validate against expected base
     if base != expected_base as u64 {
-        eprintln!(
-            "Warning: {} flash base {:#x} differs from expected {:#x}",
+        println!(
+            "cargo:warning={} flash base {:#x} differs from expected {:#x}",
             chip, base, expected_base
         );
     }
@@ -223,18 +223,23 @@ fn main() -> Result<()> {
 
     // Get target from probe-rs registry
     let registry = Registry::from_builtin_families();
-    let target = registry.get_target_by_name(config.target_name).map_err(|e| {
-        anyhow::anyhow!(
-            "Target '{}' not found in probe-rs registry: {}\n\
+    let target = registry
+        .get_target_by_name(config.target_name)
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Target '{}' not found in probe-rs registry: {}\n\
              Make sure probe-rs version supports this chip.",
-            config.target_name,
-            e
-        )
-    })?;
+                config.target_name,
+                e
+            )
+        })?;
 
     // Extract memory regions
-    let (flash_base, flash_size) =
-        get_flash_region(&target.memory_map, config.target_name, config.expected_flash_base)?;
+    let (flash_base, flash_size) = get_flash_region(
+        &target.memory_map,
+        config.target_name,
+        config.expected_flash_base,
+    )?;
 
     let (ram_base, ram_size) =
         get_ram_region(&target.memory_map, config.target_name, &config.ram_selector)?;
@@ -250,7 +255,8 @@ fn main() -> Result<()> {
     );
 
     // Write to OUT_DIR
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    let out_dir =
+        PathBuf::from(env::var_os("OUT_DIR").ok_or_else(|| anyhow::anyhow!("OUT_DIR is not set"))?);
     let memory_x_path = out_dir.join("memory.x");
 
     let mut file = fs::File::create(&memory_x_path)?;
@@ -258,6 +264,8 @@ fn main() -> Result<()> {
 
     // Tell cargo to use this directory for linker scripts
     println!("cargo:rustc-link-search={}", out_dir.display());
+    // The caller's RUSTFLAGS override Cargo config, so the package owns this invariant.
+    println!("cargo:rustc-link-arg=-Tlink.x");
 
     // Report what we generated
     println!(
