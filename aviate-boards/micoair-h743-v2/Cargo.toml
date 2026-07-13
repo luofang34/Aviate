@@ -34,9 +34,7 @@ aviate-hal-stm32h7 = { path = "../../aviate-hal/stm32h7" }
 aviate-drivers = { path = "../../aviate-drivers" }
 aviate-runtime = { path = "../../aviate-runtime", optional = true }
 aviate-link = { path = "../../aviate-link" }
-
-# Bootloader chip backend (optional, for bootloader LED pin definitions)
-aviate-chip-stm32h743 = { path = "../../aviate-chips/stm32h743", optional = true }
+aviate-board-micoair-h743-v2-metadata = { path = "../micoair-h743-v2-metadata" }
 
 # STM32H7 HAL with USB support
 # Note: usb_hs feature provides USB OTG support (can be configured for FS mode)

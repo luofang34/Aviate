@@ -250,6 +250,9 @@ jobs:
       - name: Build MicoAir board release on thumbv7em (env-flight)
         run: cargo build --manifest-path aviate-boards/micoair-h743-v2/Cargo.toml --target thumbv7em-none-eabihf --features env-flight --locked --release
 
+      - name: Verify bootloader dependency boundary
+        run: bash scripts/check_bootloader_dependency_boundary.sh
+
       # The bootloader is a standalone workspace, so the root checks do not
       # exercise its target-gated chip code or linker scripts.
       - name: Clippy STM32H743 bootloader on thumbv7em

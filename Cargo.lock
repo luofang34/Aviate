@@ -165,6 +165,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aviate-board-micoair-h743-v2-metadata"
+version = "0.0.0"
+
+[[package]]
 name = "aviate-board-pico2"
 version = "0.0.0"
 

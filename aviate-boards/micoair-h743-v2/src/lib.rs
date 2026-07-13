@@ -190,24 +190,6 @@ pub mod hal {
 #[cfg(feature = "software-bootloader")]
 pub mod bootloader;
 
-/// LED pin assignments for bootloader
-///
-/// These pins are used by the bootloader for status indication.
-/// LEDs are active-low on this board.
-#[cfg(feature = "aviate-chip-stm32h743")]
-pub mod leds {
-    use aviate_chip_stm32h743::Port;
-
-    /// Red LED pin (PE3, active low)
-    pub const RED: (Port, u8) = (Port::E, 3);
-
-    /// Green LED pin (PE2, active low)
-    pub const GREEN: (Port, u8) = (Port::E, 2);
-
-    /// Blue LED pin (PE4, active low)
-    pub const BLUE: (Port, u8) = (Port::E, 4);
-}
-
 /// Board identification
 #[cfg(not(feature = "aio"))]
 pub const BOARD_ID: &str = "micoair-h743-v2";
@@ -379,12 +361,14 @@ pub mod pins {
 
     /// Status LED pins
     pub mod leds {
+        use aviate_board_micoair_h743_v2_metadata::STATUS_LEDS;
+
         /// Red LED (PE3, active low)
-        pub const RED: (char, u8) = ('E', 3);
+        pub const RED: (char, u8) = STATUS_LEDS.red.as_tuple();
         /// Green LED (PE2, active low)
-        pub const GREEN: (char, u8) = ('E', 2);
+        pub const GREEN: (char, u8) = STATUS_LEDS.green.as_tuple();
         /// Blue LED (PE4, active low)
-        pub const BLUE: (char, u8) = ('E', 4);
+        pub const BLUE: (char, u8) = STATUS_LEDS.blue.as_tuple();
     }
 
     /// UART assignments

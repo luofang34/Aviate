@@ -6,8 +6,8 @@ version = 4
 name = "aviate-board-micoair-h743-v2"
 version = "0.0.0"
 dependencies = [
+ "aviate-board-micoair-h743-v2-metadata",
  "aviate-boot-core",
- "aviate-chip-stm32h743",
  "aviate-core",
  "aviate-drivers",
  "aviate-hal-io",
@@ -27,22 +27,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "aviate-boot-core"
+name = "aviate-board-micoair-h743-v2-metadata"
 version = "0.0.0"
 
 [[package]]
-name = "aviate-chip-stm32h743"
+name = "aviate-boot-core"
 version = "0.0.0"
-dependencies = [
- "aviate-boot-core",
- "cortex-m",
- "cortex-m-rt",
- "embedded-hal 1.0.0",
- "panic-halt",
- "stm32h7xx-hal",
- "usb-device",
- "usbd-dfu",
-]
 
 [[package]]
 name = "aviate-config"
@@ -445,12 +435,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d5439c4ad607c3c23abf66de8c8bf57ba8adcd1f129e699851a6e43935d339d"
 
 [[package]]
-name = "panic-halt"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a513e167849a384b7f9b746e517604398518590a9142f4846a32e3c2a4de7b11"
-
-[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -687,15 +671,6 @@ checksum = "98816b1accafbb09085168b90f27e93d790b4bfa19d883466b5e53315b5f06a6"
 dependencies = [
  "heapless",
  "portable-atomic",
-]
-
-[[package]]
-name = "usbd-dfu"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48a6b0820a430446fd361a89ca0d0b9572134d307cc8f4a77c0cce973a78b820"
-dependencies = [
- "usb-device",
 ]
 
 [[package]]
