@@ -264,6 +264,9 @@ jobs:
       - name: Build RP2350 bootloader release on thumbv8m
         run: cargo build --manifest-path aviate-bootloader/Cargo.toml --target thumbv8m.main-none-eabihf --no-default-features --features pico2 --locked --release
 
+      - name: Verify bootloader ELF layout
+        run: bash scripts/check_bootloader_images.sh
+
       - name: Clippy (host)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
