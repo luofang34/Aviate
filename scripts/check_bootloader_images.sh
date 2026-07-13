@@ -238,10 +238,10 @@ require_rp2350_boundary_agreement() {
 }
 
 # Negative proof (mutation): re-run the footprint guard with the boundary
-# lowered to just past the vector table. The real bootloader's .text and
-# .rodata sit above that, so a correct guard MUST reject it. If this
-# lowered check passes, the guard is broken and cannot be trusted to
-# catch a real crossing — fail loudly.
+# lowered to the vector-table start. The real bootloader's .text and
+# .rodata load above the vector table, so a correct guard MUST reject it.
+# If this lowered check passes, the guard is broken and cannot be trusted
+# to catch a real crossing — fail loudly.
 assert_guard_rejects_crossing() {
     local elf=$1
     local decoy_boundary=$RP2350_VECTOR_TABLE
