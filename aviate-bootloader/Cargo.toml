@@ -64,7 +64,7 @@ panic-halt = "1.0"
 
 [build-dependencies]
 # probe-rs for dynamic memory.x generation from chip registry
-probe-rs = { version = "0.30", default-features = false, features = ["builtin-targets"] }
+probe-rs = { version = "0.31", default-features = false, features = ["builtin-targets"] }
 anyhow = "1.0"
 
 [profile.release]
