@@ -1,10 +1,9 @@
 version: 2
 updates:
-  # Root workspace + bootloader workspace (separate Cargo.lock).
+  # Root workspace. Keep it separate from the bootloader workspace so
+  # grouped updates cannot regenerate an unverified second lockfile.
   - package-ecosystem: cargo
-    directories:
-      - "/"
-      - "/aviate-bootloader"
+    directory: "/"
     schedule:
       interval: weekly
       day: monday
@@ -16,6 +15,30 @@ updates:
       # Bmi2's generics and new_spi's signature); aviate-drivers exact-pins
       # it. Bump manually with a migration, never automatically.
       - dependency-name: bmi2
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Bootloader workspace. Its dependency and lockfile updates stay in
+  # their own PR so the real-target evidence tracked by #92 can review
+  # them without unrelated root-workspace changes.
+  - package-ecosystem: cargo
+    directory: "/aviate-bootloader"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    ignore:
+      # stm32h7xx-hal 0.16 still pins fugit 0.3; bumping fugit alone
+      # splits the Instant/Duration types between the MicoAir watchdog
+      # and the HAL and fails to typecheck. Lift when stm32h7xx-hal
+      # moves to fugit 0.4, then bump both together.
+      - dependency-name: fugit
+        versions: [">=0.4.0"]
     groups:
       cargo-minor-patch:
         update-types:
