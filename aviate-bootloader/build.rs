@@ -11,6 +11,20 @@ use std::path::PathBuf;
 use anyhow::{bail, Result};
 use probe_rs::config::{MemoryRegion, Registry};
 
+/// RP2350 flash base — the Boot ROM maps XIP flash here.
+const RP2350_FLASH_BASE: u32 = 0x1000_0000;
+
+/// RP2350 bootloader/application partition boundary. The application
+/// is linked here and the Boot ROM hands off to it, so the bootloader
+/// FLASH region must end at or before this address.
+///
+/// This is the single boundary invariant. It MUST equal
+/// `aviate_chip_rp2350::APP_START` and the test-app's linker origin;
+/// `scripts/check_bootloader_images.sh` enforces the agreement against
+/// the linked ELF (a build script cannot import the chip crate's
+/// constant, so CI binds the two).
+const RP2350_APP_START: u32 = 0x1001_0000;
+
 /// Chip family for platform-specific linker script sections
 #[derive(Clone, Copy, PartialEq)]
 enum ChipFamily {
@@ -58,9 +72,13 @@ fn get_chip_config() -> Result<ChipConfig> {
     } else if chip_rp2350 {
         Ok(ChipConfig {
             target_name: "RP2350",
-            expected_flash_base: 0x1000_0000,
+            expected_flash_base: RP2350_FLASH_BASE,
             ram_selector: RamSelector::Largest,
-            bootloader_flash_limit: 256 * 1024, // 256KB for bootloader
+            // Cap the region at the partition boundary so the linker
+            // physically cannot place bootloader bytes into the
+            // application region (link fails with a region-overflow
+            // error long before an overlapping image is produced).
+            bootloader_flash_limit: RP2350_APP_START - RP2350_FLASH_BASE,
             family: ChipFamily::Rp2350,
         })
     } else {
