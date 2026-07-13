@@ -80,7 +80,9 @@ impl CrashBackend for Rp2350CrashBackend {
             0
         };
 
-        self.watchdog.scratch0().write(|w| unsafe { w.bits(want_bl) });
+        self.watchdog
+            .scratch0()
+            .write(|w| unsafe { w.bits(want_bl) });
         self.watchdog.scratch1().write(|w| unsafe { w.bits(crash) });
         self.watchdog.scratch2().write(|w| unsafe { w.bits(fw_ok) });
     }
@@ -116,17 +118,29 @@ pub struct Rp2350LedBackend {
 }
 
 impl Rp2350LedBackend {
-    pub fn new(io_bank: pac::IO_BANK0, pads: pac::PADS_BANK0, sio: pac::SIO, metadata: Rp2350LedMetadata) -> Self {
+    pub fn new(
+        io_bank: pac::IO_BANK0,
+        pads: pac::PADS_BANK0,
+        sio: pac::SIO,
+        metadata: Rp2350LedMetadata,
+    ) -> Self {
         // Configure LED pins as outputs if specified
         // Enable GPIO function (function 5 = SIO) for each LED pin
-        for pin in [metadata.red, metadata.green, metadata.blue].iter().flatten() {
+        for pin in [metadata.red, metadata.green, metadata.blue]
+            .iter()
+            .flatten()
+        {
             let pin_num = pin.0 as usize;
 
             // Set pad to output enable (using indexed gpio accessor)
-            pads.gpio(pin_num).modify(|_, w| w.ie().set_bit().od().clear_bit());
+            pads.gpio(pin_num)
+                .modify(|_, w| w.ie().set_bit().od().clear_bit());
 
             // Set function to SIO (function 5)
-            io_bank.gpio(pin_num).gpio_ctrl().write(|w| w.funcsel().sio());
+            io_bank
+                .gpio(pin_num)
+                .gpio_ctrl()
+                .write(|w| w.funcsel().sio());
 
             // Enable output
             sio.gpio_oe_set().write(|w| unsafe { w.bits(1 << pin_num) });
@@ -141,9 +155,13 @@ impl Rp2350LedBackend {
     fn set_pin(&mut self, pin: Option<GpioPin>, on: bool) {
         if let Some(p) = pin {
             if on {
-                self.sio.gpio_out_set().write(|w| unsafe { w.bits(1 << p.0) });
+                self.sio
+                    .gpio_out_set()
+                    .write(|w| unsafe { w.bits(1 << p.0) });
             } else {
-                self.sio.gpio_out_clr().write(|w| unsafe { w.bits(1 << p.0) });
+                self.sio
+                    .gpio_out_clr()
+                    .write(|w| unsafe { w.bits(1 << p.0) });
             }
         }
     }

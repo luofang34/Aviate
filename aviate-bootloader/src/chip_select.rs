@@ -21,8 +21,5 @@ impl SelectedChip {
 }
 
 // Compile-time check: exactly one chip must be selected
-#[cfg(not(any(
-    feature = "chip-stm32h743",
-    feature = "chip-rp2350",
-)))]
+#[cfg(not(any(feature = "chip-stm32h743", feature = "chip-rp2350",)))]
 compile_error!("No chip selected! Enable exactly one chip-* feature.");
