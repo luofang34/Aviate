@@ -23,9 +23,9 @@
 //! ```
 
 use aviate_hal_io::WatchdogHal;
-use fugit::ExtU32;
 use stm32h7xx_hal::independent_watchdog::IndependentWatchdog;
 use stm32h7xx_hal::pac::IWDG;
+use stm32h7xx_hal::time::MilliSeconds;
 
 /// Board-level watchdog wrapper
 ///
@@ -64,8 +64,8 @@ impl BoardWatchdog {
         let mut watchdog = IndependentWatchdog::new(iwdg);
 
         // Start with specified timeout
-        // Note: stm32h7xx-hal uses fugit duration types
-        watchdog.start(timeout_ms.millis());
+        // Use the HAL-exported type so its dependency version cannot diverge here.
+        watchdog.start(MilliSeconds::from_ticks(timeout_ms));
 
         Self {
             iwdg: watchdog,
