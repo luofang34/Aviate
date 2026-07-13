@@ -45,15 +45,24 @@ pub struct PositionController {
 }
 
 impl PositionController {
-    /// Constructor with sensible defaults for a multirotor like
-    /// the X500: horizontal `(p=0.3, a=1.5, vel=2.0)`, vertical
-    /// `(p=0.6, a=1.5, vel=3.0)`. The Z `a=1.5` is below the
-    /// X500's measured ~2.9 m/s² max upward braking authority at
-    /// thrust=1.0; `vel_cap_z = 3.0` is above `a/p = 2.5` so the
-    /// sqrt branch actually engages during cruise descent.
-    /// Explicit per-axis tuning. Reach for this when the airframe's
-    /// brake authority differs from the X500 defaults (heavier
-    /// payload, lower max thrust, etc).
+    /// Explicit per-axis tuning — the only constructor. Limits come
+    /// from the hash-covered airframe config, so there is no
+    /// implicit-default variant that could drift out from under the
+    /// tuning identity (one production tuning source; cert/trace
+    /// DRQ-CTL-001).
+    ///
+    /// A zero-argument constructor must not reappear; both routes
+    /// are pinned uncompilable from outside the crate:
+    ///
+    /// ```compile_fail
+    /// // No `new()`: limits are explicit, never defaulted.
+    /// let _ = aviate_core::control::position::PositionController::new();
+    /// ```
+    ///
+    /// ```compile_fail
+    /// // No `Default` impl either, for the same reason.
+    /// let _ = aviate_core::control::position::PositionController::default();
+    /// ```
     pub fn with_limits(
         gains: [Scalar; 3],
         accel_limits: [Scalar; 3],
