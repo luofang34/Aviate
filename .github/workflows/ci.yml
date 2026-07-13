@@ -216,8 +216,8 @@ jobs:
         with:
           components: clippy
 
-      - name: Install ARM target
-        run: rustup target add thumbv7em-none-eabihf
+      - name: Install ARM targets
+        run: rustup target add thumbv7em-none-eabihf thumbv8m.main-none-eabihf
 
       - name: Cache cargo registry
         uses: actions/cache@v6
@@ -226,6 +226,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
+            aviate-bootloader/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Verify workspace manifest
@@ -241,13 +242,27 @@ jobs:
       # (thumbv7em-only), so nothing above compiles it. env-flight is the
       # real-hardware path: hw.rs + USB CDC + aviate-runtime/env-flight.
       - name: Check MicoAir board on thumbv7em (env-flight)
-        run: cargo check --manifest-path aviate-boards/micoair-h743-v2/Cargo.toml --target thumbv7em-none-eabihf --features env-flight
+        run: cargo check --manifest-path aviate-boards/micoair-h743-v2/Cargo.toml --target thumbv7em-none-eabihf --features env-flight --locked
 
       - name: Clippy MicoAir board on thumbv7em (env-flight)
-        run: cargo clippy --manifest-path aviate-boards/micoair-h743-v2/Cargo.toml --target thumbv7em-none-eabihf --features env-flight -- -D warnings
+        run: cargo clippy --manifest-path aviate-boards/micoair-h743-v2/Cargo.toml --target thumbv7em-none-eabihf --features env-flight --locked -- -D warnings
 
       - name: Build MicoAir board release on thumbv7em (env-flight)
-        run: cargo build --manifest-path aviate-boards/micoair-h743-v2/Cargo.toml --target thumbv7em-none-eabihf --features env-flight --release
+        run: cargo build --manifest-path aviate-boards/micoair-h743-v2/Cargo.toml --target thumbv7em-none-eabihf --features env-flight --locked --release
+
+      # The bootloader is a standalone workspace, so the root checks do not
+      # exercise its target-gated chip code or linker scripts.
+      - name: Clippy STM32H743 bootloader on thumbv7em
+        run: cargo clippy --manifest-path aviate-bootloader/Cargo.toml --target thumbv7em-none-eabihf --no-default-features --features micoair-h743-v2 --locked -- -D warnings
+
+      - name: Build STM32H743 bootloader release on thumbv7em
+        run: cargo build --manifest-path aviate-bootloader/Cargo.toml --target thumbv7em-none-eabihf --no-default-features --features micoair-h743-v2 --locked --release
+
+      - name: Clippy RP2350 bootloader on thumbv8m
+        run: cargo clippy --manifest-path aviate-bootloader/Cargo.toml --target thumbv8m.main-none-eabihf --no-default-features --features pico2 --locked -- -D warnings
+
+      - name: Build RP2350 bootloader release on thumbv8m
+        run: cargo build --manifest-path aviate-bootloader/Cargo.toml --target thumbv8m.main-none-eabihf --no-default-features --features pico2 --locked --release
 
       - name: Clippy (host)
         run: cargo clippy --workspace --all-targets -- -D warnings
