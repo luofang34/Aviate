@@ -18,12 +18,12 @@
 //! - Counter-based timing (no floating point in timing)
 
 use aviate_core::control::{Command, ControlMode, Setpoint};
-use aviate_hal_io::SystemCommand;
 use aviate_core::math::Quaternion;
 use aviate_core::types::{FloatExt, Normalized, RadiansPerSecond};
 use aviate_hal_io::transport_hal::{
     SystemState, TransportHal, TransportStatus as TransportHalStatus,
 };
+use aviate_hal_io::SystemCommand;
 use aviate_hal_stm32h7::{Stm32h7UsbCdc, UsbMetrics};
 
 use aviate_link::mavlink::protocol::{
@@ -36,8 +36,6 @@ use stm32h7xx_hal::usb_hs::USB2;
 // =============================================================================
 // Constants
 // =============================================================================
-
-/// Maximum bytes to process per service call (bounded WCET)
 
 /// MAVLink frame accumulator size
 const MAV_BUF_SIZE: usize = 300;
@@ -217,7 +215,7 @@ impl SerialTransport {
     fn maybe_send_heartbeat(&mut self) {
         self.tick_counter = self.tick_counter.wrapping_add(1);
 
-        if self.tick_counter % HEARTBEAT_INTERVAL_TICKS == 0 {
+        if self.tick_counter.is_multiple_of(HEARTBEAT_INTERVAL_TICKS) {
             self.send_heartbeat();
         }
     }
@@ -384,8 +382,9 @@ const DFU_TIMEOUT_TICKS: u32 = 10000;
 const DFU_RETRANSMIT_TICKS: u32 = 200;
 
 #[cfg(feature = "software-bootloader")]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 enum DfuState {
+    #[default]
     Idle,
     /// Matching "dfu" command
     WaitDfu(usize),
@@ -402,13 +401,6 @@ enum DfuState {
         /// Tick counter when challenge started (for timeout)
         start_tick: u32,
     },
-}
-
-#[cfg(feature = "software-bootloader")]
-impl Default for DfuState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 #[cfg(feature = "software-bootloader")]
@@ -484,7 +476,7 @@ impl SerialTransport {
                 }
 
                 // Only accept ASCII digits for the code
-                if byte >= b'0' && byte <= b'9' {
+                if byte.is_ascii_digit() {
                     if idx < 4 {
                         buf[idx] = byte;
                         idx += 1;
@@ -530,7 +522,7 @@ impl SerialTransport {
         }
         let mut val: u16 = 0;
         for &b in &bytes[..4] {
-            if b < b'0' || b > b'9' {
+            if !b.is_ascii_digit() {
                 return None;
             }
             val = val * 10 + (b - b'0') as u16;
@@ -553,36 +545,34 @@ impl SerialTransport {
 
     /// Periodic update to handle retransmission and timeout
     fn update_dfu_state(&mut self) {
-        match self.dfu_state {
-            DfuState::WaitConfirm {
-                code,
-                idx,
-                buf,
-                last_sent,
-                start_tick,
-            } => {
-                let now = self.tick_counter;
+        if let DfuState::WaitConfirm {
+            code,
+            idx,
+            buf,
+            last_sent,
+            start_tick,
+        } = self.dfu_state
+        {
+            let now = self.tick_counter;
 
-                // Check timeout (5 seconds)
-                if now.wrapping_sub(start_tick) > DFU_TIMEOUT_TICKS {
-                    let _ = self.usb.try_write(b"DFU:TIMEOUT\r\n");
-                    self.dfu_state = DfuState::Idle;
-                    return;
-                }
-
-                // Retransmit every 200ms
-                if now.wrapping_sub(last_sent) > DFU_RETRANSMIT_TICKS {
-                    self.send_dfu_confirm(code);
-                    self.dfu_state = DfuState::WaitConfirm {
-                        code,
-                        idx,
-                        buf,
-                        last_sent: now,
-                        start_tick,
-                    };
-                }
+            // Check timeout (5 seconds)
+            if now.wrapping_sub(start_tick) > DFU_TIMEOUT_TICKS {
+                let _ = self.usb.try_write(b"DFU:TIMEOUT\r\n");
+                self.dfu_state = DfuState::Idle;
+                return;
             }
-            _ => {}
+
+            // Retransmit every 200ms
+            if now.wrapping_sub(last_sent) > DFU_RETRANSMIT_TICKS {
+                self.send_dfu_confirm(code);
+                self.dfu_state = DfuState::WaitConfirm {
+                    code,
+                    idx,
+                    buf,
+                    last_sent: now,
+                    start_tick,
+                };
+            }
         }
     }
 

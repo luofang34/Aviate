@@ -39,9 +39,10 @@ const FAST_BLINK_HALF_PERIOD: u32 = UPDATE_RATE_HZ / 10; // 100 ticks
 const SLOW_BLINK_HALF_PERIOD: u32 = UPDATE_RATE_HZ / 2; // 500 ticks
 
 /// LED state for visual feedback
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum LedState {
     /// Boot: Blue solid (system initializing)
+    #[default]
     Boot,
     /// Calibrating: Blue fast blink (sensors calibrating)
     Calibrating,
@@ -53,12 +54,6 @@ pub enum LedState {
     Critical,
     /// Emergency: Red solid (motors cut)
     Emergency,
-}
-
-impl Default for LedState {
-    fn default() -> Self {
-        Self::Boot
-    }
 }
 
 /// LED heartbeat controller
@@ -89,9 +84,9 @@ impl LedHeartbeat {
     ) -> Self {
         // Start with blue on (Boot state)
         // Active low: set_low() turns LED ON
-        let _ = green.set_high(); // OFF
-        let _ = red.set_high(); // OFF
-        let _ = blue.set_low(); // ON (Boot)
+        green.set_high(); // OFF
+        red.set_high(); // OFF
+        blue.set_low(); // ON (Boot)
 
         Self {
             green,
@@ -125,58 +120,58 @@ impl LedHeartbeat {
         self.tick = self.tick.wrapping_add(1);
 
         // Determine blink phase
-        let fast_on = (self.tick / FAST_BLINK_HALF_PERIOD) % 2 == 0;
-        let slow_on = (self.tick / SLOW_BLINK_HALF_PERIOD) % 2 == 0;
+        let fast_on = (self.tick / FAST_BLINK_HALF_PERIOD).is_multiple_of(2);
+        let slow_on = (self.tick / SLOW_BLINK_HALF_PERIOD).is_multiple_of(2);
 
         // Set LEDs based on state (active low: set_low = ON)
         match self.state {
             LedState::Boot => {
                 // Blue solid
-                let _ = self.green.set_high(); // OFF
-                let _ = self.red.set_high(); // OFF
-                let _ = self.blue.set_low(); // ON
+                self.green.set_high(); // OFF
+                self.red.set_high(); // OFF
+                self.blue.set_low(); // ON
             }
             LedState::Calibrating => {
                 // Blue fast blink
-                let _ = self.green.set_high(); // OFF
-                let _ = self.red.set_high(); // OFF
+                self.green.set_high(); // OFF
+                self.red.set_high(); // OFF
                 if fast_on {
-                    let _ = self.blue.set_low(); // ON
+                    self.blue.set_low(); // ON
                 } else {
-                    let _ = self.blue.set_high(); // OFF
+                    self.blue.set_high(); // OFF
                 }
             }
             LedState::Standby => {
                 // Green slow blink
-                let _ = self.red.set_high(); // OFF
-                let _ = self.blue.set_high(); // OFF
+                self.red.set_high(); // OFF
+                self.blue.set_high(); // OFF
                 if slow_on {
-                    let _ = self.green.set_low(); // ON
+                    self.green.set_low(); // ON
                 } else {
-                    let _ = self.green.set_high(); // OFF
+                    self.green.set_high(); // OFF
                 }
             }
             LedState::Active => {
                 // Green solid
-                let _ = self.green.set_low(); // ON
-                let _ = self.red.set_high(); // OFF
-                let _ = self.blue.set_high(); // OFF
+                self.green.set_low(); // ON
+                self.red.set_high(); // OFF
+                self.blue.set_high(); // OFF
             }
             LedState::Critical => {
                 // Red fast blink
-                let _ = self.green.set_high(); // OFF
-                let _ = self.blue.set_high(); // OFF
+                self.green.set_high(); // OFF
+                self.blue.set_high(); // OFF
                 if fast_on {
-                    let _ = self.red.set_low(); // ON
+                    self.red.set_low(); // ON
                 } else {
-                    let _ = self.red.set_high(); // OFF
+                    self.red.set_high(); // OFF
                 }
             }
             LedState::Emergency => {
                 // Red solid
-                let _ = self.green.set_high(); // OFF
-                let _ = self.red.set_low(); // ON
-                let _ = self.blue.set_high(); // OFF
+                self.green.set_high(); // OFF
+                self.red.set_low(); // ON
+                self.blue.set_high(); // OFF
             }
         }
     }
@@ -185,9 +180,9 @@ impl LedHeartbeat {
     ///
     /// Use for power-down or entering DFU mode.
     pub fn all_off(&mut self) {
-        let _ = self.green.set_high();
-        let _ = self.red.set_high();
-        let _ = self.blue.set_high();
+        self.green.set_high();
+        self.red.set_high();
+        self.blue.set_high();
     }
 
     /// Set RGB directly (for testing)
@@ -196,19 +191,19 @@ impl LedHeartbeat {
     #[cfg(test)]
     pub fn set_rgb(&mut self, green: bool, red: bool, blue: bool) {
         if green {
-            let _ = self.green.set_low();
+            self.green.set_low();
         } else {
-            let _ = self.green.set_high();
+            self.green.set_high();
         }
         if red {
-            let _ = self.red.set_low();
+            self.red.set_low();
         } else {
-            let _ = self.red.set_high();
+            self.red.set_high();
         }
         if blue {
-            let _ = self.blue.set_low();
+            self.blue.set_low();
         } else {
-            let _ = self.blue.set_high();
+            self.blue.set_high();
         }
     }
 }

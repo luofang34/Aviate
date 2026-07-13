@@ -237,6 +237,18 @@ jobs:
       - name: Check embedded HAL on thumbv7em
         run: cargo check --manifest-path aviate-hal/stm32h7/Cargo.toml --target thumbv7em-none-eabihf
 
+      # The MicoAir board crate is excluded from the host workspace
+      # (thumbv7em-only), so nothing above compiles it. env-flight is the
+      # real-hardware path: hw.rs + USB CDC + aviate-runtime/env-flight.
+      - name: Check MicoAir board on thumbv7em (env-flight)
+        run: cargo check --manifest-path aviate-boards/micoair-h743-v2/Cargo.toml --target thumbv7em-none-eabihf --features env-flight
+
+      - name: Clippy MicoAir board on thumbv7em (env-flight)
+        run: cargo clippy --manifest-path aviate-boards/micoair-h743-v2/Cargo.toml --target thumbv7em-none-eabihf --features env-flight -- -D warnings
+
+      - name: Build MicoAir board release on thumbv7em (env-flight)
+        run: cargo build --manifest-path aviate-boards/micoair-h743-v2/Cargo.toml --target thumbv7em-none-eabihf --features env-flight --release
+
       - name: Clippy (host)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
