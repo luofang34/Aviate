@@ -44,6 +44,10 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 version = "0.1.0"
+# Minimum supported Rust version — the toolchain CI and the release
+# workflow build and test with. Not a floor probed against older
+# compilers; raise deliberately.
+rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/luofang34/Aviate"
 

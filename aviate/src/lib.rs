@@ -2,8 +2,12 @@
 //!
 //! This crate is a thin facade that re-exports [`aviate_core`], the minimal,
 //! deterministic, hard-real-time inner-loop kernel: state estimation,
-//! stabilization control, and actuator mixing. Depend on `aviate` for the
-//! stable public surface; the layered implementation crates evolve behind it.
+//! stabilization control, and actuator mixing. Depend on `aviate` as the
+//! entry point; the layered implementation crates evolve behind it.
+//!
+//! The public API is **not stable**. This is experimental / work in progress
+//! and re-exports `aviate-core` wholesale (`pub use aviate_core::*`); expect
+//! breaking changes. A curated, stable surface may come later.
 //!
 //! ```
 //! use aviate::math::Vector3;
