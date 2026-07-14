@@ -1,4 +1,5 @@
 [package]
+publish = false  # internal crate — not released to crates.io
 name = "aviate-link"
 version = "0.1.0"
 edition = "2021"

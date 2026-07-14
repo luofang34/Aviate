@@ -1,4 +1,5 @@
 [package]
+publish = false  # internal crate — not released to crates.io
 name = "aviate-board-micoair-h743-v2-metadata"
 edition.workspace = true
 version.workspace = true
