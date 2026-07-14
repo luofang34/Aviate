@@ -1,4 +1,5 @@
 [package]
+publish = false  # internal crate — not released to crates.io
 name = "aviate-board-micoair-h743-v2"
 # Explicit fields, not workspace inheritance: the parent workspace
 # excludes this crate (thumbv7em-only), so a standalone

@@ -130,6 +130,9 @@ jobs:
       - name: Verify aviate-runtime env-flight dependency closure
         run: ./scripts/check_runtime_boundary.sh
 
+      - name: Verify only aviate + aviate-core are publishable
+        run: ./scripts/check_publish_deny.sh
+
   floors-lower-lint:
     name: Floors Lower Lint
     runs-on: ubuntu-latest

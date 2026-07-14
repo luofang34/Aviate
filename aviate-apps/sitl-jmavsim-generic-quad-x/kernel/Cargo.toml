@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 publish = false  # internal crate — not released to crates.io
 name = "aviate-app-sitl-jmavsim-generic-quad-x-kernel"
 version = "0.1.0"

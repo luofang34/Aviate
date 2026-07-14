@@ -1,4 +1,6 @@
 [package]
+license = "MIT OR Apache-2.0"
+publish = false  # internal crate — not released to crates.io
 name = "test-app-rp2350"
 version = "0.1.0"
 edition = "2021"

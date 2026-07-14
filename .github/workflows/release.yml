@@ -90,14 +90,9 @@ jobs:
             || { echo "::error::CI Success on ${GITHUB_SHA} is '${conclusions}', not success"; exit 1; }
 
       - name: Verify only aviate-core and aviate are publishable
-        run: |
-          set -euo pipefail
-          # `publish == null` means unrestricted (publishable to any registry).
-          publishable="$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.publish == null) | .name' | sort | tr '\n' ' ' | xargs)"
-          expected="aviate aviate-core"
-          [[ "$publishable" == "$expected" ]] \
-            || { echo "::error::publishable set is '{$publishable}', expected '{$expected}'"; exit 1; }
+        # Inventories every first-party manifest, not just root workspace
+        # members, so an excluded/standalone crate cannot be publishable.
+        run: ./scripts/check_publish_deny.sh
 
       - name: Verify committed lockfiles are up to date (--locked)
         run: |
