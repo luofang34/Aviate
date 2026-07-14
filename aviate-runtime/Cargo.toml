@@ -1,4 +1,5 @@
 [package]
+publish = false  # internal crate — not released to crates.io
 name = "aviate-runtime"
 edition.workspace = true
 version.workspace = true
