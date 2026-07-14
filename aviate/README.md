@@ -6,7 +6,7 @@
 
 Public entry point for **Aviate**, a minimal, deterministic, hard-real-time inner-loop flight control kernel (state estimation, stabilization control, actuator mixing).
 
-`aviate` is a thin facade that re-exports [`aviate-core`](https://crates.io/crates/aviate-core). Depend on this crate for the stable public surface; the layered implementation crates evolve behind it.
+`aviate` is a thin facade that re-exports [`aviate-core`](https://crates.io/crates/aviate-core); the layered implementation crates evolve behind it. The public API is **not stable** — it re-exports `aviate-core` wholesale and will change.
 
 ```toml
 [dependencies]

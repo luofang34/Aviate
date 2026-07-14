@@ -18,8 +18,10 @@
 //! # Status
 //!
 //! **Experimental / work in progress — no warranty of any kind.** Not
-//! qualified or certified for any use. Do not deploy on real hardware or rely
-//! on it in any safety-critical context. See the project README.
+//! qualified or certified for any use. Do not use it to fly or otherwise
+//! control a real vehicle, and do not rely on it in any safety-critical
+//! context; bench bring-up and HITL are development-only. See the project
+//! README.
 
 #![no_std]
 #![forbid(unsafe_code)]
