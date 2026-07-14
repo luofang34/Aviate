@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "aviate",
     "aviate-core",
     "aviate-drivers",
     "aviate-config",    # Configuration parsing (TOML, low-DAL only)
@@ -42,8 +43,9 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-version = "0.0.0"
+version = "0.1.0"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/luofang34/Aviate"
 
 [workspace.metadata]
 description = "Aviate workspace — see docs/AVIATE_SPEC.md and docs/AVIATE_LANGUAGE_PROFILE.md for constraints."
