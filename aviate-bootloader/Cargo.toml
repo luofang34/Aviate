@@ -5,6 +5,7 @@
 members = ["test-app-rp2350"]
 
 [package]
+publish = false  # internal crate — not released to crates.io
 name = "aviate-bootloader"
 edition = "2021"
 version = "0.1.0"
