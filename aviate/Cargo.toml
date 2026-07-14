@@ -1,0 +1,13 @@
+[package]
+name = "aviate"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Aviate — public entry point for the minimal, deterministic, hard-real-time flight control kernel. Thin facade over aviate-core. Experimental / work in progress."
+repository.workspace = true
+readme = "README.md"
+categories = ["aerospace::drones", "no-std", "embedded"]
+keywords = ["flight-control", "control", "estimation", "no-std", "evtol"]
+
+[dependencies]
+aviate-core = { path = "../aviate-core", version = "0.1.0" }
