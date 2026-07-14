@@ -158,6 +158,26 @@ jobs:
       - name: Clippy ${{ matrix.crate }} ${{ matrix.features }}
         run: cargo clippy -p ${{ matrix.crate }} ${{ matrix.features }} --locked -- -D warnings
 
+  release-scripts:
+    name: Release Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish-decision self-test (mocked, no network)
+        run: bash scripts/release_publish.sh --self-test
+
+      - name: Preflight — package both crates, VCS-match, external consumer
+        # Exercises the real packaging/provenance/consumer path on every PR
+        # (no auth, no publish). Uses the checked-out commit as the expected
+        # VCS sha, which is what cargo records for a clean tree.
+        run: ./scripts/release_preflight.sh "$(cargo metadata --no-deps --locked --format-version 1 | jq -r '.packages[] | select(.name=="aviate-core") | .version')" "$(git rev-parse HEAD)"
+
   floors-lower-lint:
     name: Floors Lower Lint
     runs-on: ubuntu-latest
@@ -725,6 +745,7 @@ jobs:
       - jmavsim-smoke
       - runtime-boundary
       - feature-clippy
+      - release-scripts
       - floors-lower-lint
       - check
       - test
