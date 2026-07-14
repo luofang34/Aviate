@@ -2,7 +2,7 @@
 
 > ⚠️ **Work in progress — experimental. No guarantees of any kind.**
 >
-> Aviate is under active development and is **not** production-ready. Nothing here has been qualified or certified for any use. It is provided **as-is, with no warranty or guarantee of any kind** — express or implied — including (without limitation) correctness, safety, reliability, fitness for a particular purpose, or airworthiness. Do not deploy it on real hardware or rely on it in any safety-critical context. APIs, behavior, and file layout may change without notice.
+> Aviate is under active development and is **not** production-ready. Nothing here has been qualified or certified for any use. It is provided **as-is, with no warranty or guarantee of any kind** — express or implied — including (without limitation) correctness, safety, reliability, fitness for a particular purpose, or airworthiness. **Do not use it to fly or otherwise control a real vehicle, and do not rely on it in any safety-critical context.** Controlled bench bring-up and hardware-in-the-loop (HITL) testing are development-only activities; no hardware or flight path here is qualified for operational use. APIs, behavior, and file layout may change without notice.
 
 Aviate is a minimal, deterministic, hard-real-time motion control kernel responsible only for state estimation and stabilization control — not navigation, communication, mission management, or human-machine interface.
 
