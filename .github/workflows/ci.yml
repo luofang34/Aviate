@@ -133,6 +133,31 @@ jobs:
       - name: Verify only aviate + aviate-core are publishable
         run: ./scripts/check_publish_deny.sh
 
+  feature-clippy:
+    name: Feature Clippy Matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [aviate-core, aviate]
+        features:
+          - "--no-default-features"
+          - "--no-default-features --features mc"
+          - "--no-default-features --features fw"
+          - "--no-default-features --features vtol"
+          - "--no-default-features --features test-hooks"
+          - "--all-features"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Clippy ${{ matrix.crate }} ${{ matrix.features }}
+        run: cargo clippy -p ${{ matrix.crate }} ${{ matrix.features }} --locked -- -D warnings
+
   floors-lower-lint:
     name: Floors Lower Lint
     runs-on: ubuntu-latest
@@ -699,6 +724,7 @@ jobs:
       - app-template
       - jmavsim-smoke
       - runtime-boundary
+      - feature-clippy
       - floors-lower-lint
       - check
       - test

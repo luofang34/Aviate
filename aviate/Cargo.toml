@@ -18,6 +18,8 @@ default = ["mc", "fw", "vtol"]
 mc = ["aviate-core/mc"]
 fw = ["aviate-core/fw"]
 vtol = ["aviate-core/vtol"]
+# Out-of-tree SITL fault-injection hooks (spec §20); not in default.
+test-hooks = ["aviate-core/test-hooks"]
 
 [dependencies]
 # Exact pin: the facade and the kernel version in lockstep, so a published

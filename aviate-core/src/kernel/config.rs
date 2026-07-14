@@ -207,6 +207,10 @@ fn default_limits() -> Limits {
 /// Canonical identity over a gains/hover pair. Controller
 /// construction and `ResolvedKernelConfig::controller_tuning_identity`
 /// both call this one function, so their encodings cannot drift.
+///
+/// Only the multirotor controller constructs through this wrapper, so it
+/// is gated to the `mc` feature to stay dead-code-free when `mc` is off.
+#[cfg(feature = "mc")]
 pub(crate) fn canonical_controller_tuning_identity(
     gains: &CascadeGains,
     hover_thrust_norm: crate::types::Scalar,
