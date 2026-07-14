@@ -6,7 +6,9 @@ name: Release
 # job ends. All safety and provenance checks run BEFORE the token is requested.
 #
 # Trigger: pushing a `vX.Y.Z` tag. A failed run is safe to re-run from the
-# Actions tab (idempotent: an already-published version is skipped).
+# Actions tab: an already-published version is skipped only when its crates.io
+# checksum matches the archive this commit produces and it is not yanked;
+# otherwise the run fails rather than skip a mismatched/yanked artifact.
 
 on:
   push:
@@ -56,7 +58,7 @@ jobs:
         id: meta
         run: |
           set -euo pipefail
-          meta="$(cargo metadata --no-deps --format-version 1)"
+          meta="$(cargo metadata --no-deps --locked --format-version 1)"
           core_ver="$(jq -r '.packages[] | select(.name=="aviate-core") | .version' <<<"$meta")"
           facade_ver="$(jq -r '.packages[] | select(.name=="aviate")      | .version' <<<"$meta")"
           [[ -n "$core_ver" && -n "$facade_ver" ]] \
@@ -114,7 +116,7 @@ jobs:
                 || { echo "::error::$crate package is missing $f"; exit 1; }
             done
             # Corrected safety wording present; blanket real-hardware ban absent.
-            crate_dir="$(cargo metadata --no-deps --format-version 1 \
+            crate_dir="$(cargo metadata --no-deps --locked --format-version 1 \
               | jq -r --arg n "$crate" '.packages[] | select(.name==$n) | .manifest_path' \
               | xargs dirname)"
             grep -q "control a real vehicle" "$crate_dir/README.md" \
@@ -123,18 +125,18 @@ jobs:
               || { echo "::error::$crate README still carries the blanket real-hardware ban"; exit 1; }
           done
 
-      - name: Package, feature, doc, and downstream-consumer smoke checks
+      - name: Feature matrix and documentation
         run: |
           set -euo pipefail
-          # Package (build-verified) for the leaf crate.
-          cargo package -p aviate-core --locked
-          # Feature matrix on the kernel.
           cargo check -p aviate-core --locked --no-default-features
           cargo check -p aviate-core --locked --all-features
-          # Documentation must build clean.
           RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked -p aviate-core -p aviate
-          # Downstream consumer: the facade doctest exercises `use aviate::...`.
-          cargo test -p aviate --doc --locked
+
+      - name: Preflight — package both crates, VCS-match, external consumer
+        # Packages aviate-core and aviate, asserts each archive's
+        # .cargo_vcs_info.json records the tagged commit, and builds a
+        # throwaway consumer against the PACKAGED sources.
+        run: ./scripts/release_preflight.sh "${{ steps.meta.outputs.version }}" "${GITHUB_SHA}"
 
       # --- Authenticate (short-lived OIDC token) --------------------------
 
@@ -142,53 +144,32 @@ jobs:
         id: auth
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
-      # --- Publish in dependency order (idempotent) -----------------------
+      # --- Publish (checksum/yank-aware, idempotent, dependency order) ----
 
       - name: Publish aviate-core, then aviate
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-          VERSION: ${{ steps.meta.outputs.version }}
+        run: ./scripts/release_publish.sh "${{ steps.meta.outputs.version }}"
+
+  github-release:
+    name: Create GitHub Release
+    needs: release
+    runs-on: ubuntu-latest
+    # Isolated from the publishing job: only this job gets contents: write,
+    # and it never touches the crates.io OIDC token.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Create the GitHub Release for the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-
-          # Sparse-index path for a crate name (crates.io layout).
-          index_path() {
-            local c=$1
-            case ${#c} in
-              1) printf '1/%s' "$c" ;;
-              2) printf '2/%s' "$c" ;;
-              3) printf '3/%s/%s' "${c:0:1}" "$c" ;;
-              *) printf '%s/%s/%s' "${c:0:2}" "${c:2:2}" "$c" ;;
-            esac
-          }
-
-          version_on_index() {
-            local c=$1 v=$2
-            curl -sfL "https://index.crates.io/$(index_path "$c")" 2>/dev/null \
-              | jq -re --arg v "$v" 'select(.vers == $v) | .vers' >/dev/null 2>&1
-          }
-
-          wait_on_index() {
-            local c=$1 v=$2
-            for _ in $(seq 1 60); do
-              if version_on_index "$c" "$v"; then echo "$c $v visible on index"; return 0; fi
-              sleep 5
-            done
-            echo "::error::$c $v did not become visible on the index"; return 1
-          }
-
-          publish_crate() {
-            local c=$1 v=$2
-            if version_on_index "$c" "$v"; then
-              echo "$c $v already published — skipping"
-              return 0
-            fi
-            echo "Publishing $c $v"
-            cargo publish -p "$c" --locked
-            wait_on_index "$c" "$v"
-          }
-
-          for c in $PUBLISH_CRATES; do
-            publish_crate "$c" "$VERSION"
-          done
-          echo "Release v$VERSION complete."
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "${GITHUB_REF_NAME}" \
+            --verify-tag \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Published \`aviate\` ${version} and \`aviate-core\` ${version} to crates.io via Trusted Publishing."
