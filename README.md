@@ -60,3 +60,14 @@ If a test crashes or hangs, you can manually force clean the environment:
 ```bash
 cargo xtask cleanup
 ```
+
+## License
+
+Aviate is dual-licensed under either of:
+
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option. You may use Aviate under the terms of either license.
+
+Third-party components vendored under `external/` are licensed separately under their own terms; see the license files in those directories. Their inclusion does not license Aviate itself.
