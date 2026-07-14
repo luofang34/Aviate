@@ -72,7 +72,8 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags origin main
-          git merge-base --is-ancestor "${GITHUB_SHA}" origin/FETCH_HEAD \
+          # `git fetch origin main` records the fetched tip in FETCH_HEAD.
+          git merge-base --is-ancestor "${GITHUB_SHA}" FETCH_HEAD \
             || { echo "::error::${GITHUB_SHA} is not reachable from protected main"; exit 1; }
 
       - name: Verify required CI Success passed on this exact commit
