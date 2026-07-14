@@ -2,6 +2,7 @@
 name = "aviate"
 edition.workspace = true
 version.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Aviate — public entry point for the minimal, deterministic, hard-real-time flight control kernel. Thin facade over aviate-core. Experimental / work in progress."
 repository.workspace = true
@@ -9,5 +10,21 @@ readme = "README.md"
 categories = ["aerospace::drones", "no-std", "embedded"]
 keywords = ["flight-control", "control", "estimation", "no-std", "evtol"]
 
+[features]
+# Airframe features are forwarded explicitly to aviate-core. The default
+# mirrors aviate-core's default, so `aviate = "0.1"` (default features)
+# behaves identically to depending on the kernel directly.
+default = ["mc", "fw", "vtol"]
+mc = ["aviate-core/mc"]
+fw = ["aviate-core/fw"]
+vtol = ["aviate-core/vtol"]
+
 [dependencies]
-aviate-core = { path = "../aviate-core", version = "0.1.0" }
+# Exact pin: the facade and the kernel version in lockstep, so a published
+# `aviate X.Y.Z` always resolves `aviate-core X.Y.Z`. `default-features =
+# false` hands feature selection to the facade's own features above. The
+# release process bumps this pin together with the workspace version.
+aviate-core = { path = "../aviate-core", version = "=0.1.0", default-features = false }
+
+[lints]
+workspace = true

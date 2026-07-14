@@ -2,6 +2,7 @@
 name = "aviate-core"
 edition.workspace = true
 version.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Minimal, deterministic, hard-real-time inner-loop flight control kernel: state estimation, stabilization control, and actuator mixing. Experimental / work in progress."
 repository.workspace = true
