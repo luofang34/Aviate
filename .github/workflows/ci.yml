@@ -253,6 +253,9 @@ jobs:
       - name: Verify bootloader dependency boundary
         run: bash scripts/check_bootloader_dependency_boundary.sh
 
+      - name: Verify RP2350 dependency alignment
+        run: bash scripts/check_rp2350_dependency_alignment.sh
+
       # The bootloader is a standalone workspace, so the root checks do not
       # exercise its target-gated chip code or linker scripts.
       - name: Clippy STM32H743 bootloader on thumbv7em
