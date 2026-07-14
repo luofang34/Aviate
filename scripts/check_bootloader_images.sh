@@ -226,9 +226,9 @@ readonly RP2350_VECTOR_TABLE=0x10000100
 # application entry-point range.
 readonly RP2350_FLASH_TOP=0x11000000
 
-# The bootloader/application partition boundary, read from its single
-# source of truth (the backend handoff constant). The test-app origin,
-# and therefore the linker geometry the ELF is built with, must agree.
+# The application boundary comes from the backend handoff constant. The
+# test-app origin must equal it, while the bootloader linker region is
+# independently required to end at or below it.
 rp2350_boundary() {
     parse_hex_constant \
         "$REPO_ROOT/aviate-chips/rp2350/src/lib.rs" \
@@ -308,7 +308,8 @@ verify_rp2350() {
     assert_guard_rejects_crossing "$elf"
     assert_region_guard_rejects_oversize "$elf"
 
-    printf 'RP2350 bootloader image: OK (image and linker region below 0x%08x)\n' "$boundary"
+    printf 'RP2350 bootloader image: OK (image footprint and linker region end at or below 0x%08x)\n' \
+        "$boundary"
 }
 
 verify_test_app_rp2350() {
@@ -331,8 +332,8 @@ verify_test_app_rp2350() {
     require_entry_in_range "$elf" "$boundary" "$RP2350_FLASH_TOP"
     require_absent_section "$elf" .start_block
 
-    printf 'RP2350 test-app image: OK (vector and entry in the application region above 0x%08x)\n' \
-        "$boundary"
+    printf 'RP2350 test-app image: OK (vector exactly at 0x%08x; entry in [0x%08x, 0x%08x))\n' \
+        "$boundary" "$boundary" "$RP2350_FLASH_TOP"
 }
 
 verify_stm32h743
