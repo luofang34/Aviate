@@ -2,16 +2,22 @@ name: Governance Audit
 
 # Verifies that the live rulesets protecting `main` still match
 # docs/REPO_GOVERNANCE.md and records the JSON they were verified
-# from. Runs only on a schedule or manual dispatch, so it always
-# executes the default branch's workflow definition and script —
-# never pull-request code — and no token with administration read
-# access is ever exposed to a PR.
+# from. Schedule is the only trigger: a scheduled run always executes
+# the default branch's workflow definition and script, so no other
+# ref can substitute its own version of either, and no token with
+# administration read access is ever exposed to pull-request code.
+# Manual runs happen by invoking scripts/check_branch_protection.sh
+# locally.
+#
+# A workflow_dispatch trigger would let a run start from any branch,
+# executing that branch's workflow definition. Do not re-add one
+# before the governance-audit environment carries a deployment-branch
+# policy that permits only main (see docs/REPO_GOVERNANCE.md).
 
 on:
   schedule:
     # 09:17 UTC Mondays.
     - cron: "17 9 * * 1"
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,7 +25,16 @@ permissions:
 jobs:
   audit:
     name: Ruleset Audit
+    # Redundant with the schedule-only trigger, and deliberately so:
+    # the job refuses any ref that is not main even if another
+    # trigger is added later.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # The audit token, when one is configured, lives in this
+    # environment. Its deployment-branch policy must permit only main
+    # so that a workflow edit on any other ref cannot obtain the
+    # secret.
+    environment: governance-audit
     steps:
       - uses: actions/checkout@v7
 
@@ -31,8 +46,10 @@ jobs:
           # Falls back to the workflow token. If that token cannot see
           # bypass_actors the audit fails and names the missing
           # permission; the remedy is a GOVERNANCE_AUDIT_TOKEN secret
-          # holding a fine-grained PAT with read-only Administration
-          # scoped to this repository — never a broader token.
+          # on the governance-audit environment — never a repository
+          # secret, which any same-repo pull request could read by
+          # editing a workflow — holding a fine-grained PAT with
+          # read-only Administration scoped to this repository.
           GH_TOKEN: ${{ secrets.GOVERNANCE_AUDIT_TOKEN || github.token }}
           REPO: ${{ github.repository }}
           EVIDENCE_DIR: governance-evidence

@@ -3,12 +3,14 @@
 # Read-only audit of the effective ruleset policy protecting `main`.
 #
 # Enumerates every repository ruleset, identifies all active branch
-# rulesets whose conditions reach `main`, and verifies the aggregate
-# against the policy recorded in docs/REPO_GOVERNANCE.md. Any
-# undocumented ruleset reaching `main`, and any single-field drift
-# inside the documented one — ref targeting, enforcement, rule
-# presence, review parameters, required-check identity and producing
-# app, bypass actors — is a failure.
+# rulesets whose ref conditions reach `main` (fnmatch include/exclude
+# evaluation, plus the `~ALL` / `~DEFAULT_BRANCH` tokens), and
+# verifies the aggregate against the policy recorded in
+# docs/REPO_GOVERNANCE.md. Any undocumented or duplicate ruleset
+# reaching `main`, and any single-field drift inside the documented
+# one — ref targeting, enforcement, exact rule-type inventory, review
+# parameters, required-check identity and producing app, bypass
+# actors — is a failure.
 #
 # Requires `gh` authenticated with permission to read ruleset
 # `bypass_actors` (the field is omitted for low-privilege callers, and
@@ -46,8 +48,10 @@ python3 - "$MODE" "$REPO" <<'PY'
 import copy
 import json
 import os
+import re
 import subprocess
 import sys
+from collections import Counter
 
 MODE = sys.argv[1]
 REPO = sys.argv[2]
@@ -75,14 +79,60 @@ EXPECTED_CONDITIONS = {"ref_name": {"exclude": [], "include": ["~DEFAULT_BRANCH"
 EXPECTED_REVIEW = {
     "required_approving_review_count": 0,
     "dismiss_stale_reviews_on_push": False,
+    "required_reviewers": [],
     "require_code_owner_review": False,
     "require_last_push_approval": False,
     "required_review_thread_resolution": False,
 }
 EXPECTED_MERGE_METHODS = {"merge", "squash", "rebase"}
+EXPECTED_RULE_TYPES = (
+    "deletion",
+    "non_fast_forward",
+    "pull_request",
+    "required_status_checks",
+)
 
-MAIN_INCLUDE_REFS = {"~DEFAULT_BRANCH", "~ALL", "refs/heads/main"}
-MAIN_EXCLUDE_REFS = {"~DEFAULT_BRANCH", "refs/heads/main"}
+MAIN_REF = "refs/heads/main"
+
+
+def ref_pattern_regex(pattern):
+    # Ruleset ref conditions use fnmatch: `*` stops at `/`, `**`
+    # crosses it, `?` is one non-slash character, brackets are
+    # character classes. An unterminated bracket falls back to a
+    # literal so a malformed pattern cannot crash the audit.
+    out = []
+    i = 0
+    while i < len(pattern):
+        char = pattern[i]
+        if char == "*":
+            if pattern[i + 1:i + 2] == "*":
+                out.append(".*")
+                i += 1
+            else:
+                out.append("[^/]*")
+        elif char == "?":
+            out.append("[^/]")
+        elif char == "[":
+            end = pattern.find("]", i + 2)
+            if end == -1:
+                out.append(re.escape(char))
+            else:
+                body = pattern[i + 1:end]
+                negate = body[:1] in ("!", "^")
+                if negate:
+                    body = body[1:]
+                out.append("[" + ("^" if negate else "") + body + "]")
+                i = end
+        else:
+            out.append(re.escape(char))
+        i += 1
+    return "".join(out)
+
+
+def pattern_matches_main(pattern):
+    if pattern in ("~ALL", "~DEFAULT_BRANCH"):
+        return True
+    return re.fullmatch(ref_pattern_regex(pattern), MAIN_REF) is not None
 
 
 def reaches_main(detail):
@@ -91,9 +141,9 @@ def reaches_main(detail):
     if detail.get("enforcement") != "active":
         return False
     ref_name = detail.get("conditions", {}).get("ref_name", {})
-    if not set(ref_name.get("include", [])) & MAIN_INCLUDE_REFS:
+    if not any(pattern_matches_main(p) for p in ref_name.get("include", [])):
         return False
-    if set(ref_name.get("exclude", [])) & MAIN_EXCLUDE_REFS:
+    if any(pattern_matches_main(p) for p in ref_name.get("exclude", [])):
         return False
     return True
 
@@ -160,6 +210,11 @@ def audit(rulesets):
             f"documented ruleset {EXPECTED_RULESET_NAME!r} does not reach main"
         )
         return failures
+    if len(documented) > 1:
+        failures.append(
+            f"{len(documented)} rulesets named {EXPECTED_RULESET_NAME!r} "
+            "reach main; the documented policy has exactly one"
+        )
     ruleset = documented[0]
 
     if ruleset.get("conditions") != EXPECTED_CONDITIONS:
@@ -182,6 +237,19 @@ def audit(rulesets):
         failures.append(
             f"bypass_actors must be empty, found {json.dumps(bypass)}"
         )
+
+    # Each expected rule type must appear exactly once and nothing
+    # else may: a duplicate rule of a checked type could carry weaker
+    # parameters than the instance the audit happens to inspect, and
+    # an unexpected type is policy the docs do not describe.
+    type_counts = Counter(rule["type"] for rule in ruleset.get("rules", []))
+    for rule_type, count in sorted(type_counts.items()):
+        if rule_type not in EXPECTED_RULE_TYPES:
+            failures.append(f"unexpected rule type: {rule_type}")
+        elif count > 1:
+            failures.append(
+                f"duplicate rule type: {rule_type} appears {count} times"
+            )
 
     rules = {rule["type"]: rule for rule in ruleset.get("rules", [])}
     for required in ("deletion", "non_fast_forward"):
@@ -295,11 +363,21 @@ def rule_params(rs, rule_type):
     return next(r for r in rs[0]["rules"] if r["type"] == rule_type)["parameters"]
 
 
-def add_shadow_ruleset(rs):
+def add_shadow_ruleset(rs, include=None, exclude=None,
+                       name="shadow-main-ruleset"):
     shadow = copy.deepcopy(rs[0])
     shadow["id"] = 99999999
-    shadow["name"] = "shadow-main-ruleset"
+    shadow["name"] = name
+    if include is not None:
+        shadow["conditions"]["ref_name"]["include"] = include
+    if exclude is not None:
+        shadow["conditions"]["ref_name"]["exclude"] = exclude
     rs.append(shadow)
+
+
+def duplicate_rule(rs, rule_type):
+    original = next(r for r in rs[0]["rules"] if r["type"] == rule_type)
+    rs[0]["rules"].append(copy.deepcopy(original))
 
 
 # Every property the audit asserts gets an adversarial single-field
@@ -332,6 +410,24 @@ DRIFT_CASES = [
     ("second undocumented ruleset reaches main",
      add_shadow_ruleset,
      "undocumented ruleset"),
+    ("shadow ruleset included via ~ALL",
+     lambda rs: add_shadow_ruleset(rs, include=["~ALL"]),
+     "undocumented ruleset"),
+    ("shadow ruleset included via ~DEFAULT_BRANCH",
+     lambda rs: add_shadow_ruleset(rs, include=["~DEFAULT_BRANCH"]),
+     "undocumented ruleset"),
+    ("shadow ruleset included via refs/heads/* fnmatch",
+     lambda rs: add_shadow_ruleset(rs, include=["refs/heads/*"]),
+     "undocumented ruleset"),
+    ("shadow ruleset included via refs/heads/** fnmatch",
+     lambda rs: add_shadow_ruleset(rs, include=["refs/heads/**"]),
+     "undocumented ruleset"),
+    ("shadow ruleset included via refs/heads/ma* fnmatch",
+     lambda rs: add_shadow_ruleset(rs, include=["refs/heads/ma*"]),
+     "undocumented ruleset"),
+    ("duplicate ruleset named main-protection",
+     lambda rs: add_shadow_ruleset(rs, name="main-protection"),
+     "rulesets named"),
     ("always-on bypass actor restored",
      lambda rs: rs[0].update(bypass_actors=[
          {"actor_id": 5, "actor_type": "RepositoryRole",
@@ -369,6 +465,10 @@ DRIFT_CASES = [
      lambda rs: rule_params(rs, "pull_request").update(
          require_last_push_approval=True),
      "pull_request.require_last_push_approval"),
+    ("required reviewers drifted from documented value",
+     lambda rs: rule_params(rs, "pull_request").update(
+         required_reviewers=[{"id": 1}]),
+     "pull_request.required_reviewers"),
     ("merge methods narrowed",
      lambda rs: rule_params(rs, "pull_request").update(
          allowed_merge_methods=["merge"]),
@@ -400,6 +500,29 @@ DRIFT_CASES = [
      lambda rs: rule_params(rs, "required_status_checks")
      ["required_status_checks"][0].pop("integration_id"),
      "not bound to GitHub Actions app"),
+    ("duplicate required_status_checks rule",
+     lambda rs: duplicate_rule(rs, "required_status_checks"),
+     "duplicate rule type"),
+    ("duplicate pull_request rule",
+     lambda rs: duplicate_rule(rs, "pull_request"),
+     "duplicate rule type"),
+    ("unexpected rule type present",
+     lambda rs: rs[0]["rules"].append({"type": "required_signatures"}),
+     "unexpected rule type"),
+]
+
+# Fixtures the audit must NOT flag: rulesets whose ref conditions do
+# not reach main must stay out of the branch verdict, or the audit
+# would cry wolf and train readers to ignore it.
+CLEAN_CASES = [
+    ("shadow ruleset with non-matching include pattern",
+     lambda rs: add_shadow_ruleset(rs, include=["refs/heads/release/*"])),
+    ("shadow ruleset excluding main by literal ref",
+     lambda rs: add_shadow_ruleset(rs, include=["refs/heads/**"],
+                                   exclude=["refs/heads/main"])),
+    ("shadow ruleset excluding main by fnmatch pattern",
+     lambda rs: add_shadow_ruleset(rs, include=["~ALL"],
+                                   exclude=["refs/heads/ma*"])),
 ]
 
 
@@ -410,6 +533,19 @@ def self_test():
         print(f"SELF-TEST FAIL: baseline fixture rejected: {clean}",
               file=sys.stderr)
         escaped += 1
+    for name, mutate in CLEAN_CASES:
+        rulesets = baseline()
+        mutate(rulesets)
+        failures = audit(rulesets)
+        if failures:
+            print(
+                f"SELF-TEST FAIL: {name}: expected a clean audit, "
+                f"got {failures}",
+                file=sys.stderr,
+            )
+            escaped += 1
+        else:
+            print(f"non-matching fixture ignored: {name}")
     for name, mutate, fragment in DRIFT_CASES:
         rulesets = baseline()
         mutate(rulesets)
@@ -425,7 +561,10 @@ def self_test():
             escaped += 1
     if escaped:
         sys.exit(1)
-    print(f"Self-test: all {len(DRIFT_CASES)} drift cases detected")
+    print(
+        f"Self-test: all {len(DRIFT_CASES)} drift cases detected, "
+        f"{len(CLEAN_CASES)} non-matching fixtures ignored"
+    )
 
 
 if MODE == "--self-test":

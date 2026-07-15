@@ -20,6 +20,18 @@ jobs:
       - name: Enforce 500-line (and 100-line lib.rs) caps
         run: ./scripts/check_file_sizes.sh
 
+  # Fixtures only — no live API, no privileged token — so it is safe
+  # in pull-request context and proves the governance audit still
+  # detects every drift case it claims to.
+  governance-self-test:
+    name: Governance Self-Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Replay ruleset drift fixtures through the audit assertions
+        run: ./scripts/check_branch_protection.sh --self-test
+
   dialect-generation:
     name: Dialect (mavgen)
     runs-on: ubuntu-latest
@@ -756,6 +768,7 @@ jobs:
     if: always()
     needs:
       - file-sizes
+      - governance-self-test
       - dialect-generation
       - identity-adjudication
       - app-template
