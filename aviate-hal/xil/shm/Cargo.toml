@@ -1,0 +1,23 @@
+[package]
+publish = false  # internal contract crate — consumers pin the git dependency
+name = "aviate-xil-shm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Small, auditable POSIX shared-memory transport for the aviate-xil-contract block; the only crate in the SITL data plane that contains unsafe code"
+
+# Deliberately NOT opted into the workspace lint set: mmap and
+# volatile access require `unsafe`, which the workspace forbids.
+# The trade is bounded here: this crate stays tiny, every unsafe
+# block carries a SAFETY comment, and everything above it (contract,
+# FC, consumers) is unsafe-free.
+
+[dependencies]
+aviate-xil-contract = { path = "../contract" }
+libc = "0.2"
+
+[lints.clippy]
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
