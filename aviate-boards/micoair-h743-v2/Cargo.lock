@@ -28,7 +28,7 @@ dependencies = [
 
 [[package]]
 name = "aviate-board-micoair-h743-v2-metadata"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "aviate-boot-core"
@@ -36,7 +36,7 @@ version = "0.0.0"
 
 [[package]]
 name = "aviate-config"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "toml",
@@ -44,7 +44,7 @@ dependencies = [
 
 [[package]]
 name = "aviate-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bitflags",
  "libm",
@@ -52,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "aviate-drivers"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aviate-hal-io",
  "bmi088",
@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "aviate-hal-io"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aviate-core",
  "embedded-hal 1.0.0",
@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "aviate-hal-xil"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aviate-core",
  "aviate-hal-io",
@@ -106,7 +106,7 @@ dependencies = [
 
 [[package]]
 name = "aviate-runtime"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aviate-config",
  "aviate-core",

@@ -43,7 +43,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-version = "0.1.1"
+version = "0.1.2"
 # Minimum supported Rust version — the toolchain CI and the release
 # workflow build and test with. Not a floor probed against older
 # compilers; raise deliberately.
