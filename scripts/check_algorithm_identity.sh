@@ -8,9 +8,11 @@
 # decide whether they run behaviorally compatible code. This gate
 # exists so that no behavior-relevant change to a production
 # estimator / controller / mixer / sanitizer implementation can land
-# without either rotating the identity of THAT implementation in
-# cert/algorithm_id_registry.toml, or a human stating — per commit,
-# as an exact git trailer — why behavior cannot have changed:
+# without either rotating the identity of EVERY implementation that
+# owns the changed file in cert/algorithm_id_registry.toml — each to
+# an ID never before present anywhere in the ledger — or a human
+# stating, per commit, as an exact git trailer, why behavior cannot
+# have changed:
 #
 #   Algorithm-Identity-Unchanged: <why this cannot change observable behavior>
 #
@@ -38,6 +40,7 @@
 #
 # Usage:
 #   scripts/check_algorithm_identity.sh <base-rev> <head-rev>
+#   scripts/check_algorithm_identity.sh --push-range <before> <sha> [main-ref]
 #   scripts/check_algorithm_identity.sh --structural <rev>
 #   scripts/check_algorithm_identity.sh --self-test
 #
@@ -417,8 +420,11 @@ adjudicate() {
     structural_check "$head" || bad=1
     continuity_check "$base" "$head" || bad=1
 
+    # --no-renames: a rename out of a managed tree must surface the
+    # old managed path as a deletion and be adjudicated, not be
+    # collapsed into an unmanaged new path by rename detection.
     local changed
-    changed="$(git -C "$REPO_ROOT" diff --name-only "$base" "$head")"
+    changed="$(git -C "$REPO_ROOT" diff --no-renames --name-only "$base" "$head")"
 
     # owner|file pairs for every changed production file.
     local pairs='' file owners
@@ -445,30 +451,38 @@ adjudicate() {
     base_dump="$(registry_parse "$base" 2>/dev/null || true)"
     head_dump="$(registry_parse "$head")"
 
-    # A changed file is adjudicated when any one of its owners rotated
-    # in this range; otherwise every commit touching it must carry a
-    # valid trailer.
-    local touched_files unadjudicated=''
+    # Every numeric ID present anywhere in the base ledger — active in
+    # any section, or retired. A rotation must mint an ID outside this
+    # set: renaming a key while keeping its number, or two entries
+    # swapping numbers, changes nothing at the lockstep gate and must
+    # not count as a rotation.
+    local base_ids
+    base_ids="$(awk '{ print ($1 == "A") ? $4 : $2 }' <<< "$base_dump" | sort -u)"
+
+    # A changed file is rotation-adjudicated only when EVERY identity
+    # that owns it rotated to a genuinely new ID: rotating one sibling
+    # of a shared file must not mask a change to another sibling.
+    # Files with any unrotated owner fall through to the per-commit
+    # trailer requirement.
+    local touched_files unadjudicated='' unrot_report=''
     touched_files="$(cut -d'|' -f2 <<< "$pairs" | sort -u)"
     while IFS= read -r file; do
         [[ -z "$file" ]] && continue
-        local rotated=0 owner section key base_val head_val
+        local unrotated='' owner section key head_val
         while IFS= read -r owner; do
             [[ -z "$owner" ]] && continue
             section="${owner%%/*}"
             key="${owner#*/}"
             head_val="$(registry_value "$head_dump" "$section" "$key")"
-            base_val="$(registry_value "$base_dump" "$section" "$key")"
-            # Rotated: the entry this implementation now points at is
-            # new in this range, or changed value in place.
-            if [[ -n "$head_val" && ( -z "$base_val" || "$base_val" != "$head_val" ) ]]; then
-                echo "Identity rotated for $file: [$section] \"$key\" moved in this range."
-                rotated=1
-                break
+            if [[ -n "$head_val" ]] && ! grep -qxF "$head_val" <<< "$base_ids"; then
+                echo "Identity rotated for $file: [$section] \"$key\" holds an ID new to the ledger."
+            else
+                unrotated+="${unrotated:+, }$owner"
             fi
         done < <(awk -F'|' -v f="$file" '$2 == f { print $1 }' <<< "$pairs" | sort -u)
-        if [[ $rotated -eq 0 ]]; then
+        if [[ -n "$unrotated" ]]; then
             unadjudicated+="$file"$'\n'
+            unrot_report+="  $file (unrotated: $unrotated)"$'\n'
         fi
     done <<< "$touched_files"
 
@@ -481,10 +495,10 @@ adjudicate() {
             [[ -n "$file" ]] && paths+=("$file")
         done <<< "$unadjudicated"
         local commits sha missing=''
-        commits="$(git -C "$REPO_ROOT" log --format=%H "$base..$head" -- "${paths[@]}" 2>/dev/null || true)"
+        commits="$(git -C "$REPO_ROOT" log --no-renames --format=%H "$base..$head" -- "${paths[@]}" 2>/dev/null || true)"
         if [[ -z "$commits" ]]; then
             echo "FAIL: production files changed in $base..$head but no commit claims them (history rewrite?); cannot adjudicate:" >&2
-            printf '  %s\n' "${paths[@]}" >&2
+            printf '%s' "$unrot_report" >&2
             bad=1
         else
             while IFS= read -r sha; do
@@ -495,11 +509,11 @@ adjudicate() {
             done <<< "$commits"
             if [[ -n "$missing" ]]; then
                 echo "FAIL: production algorithm files changed without identity rotation:" >&2
-                printf '  %s\n' "${paths[@]}" >&2
+                printf '%s' "$unrot_report" >&2
                 echo "and these commits touch them without a valid '$TRAILER_KEY' trailer" >&2
                 echo "(exact final trailer, exactly once, non-empty rationale):" >&2
                 printf '%s' "$missing" | sed 's/^/  /' >&2
-                echo "Either rotate the owning identity in $REGISTRY or add, per commit:" >&2
+                echo "Either rotate every owning identity in $REGISTRY (to IDs new to the ledger) or add, per commit:" >&2
                 echo "  $TRAILER_KEY: <why this cannot change observable behavior>" >&2
                 bad=1
             else
@@ -512,6 +526,53 @@ adjudicate() {
         echo "Identity adjudication passed for $base..$head."
     fi
     return "$bad"
+}
+
+# ------------------------------------------------------- push ranges
+
+# Resolve a push event's before/sha pair into an adjudication,
+# fail-closed. Only two shapes may skip range adjudication: a
+# genuinely empty push (before == sha) and the creation of a branch
+# whose head is already main history — both still get the structural
+# ledger check. A nonzero before that this checkout cannot resolve
+# means a force-push or truncated fetch: refusing is the point, since
+# a silent structural-only fallback would wave exactly the
+# direct-push case this gate exists for.
+push_range() {
+    local before="$1" sha="$2" main_ref="${3:-origin/main}"
+    local zero='0000000000000000000000000000000000000000'
+
+    if [[ "$before" == "$sha" ]]; then
+        echo "Empty push (before == sha); checking ledger coherence only."
+        structural_check "$sha" && echo "Ledger coherent at $sha."
+        return
+    fi
+
+    if [[ -z "$before" || "$before" == "$zero" ]]; then
+        # Branch creation: no prior tip exists, so adjudicate what the
+        # branch adds over main.
+        local mb head_commit
+        mb="$(git -C "$REPO_ROOT" merge-base "$main_ref" "$sha" 2>/dev/null || true)"
+        if [[ -z "$mb" ]]; then
+            echo "FAIL: cannot establish a push range: no merge base between $main_ref and $sha (disjoint history); refusing to adjudicate" >&2
+            return 1
+        fi
+        head_commit="$(git -C "$REPO_ROOT" rev-parse "$sha^{commit}")"
+        if [[ "$mb" == "$head_commit" ]]; then
+            echo "Branch created at existing $main_ref history; checking ledger coherence only."
+            structural_check "$sha" && echo "Ledger coherent at $sha."
+            return
+        fi
+        adjudicate "$mb" "$sha"
+        return
+    fi
+
+    if ! git -C "$REPO_ROOT" rev-parse --quiet --verify "$before^{commit}" > /dev/null 2>&1; then
+        echo "FAIL: push before-SHA $before is unreachable in this checkout (force-push or shallow/truncated fetch history); refusing to adjudicate a partial range" >&2
+        return 1
+    fi
+
+    adjudicate "$before" "$sha"
 }
 
 # ------------------------------------------------------------ self-test
@@ -533,6 +594,7 @@ fixture_init() {
         "$REGISTRY" \
         aviate-core/src/ekf/scalar.rs \
         aviate-core/src/ekf/update.rs \
+        aviate-core/src/control/attitude.rs \
         aviate-core/src/control/multirotor.rs \
         aviate-core/src/control/fixed_wing.rs \
         aviate-core/src/control/vtol.rs \
@@ -575,23 +637,56 @@ append_line() {
     printf '%s\n' "$2" >> "$FIXTURE/$1"
 }
 
-# expect <pass|fail> <name> — runs adjudicate main..HEAD on the
-# fixture and compares the verdict.
+# Shared verdict checker for the expect_* helpers below: compares the
+# observed pass/fail against the expectation and, when a pattern is
+# given, requires the output to contain it — so a scenario cannot
+# "pass" by failing for an unrelated reason.
 SELF_TEST_FAILURES=0
+check_verdict() {
+    local want="$1" name="$2" pattern="$3" got="$4" out="$5"
+    if [[ "$got" != "$want" ]]; then
+        echo "SELF-TEST FAIL: $name — expected $want, got $got" >&2
+        sed 's/^/    /' <<< "$out" >&2
+        SELF_TEST_FAILURES=$(( SELF_TEST_FAILURES + 1 ))
+        return
+    fi
+    if [[ -n "$pattern" ]] && ! grep -q "$pattern" <<< "$out"; then
+        echo "SELF-TEST FAIL: $name — verdict $got but output lacks '$pattern'" >&2
+        sed 's/^/    /' <<< "$out" >&2
+        SELF_TEST_FAILURES=$(( SELF_TEST_FAILURES + 1 ))
+        return
+    fi
+    echo "  ok: $name ($want)"
+}
+
+# expect <pass|fail> <name> — adjudicate main..HEAD on the fixture.
 expect() {
-    local want="$1" name="$2" got
-    if (REPO_ROOT="$FIXTURE"; adjudicate main HEAD) > /dev/null 2>&1; then
+    expect_msg "$1" '' "$2"
+}
+
+# expect_msg <pass|fail> <grep-pattern> <name> — same, and the output
+# must contain the pattern.
+expect_msg() {
+    local want="$1" pattern="$2" name="$3" out got
+    if out="$( (REPO_ROOT="$FIXTURE"; adjudicate main HEAD) 2>&1 )"; then
         got='pass'
     else
         got='fail'
     fi
-    if [[ "$got" != "$want" ]]; then
-        echo "SELF-TEST FAIL: $name — expected $want, got $got" >&2
-        (REPO_ROOT="$FIXTURE"; adjudicate main HEAD) 2>&1 | sed 's/^/    /' >&2 || true
-        SELF_TEST_FAILURES=$(( SELF_TEST_FAILURES + 1 ))
+    check_verdict "$want" "$name" "$pattern" "$got" "$out"
+}
+
+# expect_push <pass|fail> <before> <sha> <grep-pattern> <name> —
+# drives the push-range resolution against the fixture, with the
+# fixture's own main as the protected ref.
+expect_push() {
+    local want="$1" before="$2" sha="$3" pattern="$4" name="$5" out got
+    if out="$( (REPO_ROOT="$FIXTURE"; push_range "$before" "$sha" main) 2>&1 )"; then
+        got='pass'
     else
-        echo "  ok: $name ($want)"
+        got='fail'
     fi
+    check_verdict "$want" "$name" "$pattern" "$got" "$out"
 }
 
 self_test() {
@@ -728,6 +823,80 @@ self_test() {
     fixture_commit 'innocent non-production commit'
     expect pass 'multi-commit push range where every production commit is adjudicated'
 
+    # Shared file, wrong sibling: attitude.rs is owned by all three
+    # controllers; rotating only vtol must not adjudicate it.
+    fixture_branch s-wrong-sibling
+    append_line aviate-core/src/control/attitude.rs '// probe'
+    replace_in "$REGISTRY" '544F_4C31' '544F_4C32'
+    replace_in aviate-core/src/control/vtol.rs '544F_4C31' '544F_4C32'
+    append_line "$REGISTRY" '# Retired: "controller.vtol.v1" = 0x4354_4C56_544F_4C31.'
+    fixture_commit 'shared control change hidden behind a single sibling rotation'
+    expect_msg fail 'attitude.rs (unrotated: .*controller/controller.multirotor.v2' \
+        'shared-file change requires every owning sibling to rotate'
+
+    # Key rename keeping the numeric ID: no lockstep-visible rotation
+    # happened, so the gate must not treat it as one.
+    fixture_branch s-rename-launder
+    append_line aviate-core/src/control/vtol.rs '// probe'
+    replace_in "$REGISTRY" '"controller.vtol.v1"' '"controller.vtol.v9"'
+    fixture_commit 'key renamed, numeric ID kept'
+    expect_msg fail 'unrotated: controller/controller.vtol.v1' \
+        'key rename keeping the old numeric ID is not a rotation'
+
+    # Two entries swapping numeric IDs: parity, uniqueness, reuse and
+    # continuity all still hold — only the IDs-new-to-the-ledger rule
+    # can catch it.
+    fixture_branch s-id-swap
+    replace_in "$REGISTRY" '4354_4C56_544F_4C31' 'SWAP_PLACEHOLDER'
+    replace_in "$REGISTRY" '4354_4C46_5747_5631' '4354_4C56_544F_4C31'
+    replace_in "$REGISTRY" 'SWAP_PLACEHOLDER' '4354_4C46_5747_5631'
+    replace_in aviate-core/src/control/vtol.rs '4354_4C56_544F_4C31' '4354_4C46_5747_5631'
+    replace_in aviate-core/src/control/fixed_wing.rs '4354_4C46_5747_5631' '4354_4C56_544F_4C31'
+    fixture_commit 'vtol and fixed_wing swap numeric IDs'
+    expect_msg fail 'unrotated: controller/controller.vtol.v1' \
+        'two entries swapping numeric IDs is not a rotation'
+
+    # Rename escape: moving a managed implementation out of its tree
+    # must adjudicate the old managed path, not vanish behind rename
+    # detection.
+    fixture_branch s-rename-escape
+    mkdir -p "$FIXTURE/aviate-link/src"
+    git -C "$FIXTURE" mv aviate-core/src/control/vtol.rs aviate-link/src/vtol_moved.rs
+    append_line aviate-link/src/vtol_moved.rs '// tweak after the move'
+    fixture_commit 'vtol implementation renamed out of the managed tree'
+    expect_msg fail 'aviate-core/src/control/vtol.rs (unrotated' \
+        'rename out of a managed tree is adjudicated at the old path'
+
+    # Push-range resolution: fail-closed on anything that is not a
+    # provable range, structural-only for the two honest no-range
+    # shapes.
+    local zero='0000000000000000000000000000000000000000'
+    local main_sha
+    main_sha="$(git -C "$FIXTURE" rev-parse main)"
+
+    fixture_branch p-ahead
+    append_line aviate-core/src/ekf/update.rs '// probe'
+    fixture_commit 'unadjudicated EKF change'
+    local p_ahead
+    p_ahead="$(git -C "$FIXTURE" rev-parse HEAD)"
+
+    fixture_branch p-old
+    append_line aviate-link/src/queue.rs '// pre-rewrite tip'
+    fixture_commit 'non-production commit on the old tip'
+    local p_old
+    p_old="$(git -C "$FIXTURE" rev-parse HEAD)"
+
+    expect_push fail 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' "$p_ahead" \
+        'unreachable' 'unreachable push before-SHA fails closed'
+    expect_push fail "$p_old" "$p_ahead" 'without identity rotation' \
+        'force-push rewrite range is adjudicated, not waved through'
+    expect_push pass "$main_sha" "$main_sha" 'Ledger coherent' \
+        'genuinely empty push runs the structural check only'
+    expect_push pass "$zero" "$main_sha" 'Ledger coherent' \
+        'branch creation at existing main history is structural-only'
+    expect_push fail "$zero" "$p_ahead" 'without identity rotation' \
+        'branch creation adjudicates its new commits against main'
+
     fixture_cleanup
     trap - EXIT
 
@@ -748,8 +917,13 @@ case "${1:-}" in
         rev="${2:?usage: $0 --structural <rev>}"
         structural_check "$rev" && echo "Ledger coherent at $rev."
         ;;
+    --push-range)
+        before="${2:?usage: $0 --push-range <before-sha> <sha> [main-ref]}"
+        sha="${3:?usage: $0 --push-range <before-sha> <sha> [main-ref]}"
+        push_range "$before" "$sha" "${4:-origin/main}"
+        ;;
     "")
-        echo "usage: $0 <base-rev> <head-rev> | --structural <rev> | --self-test" >&2
+        echo "usage: $0 <base-rev> <head-rev> | --push-range <before> <sha> [main-ref] | --structural <rev> | --self-test" >&2
         exit 2
         ;;
     *)

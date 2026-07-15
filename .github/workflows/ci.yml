@@ -50,6 +50,12 @@ jobs:
       # Fail-closed for every path to a protected branch: PR ranges
       # and push ranges (before..sha) alike, so a direct or
       # admin-bypass push to main is adjudicated exactly like a PR.
+      # Range resolution lives in the script (--push-range) so the
+      # self-test can exercise it: an unreachable before-SHA
+      # (force-push / truncated fetch) fails closed rather than
+      # degrading to a structural-only check. fetch-depth: 0 above
+      # keeps a normal push's before-SHA resolvable (it is an
+      # ancestor of the pushed sha).
       - name: Adjudicate production algorithm changes
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -60,31 +66,16 @@ jobs:
         run: |
           case "$EVENT_NAME" in
             pull_request)
-              base="$PR_BASE"
-              head="$PR_HEAD"
+              ./scripts/check_algorithm_identity.sh "$PR_BASE" "$PR_HEAD"
               ;;
             push)
-              base="$PUSH_BASE"
-              head="$PUSH_HEAD"
-              # Branch creation or history rewrite: the before-SHA is
-              # all-zeros or unreachable; adjudicate from the merge
-              # base with main instead of waving the push through.
-              if [ -z "$base" ] || ! git rev-parse --quiet --verify "$base^{commit}" > /dev/null 2>&1; then
-                base="$(git merge-base origin/main "$head" 2> /dev/null || true)"
-              fi
+              ./scripts/check_algorithm_identity.sh --push-range "$PUSH_BASE" "$PUSH_HEAD" origin/main
               ;;
             *)
               echo "fail-closed: unsupported event '$EVENT_NAME'" >&2
               exit 1
               ;;
           esac
-          if [ -z "$base" ] || [ "$base" = "$head" ]; then
-            # No comparable range (e.g. main's own initial push):
-            # still prove the ledger is coherent at the head.
-            ./scripts/check_algorithm_identity.sh --structural "$head"
-          else
-            ./scripts/check_algorithm_identity.sh "$base" "$head"
-          fi
 
   app-template:
     name: App Template (generate + check)

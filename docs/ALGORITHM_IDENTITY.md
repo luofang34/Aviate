@@ -38,12 +38,23 @@ global collision and reuse checks.
 
 `scripts/check_algorithm_identity.sh` runs in CI for pull requests
 and for pushes to protected branches (`before..sha`), so a direct or
-admin-bypass push to `main` is adjudicated exactly like a PR. The
-script maps every changed production file to the registry entries
+admin-bypass push to `main` is adjudicated exactly like a PR. A push
+whose `before` cannot be resolved (force-push, shallow or truncated
+fetch) fails closed; only a genuinely empty push (`before == sha`) or
+the creation of a branch already at `main` history may drop to the
+structural ledger check alone. Renames are adjudicated at both paths
+(`--no-renames`), so moving an implementation out of a managed tree
+does not escape the gate.
+
+The script maps every changed production file to the registry entries
 that own it; the gate is satisfied only by:
 
-- a rotation of an owning entry — editing an unrelated registry entry
-  (or a comment) does not count, or
+- a rotation of **every** identity owning the changed file — each to
+  a numeric ID that appears nowhere in the base ledger (not active in
+  any section, not retired). Rotating one sibling of a shared file,
+  renaming a key while keeping its number, or swapping numbers
+  between entries does not count, and neither does editing an
+  unrelated registry entry or comment — or
 - an exact `Algorithm-Identity-Unchanged` git trailer on **every
   commit** in the range that touches the non-rotated file:
 
