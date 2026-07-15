@@ -45,6 +45,9 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          # Standalone crates (e.g. the MicoAir board) path-depend on the
+          # external/ submodules, so the --locked lockfile check needs them.
+          submodules: recursive
           persist-credentials: false
 
       - name: Install pinned Rust toolchain
@@ -97,33 +100,10 @@ jobs:
         run: ./scripts/check_publish_deny.sh
 
       - name: Verify committed lockfiles are up to date (--locked)
-        run: |
-          set -euo pipefail
-          while IFS= read -r lock; do
-            dir="$(dirname "$lock")"
-            echo "checking $dir"
-            cargo tree --locked --manifest-path "$dir/Cargo.toml" >/dev/null \
-              || { echo "::error::$lock is not up to date (--locked failed)"; exit 1; }
-          done < <(git ls-files 'Cargo.lock' '**/Cargo.lock')
+        run: ./scripts/check_release_lockfiles.sh
 
       - name: Verify package contents (license texts + corrected safety wording)
-        run: |
-          set -euo pipefail
-          for crate in $PUBLISH_CRATES; do
-            list="$(cargo package --list -p "$crate")"
-            for f in LICENSE-MIT LICENSE-APACHE README.md; do
-              grep -qx "$f" <<<"$list" \
-                || { echo "::error::$crate package is missing $f"; exit 1; }
-            done
-            # Corrected safety wording present; blanket real-hardware ban absent.
-            crate_dir="$(cargo metadata --no-deps --locked --format-version 1 \
-              | jq -r --arg n "$crate" '.packages[] | select(.name==$n) | .manifest_path' \
-              | xargs dirname)"
-            grep -q "control a real vehicle" "$crate_dir/README.md" \
-              || { echo "::error::$crate README missing corrected safety wording"; exit 1; }
-            ! grep -q "Do not deploy it on real hardware" "$crate_dir/README.md" \
-              || { echo "::error::$crate README still carries the blanket real-hardware ban"; exit 1; }
-          done
+        run: ./scripts/check_release_package_contents.sh
 
       - name: Feature matrix and documentation
         run: |
