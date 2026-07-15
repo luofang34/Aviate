@@ -78,7 +78,7 @@ jobs:
         run: |
           case "$EVENT_NAME" in
             pull_request)
-              ./scripts/check_algorithm_identity.sh "$PR_BASE" "$PR_HEAD"
+              ./scripts/check_algorithm_identity.sh --pr-range "$PR_BASE" "$PR_HEAD"
               ;;
             push)
               ./scripts/check_algorithm_identity.sh --push-range "$PUSH_BASE" "$PUSH_HEAD" origin/main

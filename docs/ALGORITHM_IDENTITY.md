@@ -64,15 +64,33 @@ that own it; the gate is satisfied only by:
 
 The trailer is parsed with `git interpret-trailers` from the final
 trailer block: look-alike keys, copies embedded mid-body, duplicated
-trailers, and bare trailers without rationale text all fail. When a
-trailer-adjudicated PR is squash-merged, keep the trailer as a proper
-trailer in the squash commit message — the push-range adjudication of
-`main` re-checks it.
+trailers, and bare trailers without rationale text all fail.
+
+## Squash merges and trailers
+
+The repository composes squash-merge messages from the PR's commit
+messages, so only the final commit's trailer block ends the squash
+body as a parseable final trailer. The PR-side gate (`--pr-range`)
+therefore requires a trailer-reliant multi-commit PR to carry the
+trailer on its final commit; otherwise the squashed commit would land
+on `main` and be rejected by the push gate, forcing a revert. A
+single-commit PR and a rotation-adjudicated PR need nothing extra.
+
+Accepted residual, stated explicitly: a maintainer editing the squash
+message at merge time, or a change to the repository's
+squash-composition setting, is outside what PR CI can observe — the
+gate validates what the composition rules will produce, not what a
+human types into the merge dialog. The push-range adjudication of
+`main` remains the fail-closed backstop for both; a violation that
+lands must be reverted.
 
 Independently of what changed, the script proves at the head
 revision: active IDs (including `[testing]`) are globally unique; no
 active ID reuses a retired one; every implementation's compiled
-constant equals its registry entry; every `ALGORITHM_ID` literal in
+constant equals its registry entry; every production implementation
+of an adjudicated trait has exactly one implementation-map row (a new
+impl under a covered root cannot escape adjudication, even by
+aliasing an already-registered ID); every `ALGORITHM_ID` literal in
 the repo is registered in the right section; the generic quad-X and
 X500 production aggregates match their pins; and no ID active at base
 vanished from the ledger without a retirement record.
