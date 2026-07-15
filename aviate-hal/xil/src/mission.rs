@@ -100,7 +100,9 @@ pub enum Action {
     Arm,
     /// Disarm the vehicle
     Disarm,
-    /// Set thrust level (0.0 - 1.0)
+    /// Set collective thrust, force-domain NormalizedThrust (0.0 - 1.0):
+    /// the fraction of maximum total thrust, not a rotor-speed
+    /// fraction (#140).
     Thrust(f32),
     /// Set attitude target (quaternion + thrust)
     AttitudeTarget {

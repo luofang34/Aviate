@@ -25,8 +25,8 @@ use aviate_core::sensor::{
 use aviate_core::state::EstimateQuality;
 use aviate_core::time::{TimeSource, Timestamp};
 use aviate_core::types::{
-    Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Normalized, Pascals,
-    RadiansPerSecond,
+    Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Normalized, NormalizedThrust,
+    Pascals, RadiansPerSecond,
 };
 use aviate_core::{
     ArmError, AviateKernel, ChannelHealthV1, ChannelId, ChannelStatus, ConfigTransitionState,
@@ -488,7 +488,7 @@ fn kernel_outputs_safe_when_not_armed() {
     let cmd = Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.8),
+            collective_thrust: NormalizedThrust(0.8),
             ..Default::default()
         },
         config_mode_request: None,
@@ -533,7 +533,7 @@ fn kernel_outputs_control_when_armed() {
     let cmd = Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -1783,7 +1783,7 @@ fn fault_state_outputs_safe_values() {
     let cmd = Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.8),
+            collective_thrust: NormalizedThrust(0.8),
             ..Default::default()
         },
         config_mode_request: None,
@@ -2212,7 +2212,7 @@ fn step_returns_safe_when_not_armed() {
     let cmd = Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -2353,7 +2353,7 @@ fn step_performs_control_when_armed() {
     let cmd = Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -3269,7 +3269,7 @@ fn update_command_age_gates_command_recent_flag() {
     let cmd = Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,

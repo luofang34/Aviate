@@ -18,7 +18,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use aviate_core::control::{Command, CommandSource, ControlMode, Setpoint};
-use aviate_core::types::Normalized;
+use aviate_core::types::NormalizedThrust;
 use aviate_hal_io::{
     SystemCommand, SystemState, TimeHal, TransportHal, TransportStatus, WatchdogHal,
 };
@@ -28,7 +28,7 @@ fn flight(thrust: f32) -> SystemCommand {
     SystemCommand::FlightControl(Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(thrust),
+            collective_thrust: NormalizedThrust(thrust),
             ..Default::default()
         },
         config_mode_request: None,

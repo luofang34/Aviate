@@ -12,7 +12,7 @@ use aviate_core::control::{
 };
 use aviate_core::math::Quaternion;
 use aviate_core::state::{EstimateQuality, StateEstimate, StateValidFlags};
-use aviate_core::types::{Meters, MetersPerSecond, Normalized, Radians, RadiansPerSecond};
+use aviate_core::types::{Meters, MetersPerSecond, NormalizedThrust, Radians, RadiansPerSecond};
 
 fn make_state() -> StateEstimate {
     StateEstimate {
@@ -63,7 +63,7 @@ fn mc_controller_position_control_path() {
         mode: ControlMode::PositionHold,
         setpoint: Setpoint {
             position: Some([Meters(5.0), Meters(5.0), Meters(-15.0)]),
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -104,7 +104,7 @@ fn mc_controller_position_control_with_offset() {
         mode: ControlMode::PositionHold,
         setpoint: Setpoint {
             position: Some([Meters(10.0), Meters(0.0), Meters(-10.0)]),
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -149,7 +149,7 @@ fn mc_controller_velocity_control_path() {
                 MetersPerSecond(0.0),
                 MetersPerSecond(0.0),
             ]),
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -187,7 +187,7 @@ fn mc_controller_velocity_control_vertical() {
                 MetersPerSecond(0.0),
                 MetersPerSecond(-2.0),
             ]), // NED: -Z is up
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -228,7 +228,7 @@ fn mc_controller_attitude_only_path() {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
             attitude: Some(tilted),
-            collective_thrust: Normalized(0.6),
+            collective_thrust: NormalizedThrust(0.6),
             ..Default::default()
         },
         config_mode_request: None,
@@ -265,7 +265,7 @@ fn mc_controller_no_setpoint_uses_defaults() {
     let cmd = Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -305,7 +305,7 @@ fn mc_controller_position_feedforward_fires_on_primed_cycle() {
         mode: ControlMode::PositionHold,
         setpoint: Setpoint {
             position: Some([Meters(8.0), Meters(-3.0), Meters(-12.0)]),
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -354,7 +354,7 @@ fn cmd_with_position(mode: ControlMode) -> Command {
         mode,
         setpoint: Setpoint {
             position: Some([Meters(20.0), Meters(0.0), Meters(-10.0)]),
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -427,7 +427,7 @@ fn position_mode_without_position_setpoint_runs_open_loop() {
     let cmd = Command {
         mode: ControlMode::PositionHold,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -460,7 +460,7 @@ fn velocity_mode_without_velocity_setpoint_runs_open_loop() {
     let cmd = Command {
         mode: ControlMode::VelocityControl,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -539,7 +539,7 @@ fn altitude_mode_climb_rate_drives_collective_not_passthrough() {
         &limits,
         Setpoint {
             vertical_speed: Some(MetersPerSecond(-2.0)),
-            collective_thrust: Normalized(manual),
+            collective_thrust: NormalizedThrust(manual),
             ..Default::default()
         },
     );
@@ -549,7 +549,7 @@ fn altitude_mode_climb_rate_drives_collective_not_passthrough() {
         &limits,
         Setpoint {
             vertical_speed: Some(MetersPerSecond(2.0)),
-            collective_thrust: Normalized(manual),
+            collective_thrust: NormalizedThrust(manual),
             ..Default::default()
         },
     );
@@ -579,7 +579,7 @@ fn altitude_mode_altitude_error_drives_thrust() {
         &limits,
         Setpoint {
             altitude: Some(Meters(11.0)),
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
     );
@@ -589,7 +589,7 @@ fn altitude_mode_altitude_error_drives_thrust() {
         &limits,
         Setpoint {
             altitude: Some(Meters(9.0)),
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
     );
@@ -619,7 +619,7 @@ fn altitude_mode_keeps_manual_roll_pitch() {
         setpoint: Setpoint {
             attitude: Some(tilted),
             vertical_speed: Some(MetersPerSecond(0.0)),
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -654,7 +654,7 @@ fn altitude_mode_slaves_yaw_to_heading() {
     let yaw_no_heading = {
         let axis_setpoint = Setpoint {
             attitude: Some(Quaternion::IDENTITY),
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         };
         let cmd = Command {
@@ -685,7 +685,7 @@ fn altitude_mode_slaves_yaw_to_heading() {
             setpoint: Setpoint {
                 attitude: Some(Quaternion::IDENTITY),
                 heading: Some(Radians(0.5)),
-                collective_thrust: Normalized(0.5),
+                collective_thrust: NormalizedThrust(0.5),
                 ..Default::default()
             },
             config_mode_request: None,
@@ -746,7 +746,7 @@ fn altitude_hold_tracks_commanded_altitude_in_sim() {
             setpoint: Setpoint {
                 attitude: Some(Quaternion::IDENTITY),
                 altitude: Some(Meters(target_alt)),
-                collective_thrust: Normalized(hover),
+                collective_thrust: NormalizedThrust(hover),
                 ..Default::default()
             },
             config_mode_request: None,
@@ -795,7 +795,7 @@ fn disarm_gate_boundary_is_the_named_invariant() {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
             attitude: Some(tilted),
-            collective_thrust: Normalized(c),
+            collective_thrust: NormalizedThrust(c),
             ..Default::default()
         },
         config_mode_request: None,

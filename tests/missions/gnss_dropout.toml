@@ -37,7 +37,7 @@ verify = [{ type = "armed", value = true }]
 [[vehicles.mission.phases]]
 name = "takeoff"
 duration_ms = 5000
-action = { type = "thrust", value = 0.8 }
+action = { type = "thrust", value = 0.64 }
 verify = [{ type = "min_altitude", value = 0.1 }]
 
 # Phase 3: Estimator warmup. The kernel just needs to stay armed
@@ -46,7 +46,7 @@ verify = [{ type = "min_altitude", value = 0.1 }]
 [[vehicles.mission.phases]]
 name = "hover_warmup"
 duration_ms = 3000
-action = { type = "thrust", value = 0.65 }
+action = { type = "thrust", value = 0.4225 }
 verify = [{ type = "armed", value = true }]
 
 # Phase 4: GNSS dropout. Inject Lost-health on the GNSS channel
@@ -71,7 +71,7 @@ verify = [{ type = "armed", value = true }]
 [[vehicles.mission.phases]]
 name = "hover_under_dropout"
 duration_ms = 5000
-action = { type = "thrust", value = 0.65 }
+action = { type = "thrust", value = 0.4225 }
 verify = [{ type = "armed", value = true }]
 
 # Phase 5: Clear faults — GNSS returns. Innovation gate
@@ -85,7 +85,7 @@ verify = [{ type = "armed", value = true }]
 [[vehicles.mission.phases]]
 name = "hover_after_recovery"
 duration_ms = 3000
-action = { type = "thrust", value = 0.65 }
+action = { type = "thrust", value = 0.4225 }
 verify = [{ type = "armed", value = true }]
 
 # Phase 6: Land + disarm.

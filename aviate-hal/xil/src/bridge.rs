@@ -1,7 +1,7 @@
 use aviate_core::control::{Command, CommandSource, ControlMode, Setpoint};
 use aviate_core::math::Quaternion;
 use aviate_core::state::StateEstimate;
-use aviate_core::types::{Meters, MetersPerSecond, Normalized, Radians, RadiansPerSecond};
+use aviate_core::types::{Meters, MetersPerSecond, NormalizedThrust, Radians, RadiansPerSecond};
 use aviate_link::mavlink::protocol::{
     position_target_typemask, AttitudeQuaternion, SetAttitudeTarget, SetPositionTargetLocalNed,
 };
@@ -25,7 +25,7 @@ pub fn mavlink_to_command(
                 RadiansPerSecond(set_att.body_pitch_rate),
                 RadiansPerSecond(set_att.body_yaw_rate),
             ]),
-            collective_thrust: Normalized(set_att.thrust),
+            collective_thrust: NormalizedThrust(set_att.thrust),
             ..Default::default()
         },
         config_mode_request: None,

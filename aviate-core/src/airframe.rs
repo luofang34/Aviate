@@ -191,7 +191,7 @@ mod tests {
             roll: crate::types::NormalizedSigned(0.0),
             pitch: crate::types::NormalizedSigned(0.0),
             yaw: crate::types::NormalizedSigned(0.0),
-            collective: crate::types::Normalized(0.5),
+            collective: crate::types::NormalizedThrust(0.5),
         });
         assert_eq!(cmd.active_mask, 0b1111);
         assert!((cmd.outputs[0].0 - 0.5).abs() < 1e-5);

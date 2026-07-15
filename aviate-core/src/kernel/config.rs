@@ -28,9 +28,12 @@ use crate::control::{ConfigMode, Limits};
 use crate::fault::FaultHandlingTable;
 use crate::kernel_types::DEFAULT_COMMAND_TIMEOUT_MS;
 use crate::mixer::ModeConfig;
-use crate::types::Normalized;
+use crate::types::{Normalized, NormalizedThrust};
 
+pub mod actuation;
 mod canonical;
+
+pub use actuation::{ActuatorCurveKind, MixerGeometry};
 
 /// Maximum number of actuator channels the kernel can drive.
 /// Mirrors `crate::mixer::MAX_ACTUATORS` — duplicated here as a const
@@ -90,25 +93,38 @@ pub struct ResolvedKernelConfig {
     /// `algorithm_identity_hash` only sees algorithm classes.
     pub cascade_gains: CascadeGains,
 
-    /// Per-airframe hover-thrust trim, as a Normalized value (0..1).
+    /// Per-airframe hover-thrust trim in the FORCE domain (#140):
+    /// the fraction of maximum total thrust at which motor thrust
+    /// equals airframe weight, `weight / max_thrust`. For the X500
+    /// (2.06 kg mass, 34.19 N max thrust) this is 20.25/34.19
+    /// ≈ 0.59.
     ///
     /// The closed-loop velocity controller uses this as the offset
-    /// around which it commands collective-thrust corrections — for
-    /// a hovering multirotor at this commanded value, motor thrust
-    /// equals airframe weight. Wrong value here means the closed
-    /// loop saturates trying to hold altitude.
-    ///
-    /// Quadratic-rotor airframes (most multirotors) need
-    /// `hover_thrust_norm = sqrt(weight / max_thrust)` because the
-    /// rotor maps `thrust = motorConstant * omega^2` and the FC
-    /// pipeline maps `omega = sqrt(cmd) * MAX_RPS`. For the X500
-    /// with 2.06 kg mass and 34.2 N max thrust, this is √(20.3/34.2)
-    /// ≈ 0.77.
+    /// around which it commands collective-thrust corrections; wrong
+    /// value here means the closed loop saturates trying to hold
+    /// altitude. The rotor-speed / PWM shape of the plant is NOT
+    /// this field's concern — `actuator_curve` converts force to the
+    /// boundary command exactly once at the board/simulator edge.
     ///
     /// Default 0.5: safe for builds whose airframe has not yet been
     /// calibrated — the closed loop will be sluggish but will not
     /// destabilize at full saturation.
-    pub hover_thrust_norm: Normalized,
+    pub hover_thrust_norm: NormalizedThrust,
+
+    /// Registered mixer geometry this configuration was resolved
+    /// for (#140). Declaration-side witness folded into
+    /// `canonical_hash`; the compiled mixer TYPE is separately
+    /// witnessed by `algorithm_identity_hash`. The app is
+    /// responsible for mapping its preset's geometry onto the
+    /// compiled mixer it injects.
+    pub mixer_geometry: MixerGeometry,
+
+    /// Actuator curve between the cascade's force-domain collective
+    /// and the boundary command (#140). Resolved from the airframe
+    /// preset, folded into `canonical_hash`, and applied EXACTLY
+    /// ONCE at the board/simulator boundary via
+    /// [`ActuatorCurveKind::boundary_command`].
+    pub actuator_curve: ActuatorCurveKind,
 }
 // COV:EXCL_STOP
 
@@ -125,7 +141,9 @@ impl Default for ResolvedKernelConfig {
             safe_output: [Normalized(0.0); MAX_ACTUATORS],
             slew_limit_per_cycle: [Normalized(0.0); MAX_ACTUATORS],
             cascade_gains: CascadeGains::default(),
-            hover_thrust_norm: Normalized(0.5),
+            hover_thrust_norm: NormalizedThrust(0.5),
+            mixer_geometry: MixerGeometry::QuadX,
+            actuator_curve: ActuatorCurveKind::Linear,
         }
     }
 }

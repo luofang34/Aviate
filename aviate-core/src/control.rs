@@ -10,7 +10,7 @@ use crate::math::Quaternion;
 use crate::sensor::GnssHealth;
 use crate::state::StateEstimate;
 use crate::types::{
-    Meters, MetersPerSecond, Normalized, NormalizedSigned, Radians, RadiansPerSecond,
+    Meters, MetersPerSecond, NormalizedSigned, NormalizedThrust, Radians, RadiansPerSecond,
 };
 
 // Re-exporting for submodules
@@ -35,7 +35,7 @@ pub struct Setpoint {
     pub velocity: Option<[MetersPerSecond; 3]>,
     pub lateral_deviation: Option<Meters>,
     pub vertical_deviation: Option<Meters>,
-    pub collective_thrust: Normalized,
+    pub collective_thrust: NormalizedThrust,
 }
 
 impl Default for Setpoint {
@@ -50,7 +50,7 @@ impl Default for Setpoint {
             velocity: None,
             lateral_deviation: None,
             vertical_deviation: None,
-            collective_thrust: Normalized(0.0),
+            collective_thrust: NormalizedThrust(0.0),
         }
     }
 }
@@ -154,7 +154,7 @@ pub struct AxisCommand {
     pub roll: NormalizedSigned,
     pub pitch: NormalizedSigned,
     pub yaw: NormalizedSigned,
-    pub collective: Normalized,
+    pub collective: NormalizedThrust,
 }
 
 // COV:EXCL_START(phantom DA: rustc's coverage attribution places

@@ -9,7 +9,7 @@ mod tests {
         MAX_ACTUATORS,
     };
     use aviate_core::time::{TimeSource, Timestamp};
-    use aviate_core::types::{Normalized, Scalar};
+    use aviate_core::types::{Normalized, NormalizedThrust, Scalar};
 
     const TEST_GROUP_MEMBERS: &[u8] = &[0, 1, 2, 3];
     const TEST_SAFE_PATTERN: GroupVector = GroupVector {
@@ -163,7 +163,7 @@ mod tests {
             roll: NormalizedSigned(0.0),
             pitch: NormalizedSigned(0.0),
             yaw: NormalizedSigned(0.0),
-            collective: Normalized(0.5),
+            collective: NormalizedThrust(0.5),
         };
 
         let cmd = mixer.mix(&axis);
@@ -188,7 +188,7 @@ mod tests {
             roll: NormalizedSigned(0.1),
             pitch: NormalizedSigned(0.0),
             yaw: NormalizedSigned(0.0),
-            collective: Normalized(0.5),
+            collective: NormalizedThrust(0.5),
         };
 
         let cmd = mixer.mix(&axis);
@@ -213,7 +213,7 @@ mod tests {
             roll: NormalizedSigned(0.1),
             pitch: NormalizedSigned(0.05),
             yaw: NormalizedSigned(0.02),
-            collective: Normalized(0.5),
+            collective: NormalizedThrust(0.5),
         };
         let cmd = mixer.mix(&axis);
         // t=0.5,r=0.1,p=0.05,y=0.02 → [0.47, 0.57, 0.63, 0.33], all in range.
@@ -252,7 +252,7 @@ mod tests {
             roll: NormalizedSigned(0.2),
             pitch: NormalizedSigned(0.0),
             yaw: NormalizedSigned(0.0),
-            collective: Normalized(0.9),
+            collective: NormalizedThrust(0.9),
         };
 
         let cmd = mixer.mix(&axis);
@@ -754,7 +754,7 @@ mod tests {
             roll: NormalizedSigned(0.5),
             pitch: NormalizedSigned(0.0),
             yaw: NormalizedSigned(0.0),
-            collective: Normalized(0.9),
+            collective: NormalizedThrust(0.9),
         };
 
         let cmd1 = mixer.mix(&axis1);
@@ -774,7 +774,7 @@ mod tests {
             roll: NormalizedSigned(0.3),
             pitch: NormalizedSigned(0.3),
             yaw: NormalizedSigned(0.2),
-            collective: Normalized(0.8),
+            collective: NormalizedThrust(0.8),
         };
 
         let cmd2 = mixer.mix(&axis2);
@@ -794,7 +794,7 @@ mod tests {
             roll: NormalizedSigned(0.3),
             pitch: NormalizedSigned(0.0),
             yaw: NormalizedSigned(0.0),
-            collective: Normalized(0.1),
+            collective: NormalizedThrust(0.1),
         };
 
         let cmd3 = mixer.mix(&axis3);

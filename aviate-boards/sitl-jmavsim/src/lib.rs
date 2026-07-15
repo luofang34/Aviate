@@ -297,7 +297,9 @@ where
             .state
             .checks
             .pre_arm
-            .update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
+            // Throttle-low gate: commanded collective below 1 % of maximum
+            // thrust (force domain).
+            .update_throttle(cmd.setpoint.collective_thrust.0 < 0.01);
         let now_ticks = self.runner.transport.now().ticks;
         self.runner
             .ingress
