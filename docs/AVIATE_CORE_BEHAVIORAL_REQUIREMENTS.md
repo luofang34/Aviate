@@ -47,4 +47,5 @@ non-blocking quarantine lane run per the mission manifest (see
 
 `docs/AVIATE_CORE_TEST_PLAN.md` maps each behavioral HLR to its
 witnesses for human readers. It is a navigation view, not a second
-requirements database.
+requirements database; `scripts/check_test_plan_sync.py` (CI-gated)
+fails when it drifts from the trace.

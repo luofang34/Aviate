@@ -28,7 +28,8 @@ satisfied by the witnesses listed in the trace.
 Navigation only — decomposition and witness links are normative in
 `cert/trace/{hlr,llr,tests}.toml`, and `cargo evidence trace
 --validate` plus `cargo evidence check` gate them in CI. Titles
-abbreviate the HLR rows.
+abbreviate the HLR rows. `scripts/check_test_plan_sync.py`
+(CI-gated) fails when this matrix drifts from the trace.
 
 | HLR | Title | Decomposed by | Witnessed by |
 |---|---|---|---|
@@ -51,7 +52,7 @@ abbreviate the HLR rows.
 | `HLR-MORPH-201` | Atomic ConfigMode swap | LLR-MORPH-201 | TST-MORPH-201 |
 | `HLR-MORPH-202` | GeometryState change without actuator spikes | LLR-MORPH-202 | TST-FLT-208 (shared slew-limiter witness) |
 | `HLR-INIT-201` | Bit-deterministic cold start | LLR-INIT-201 | TST-INIT-201 |
-| `HLR-INIT-202` | Pre-arm gates individually testable | LLR-INIT-202 | TST-FLT-203 (shared pre-arm witness) |
+| `HLR-INIT-202` | Pre-arm gates individually testable | LLR-FLT-203 (shared with HLR-FLT-202), LLR-INIT-202 | TST-FLT-203 (shared pre-arm witness) |
 
 ## Tier U — unit / integration tests
 
@@ -120,7 +121,8 @@ Linux CI is the ground truth for the X tier.
 ## Tier DRQ — derived requirements
 
 Normative text lives in `cert/trace/derived.toml`. One lifecycle
-status per DRQ:
+status per DRQ, mirroring the `status` field there
+(`scripts/check_test_plan_sync.py` enforces equality):
 
 | DRQ | Status | Anchor |
 |---|---|---|
@@ -186,7 +188,9 @@ an airframe variant the tree does not ship.
 - Requirement or witness changes happen in `cert/trace/*.toml` (with
   the matching `cert/floors.toml` bump); update the navigation matrix
   here to mirror them. `cargo evidence trace --validate` and
-  `cargo evidence check` catch drift between trace and tests.
+  `cargo evidence check` catch drift between trace and tests;
+  `scripts/check_test_plan_sync.py` catches drift between this file
+  and the trace.
 - Mission gating changes happen in `tests/missions/manifest.json`;
   `scripts/check_mission_manifest.py` enforces the manifest ↔
   mission-file bijection.
