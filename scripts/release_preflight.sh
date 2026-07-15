@@ -20,11 +20,21 @@ cd "$REPO_ROOT"
 # aviate exact-pins `aviate-core =<version>`, which is not on the registry
 # until the release publishes it, so packaging aviate here would fail the
 # index lookup. A resolution-only patch to the local aviate-core lets it
-# package now; the patch does not change the packaged manifest (still
-# `=<version>`) or the archive bytes, so this is what publish will upload.
+# package now.
+#
+# The patched archive is SOURCE/PROVENANCE-equivalent to what publish
+# uploads (same source, manifest still `=<version>`, same .cargo_vcs_info),
+# but NOT byte-identical: its embedded Cargo.lock records aviate-core as a
+# path crate (no registry source/checksum), whereas the archive published
+# after aviate-core is on the registry records the registry source and the
+# core's checksum. release_publish.sh compares the real archive to this one
+# excluding Cargo.lock, and separately checks the lock's core checksum.
 cargo package -p aviate-core --locked
 cargo package -p aviate --locked --no-verify \
     --config 'patch.crates-io.aviate-core.path="aviate-core"'
+# Preserve the patched facade archive for the publish-time source comparison
+# (publish repackages aviate unpatched, overwriting the default path).
+cp "target/package/aviate-${VERSION}.crate" "target/package/aviate-${VERSION}.preflight.crate"
 
 for crate in aviate-core aviate; do
     archive="target/package/${crate}-${VERSION}.crate"

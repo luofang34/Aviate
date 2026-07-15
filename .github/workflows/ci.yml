@@ -166,8 +166,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install release toolchain (pinned to match the release workflow)
+        uses: dtolnay/rust-toolchain@1.95.0
 
       - name: Publish-decision self-test (mocked, no network)
         run: bash scripts/release_publish.sh --self-test
