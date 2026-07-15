@@ -29,6 +29,10 @@
 #     ID in a comment);
 #   * every production implementation's compiled `ALGORITHM_ID`
 #     constant equals its registry entry (IMPL_MAP parity);
+#   * every production implementation of an adjudicated trait has
+#     exactly one IMPL_MAP row (reverse coverage — a new impl under a
+#     covered root cannot escape adjudication, even by aliasing an
+#     already-registered ID);
 #   * every `ALGORITHM_ID` literal anywhere in the repo is
 #     registered: production files must use production-section IDs,
 #     test files must use [testing] IDs;
@@ -40,9 +44,15 @@
 #
 # Usage:
 #   scripts/check_algorithm_identity.sh <base-rev> <head-rev>
+#   scripts/check_algorithm_identity.sh --pr-range <base-rev> <head-rev>
 #   scripts/check_algorithm_identity.sh --push-range <before> <sha> [main-ref]
 #   scripts/check_algorithm_identity.sh --structural <rev>
 #   scripts/check_algorithm_identity.sh --self-test
+#
+# --pr-range adds the squash-survivability guard: a trailer-reliant
+# multi-commit PR must carry the trailer on its final commit, so the
+# commit-message-composed squash body still ends in a parseable
+# trailer block when it reaches the push gate on main.
 #
 # Exit codes: 0 adjudicated / coherent, 1 adjudication or coherence
 # failure, 2 bad invocation.
@@ -75,11 +85,13 @@ IMPL_MAP=(
 
 # Ownership: which registry entries adjudicate a change to a given
 # production file. First match wins; a trailing '/' is a tree prefix.
-# A file owned by several entries (shared code) is adjudicated by a
-# rotation of ANY of its owners — an entry that does not own the file
-# never satisfies the gate for it. The sanitizer tree is explicit so
-# a sanitizer change is adjudicated against the sanitizer identity,
-# not waved through as generic mixer-tree churn.
+# A file owned by several entries (shared code) is rotation-
+# adjudicated only when EVERY owner rotates: rotating one sibling
+# would otherwise mask a change to another sibling sharing the file.
+# An entry that does not own the file never satisfies the gate for
+# it. The sanitizer tree is explicit so a sanitizer change is
+# adjudicated against the sanitizer identity, not waved through as
+# generic mixer-tree churn.
 # Fields: pattern|comma-separated owners (section/key)
 OWNERSHIP=(
     'aviate-core/src/ekf.rs|estimator/ekf.basic-15state.v3'
@@ -338,6 +350,10 @@ structural_check() {
         fi
     done < <(git -C "$REPO_ROOT" grep -I -E 'const[ \t]+ALGORITHM_ID[ \t]*:[ \t]*u64[ \t]*=[ \t]*0x' "$rev" -- '*.rs' 2>/dev/null || true)
 
+    if ! check_impl_coverage "$rev"; then
+        bad=1
+    fi
+
     # Pinned production aggregates. The generic pin doubles as a
     # cross-check that this script's fold matches the Rust fold, via
     # the shared TST-PIPE-104 constant.
@@ -348,6 +364,55 @@ structural_check() {
         bad=1
     fi
 
+    return "$bad"
+}
+
+# Reverse IMPL_MAP completeness: every production implementation of
+# an adjudicated trait — an impl block under a production root that
+# declares an ALGORITHM_ID constant — must have exactly one IMPL_MAP
+# row for its (file, type). Without this, a new implementation added
+# under a covered root would carry an identity the gate never
+# adjudicates (worst case: aliasing an already-registered ID, which
+# the literal-registration check alone cannot see).
+check_impl_coverage() {
+    local rev="$1" bad=0
+    local hit file type row msec mkey mtype mfile matches
+    while IFS= read -r hit; do
+        [[ -z "$hit" ]] && continue
+        file="${hit#"$rev":}"
+        is_test_path "$file" && continue
+        [[ -z "$(owners_for "$file")" ]] && continue
+        while IFS= read -r type; do
+            [[ -z "$type" ]] && continue
+            matches=0
+            for row in "${IMPL_MAP[@]}"; do
+                IFS='|' read -r msec mkey mtype mfile <<< "$row"
+                if [[ "$mfile" == "$file" && "$mtype" == "$type" ]]; then
+                    matches=$(( matches + 1 ))
+                fi
+            done
+            if [[ $matches -eq 0 ]]; then
+                echo "FAIL: production implementation $type in $file has no IMPL_MAP row; its identity is never adjudicated" >&2
+                bad=1
+            elif [[ $matches -gt 1 ]]; then
+                echo "FAIL: $matches IMPL_MAP rows claim $type in $file; ownership must be unambiguous" >&2
+                bad=1
+            fi
+        done < <(git -C "$REPO_ROOT" show "$rev:$file" 2>/dev/null | awk '
+            /^impl/ {
+                type = ""
+                if (match($0, / for [A-Za-z0-9_:]+/)) {
+                    type = substr($0, RSTART + 5, RLENGTH - 5)
+                    sub(/.*::/, "", type)
+                }
+            }
+            /^\}/ { type = "" }
+            type != "" && /const[ \t]+ALGORITHM_ID[ \t]*:[ \t]*u64[ \t]*=[ \t]*0x/ {
+                print type
+                type = ""
+            }
+        ')
+    done < <(git -C "$REPO_ROOT" grep -l -E 'const[ \t]+ALGORITHM_ID[ \t]*:[ \t]*u64[ \t]*=[ \t]*0x' "$rev" -- '*.rs' 2>/dev/null || true)
     return "$bad"
 }
 
@@ -413,9 +478,16 @@ trailer_ok() {
 
 # --------------------------------------------------------- adjudication
 
-# adjudicate <base> <head>
+# adjudicate <base> <head> [guard]
+# guard 'squash' adds the PR-only squash-survivability requirement:
+# when trailer adjudication is in play and the range has more than
+# one commit, the final commit must itself carry the trailer. The
+# repository composes squash-merge messages from the commit messages,
+# so the final commit's trailer block is what ends the squash body —
+# it is the only part of the composition that the push gate on main
+# will still parse as a final trailer.
 adjudicate() {
-    local base="$1" head="$2" bad=0
+    local base="$1" head="$2" guard="${3:-}" bad=0
 
     structural_check "$head" || bad=1
     continuity_check "$base" "$head" || bad=1
@@ -518,6 +590,18 @@ adjudicate() {
                 bad=1
             else
                 echo "Identity adjudicated: every commit touching non-rotated production files carries an exact $TRAILER_KEY trailer."
+                if [[ "$guard" == 'squash' ]]; then
+                    local range_commits
+                    range_commits="$(git -C "$REPO_ROOT" rev-list --count "$base..$head")"
+                    if [[ "$range_commits" -gt 1 ]] && ! trailer_ok "$head"; then
+                        echo "FAIL: this range relies on $TRAILER_KEY trailers but its final commit does not carry one." >&2
+                        echo "A squash merge composes its message from the commit messages, so only the final" >&2
+                        echo "commit's trailer block survives as the squash commit's final trailer; without it" >&2
+                        echo "the push gate rejects the squashed commit after it lands on main." >&2
+                        echo "Add the trailer to the final commit, rotate the identity instead, or merge without squashing." >&2
+                        bad=1
+                    fi
+                fi
             fi
         fi
     fi
@@ -682,6 +766,18 @@ expect_msg() {
 expect_push() {
     local want="$1" before="$2" sha="$3" pattern="$4" name="$5" out got
     if out="$( (REPO_ROOT="$FIXTURE"; push_range "$before" "$sha" main) 2>&1 )"; then
+        got='pass'
+    else
+        got='fail'
+    fi
+    check_verdict "$want" "$name" "$pattern" "$got" "$out"
+}
+
+# expect_pr <pass|fail> <grep-pattern> <name> — adjudicates
+# main..HEAD with the PR-only squash-survivability guard.
+expect_pr() {
+    local want="$1" pattern="$2" name="$3" out got
+    if out="$( (REPO_ROOT="$FIXTURE"; adjudicate main HEAD squash) 2>&1 )"; then
         got='pass'
     else
         got='fail'
@@ -867,6 +963,61 @@ self_test() {
     expect_msg fail 'aviate-core/src/control/vtol.rs (unrotated' \
         'rename out of a managed tree is adjudicated at the old path'
 
+    # Reverse coverage: an implementation added under a covered root
+    # that aliases an already-registered ID passes every literal and
+    # parity check — only the impl-to-IMPL_MAP enumeration can see it.
+    fixture_branch s-unmapped-impl
+    cat > "$FIXTURE/aviate-core/src/ekf/experimental.rs" <<'RS'
+//! Experimental estimator variant.
+
+impl super::Estimator for Ekf2 {
+    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4634; // aliases Ekf
+}
+RS
+    fixture_commit 'new estimator impl without an IMPL_MAP row'
+    expect_msg fail 'Ekf2 in aviate-core/src/ekf/experimental.rs has no IMPL_MAP row' \
+        'unmapped production implementation is rejected by reverse coverage'
+
+    # Squash survivability: a trailer-reliant multi-commit PR whose
+    # final commit lacks the trailer would land on main as a squash
+    # commit the push gate rejects — catch it before merge.
+    fixture_branch s-squash-buried
+    append_line aviate-core/src/ekf/update.rs '// probe'
+    git -C "$FIXTURE" add -A
+    git -C "$FIXTURE" commit -qm 'Touch EKF comment' \
+        -m 'Algorithm-Identity-Unchanged: comment-only change, no executable difference'
+    append_line aviate-link/src/queue.rs '// innocent follow-up'
+    fixture_commit 'innocent non-production commit'
+    expect_pr fail 'final commit does not carry one' \
+        'trailer-reliant PR whose final commit lacks the trailer fails the squash guard'
+
+    fixture_branch s-squash-final
+    append_line aviate-core/src/ekf/update.rs '// probe'
+    git -C "$FIXTURE" add -A
+    git -C "$FIXTURE" commit -qm 'Touch EKF comment' \
+        -m 'Algorithm-Identity-Unchanged: comment-only change, no executable difference'
+    append_line aviate-link/src/queue.rs '// innocent follow-up'
+    git -C "$FIXTURE" add -A
+    git -C "$FIXTURE" commit -qm 'Innocent follow-up' \
+        -m 'Algorithm-Identity-Unchanged: restates the range claim so the squash body ends with it'
+    expect_pr pass '' 'trailer on the final commit satisfies the squash guard'
+
+    fixture_branch s-squash-single
+    append_line aviate-core/src/ekf/update.rs '// probe'
+    git -C "$FIXTURE" add -A
+    git -C "$FIXTURE" commit -qm 'Touch EKF comment' \
+        -m 'Algorithm-Identity-Unchanged: comment-only change, no executable difference'
+    expect_pr pass '' 'single-commit trailer PR passes the squash guard'
+
+    fixture_branch s-squash-rotation
+    replace_in "$REGISTRY" '544F_4C31' '544F_4C32'
+    replace_in aviate-core/src/control/vtol.rs '544F_4C31' '544F_4C32'
+    append_line "$REGISTRY" '# Retired: "controller.vtol.v1" = 0x4354_4C56_544F_4C31.'
+    fixture_commit 'vtol behavior change with its own rotation'
+    append_line aviate-link/src/queue.rs '// innocent follow-up'
+    fixture_commit 'innocent non-production commit'
+    expect_pr pass '' 'rotation-adjudicated multi-commit PR needs no squash trailer'
+
     # Push-range resolution: fail-closed on anything that is not a
     # provable range, structural-only for the two honest no-range
     # shapes.
@@ -917,13 +1068,18 @@ case "${1:-}" in
         rev="${2:?usage: $0 --structural <rev>}"
         structural_check "$rev" && echo "Ledger coherent at $rev."
         ;;
+    --pr-range)
+        base="${2:?usage: $0 --pr-range <base-rev> <head-rev>}"
+        head="${3:?usage: $0 --pr-range <base-rev> <head-rev>}"
+        adjudicate "$base" "$head" squash
+        ;;
     --push-range)
         before="${2:?usage: $0 --push-range <before-sha> <sha> [main-ref]}"
         sha="${3:?usage: $0 --push-range <before-sha> <sha> [main-ref]}"
         push_range "$before" "$sha" "${4:-origin/main}"
         ;;
     "")
-        echo "usage: $0 <base-rev> <head-rev> | --push-range <before> <sha> [main-ref] | --structural <rev> | --self-test" >&2
+        echo "usage: $0 <base-rev> <head-rev> | --pr-range <base> <head> | --push-range <before> <sha> [main-ref] | --structural <rev> | --self-test" >&2
         exit 2
         ;;
     *)
