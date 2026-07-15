@@ -581,13 +581,13 @@ fn config_mode_discriminant_valid() {
 // ============================================================================
 
 use aviate_core::control::{Command, Setpoint};
-use aviate_core::types::Normalized;
+use aviate_core::types::NormalizedThrust;
 
 fn make_valid_command() -> Command {
     Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,

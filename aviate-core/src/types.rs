@@ -16,6 +16,27 @@ pub struct Seconds(pub Scalar);
 pub struct Normalized(pub Scalar); // [0.0, 1.0]
 #[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
 pub struct NormalizedSigned(pub Scalar); // [-1.0, 1.0]
+/// Normalized collective thrust in the FORCE domain: `1.0` is the
+/// airframe's maximum total thrust, `0.5` is half that FORCE — not
+/// half rotor speed and not half PWM. The controller and mixer reason
+/// exclusively in this domain (#140); the resolved actuator curve
+/// (`ResolvedKernelConfig::actuator_curve`) converts it to a boundary
+/// command exactly once at the board/simulator edge. The distinct
+/// type exists so a rotor-speed or PWM fraction cannot be passed
+/// where force is meant:
+///
+/// ```compile_fail
+/// use aviate_core::control::AxisCommand;
+/// use aviate_core::types::{Normalized, NormalizedSigned};
+/// let _ = AxisCommand {
+///     roll: NormalizedSigned(0.0),
+///     pitch: NormalizedSigned(0.0),
+///     yaw: NormalizedSigned(0.0),
+///     collective: Normalized(0.5), // speed/PWM fraction — rejected
+/// };
+/// ```
+#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
+pub struct NormalizedThrust(pub Scalar); // [0.0, 1.0], force domain
 #[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
 pub struct Pascals(pub Scalar);
 #[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd)]
@@ -73,6 +94,7 @@ impl_validated!(
     Seconds,
     Normalized,
     NormalizedSigned,
+    NormalizedThrust,
     Pascals,
     Celsius,
     Degrees,
@@ -157,6 +179,7 @@ impl_arithmetic!(
     Seconds,
     Normalized,
     NormalizedSigned,
+    NormalizedThrust,
     Pascals,
     Celsius,
     Degrees,

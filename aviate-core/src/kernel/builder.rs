@@ -190,7 +190,7 @@ mod tests {
     use crate::kernel_types::InitState;
     use crate::mixer::{ModeConfig, QuadXMixer, Sanitizer};
     use crate::time::{TimeSource, Timestamp};
-    use crate::types::{Normalized, NormalizedSigned, Radians};
+    use crate::types::{NormalizedSigned, NormalizedThrust, Radians};
 
     /// Timestamp source consumed by `QuadXMixer` — the function is invoked
     /// indirectly when a test exercises `kernel.pipeline.mixer.mix(...)` (see
@@ -291,7 +291,7 @@ mod tests {
             roll: NormalizedSigned(0.0),
             pitch: NormalizedSigned(0.0),
             yaw: NormalizedSigned(0.0),
-            collective: Normalized(0.0),
+            collective: NormalizedThrust(0.0),
         });
         // QuadXMixer.mix() calls (self.timestamp_source)() to populate
         // the ActuatorCmd timestamp — confirm the indirection ran by

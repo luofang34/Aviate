@@ -25,7 +25,7 @@ use aviate_core::mixer::{ModeConfig, QuadXMixer, Sanitizer};
 use aviate_core::state::StateEstimate;
 use aviate_core::time::{TimeSource, Timestamp};
 use aviate_core::types::{
-    Meters, MetersPerSecond, Normalized, NormalizedSigned, Radians, RadiansPerSecond,
+    Meters, MetersPerSecond, NormalizedSigned, NormalizedThrust, Radians, RadiansPerSecond,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -75,7 +75,7 @@ impl VehicleController for TestStatefulController {
             roll: NormalizedSigned(0.0),
             pitch: NormalizedSigned(0.0),
             yaw: NormalizedSigned(0.0),
-            collective: Normalized(0.0),
+            collective: NormalizedThrust(0.0),
         }
     }
 }

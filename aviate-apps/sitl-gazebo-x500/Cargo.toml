@@ -15,6 +15,9 @@ path = "src/main.rs"
 # airframe, builds the resolved config through the checked builder,
 # and this binary injects the result into the board.
 aviate-app-sitl-gazebo-x500-kernel = { path = "kernel" }
+# The boundary conversion consumes the resolved actuator-curve
+# contract (`ActuatorCurveKind::boundary_command`, #140).
+aviate-core = { path = "../../aviate-core" }
 aviate-board-sitl-gazebo = { path = "../../aviate-boards/sitl-gazebo", features = ["gz-plugin"] }
 aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor", features = ["x500"] }
 aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", features = ["gz-plugin"] }

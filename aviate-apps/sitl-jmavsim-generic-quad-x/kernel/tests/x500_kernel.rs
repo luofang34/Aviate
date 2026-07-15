@@ -36,7 +36,7 @@ fn app_built_kernel_matches_pre_change_identity() {
     // encoding changes — e.g. a `CascadeGains` field addition — even
     // when every flown value is unchanged; the algorithm-identity pin
     // below is the witness that the control law itself is the same.
-    assert_eq!(kernel.cfg().canonical_hash(), 0xe133_513c_7b5d_ed17);
+    assert_eq!(kernel.cfg().canonical_hash(), 0x1b84_cab8_60c4_5a0c);
     assert_eq!(
         kernel.pipeline().algorithm_identity_hash(),
         0x20ce_8c48_7287_24d5

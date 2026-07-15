@@ -30,19 +30,19 @@ verify = [{ type = "armed", value = true }]
 [[vehicles.mission.phases]]
 name = "takeoff"
 duration_ms = 5000
-action = { type = "thrust", value = 0.8 }
+action = { type = "thrust", value = 0.64 }
 verify = [{ type = "min_altitude", value = 5.0 }]
 
 [[vehicles.mission.phases]]
 name = "hover"
 duration_ms = 5000
-action = { type = "thrust", value = 0.65 }
+action = { type = "thrust", value = 0.4225 }
 verify = [{ type = "max_drift", value = 50.0 }]
 
 [[vehicles.mission.phases]]
 name = "descend"
 duration_ms = 3000
-action = { type = "thrust", value = 0.45 }
+action = { type = "thrust", value = 0.2025 }
 verify = []
 
 [[vehicles.mission.phases]]
@@ -77,19 +77,19 @@ verify = [{ type = "armed", value = true }]
 [[vehicles.mission.phases]]
 name = "takeoff"
 duration_ms = 5000
-action = { type = "thrust", value = 0.8 }
+action = { type = "thrust", value = 0.64 }
 verify = [{ type = "min_altitude", value = 5.0 }]
 
 [[vehicles.mission.phases]]
 name = "hover"
 duration_ms = 5000
-action = { type = "thrust", value = 0.65 }
+action = { type = "thrust", value = 0.4225 }
 verify = [{ type = "max_drift", value = 50.0 }]
 
 [[vehicles.mission.phases]]
 name = "descend"
 duration_ms = 3000
-action = { type = "thrust", value = 0.45 }
+action = { type = "thrust", value = 0.2025 }
 verify = []
 
 [[vehicles.mission.phases]]

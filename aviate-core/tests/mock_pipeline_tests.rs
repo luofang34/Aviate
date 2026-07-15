@@ -31,7 +31,7 @@ use aviate_core::sensor::{
 };
 use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
 use aviate_core::types::{
-    MetersPerSecondSquared, Normalized, NormalizedSigned, RadiansPerSecond, Scalar,
+    MetersPerSecondSquared, NormalizedSigned, NormalizedThrust, RadiansPerSecond, Scalar,
 };
 use aviate_core::ChannelId;
 
@@ -162,7 +162,7 @@ impl VehicleController for MockController {
             roll: NormalizedSigned(0.0),
             pitch: NormalizedSigned(0.0),
             yaw: NormalizedSigned(0.0),
-            collective: Normalized(0.0),
+            collective: NormalizedThrust(0.0),
         }
     }
 }

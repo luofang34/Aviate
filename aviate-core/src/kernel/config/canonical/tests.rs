@@ -2,7 +2,7 @@
 use super::super::MAX_ACTUATORS;
 use super::*;
 use crate::fault::FaultHandlingTable;
-use crate::types::Normalized;
+use crate::types::{Normalized, NormalizedThrust};
 
 #[test]
 fn canonical_hash_is_deterministic() {
@@ -90,7 +90,7 @@ fn canonical_hash_distinguishes_hover_thrust_norm() {
     // here would let lockstep peers fly different trims silently.
     let baseline = ResolvedKernelConfig::default().canonical_hash();
     let mut cfg = ResolvedKernelConfig::default();
-    cfg.hover_thrust_norm = Normalized(cfg.hover_thrust_norm.0 + 0.1);
+    cfg.hover_thrust_norm = NormalizedThrust(cfg.hover_thrust_norm.0 + 0.1);
     assert_ne!(baseline, cfg.canonical_hash());
 }
 
@@ -129,6 +129,37 @@ fn canonical_hash_distinguishes_fault_table() {
         ..Default::default()
     };
     assert_ne!(cfg_default.canonical_hash(), cfg_empty.canonical_hash());
+}
+
+#[test]
+fn canonical_hash_distinguishes_mixer_geometry() {
+    // #140: the declared mixer geometry must be lockstep-visible —
+    // two channels resolved for different geometries may not agree.
+    let quad_x = ResolvedKernelConfig {
+        mixer_geometry: MixerGeometry::QuadX,
+        ..Default::default()
+    };
+    let x500 = ResolvedKernelConfig {
+        mixer_geometry: MixerGeometry::QuadXX500,
+        ..Default::default()
+    };
+    assert_ne!(quad_x.canonical_hash(), x500.canonical_hash());
+}
+
+#[test]
+fn canonical_hash_distinguishes_actuator_curve() {
+    // #140: the resolved actuator curve shapes every boundary
+    // command; a linear and a quadratic resolution must not compare
+    // config-equal at lockstep entry.
+    let linear = ResolvedKernelConfig {
+        actuator_curve: ActuatorCurveKind::Linear,
+        ..Default::default()
+    };
+    let quadratic = ResolvedKernelConfig {
+        actuator_curve: ActuatorCurveKind::QuadraticRotor,
+        ..Default::default()
+    };
+    assert_ne!(linear.canonical_hash(), quadratic.canonical_hash());
 }
 
 #[test]

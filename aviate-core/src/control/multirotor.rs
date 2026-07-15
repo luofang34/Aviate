@@ -16,7 +16,7 @@ use crate::control::{
 };
 use crate::math::{Quaternion, Vector3};
 use crate::state::StateEstimate;
-use crate::types::{MetersPerSecond, MetersPerSecondSquared, Normalized, Radians};
+use crate::types::{MetersPerSecond, MetersPerSecondSquared, NormalizedThrust, Radians};
 
 /// Persistent runtime state for the multirotor cascade. Owned by
 /// `KernelState.controller`. Reset on every transition that
@@ -226,7 +226,7 @@ impl MultirotorController {
         state: &StateEstimate,
         vertical_sp: MetersPerSecond,
         dt_sec: Scalar,
-    ) -> Normalized {
+    ) -> NormalizedThrust {
         let zero = MetersPerSecond(0.0);
         let vel_sp = Vector3::new(zero, zero, vertical_sp);
         let current = Vector3::new(zero, zero, state.velocity_ned[2]);

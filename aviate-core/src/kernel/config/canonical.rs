@@ -15,6 +15,7 @@ use crate::mixer::{
     ActuatorGroupConfig, CouplingKind, FallbackPolicy, GroupKind, GroupVector, ModeConfig,
 };
 
+use super::actuation::{ActuatorCurveKind, MixerGeometry};
 use super::ResolvedKernelConfig;
 
 /// FNV-1a 64-bit fold over the entire flight-period configuration.
@@ -56,7 +57,25 @@ pub(super) fn canonical_hash(cfg: &ResolvedKernelConfig) -> u64 {
     feed_cascade_gains(&mut h, &cfg.cascade_gains);
     h.feed_separator();
     h.feed_f32(cfg.hover_thrust_norm.0);
+    h.feed_separator();
+    feed_mixer_geometry(&mut h, cfg.mixer_geometry);
+    h.feed_separator();
+    feed_actuator_curve(&mut h, cfg.actuator_curve);
     h.finish()
+}
+
+fn feed_mixer_geometry(h: &mut Fnv1a64, g: MixerGeometry) {
+    h.feed_u8(match g {
+        MixerGeometry::QuadX => 0,
+        MixerGeometry::QuadXX500 => 1,
+    });
+}
+
+fn feed_actuator_curve(h: &mut Fnv1a64, c: ActuatorCurveKind) {
+    h.feed_u8(match c {
+        ActuatorCurveKind::Linear => 0,
+        ActuatorCurveKind::QuadraticRotor => 1,
+    });
 }
 
 struct Fnv1a64 {

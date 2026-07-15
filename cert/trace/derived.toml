@@ -195,7 +195,8 @@ oscillation is the still-open gap.
 Closing this DRQ requires:
   1. Reading the actual hover-thrust trim point for the X500
      (motorConstant=8.55e-6 × 1000² × 4 = 34 N max vs 20.25 N
-     weight → hover ≈ 0.77 normalized, not 0.65).
+     weight → hover ≈ 0.59 force-domain NormalizedThrust,
+     equivalently ≈ 0.77 as the boundary rotor-speed command).
   2. Tightening attitude-loop gains so the motor command stays
      symmetric at level setpoint (no [0, 1, 1, 0] saturation
      pattern under perfect sensors).
@@ -263,7 +264,11 @@ Witnessed (negative) by `tests/missions/square_course.toml`,
 which executes the full position-target path but does not
 reliably pass its `ReachedWaypoint` criteria today. Open-loop
 flight is witnessed by `tests/missions/hover_trim_check.toml`
-(climb → hover at trim → descend → land) which passes 5/5.
+(climb → decelerate → descend → land) which passes 5/5. The
+profile contains NO steady hover-at-trim observation — an
+open-loop profile cannot null the vertical velocity first — so
+it is not evidence for the hover-trim value; the force-domain
+trim measurement with saved evidence is the #140 sweep.
 """
 rationale = """
 Honest scope: this PR delivers the harness, the criteria, and

@@ -39,7 +39,7 @@ verify = [{ type = "armed", value = true }]
 [[vehicles.mission.phases]]
 name = "takeoff"
 duration_ms = 3000
-action = { type = "thrust", value = 0.8 }
+action = { type = "thrust", value = 0.64 }
 verify = [{ type = "min_altitude", value = 0.1 }]
 
 # Phase 3: Wait. `Action::Wait` only sends heartbeat — no
@@ -59,7 +59,7 @@ verify = [{ type = "armed", value = true }]
 [[vehicles.mission.phases]]
 name = "resume_command"
 duration_ms = 2000
-action = { type = "thrust", value = 0.65 }
+action = { type = "thrust", value = 0.4225 }
 verify = [{ type = "armed", value = true }]
 
 # Phase 5: Land + disarm.

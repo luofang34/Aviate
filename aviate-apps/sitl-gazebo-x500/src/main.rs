@@ -50,6 +50,11 @@ fn main() -> std::io::Result<()> {
     )?;
     log::info!("board constructed");
 
+    // The one boundary conversion (#140): the resolved configuration
+    // declares the plant's actuator curve; every mixer output passes
+    // through it exactly once on the way to gz-sim.
+    let actuator_curve = board.kernel().cfg().actuator_curve;
+
     // Connect to the gz-sim system plugin via shared memory. The plugin
     // initializes the shared region as soon as gz-sim loads the SDF, so
     // a short retry loop is plenty.
@@ -112,22 +117,16 @@ fn main() -> std::io::Result<()> {
 
         // 4. Forward actuator outputs to gz-sim as rotor velocities.
         //
-        // Aviate's mixer produces normalized [0, 1] outputs whose
-        // semantics the kernel treats as normalized **thrust** (the
-        // mixer's additive corrections compose meaningfully in
-        // thrust units; in motor-speed units, mid-throttle would
-        // produce only `cmd²` of max thrust). The X500 rotor model
-        // in PX4-gazebo-models implements quadratic thrust:
-        // `thrust = motorConstant · ω²`. So normalized-thrust input
-        // maps to motor angular velocity as `ω = MAX · √cmd`.
-        // Without the sqrt, "0.65 hover" actually produces only
-        // 0.42 of max thrust — well below the X500's 0.57 weight-
-        // to-max-thrust ratio, and the vehicle sinks.
+        // Mixer outputs are normalized per-motor THRUST (force
+        // domain, #140). The resolved actuator curve — quadratic
+        // for the gz rotor, `thrust = motorConstant · ω²` — is
+        // applied here, exactly once, mapping force to rotor speed
+        // as `ω = MAX · √thrust`.
         let motor_speeds = [
-            cmd_to_omega(cmd.outputs[0].0),
-            cmd_to_omega(cmd.outputs[1].0),
-            cmd_to_omega(cmd.outputs[2].0),
-            cmd_to_omega(cmd.outputs[3].0),
+            cmd_to_omega(actuator_curve, cmd.outputs[0].0),
+            cmd_to_omega(actuator_curve, cmd.outputs[1].0),
+            cmd_to_omega(actuator_curve, cmd.outputs[2].0),
+            cmd_to_omega(actuator_curve, cmd.outputs[3].0),
         ];
         if let Err(e) = plugin.set_motor_speeds(&motor_speeds) {
             log::warn!("set_motor_speeds failed: {e:?}");

@@ -25,7 +25,7 @@ use crate::control::law_invariants::{
 use crate::math::{Quaternion, Vector3};
 #[allow(unused_imports)] // FloatExt needed for no_std math methods
 use crate::types::{
-    FloatExt, MetersPerSecond, MetersPerSecondSquared, Normalized, Radians, Scalar,
+    FloatExt, MetersPerSecond, MetersPerSecondSquared, NormalizedThrust, Radians, Scalar,
 };
 
 /// Persistent state owned by the velocity loop. Lives inside
@@ -88,7 +88,7 @@ impl VelocityLoopState {
 #[derive(Clone, Copy, Debug)]
 pub struct VelocityCommand {
     /// Collective thrust setpoint for the rate-loop / mixer chain.
-    pub collective: Normalized,
+    pub collective: NormalizedThrust,
     /// Attitude setpoint (yaw-from-current-attitude, roll/pitch
     /// derived from horizontal acceleration command).
     pub attitude: Quaternion,
@@ -123,7 +123,7 @@ pub struct VelocityController {
     /// strictly equivalent and avoids a borrow-life lifetime
     /// chasing through the trait.
     pub gains: CascadeGains,
-    /// Hover thrust trim [Normalized] — vertical loop commands
+    /// Hover thrust trim (normalized force) — vertical loop commands
     /// corrections around this value. Mirrors
     /// `ResolvedKernelConfig.hover_thrust_norm`.
     pub hover_thrust_norm: Scalar,
@@ -194,7 +194,7 @@ impl VelocityController {
         let i_z = -state.integrator_ned.z.0 * self.gains.vel_i[2];
         // Convert NED accel ff to thrust offset. Newton's second
         // law: thrust = m·(g − a_ned_z); divided by max-thrust to
-        // get the Normalized command. Approximated as
+        // get the normalized-force command. Approximated as
         // `−a_ned_z·trim/g` because at hover trim is `m·g/max_thrust`
         // — the linearization around hover trim that the rest of
         // the velocity loop already assumes.
@@ -220,7 +220,7 @@ impl VelocityController {
         let r22 = 1.0 - 2.0 * (current_att.x * current_att.x + current_att.y * current_att.y);
         let cos_tilt = r22.max(TILT_COMP_COS_FLOOR);
         let collective_cmd = collective_unscaled / cos_tilt;
-        let collective = Normalized(collective_cmd.clamp(0.0, 1.0));
+        let collective = NormalizedThrust(collective_cmd.clamp(0.0, 1.0));
 
         // ---- horizontal (X/Y) ----
         // Convert velocity error → horizontal acceleration → tilt.

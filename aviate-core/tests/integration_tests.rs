@@ -17,7 +17,7 @@ mod tests {
     use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
     use aviate_core::types::Seconds;
     use aviate_core::types::{
-        Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Normalized, Pascals,
+        Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, NormalizedThrust, Pascals,
         RadiansPerSecond, Scalar,
     };
     use aviate_core::{AviateKernel, ChannelId};
@@ -345,7 +345,7 @@ mod tests {
         let cmd = Command {
             mode: ControlMode::Attitude,
             setpoint: Setpoint {
-                collective_thrust: Normalized(0.5),
+                collective_thrust: NormalizedThrust(0.5),
                 ..Default::default()
             },
             config_mode_request: None,
@@ -453,7 +453,7 @@ mod tests {
         let cmd = Command {
             mode: ControlMode::Attitude,
             setpoint: Setpoint {
-                collective_thrust: Normalized(0.5),
+                collective_thrust: NormalizedThrust(0.5),
                 ..Default::default()
             },
             config_mode_request: None,

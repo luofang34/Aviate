@@ -11,7 +11,7 @@ use aviate_core::control::{
 };
 use aviate_core::math::Quaternion;
 use aviate_core::state::{EstimateQuality, StateEstimate, StateValidFlags};
-use aviate_core::types::{Meters, MetersPerSecond, Normalized, Radians, RadiansPerSecond};
+use aviate_core::types::{Meters, MetersPerSecond, NormalizedThrust, Radians, RadiansPerSecond};
 
 fn make_state() -> StateEstimate {
     StateEstimate {
@@ -56,7 +56,7 @@ fn vtol_controller_step_returns_collective() {
     let cmd = Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.7),
+            collective_thrust: NormalizedThrust(0.7),
             ..Default::default()
         },
         config_mode_request: None,
@@ -92,7 +92,7 @@ fn vtol_controller_step_in_transition_mode() {
     let cmd = Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,

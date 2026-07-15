@@ -28,8 +28,8 @@ use aviate_core::sensor::{
 };
 use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
 use aviate_core::types::{
-    Celsius, Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Normalized, Pascals,
-    RadiansPerSecond, Seconds,
+    Celsius, Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Normalized,
+    NormalizedThrust, Pascals, RadiansPerSecond, Seconds,
 };
 use aviate_core::{ChannelId, InitState};
 
@@ -190,7 +190,7 @@ fn full_throttle_cmd() -> Command {
     Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(1.0),
+            collective_thrust: NormalizedThrust(1.0),
             attitude: Some(Quaternion::IDENTITY),
             ..Default::default()
         },

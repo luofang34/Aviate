@@ -273,7 +273,7 @@ where
 
 use aviate_core::control::{CommandSource, ControlMode, Setpoint};
 use aviate_core::time::{TimeSource, Timestamp};
-use aviate_core::types::Normalized;
+use aviate_core::types::NormalizedThrust;
 
 /// Create a safe default/failsafe command with zero thrust
 ///
@@ -282,7 +282,7 @@ pub fn default_command() -> Command {
     Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.0),
+            collective_thrust: NormalizedThrust(0.0),
             ..Default::default()
         },
         config_mode_request: None,

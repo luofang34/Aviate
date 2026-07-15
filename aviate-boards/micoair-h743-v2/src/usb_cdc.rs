@@ -19,7 +19,7 @@
 
 use aviate_core::control::{Command, ControlMode, Setpoint};
 use aviate_core::math::Quaternion;
-use aviate_core::types::{FloatExt, Normalized, RadiansPerSecond};
+use aviate_core::types::{FloatExt, NormalizedThrust, RadiansPerSecond};
 use aviate_hal_io::transport_hal::{
     SystemState, TransportHal, TransportStatus as TransportHalStatus,
 };
@@ -307,9 +307,13 @@ impl SerialTransport {
                 }
             }
             MavMessage::SetAttitudeTarget(tgt) => {
-                // Convert quaternion and thrust to Command
+                // Convert quaternion and thrust to Command. Wire
+                // thrust is interpreted as force-domain
+                // NormalizedThrust (#140): the fraction of maximum
+                // total thrust, converted to the plant's boundary
+                // command only by the resolved actuator curve.
                 let q = Quaternion::new(tgt.q[0], tgt.q[1], tgt.q[2], tgt.q[3]);
-                let thrust = Normalized(tgt.thrust.clamp(0.0, 1.0));
+                let thrust = NormalizedThrust(tgt.thrust.clamp(0.0, 1.0));
 
                 let command = Command {
                     mode: ControlMode::Attitude,
@@ -333,7 +337,8 @@ impl SerialTransport {
                 let roll = (mc.y as f32) / 1000.0 * 0.5; // Max 0.5 rad
                 let pitch = (mc.x as f32) / 1000.0 * 0.5;
                 let yaw_rate = (mc.r as f32) / 1000.0 * 1.0; // Max 1 rad/s
-                let thrust = Normalized(((mc.z as f32) / 1000.0).clamp(0.0, 1.0));
+                                                             // Stick z maps to force-domain collective (#140).
+                let thrust = NormalizedThrust(((mc.z as f32) / 1000.0).clamp(0.0, 1.0));
 
                 // Convert to quaternion (simplified - just roll/pitch, no yaw)
                 let q = quaternion_from_euler(roll, pitch, 0.0);

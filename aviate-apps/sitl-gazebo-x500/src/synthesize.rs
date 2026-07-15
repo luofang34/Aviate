@@ -12,6 +12,8 @@
 //! physics.
 
 use aviate_backend_gz::{enu_to_ned_f32, AviateModelState};
+use aviate_core::kernel::config::ActuatorCurveKind;
+use aviate_core::types::NormalizedThrust;
 use aviate_hal_xil::sim_types::{
     SimBaroData, SimGnssData, SimGnssFix, SimImuData, SimMagData, SimSensorPacket, SimTimestampUs,
 };
@@ -325,29 +327,23 @@ pub fn rotate_world_to_body(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-/// Convert an Aviate `Normalized` [0, 1] actuator command into a
-/// quad rotor angular-velocity setpoint (rad/s) for the X500's
-/// `MulticopterMotorModelSystem`.
+/// Convert a mixer output — normalized per-motor THRUST, force
+/// domain (#140) — into the quad rotor angular-velocity setpoint
+/// (rad/s) for the X500's `MulticopterMotorModelSystem`.
 ///
-/// Linear mapping: `ω = cmd · MAX_RPS`. The gz rotor produces
-/// thrust `T = motorConstant · ω²`, so per-motor thrust is
-/// `motorConstant · cmd² · MAX_RPS²` — quadratic in cmd. The
-/// implication: the **hover-thrust trim** seen by the kernel is
-/// `cmd_hover = √(weight / (4 · motorConstant · MAX_RPS²))`. For
-/// the X500 (2.06 kg, motorConstant 8.55e-6, MAX_RPS 1000):
-/// `cmd_hover = √(20.25 / 34.2) ≈ 0.77`, matching the empirical
-/// hover-trim — which is what `ResolvedKernelConfig.
-/// hover_thrust_norm` carries through to the controller.
-///
-/// An earlier revision used `ω = √cmd · MAX_RPS` so that thrust
-/// became linear in cmd. That left the mixer's "normalized thrust"
-/// semantics intact at the cost of disagreeing with how an actual
-/// X500 ESC interprets a normalized command — and the gz physics
-/// produced ~6× less lift than expected. The linear mapping here
-/// matches the X500 PX4-gazebo-models contract directly.
-pub fn cmd_to_omega(normalized: f32) -> f64 {
-    let clamped = normalized.clamp(0.0, 1.0);
-    (clamped as f64) * MOTOR_MAX_RPS
+/// This is the one place the resolved actuator curve is applied:
+/// the controller and mixer reason purely in force, and
+/// `ResolvedKernelConfig::actuator_curve` describes the plant. The
+/// gz rotor produces thrust `T = motorConstant · ω²` (quadratic),
+/// so the X500 configuration resolves
+/// `ActuatorCurveKind::QuadraticRotor` and the boundary command is
+/// `√thrust`: `ω = √thrust · MAX_RPS`, making physical thrust
+/// linear in the kernel's command. At the X500's force-domain
+/// hover trim (20.25 N weight / 34.19 N max = 0.5929) this
+/// commands `√0.5929 · MAX_RPS = 0.77 · MAX_RPS` — the identical
+/// rotor speed the pre-migration speed-domain trim produced.
+pub fn cmd_to_omega(curve: ActuatorCurveKind, thrust: f32) -> f64 {
+    f64::from(curve.boundary_command(NormalizedThrust(thrust)).0) * MOTOR_MAX_RPS
 }
 
 /// ISA pressure (Pa) at a given altitude MSL (m), troposphere model.

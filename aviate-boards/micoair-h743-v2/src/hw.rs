@@ -21,7 +21,7 @@ use aviate_core::hal::{ActuatorHal, SensorHal};
 use aviate_core::math::{Quaternion, Vector3};
 use aviate_core::mixer::{ModeConfig, QuadXMixer, Sanitizer};
 use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
-use aviate_core::types::{Meters, MetersPerSecond, Normalized, Seconds};
+use aviate_core::types::{Meters, MetersPerSecond, NormalizedThrust, Seconds};
 use aviate_core::{ChannelId, DefaultAviateKernel, InitState};
 use aviate_hal_io::SystemCommand;
 
@@ -615,7 +615,8 @@ impl BoardStep for MicoAirBoard {
                         .state
                         .checks
                         .pre_arm
-                        .update_throttle(flight_cmd.setpoint.collective_thrust.0 < 0.1);
+                        // Throttle-low gate: collective below 1 % of max thrust (force domain).
+                        .update_throttle(flight_cmd.setpoint.collective_thrust.0 < 0.01);
                 }
             }
         }
@@ -679,10 +680,20 @@ fn create_kernel() -> HwKernel {
     // hardware path takes the same verified construction road as the
     // SITL apps.
     let gains = aviate_core::control::cascade_gains::CascadeGains::x500_defaults();
-    let hover: f32 = 0.77;
+    // Force-domain hover trim (#140): explicit migration of the
+    // X500-class SPEED-domain seed 0.77 through the quadratic rotor
+    // curve (thrust = speed²), so 0.77² = 0.5929. The declared
+    // QuadraticRotor curve must be applied exactly once where the
+    // PWM/ESC write path lands — actuator output on this board is
+    // not implemented yet, and that implementation MUST route
+    // through `ActuatorCurveKind::boundary_command`, never
+    // reinterpret units itself.
+    let hover: f32 = 0.5929;
     let cfg = aviate_core::kernel::config::ResolvedKernelConfig {
         cascade_gains: gains,
-        hover_thrust_norm: aviate_core::types::Normalized(hover),
+        hover_thrust_norm: aviate_core::types::NormalizedThrust(hover),
+        mixer_geometry: aviate_core::kernel::config::MixerGeometry::QuadX,
+        actuator_curve: aviate_core::kernel::config::ActuatorCurveKind::QuadraticRotor,
         mode_config: ModeConfig {
             mode: ConfigMode::Hover,
             groups: &[],
@@ -717,7 +728,7 @@ pub fn default_command() -> Command {
     Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.0),
+            collective_thrust: NormalizedThrust(0.0),
             ..Default::default()
         },
         source: CommandSource::Failsafe,
@@ -742,7 +753,8 @@ impl MicoAirBoard {
                     .state
                     .checks
                     .pre_arm
-                    .update_throttle(cmd.setpoint.collective_thrust.0 < 0.1);
+                    // Throttle-low gate: collective below 1 % of max thrust (force domain).
+                    .update_throttle(cmd.setpoint.collective_thrust.0 < 0.01);
             }
             SystemCommand::Arm => {
                 if self.kernel.arm().is_ok() {

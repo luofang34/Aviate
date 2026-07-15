@@ -277,7 +277,7 @@ mod tests {
             roll: crate::types::NormalizedSigned(0.0),
             pitch: crate::types::NormalizedSigned(0.0),
             yaw: crate::types::NormalizedSigned(0.0),
-            collective: crate::types::Normalized(0.0),
+            collective: crate::types::NormalizedThrust(0.0),
         });
     }
 

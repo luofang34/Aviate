@@ -14,7 +14,7 @@ use aviate_core::kernel::builder::{AviateKernelBuilder, KernelBuildError};
 use aviate_core::kernel::config::ResolvedKernelConfig;
 use aviate_core::mixer::{QuadXMixer, Sanitizer};
 use aviate_core::time::{TimeSource, Timestamp};
-use aviate_core::types::Normalized;
+use aviate_core::types::NormalizedThrust;
 
 fn fake_ts() -> Timestamp {
     Timestamp {
@@ -78,7 +78,7 @@ fn every_gains_and_hover_field_mismatch_is_rejected() {
             c.cascade_gains.rate_d_lpf_alpha += 0.125
         }),
         ("hover_thrust_norm", |c| {
-            c.hover_thrust_norm = Normalized(c.hover_thrust_norm.0 + 0.125)
+            c.hover_thrust_norm = NormalizedThrust(c.hover_thrust_norm.0 + 0.125)
         }),
     ];
 

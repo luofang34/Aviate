@@ -28,8 +28,8 @@ use aviate_core::sensor::{
 };
 use aviate_core::time::{TimeDelta, TimeSource, Timestamp};
 use aviate_core::types::{
-    Celsius, Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Normalized, Pascals,
-    Radians, RadiansPerSecond, Scalar, Seconds,
+    Celsius, Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, NormalizedThrust,
+    Pascals, Radians, RadiansPerSecond, Scalar, Seconds,
 };
 use aviate_core::{ChannelId, InitState, TransitionError};
 
@@ -239,7 +239,7 @@ fn disarmed_safe_output_is_independent_of_inputs() {
     let saturating_cmd = Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(1.0),
+            collective_thrust: NormalizedThrust(1.0),
             attitude: Some(tilt),
             angular_rate: Some([
                 RadiansPerSecond(10.0),
@@ -309,7 +309,7 @@ fn numeric_fault_latched_inhibits_actuator_output() {
     let live_cmd = Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -572,7 +572,7 @@ fn altitude_ok_flag_tracks_geofence_through_update() {
         setpoint: Setpoint {
             attitude: Some(Quaternion::IDENTITY),
             altitude: Some(Meters(5.0)),
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,
@@ -636,7 +636,7 @@ fn hover_cmd() -> Command {
     Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
-            collective_thrust: Normalized(0.5),
+            collective_thrust: NormalizedThrust(0.5),
             ..Default::default()
         },
         config_mode_request: None,

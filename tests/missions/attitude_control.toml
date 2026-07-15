@@ -42,7 +42,7 @@ verify = [{ type = "armed", value = true }]
 [[vehicles.mission.phases]]
 name = "takeoff"
 duration_ms = 5000
-action = { type = "thrust", value = 0.8 }
+action = { type = "thrust", value = 0.64 }
 verify = [{ type = "min_altitude", value = 0.1 }]
 
 # Phase 3: Level hover - identity quaternion
@@ -95,7 +95,7 @@ verify = [{ type = "armed", value = true }]
 [[vehicles.mission.phases]]
 name = "descend"
 duration_ms = 4000
-action = { type = "thrust", value = 0.3 }
+action = { type = "thrust", value = 0.09 }
 verify = []
 
 # Phase 9: Land

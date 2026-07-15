@@ -37,7 +37,7 @@ verify = [
 [[vehicles.mission.phases]]
 name = "ascend"
 duration_ms = 2500
-action = { type = "thrust", value = 0.85 }
+action = { type = "thrust", value = 0.7225 }
 verify = [
   { type = "armed", value = true },
   { type = "min_altitude", value = 4.0 },
@@ -48,7 +48,7 @@ verify = [
 [[vehicles.mission.phases]]
 name = "decelerate"
 duration_ms = 3000
-action = { type = "thrust", value = 0.55 }
+action = { type = "thrust", value = 0.3025 }
 verify = [
   { type = "armed", value = true },
   { type = "max_excursion", center = [0.0, 0.0, -8.0], xy_max = 0.5, z_max = 12.0 },
@@ -58,7 +58,7 @@ verify = [
 [[vehicles.mission.phases]]
 name = "descend"
 duration_ms = 2000
-action = { type = "thrust", value = 0.30 }
+action = { type = "thrust", value = 0.09 }
 verify = [
   { type = "armed", value = true },
   { type = "max_excursion", center = [0.0, 0.0, -4.0], xy_max = 0.5, z_max = 12.0 },
