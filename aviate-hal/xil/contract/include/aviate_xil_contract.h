@@ -91,10 +91,22 @@ typedef struct AviateSharedStateHeader {
   uint32_t reset_generation;
   // Non-zero while the plugin owns the mapping.
   uint32_t plugin_ready;
+  // Non-repeating value stamped once per created object.
+  //
+  // This is how a consumer detects a writer that CRASHED and
+  // re-created the block: the crashed writer never cleared
+  // `plugin_ready`, and the orphaned object stays alive as long
+  // as anyone maps it, so the stale mapping keeps serving the
+  // dead world's last snapshot and looks perfectly healthy. The
+  // consumer must therefore compare the incarnation of the object
+  // the NAME resolves to now against the one it attached to —
+  // POSIX shm cannot be told apart by inode (macOS reports
+  // `st_dev = st_ino = 0` for every shm object).
+  uint64_t writer_incarnation;
   // Reserved; zero. Pads the header to a full 64-byte cache-line
   // block: each block of this layout is written by exactly one
   // process, and no two writers ever share a line.
-  uint64_t _reserved0[5];
+  uint64_t _reserved0[4];
 } AviateSharedStateHeader;
 
 // Ground-truth model state. Writer: gz plugin, under `seq`.
@@ -125,7 +137,15 @@ typedef struct AviateModelStateBlock {
   double quat[4];
   // Linear velocity [m/s], world ENU.
   double vel[3];
-  // Angular velocity [rad/s], body FLU.
+  // Angular velocity [rad/s] in the WORLD ENU frame — gz's
+  // `WorldAngularVelocity` component verbatim, not a body-frame
+  // gyro.
+  //
+  // Known unreliable: the component reports zero on this setup
+  // even while the attitude quaternion shows sustained rotation,
+  // so the X500 FC does not use it — `synthesize.rs` derives body
+  // rates from successive `quat` samples instead. Treat this lane
+  // as advisory until a consumer proves the component's fidelity.
   double ang_vel[3];
   // Non-zero once the first physics step has been published.
   uint32_t valid;

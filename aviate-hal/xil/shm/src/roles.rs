@@ -22,6 +22,22 @@ macro_rules! shared_readers {
             self.mapping.plugin_ready()
         }
 
+        /// Whether the shm object behind this mapping has been
+        /// REPLACED — the writer crashed (so `plugin_ready` stayed
+        /// set in the now-orphaned memory) and created a fresh
+        /// object under the same name. This mapping can then only
+        /// serve the dead world's final snapshot forever, so the
+        /// consumer must re-attach.
+        ///
+        /// The full staleness protocol for a consumer is: stop
+        /// trusting the source when `plugin_ready()` goes false
+        /// (clean writer exit — `read_model_state` already returns
+        /// `None`), and re-attach when this returns true (writer
+        /// crash + recreate).
+        pub fn writer_replaced(&self) -> bool {
+            self.mapping.writer_replaced()
+        }
+
         /// One coherent `{generation, step, time, state}` snapshot.
         pub fn read_model_state(&self) -> Option<ModelStateSnapshot> {
             self.mapping.read_model_state()
@@ -86,6 +102,16 @@ impl SimWriterSession {
         })
     }
 
+    /// Create the block WITHOUT stamping the fingerprint or
+    /// publishing readiness — a writer frozen mid-initialisation.
+    /// Test-only; see [`Mapping::create_mid_init_for_test`].
+    #[cfg(test)]
+    pub(crate) fn create_mid_init_for_test(name: &str) -> std::io::Result<Self> {
+        Ok(Self {
+            mapping: Mapping::create_mid_init_for_test(name)?,
+        })
+    }
+
     shared_readers!();
 
     /// Publish one model snapshot under the seqlock.
@@ -135,14 +161,6 @@ impl FcSession {
     /// Acknowledge a processed step: heartbeat + lockstep gate.
     pub fn ack_step(&self, step: u64) {
         self.mapping.ack_step(step);
-    }
-
-    /// Set the lockstep gate word. The FC owns this in the current
-    /// topology because it is the actor that acks steps; a session
-    /// host drives the same word through [`HostSession::set_lockstep`].
-    pub fn set_lockstep(&self, enabled: bool) {
-        self.mapping
-            .set_lockstep_enabled_raw(if enabled { 1 } else { 0 });
     }
 
     /// Publish the FC state and the generation it refers to as one

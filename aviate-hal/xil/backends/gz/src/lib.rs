@@ -1,29 +1,25 @@
-//! Gazebo Backend for Aviate XIL
+//! Gazebo backend for Aviate XIL.
 //!
-//! This crate implements `KinematicsBackend` for Gazebo Sim (gz-sim).
-//! It provides direct FFI integration with the AviateGzPlugin.
+//! Connects the flight controller to the `AviateGzPlugin` running
+//! inside gz-sim through the Rust-owned shared-memory contract
+//! (`aviate-xil-contract`, #262).
 //!
 //! ## Architecture
 //!
 //! ```text
 //! AviateGzPlugin (C++, loaded by Gazebo)
-//!        ↓ Direct FFI
-//! gazebo_bridge.rs (ENU→NED conversion, Rust API)
-//!        ↓
+//!        ↓ /aviate_gz_bridge shared block (aviate-xil-contract)
+//! plugin.rs — GzPluginBridge over aviate-xil-shm's FcSession
+//!        ↓ ENU→NED conversion
 //! SitlIO (simulator-neutral middleware)
 //!        ↓
 //! FakeSensors / Mixer
 //! ```
 //!
-//! ## FFI Functions
-//!
-//! The C++ plugin calls these functions directly:
-//! - `aviate_gz_bridge_init(instance)` - Initialize for a vehicle instance
-//! - `aviate_gz_bridge_feed_sensors(data)` - Feed sensor data from Gazebo
-//! - `aviate_gz_bridge_get_motors(cmd)` - Get motor commands for Gazebo
-//! - `aviate_gz_bridge_shutdown()` - Cleanup
-
-// Note: FFI modules contain unsafe code for C interop
+//! There is no C FFI on this path: the layout is Rust-owned, the
+//! plugin consumes its cbindgen-generated C header, and every
+//! shared-memory access goes through `aviate-xil-shm` — the one
+//! crate in the SITL data plane that contains unsafe code.
 
 mod backend;
 mod bridge;

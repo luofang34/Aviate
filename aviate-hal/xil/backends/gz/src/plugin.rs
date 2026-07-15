@@ -6,7 +6,7 @@
 //! this backend is only the gz-sim system plugin itself.
 
 use aviate_xil_contract::SHM_NAME_BASE;
-use aviate_xil_shm::{AttachFailure, FcSession};
+use aviate_xil_shm::{AttachFailure, FcSession, HostSession};
 use log::info;
 
 /// Model state from gz-sim (SI units, ENU world / FLU body).
@@ -18,7 +18,11 @@ pub struct AviateModelState {
     pub quat: [f64; 4],
     /// Linear velocity in world frame [vx, vy, vz] (m/s)
     pub vel: [f64; 3],
-    /// Angular velocity in body frame [wx, wy, wz] (rad/s)
+    /// Angular velocity [wx, wy, wz] (rad/s) in the WORLD ENU frame
+    /// — gz's `WorldAngularVelocity` verbatim, not a body gyro, and
+    /// known to report zero while the vehicle rotates. The X500
+    /// synth path derives body rates from successive `quat` samples
+    /// instead of reading this.
     pub ang_vel: [f64; 3],
     /// Timestamp (simulation time in microseconds)
     pub time_us: u64,
@@ -216,12 +220,26 @@ impl GzPluginBridge {
         self.session.ack_step(step);
     }
 
-    /// Enable or disable the lockstep gate. The plugin blocks each
-    /// physics step on [`Self::ack_step`] only when its SDF arms
-    /// lockstep AND this word is set, so a stepped harness releases
-    /// the gate by clearing it.
-    pub fn set_lockstep(&self, enabled: bool) {
-        self.session.set_lockstep(enabled);
+    /// Request the lockstep gate. The plugin blocks each physics
+    /// step on [`Self::ack_step`] only when its SDF arms lockstep
+    /// AND this word is set.
+    ///
+    /// Lockstep is a SESSION control, and the gate word has exactly
+    /// one writer role — the session host — so this opens a
+    /// transient host endpoint instead of writing it through the
+    /// FC's mapping. Callers reaching this method are harness /
+    /// mission drivers acting in that role.
+    ///
+    /// Fails loudly rather than no-op'ing: a harness that believes
+    /// it is stepping deterministically while the simulator
+    /// free-runs would produce quietly non-reproducible evidence.
+    pub fn set_lockstep(&self, enabled: bool) -> Result<(), GzPluginError> {
+        let host = HostSession::attach(&shm_name(self.instance)).map_err(|e| match e {
+            AttachFailure::Contract(_) => GzPluginError::ContractMismatch,
+            _ => GzPluginError::PluginNotRunning,
+        })?;
+        host.set_lockstep(enabled);
+        Ok(())
     }
 
     /// Whether the lockstep gate word is currently set.

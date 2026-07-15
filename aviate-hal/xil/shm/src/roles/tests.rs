@@ -180,3 +180,246 @@ fn concurrent_writer_reader_never_tear_across_the_mapping() {
     stop.store(true, Ordering::Relaxed);
     w.join().unwrap();
 }
+
+// ---------------------------------------------------------------
+// Writer lifecycle: a departed or replaced writer must never keep
+// feeding its final snapshot as if the world were still running.
+// ---------------------------------------------------------------
+
+#[test]
+fn attach_mid_init_is_retryable_not_a_contract_mismatch() {
+    // The writer zeroes the block, stamps the fingerprint, and only
+    // then publishes readiness. An attacher landing inside that
+    // window sees a zeroed header; if it validated the fingerprint
+    // FIRST it would report BadMagic -> ContractMismatch, which
+    // callers correctly refuse to retry — a permanent startup
+    // failure for a normal microsecond-wide window.
+    let name = unique_name("mi");
+    let _mid_init = SimWriterSession::create_mid_init_for_test(&name).unwrap();
+    match ConsumerSession::attach(&name) {
+        Err(AttachFailure::NotReady) => {}
+        other => panic!("mid-init attach must be retryable NotReady, got {other:?}"),
+    }
+}
+
+#[test]
+fn clean_writer_exit_stops_the_stream() {
+    let name = unique_name("ce");
+    let writer = SimWriterSession::create(&name).unwrap();
+    writer.write_model_state(&ModelStateSnapshot {
+        reset_generation: 1,
+        sim_step: 5,
+        time_us: 5_000,
+        pos: [1.0, 2.0, 3.0],
+        quat: [1.0, 0.0, 0.0, 0.0],
+        vel: [0.0; 3],
+        ang_vel: [0.0; 3],
+    });
+    let consumer = ConsumerSession::attach(&name).unwrap();
+    assert!(consumer.read_model_state().is_some(), "live writer feeds");
+
+    drop(writer);
+
+    assert!(!consumer.plugin_ready());
+    assert_eq!(
+        consumer.read_model_state(),
+        None,
+        "a departed writer must not keep serving its last snapshot forever"
+    );
+}
+
+#[test]
+fn consumer_detects_a_replaced_writer_and_can_reattach() {
+    // Writer CRASH (no cleanup): plugin_ready stays set in the
+    // orphaned memory and the object stays alive because we still
+    // map it, so `plugin_ready` alone cannot detect this. The new
+    // writer creates a fresh object under the same name; the old
+    // mapping would otherwise serve the dead world's last snapshot
+    // forever.
+    let name = unique_name("rp");
+    let crashed = SimWriterSession::create(&name).unwrap();
+    crashed.write_model_state(&ModelStateSnapshot {
+        reset_generation: 1,
+        sim_step: 9,
+        time_us: 9_000,
+        pos: [7.0, 7.0, 7.0],
+        quat: [1.0, 0.0, 0.0, 0.0],
+        vel: [0.0; 3],
+        ang_vel: [0.0; 3],
+    });
+    let consumer = ConsumerSession::attach(&name).unwrap();
+    assert!(consumer.read_model_state().is_some());
+    assert!(!consumer.writer_replaced(), "same object, not replaced");
+
+    // Model the crash: no Drop runs, so no ready-clear and no unlink.
+    core::mem::forget(crashed);
+    let _fresh = SimWriterSession::create(&name).unwrap();
+
+    assert!(
+        consumer.read_model_state().is_some(),
+        "precondition: the orphaned mapping still looks perfectly valid"
+    );
+    assert!(
+        consumer.writer_replaced(),
+        "object identity changed: the consumer must be able to see it"
+    );
+
+    let reattached = ConsumerSession::attach(&name).unwrap();
+    assert!(!reattached.writer_replaced());
+    assert_eq!(reattached.reset_generation(), 1);
+    assert_eq!(
+        reattached.read_model_state(),
+        None,
+        "the fresh world has published no snapshot yet"
+    );
+}
+
+// ---------------------------------------------------------------
+// Genuine cross-PROCESS coherence. The tests above map the same
+// object twice inside one process, where a compiler could in
+// principle reason about both sides. Production is two binaries: the
+// gz plugin publishes while the FC reads. This re-executes the test
+// binary as a real child process so neither side can be reasoned
+// about by the other's compiler.
+// ---------------------------------------------------------------
+
+const CROSS_PROC_ENV: &str = "AVXT_CROSS_PROC_NAME";
+
+/// The child half. A normal `cargo test` run reaches this without
+/// the env var set and returns immediately; only the parent below
+/// re-executes it with a target block.
+#[test]
+fn cross_process_child_reader() {
+    let Ok(name) = std::env::var(CROSS_PROC_ENV) else {
+        return;
+    };
+    let reader = ConsumerSession::attach(&name).expect("child must attach to the parent's block");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut seen = 0u32;
+    while seen < 5_000 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "child timed out after {seen} coherent reads"
+        );
+        if let Some(s) = reader.read_model_state() {
+            // Every lane is a pure function of sim_step, so any
+            // mixing of two publications is arithmetic, not luck.
+            let v = s.sim_step as f64;
+            assert_eq!(
+                s.time_us,
+                s.sim_step * 1000,
+                "torn step/time across processes"
+            );
+            assert_eq!(s.pos, [v, v + 1.0, v + 2.0], "torn pos across processes");
+            assert_eq!(s.vel, [v, v, v], "torn vel across processes");
+            assert_eq!(s.reset_generation, 1, "torn generation across processes");
+            seen += 1;
+        }
+    }
+}
+
+#[test]
+fn cross_process_reader_never_sees_a_torn_snapshot() {
+    if std::env::var(CROSS_PROC_ENV).is_ok() {
+        return; // this process IS the child; do not recurse
+    }
+    let name = unique_name("xp");
+    let writer = SimWriterSession::create(&name).unwrap();
+
+    let mut child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+        .args([
+            "--exact",
+            "roles::tests::cross_process_child_reader",
+            "--nocapture",
+        ])
+        .env(CROSS_PROC_ENV, &name)
+        .spawn()
+        .expect("spawn the reader child");
+
+    let mut i = 0u64;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        match child.try_wait().expect("poll the child") {
+            Some(status) => {
+                assert!(status.success(), "cross-process reader failed: {status}");
+                break;
+            }
+            None => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "child never finished; killing"
+                );
+                i = i.wrapping_add(1);
+                let v = i as f64;
+                writer.write_model_state(&ModelStateSnapshot {
+                    reset_generation: 1,
+                    sim_step: i,
+                    time_us: i * 1000,
+                    pos: [v, v + 1.0, v + 2.0],
+                    quat: [1.0, 0.0, 0.0, 0.0],
+                    vel: [v, v, v],
+                    ang_vel: [0.0; 3],
+                });
+            }
+        }
+    }
+}
+
+#[test]
+fn cross_process_motor_commands_round_trip() {
+    // The FC-writes / plugin-reads direction, across processes.
+    if std::env::var(CROSS_PROC_ENV).is_ok() {
+        return;
+    }
+    let name = unique_name("xm");
+    let writer = SimWriterSession::create(&name).unwrap();
+    let fc = FcSession::attach(&name).unwrap();
+
+    let mut child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+        .args([
+            "--exact",
+            "roles::tests::cross_process_child_reader",
+            "--nocapture",
+        ])
+        .env(CROSS_PROC_ENV, &name)
+        .spawn()
+        .expect("spawn the reader child");
+
+    // Publish state for the child while hammering motor commands
+    // from this process: both seqlocks are live at once, which is
+    // the production topology.
+    let mut i = 0u64;
+    loop {
+        match child.try_wait().expect("poll the child") {
+            Some(status) => {
+                assert!(status.success(), "cross-process reader failed: {status}");
+                break;
+            }
+            None => {
+                i = i.wrapping_add(1);
+                let v = i as f64;
+                writer.write_model_state(&ModelStateSnapshot {
+                    reset_generation: 1,
+                    sim_step: i,
+                    time_us: i * 1000,
+                    pos: [v, v + 1.0, v + 2.0],
+                    quat: [1.0, 0.0, 0.0, 0.0],
+                    vel: [v, v, v],
+                    ang_vel: [0.0; 3],
+                });
+                fc.write_motor_command(&[v, v * 2.0, v * 3.0, v * 4.0]);
+                if let Some((lanes, n)) = writer.read_motor_command() {
+                    assert_eq!(n, 4);
+                    // A torn motor snapshot mixes lanes from two
+                    // publications; each is a fixed multiple of the
+                    // first.
+                    if lanes[0] != 0.0 {
+                        assert_eq!(lanes[1], lanes[0] * 2.0, "torn motor lanes");
+                        assert_eq!(lanes[2], lanes[0] * 3.0, "torn motor lanes");
+                        assert_eq!(lanes[3], lanes[0] * 4.0, "torn motor lanes");
+                    }
+                }
+            }
+        }
+    }
+}
