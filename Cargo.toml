@@ -9,6 +9,8 @@ members = [
     "aviate-airframes/fixed-wing",
     "aviate-hal/io",
     "aviate-hal/xil",
+    "aviate-hal/xil/contract",
+    "aviate-hal/xil/shm",
     "aviate-hal/xil/backends/gz",
     "aviate-hal/xil/backends/mavlink-hil",
     "aviate-link",  # Note: MAVLink protocol now integrated in aviate-link/src/mavlink/

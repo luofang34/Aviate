@@ -1,32 +1,16 @@
-//! Gazebo Plugin FFI - Zero-copy physics data access
+//! FC-side client for the AviateGzPlugin shared-memory block.
 //!
-//! This module provides Rust bindings to the AviateGzPlugin running inside gz-sim.
-//! The plugin writes physics state to shared memory, which we read via FFI.
-//!
-//! ## Usage
-//!
-//! ```rust,ignore
-//! use aviate_backend_gz::{GzPluginBridge, enu_to_ned};
-//!
-//! // Connect to the plugin (requires AviateGzPlugin loaded in gz-sim)
-//! let bridge = GzPluginBridge::connect_with_retry(10, 500)?;
-//!
-//! // Read physics state
-//! if let Some(state) = bridge.get_model_state() {
-//!     let ned_pos = enu_to_ned(state.pos);
-//!     println!("Position (NED): {:?}", ned_pos);
-//! }
-//!
-//! // Send motor commands
-//! bridge.set_motor_speeds(&[700.0, 700.0, 700.0, 700.0])?;
-//! ```
+//! Pure Rust over `aviate-xil-shm` (#262): fail-closed fingerprint
+//! attach, proper seqlock reads, and the #265 runtime control plane
+//! (reset generation, lifecycle handshake, lockstep toggle, RTF
+//! target). No C FFI remains on this path — the C++ in this backend
+//! is only the gz-sim system plugin itself.
 
-use std::ffi::c_int;
-
+use aviate_xil_contract::{FcState, LifecycleRequest, SHM_NAME_BASE};
+use aviate_xil_shm::{AttachFailure, ShmSession};
 use log::info;
 
-/// Model state from gz-sim (all values in SI units, ENU frame)
-#[repr(C)]
+/// Model state from gz-sim (SI units, ENU world / FLU body).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AviateModelState {
     /// Position in world frame [x, y, z] (meters, ENU)
@@ -39,18 +23,20 @@ pub struct AviateModelState {
     pub ang_vel: [f64; 3],
     /// Timestamp (simulation time in microseconds)
     pub time_us: u64,
+    /// Physics step this snapshot belongs to (coherent with the
+    /// payload — taken under the same seqlock read).
+    pub sim_step: u64,
     /// Valid flag (non-zero if data is valid)
-    pub valid: c_int,
+    pub valid: i32,
 }
 
-/// Motor command to send to gz-sim
-#[repr(C)]
+/// Motor command for gz-sim (boundary rotor speeds, rad/s).
 #[derive(Debug, Clone, Copy)]
 pub struct AviateMotorCommand {
     /// Motor velocities in rad/s (up to 8 motors)
     pub velocities: [f64; 8],
     /// Number of motors (typically 4 for quadcopter)
-    pub num_motors: c_int,
+    pub num_motors: i32,
 }
 
 impl Default for AviateMotorCommand {
@@ -62,23 +48,6 @@ impl Default for AviateMotorCommand {
     }
 }
 
-// FFI declarations - link against libaviate_gz_bridge_static.a
-extern "C" {
-    // Multi-instance API
-    fn aviate_gz_init_instance(instance: c_int) -> c_int;
-    fn aviate_gz_shutdown_instance(instance: c_int);
-    fn aviate_gz_get_model_state_instance(instance: c_int, out: *mut AviateModelState) -> c_int;
-    fn aviate_gz_set_motor_speeds_instance(
-        instance: c_int,
-        cmd: *const AviateMotorCommand,
-    ) -> c_int;
-    fn aviate_gz_get_sim_time_us_instance(instance: c_int) -> u64;
-    fn aviate_gz_is_connected_instance(instance: c_int) -> c_int;
-    fn aviate_gz_set_lockstep_instance(instance: c_int, enabled: c_int);
-    fn aviate_gz_get_sim_step_instance(instance: c_int) -> u64;
-    fn aviate_gz_ack_step_instance(instance: c_int, step: u64);
-}
-
 /// Error type for GzPluginBridge operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GzPluginError {
@@ -86,6 +55,9 @@ pub enum GzPluginError {
     NotInitialized,
     /// Plugin not running (shared memory doesn't exist)
     PluginNotRunning,
+    /// The shm object exists but is not a valid contract block
+    /// (wrong magic / layout version / size) — fail closed.
+    ContractMismatch,
     /// Data not valid yet
     DataNotValid,
     /// Failed to set motor speeds
@@ -97,6 +69,9 @@ impl std::fmt::Display for GzPluginError {
         match self {
             Self::NotInitialized => write!(f, "GzPluginBridge not initialized"),
             Self::PluginNotRunning => write!(f, "AviateGzPlugin not running in Gazebo"),
+            Self::ContractMismatch => {
+                write!(f, "shared block failed the aviate-xil-contract fingerprint")
+            }
             Self::DataNotValid => write!(f, "Model state data not valid"),
             Self::MotorCommandFailed => write!(f, "Failed to send motor command"),
         }
@@ -105,47 +80,47 @@ impl std::fmt::Display for GzPluginError {
 
 impl std::error::Error for GzPluginError {}
 
-/// Safe wrapper around the gz-sim plugin bridge
-///
-/// This struct manages the lifecycle of the shared memory connection
-/// to the AviateGzPlugin running inside gz-sim.
+/// Safe wrapper around the gz-sim plugin's shared block.
 ///
 /// Supports multi-vehicle simulation via instance IDs.
 pub struct GzPluginBridge {
-    initialized: bool,
+    session: ShmSession,
     instance: u8,
 }
 
+fn shm_name(instance: u8) -> String {
+    if instance == 0 {
+        SHM_NAME_BASE.to_string()
+    } else {
+        format!("{SHM_NAME_BASE}_{instance}")
+    }
+}
+
 impl GzPluginBridge {
-    /// Create a new GzPluginBridge connection (instance 0)
-    ///
-    /// Returns an error if the AviateGzPlugin is not running in Gazebo.
+    /// Connect to instance 0.
     pub fn new() -> Result<Self, GzPluginError> {
         Self::for_instance(0)
     }
 
-    /// Create a new GzPluginBridge connection for a specific instance
-    ///
-    /// For multi-vehicle simulation, each vehicle uses a different instance ID.
-    /// Instance 0 connects to /aviate_gz_bridge, instance N to /aviate_gz_bridge_N.
+    /// Connect to a specific vehicle instance. Fails closed if the
+    /// block exists but does not carry the expected contract
+    /// fingerprint (#262).
     pub fn for_instance(instance: u8) -> Result<Self, GzPluginError> {
-        let result = unsafe { aviate_gz_init_instance(instance as c_int) };
-        match result {
-            0 => Ok(Self {
-                initialized: true,
-                instance,
-            }),
-            -1 => Err(GzPluginError::PluginNotRunning),
-            _ => Err(GzPluginError::NotInitialized),
+        match ShmSession::attach(&shm_name(instance)) {
+            Ok(session) => Ok(Self { session, instance }),
+            Err(AttachFailure::Io(_)) => Err(GzPluginError::PluginNotRunning),
+            Err(AttachFailure::Contract(_)) => Err(GzPluginError::ContractMismatch),
         }
     }
 
-    /// Try to connect to the bridge, retrying if plugin not ready
+    /// Try to connect to the bridge, retrying while the plugin is
+    /// not up yet. A contract mismatch aborts immediately — retrying
+    /// cannot fix a foreign layout.
     pub fn connect_with_retry(max_attempts: u32, delay_ms: u64) -> Result<Self, GzPluginError> {
         Self::connect_instance_with_retry(0, max_attempts, delay_ms)
     }
 
-    /// Try to connect to a specific instance, retrying if plugin not ready
+    /// Retry variant of [`Self::for_instance`].
     pub fn connect_instance_with_retry(
         instance: u8,
         max_attempts: u32,
@@ -177,106 +152,124 @@ impl GzPluginBridge {
         self.instance
     }
 
-    /// Get the current model state from gz-sim
-    ///
-    /// Returns None if data is not yet valid (simulation hasn't started).
+    /// One coherent `{step, time, state}` snapshot, or `None` until
+    /// the first physics step publishes.
     pub fn get_model_state(&self) -> Option<AviateModelState> {
-        if !self.initialized {
-            return None;
-        }
-
-        let mut state = AviateModelState::default();
-        let result =
-            unsafe { aviate_gz_get_model_state_instance(self.instance as c_int, &mut state) };
-
-        if result == 0 && state.valid != 0 {
-            Some(state)
-        } else {
-            None
-        }
+        let s = self.session.read_model_state()?;
+        Some(AviateModelState {
+            pos: s.pos,
+            quat: s.quat,
+            vel: s.vel,
+            ang_vel: s.ang_vel,
+            time_us: s.time_us,
+            sim_step: s.sim_step,
+            valid: 1,
+        })
     }
 
-    /// Set motor speeds (rad/s)
-    ///
-    /// The velocities slice should contain 4 values for a quadcopter.
+    /// Publish boundary rotor-speed commands (rad/s). The resolved
+    /// actuator curve is applied BEFORE this call (#140).
     pub fn set_motor_speeds(&self, velocities: &[f64]) -> Result<(), GzPluginError> {
-        if !self.initialized {
-            return Err(GzPluginError::NotInitialized);
-        }
-
-        let mut cmd = AviateMotorCommand::default();
-        let n = velocities.len().min(8);
-        cmd.velocities[..n].copy_from_slice(&velocities[..n]);
-        cmd.num_motors = n as c_int;
-
-        let result = unsafe { aviate_gz_set_motor_speeds_instance(self.instance as c_int, &cmd) };
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(GzPluginError::MotorCommandFailed)
-        }
+        self.session.write_motor_command(velocities);
+        Ok(())
     }
 
-    /// Get simulation time in microseconds
+    /// Simulation time in microseconds (coherent snapshot; 0 before
+    /// the first step).
     pub fn sim_time_us(&self) -> u64 {
-        if !self.initialized {
-            return 0;
-        }
-        unsafe { aviate_gz_get_sim_time_us_instance(self.instance as c_int) }
+        self.session
+            .read_model_state()
+            .map(|s| s.time_us)
+            .unwrap_or(0)
     }
 
-    /// Check if connected to the gz-sim plugin
+    /// Whether the plugin currently owns the block.
     pub fn is_connected(&self) -> bool {
-        if !self.initialized {
-            return false;
-        }
-        unsafe { aviate_gz_is_connected_instance(self.instance as c_int) != 0 }
+        self.session.plugin_ready()
     }
 
-    /// Enable or disable lockstep mode
-    ///
-    /// When lockstep is enabled, Gazebo waits for the flight controller
-    /// to acknowledge each simulation step before proceeding.
-    /// This ensures deterministic simulation at the cost of real-time performance.
+    /// Simulation-world epoch: bumps on every world reset (#265).
+    /// On a change, re-run estimator convergence and re-establish
+    /// any freshness tracking — do not quarantine.
+    pub fn reset_generation(&self) -> u32 {
+        self.session.reset_generation()
+    }
+
+    /// Toggle lockstep AT RUNTIME (#265): when enabled the plugin
+    /// blocks each physics step on [`Self::ack_step`].
     pub fn set_lockstep(&self, enabled: bool) {
-        if !self.initialized {
-            return;
-        }
-        unsafe {
-            aviate_gz_set_lockstep_instance(self.instance as c_int, if enabled { 1 } else { 0 })
-        }
+        self.session
+            .set_lockstep_enabled_raw(if enabled { 1 } else { 0 });
     }
 
-    /// Get the current simulation step count
-    ///
-    /// In lockstep mode, this increments after each physics step.
-    /// Use this to detect new data and acknowledge steps.
+    /// Whether lockstep is currently requested.
+    pub fn lockstep_enabled(&self) -> bool {
+        self.session.lockstep_enabled_raw() != 0
+    }
+
+    /// Request a real-time factor (percent: 100 = 1×, 400 = 4×,
+    /// 0 = as-fast-as-possible). The plugin forwards it to the
+    /// physics engine (#265).
+    pub fn set_target_rtf_percent(&self, percent: u32) {
+        self.session.set_target_rtf_percent(percent);
+    }
+
+    /// Current physics step count (coherent snapshot; 0 before the
+    /// first step).
     pub fn sim_step(&self) -> u64 {
-        if !self.initialized {
-            return 0;
-        }
-        unsafe { aviate_gz_get_sim_step_instance(self.instance as c_int) }
+        self.session
+            .read_model_state()
+            .map(|s| s.sim_step)
+            .unwrap_or(0)
     }
 
-    /// Acknowledge a simulation step
-    ///
-    /// Call this after processing a step's data to allow Gazebo to proceed.
-    /// In lockstep mode, Gazebo blocks until this is called.
+    /// Acknowledge a processed step: the lockstep gate the plugin
+    /// blocks on, and the FC liveness heartbeat.
     pub fn ack_step(&self, step: u64) {
-        if !self.initialized {
-            return;
-        }
-        unsafe { aviate_gz_ack_step_instance(self.instance as c_int, step) }
+        self.session.ack_step(step);
     }
 
-    /// Wait for a new simulation step and process it
-    ///
-    /// This is a convenience method for lockstep mode that:
-    /// 1. Waits for new state data (step > last_step)
-    /// 2. Calls the processor function with the state
-    /// 3. Acknowledges the step
-    ///
-    /// Returns None if no new state is available within timeout.
+    /// Publish the FC lifecycle state for the given generation
+    /// (#265's "ready" half; consumers trust `Ready` only when the
+    /// generation matches the current `reset_generation`).
+    pub fn set_fc_state(&self, state: FcState, generation: u32) {
+        self.session.set_fc_state(state, generation);
+    }
+
+    /// Stamp this FC process's session nonce so consumers can detect
+    /// an FC restart even though the shm object identity is
+    /// unchanged (#265).
+    pub fn set_fc_session_nonce(&self, nonce: u32) {
+        self.session.set_fc_session_nonce(nonce);
+    }
+
+    /// Post a lifecycle request (session-host / harness role) and
+    /// return its nonce; the request is complete when
+    /// [`Self::lifecycle_ack_nonce`] equals the nonce AND
+    /// [`Self::fc_state`] reports `Ready` for the current
+    /// generation.
+    pub fn post_lifecycle_request(&self, req: LifecycleRequest) -> u32 {
+        self.session.post_lifecycle_request(req)
+    }
+
+    /// Last lifecycle request nonce the simulator acknowledged.
+    pub fn lifecycle_ack_nonce(&self) -> u32 {
+        self.session.lifecycle_ack_nonce()
+    }
+
+    /// Current FC lifecycle state.
+    pub fn fc_state(&self) -> FcState {
+        self.session.fc_state()
+    }
+
+    /// Generation the FC state refers to.
+    pub fn fc_state_generation(&self) -> u32 {
+        self.session.fc_state_generation()
+    }
+
+    /// Wait for a new simulation step and process it: waits for
+    /// `sim_step > last_step`, hands the coherent state to
+    /// `processor`, acks the step. Returns `None` on timeout.
     pub fn wait_and_process<F, R>(
         &self,
         last_step: u64,
@@ -290,12 +283,12 @@ impl GzPluginBridge {
         let timeout = std::time::Duration::from_micros(timeout_us);
 
         loop {
-            let current_step = self.sim_step();
-            if current_step > last_step {
-                if let Some(state) = self.get_model_state() {
+            if let Some(state) = self.get_model_state() {
+                if state.sim_step > last_step {
+                    let step = state.sim_step;
                     let result = processor(&state);
-                    self.ack_step(current_step);
-                    return Some((current_step, result));
+                    self.ack_step(step);
+                    return Some((step, result));
                 }
             }
 
@@ -304,15 +297,6 @@ impl GzPluginBridge {
             }
 
             std::thread::sleep(std::time::Duration::from_micros(10));
-        }
-    }
-}
-
-impl Drop for GzPluginBridge {
-    fn drop(&mut self) {
-        if self.initialized {
-            unsafe { aviate_gz_shutdown_instance(self.instance as c_int) };
-            self.initialized = false;
         }
     }
 }
@@ -379,6 +363,7 @@ pub fn flu_to_frd_f32(v_flu: [f64; 3]) -> [f32; 3] {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -396,5 +381,13 @@ mod tests {
         let cmd = AviateMotorCommand::default();
         assert_eq!(cmd.num_motors, 4);
         assert_eq!(cmd.velocities, [0.0; 8]);
+    }
+
+    #[test]
+    fn bridge_fails_closed_without_plugin() {
+        assert!(matches!(
+            GzPluginBridge::for_instance(200),
+            Err(GzPluginError::PluginNotRunning)
+        ));
     }
 }
