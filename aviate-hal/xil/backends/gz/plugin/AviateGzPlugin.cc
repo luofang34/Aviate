@@ -109,13 +109,18 @@ void AviateGzPlugin::Configure(
 
 void AviateGzPlugin::ServiceLifecycleRequests()
 {
-    uint32_t reqNonce = __atomic_load_n(&shm_->control.lifecycle_request_nonce, __ATOMIC_ACQUIRE);
+    // One packed atomic word carries (nonce << 32 | request), so
+    // this read can never pair a fresh nonce with a stale request
+    // (#267). Equality-based nonce comparison: an acked nonce is
+    // complete/duplicate and is never re-executed.
+    uint64_t packed = __atomic_load_n(&shm_->control.lifecycle_request, __ATOMIC_ACQUIRE);
+    uint32_t reqNonce = static_cast<uint32_t>(packed >> 32);
+    uint32_t req = static_cast<uint32_t>(packed);
     uint32_t ackNonce = __atomic_load_n(&shm_->control.lifecycle_ack_nonce, __ATOMIC_ACQUIRE);
     if (reqNonce == ackNonce || worldName_.empty()) {
         return;
     }
 
-    uint32_t req = __atomic_load_n(&shm_->control.lifecycle_request, __ATOMIC_ACQUIRE);
     gz::msgs::WorldControl msg;
     switch (req) {
         case AviateLifecycleRequest_Reset:

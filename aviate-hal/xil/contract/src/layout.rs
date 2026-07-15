@@ -113,32 +113,39 @@ pub struct MotorCommandBlock {
     pub _reserved1: u64,
 }
 
-/// Runtime control plane (#265). Field-per-owner; every field is one
-/// naturally-aligned `u32` accessed atomically.
+/// Runtime control plane (#265). Field-per-owner; every field is a
+/// single naturally-aligned word accessed atomically. Compound pairs
+/// that must be read consistently — `(nonce, request)` and
+/// `(generation, state)` — are PACKED into one `u64` each, so no
+/// reader can pair a fresh nonce with a stale request word or
+/// `Ready` with a stale generation (#267: typed coherent snapshots,
+/// not hidden read-order conventions).
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct ControlBlock {
-    /// Requested lifecycle action ([`LifecycleRequest`] as u32).
-    /// Writer: session host / harness.
-    pub lifecycle_request: u32,
-    /// Bumped by the requester with every new request; the request
-    /// is `(lifecycle_request, lifecycle_request_nonce)`.
-    pub lifecycle_request_nonce: u32,
-    /// Set by the PLUGIN to the request nonce once the action has
-    /// been forwarded to the simulator — the "ack" half of
-    /// request → ack → ready.
+    /// Packed lifecycle request: high 32 bits = request nonce, low
+    /// 32 bits = [`LifecycleRequest`] word (see
+    /// [`pack_lifecycle_request`]). One atomic word = one coherent
+    /// request. Writer: session host / harness (single requester;
+    /// nonce comparison is equality-based, so wrapping is safe).
+    pub lifecycle_request: u64,
+    /// Set by the PLUGIN to the request nonce once the simulator
+    /// has ACCEPTED the action (service success) — the "ack" half
+    /// of request → ack → ready. A request whose nonce equals this
+    /// value is complete or duplicate; the executor never re-runs
+    /// it.
     pub lifecycle_ack_nonce: u32,
-    /// Flight-controller lifecycle state ([`FcState`] as u32) — the
-    /// "ready" half of request → ack → ready. Writer: FC.
-    pub fc_state: u32,
-    /// The `reset_generation` that `fc_state` refers to. `Ready`
-    /// only counts when this equals the header's current generation.
-    /// Writer: FC.
-    pub fc_state_generation: u32,
     /// Written once per FC process start (any non-repeating value);
     /// consumers detect an FC restart by a change here even though
     /// the shm object identity is unchanged. Writer: FC.
     pub fc_session_nonce: u32,
+    /// Packed FC status: high 32 bits = the `reset_generation` the
+    /// state refers to, low 32 bits = [`FcState`] word (see
+    /// [`pack_fc_status`]). One atomic word, so `Ready` can never
+    /// be observed with a stale generation. `Ready` counts only
+    /// when the packed generation equals the header's current
+    /// `reset_generation`. Writer: FC.
+    pub fc_status: u64,
     /// Runtime lockstep toggle: non-zero = the plugin blocks each
     /// physics step on `fc_step_ack` (#265 — no longer load-time
     /// SDF-only). Writer: session host / harness.
@@ -149,6 +156,28 @@ pub struct ControlBlock {
     pub target_rtf_percent: u32,
     /// Reserved; zero.
     pub _reserved2: [u32; 4],
+}
+
+/// Pack a lifecycle request into its single atomic word.
+pub fn pack_lifecycle_request(nonce: u32, req: LifecycleRequest) -> u64 {
+    (u64::from(nonce) << 32) | u64::from(req as u32)
+}
+
+/// Unpack a lifecycle-request word into `(nonce, request)`; unknown
+/// request values decode as `None` per [`LifecycleRequest::from_u32`].
+pub fn unpack_lifecycle_request(v: u64) -> (u32, LifecycleRequest) {
+    ((v >> 32) as u32, LifecycleRequest::from_u32(v as u32))
+}
+
+/// Pack an FC status into its single atomic word.
+pub fn pack_fc_status(generation: u32, state: FcState) -> u64 {
+    (u64::from(generation) << 32) | u64::from(state as u32)
+}
+
+/// Unpack an FC-status word into `(generation, state)`; unknown
+/// state values decode as `Init` per [`FcState::from_u32`].
+pub fn unpack_fc_status(v: u64) -> (u32, FcState) {
+    ((v >> 32) as u32, FcState::from_u32(v as u32))
 }
 
 /// The full version-2 shared block.
@@ -323,11 +352,9 @@ const _: () = {
     assert!(offset_of!(MotorCommandBlock, fc_step_ack) == 72);
 
     assert!(offset_of!(ControlBlock, lifecycle_request) == 0);
-    assert!(offset_of!(ControlBlock, lifecycle_request_nonce) == 4);
     assert!(offset_of!(ControlBlock, lifecycle_ack_nonce) == 8);
-    assert!(offset_of!(ControlBlock, fc_state) == 12);
-    assert!(offset_of!(ControlBlock, fc_state_generation) == 16);
-    assert!(offset_of!(ControlBlock, fc_session_nonce) == 20);
+    assert!(offset_of!(ControlBlock, fc_session_nonce) == 12);
+    assert!(offset_of!(ControlBlock, fc_status) == 16);
     assert!(offset_of!(ControlBlock, lockstep_enabled) == 24);
     assert!(offset_of!(ControlBlock, target_rtf_percent) == 28);
 };
@@ -363,6 +390,39 @@ mod tests {
             validate_attach(MAGIC, LAYOUT_VERSION, EXPECTED_SIZE as u32, 216),
             Err(AttachError::MappingTooSmall { actual: 216 })
         ));
+    }
+
+    #[test]
+    fn packed_words_round_trip() {
+        // The coherence guarantee rides on pack/unpack being exact
+        // inverses for every nonce/generation and every known word.
+        for nonce in [0_u32, 1, 0xFFFF_FFFF, 0xDEAD_BEEF] {
+            for req in [
+                LifecycleRequest::None,
+                LifecycleRequest::Reset,
+                LifecycleRequest::Stop,
+                LifecycleRequest::Start,
+            ] {
+                assert_eq!(
+                    unpack_lifecycle_request(pack_lifecycle_request(nonce, req)),
+                    (nonce, req)
+                );
+            }
+            for st in [
+                FcState::Init,
+                FcState::Resetting,
+                FcState::Converging,
+                FcState::Ready,
+                FcState::Stopped,
+            ] {
+                assert_eq!(unpack_fc_status(pack_fc_status(nonce, st)), (nonce, st));
+            }
+        }
+        // Unknown low words decode conservatively even when packed.
+        let (n, r) = unpack_lifecycle_request((7_u64 << 32) | 99);
+        assert_eq!((n, r), (7, LifecycleRequest::None));
+        let (g, st) = unpack_fc_status((9_u64 << 32) | 99);
+        assert_eq!((g, st), (9, FcState::Init));
     }
 
     #[test]

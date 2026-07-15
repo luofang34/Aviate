@@ -76,28 +76,38 @@ fn lifecycle_request_ack_ready_handshake() {
     let host = ShmSession::attach(&name).unwrap();
     let fc = ShmSession::attach(&name).unwrap();
 
-    // Host posts a reset request.
+    // Host posts a reset request: one packed word, one nonce.
     let nonce = host.post_lifecycle_request(LifecycleRequest::Reset);
     assert_eq!(nonce, 1);
 
-    // Sim side sees it, performs the world reset, acks, bumps the
-    // generation.
-    assert_eq!(sim.lifecycle_request(), LifecycleRequest::Reset);
-    assert_ne!(sim.lifecycle_ack_nonce(), sim.lifecycle_request_nonce());
+    // Sim side reads ONE coherent (nonce, request) pair — no hidden
+    // read-order convention (#267) — performs the world reset, acks
+    // only after success, bumps the generation.
+    let (req_nonce, req) = sim.lifecycle_request();
+    assert_eq!((req_nonce, req), (nonce, LifecycleRequest::Reset));
+    assert_ne!(sim.lifecycle_ack_nonce(), req_nonce, "not yet acked");
     let generation = sim.bump_reset_generation();
-    sim.set_lifecycle_ack_nonce(nonce);
+    sim.set_lifecycle_ack_nonce(req_nonce);
     assert_eq!(generation, 2);
 
-    // FC observes the generation change and walks its state machine.
-    assert_eq!(fc.reset_generation(), 2);
-    fc.set_fc_state(FcState::Resetting, 2);
-    fc.set_fc_state(FcState::Converging, 2);
-    fc.set_fc_state(FcState::Ready, 2);
+    // A duplicate poll sees nonce == ack nonce: complete/duplicate,
+    // never re-executed.
+    let (again_nonce, _) = sim.lifecycle_request();
+    assert_eq!(again_nonce, sim.lifecycle_ack_nonce());
 
-    // Host sees ack + ready-for-current-generation: reset complete.
+    // FC observes the generation change and walks its state machine;
+    // status is one packed (generation, state) word.
+    assert_eq!(fc.reset_generation(), 2);
+    fc.set_fc_status(FcState::Resetting, 2);
+    fc.set_fc_status(FcState::Converging, 2);
+    fc.set_fc_status(FcState::Ready, 2);
+
+    // Host sees ack + Ready-for-current-generation in ONE read:
+    // reset complete.
     assert_eq!(host.lifecycle_ack_nonce(), nonce);
-    assert_eq!(host.fc_state(), FcState::Ready);
-    assert_eq!(host.fc_state_generation(), host.reset_generation());
+    let (status_generation, state) = host.fc_status();
+    assert_eq!(state, FcState::Ready);
+    assert_eq!(status_generation, host.reset_generation());
 }
 
 #[test]

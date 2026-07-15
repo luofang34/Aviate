@@ -81,7 +81,7 @@ fn main() -> std::io::Result<()> {
     plugin.set_fc_session_nonce(session_nonce);
     let mut fc_generation = plugin.reset_generation();
     let mut fc_ready = false;
-    plugin.set_fc_state(FcState::Converging, fc_generation);
+    plugin.set_fc_status(FcState::Converging, fc_generation);
     let mut last_step_acked: u64 = 0;
 
     let mut last_state: Option<AviateModelState> = None;
@@ -114,7 +114,7 @@ fn main() -> std::io::Result<()> {
         let generation = plugin.reset_generation();
         if generation != fc_generation {
             log::info!("world reset detected (generation {fc_generation} -> {generation}); rebuilding kernel in-process");
-            plugin.set_fc_state(FcState::Resetting, generation);
+            plugin.set_fc_status(FcState::Resetting, generation);
             board = GazeboSitlBoard::new_with_retry(
                 aviate_app_sitl_gazebo_x500_kernel::build_x500_kernel,
                 10,
@@ -125,7 +125,7 @@ fn main() -> std::io::Result<()> {
             last_ned_vel = [0.0; 3];
             fc_generation = generation;
             fc_ready = false;
-            plugin.set_fc_state(FcState::Converging, fc_generation);
+            plugin.set_fc_status(FcState::Converging, fc_generation);
         }
 
         // 1. Read the latest ground-truth model state from the plugin.
@@ -191,7 +191,7 @@ fn main() -> std::io::Result<()> {
                 FcState::Converging
             };
             log::info!("fc lifecycle -> {state:?} (generation {fc_generation})");
-            plugin.set_fc_state(state, fc_generation);
+            plugin.set_fc_status(state, fc_generation);
         }
 
         // 6. Acknowledge the step we consumed: the FC liveness

@@ -148,30 +148,37 @@ typedef struct AviateMotorCommandBlock {
   uint64_t _reserved1;
 } AviateMotorCommandBlock;
 
-// Runtime control plane (#265). Field-per-owner; every field is one
-// naturally-aligned `u32` accessed atomically.
+// Runtime control plane (#265). Field-per-owner; every field is a
+// single naturally-aligned word accessed atomically. Compound pairs
+// that must be read consistently — `(nonce, request)` and
+// `(generation, state)` — are PACKED into one `u64` each, so no
+// reader can pair a fresh nonce with a stale request word or
+// `Ready` with a stale generation (#267: typed coherent snapshots,
+// not hidden read-order conventions).
 typedef struct AviateControlBlock {
-  // Requested lifecycle action ([`LifecycleRequest`] as u32).
-  // Writer: session host / harness.
-  uint32_t lifecycle_request;
-  // Bumped by the requester with every new request; the request
-  // is `(lifecycle_request, lifecycle_request_nonce)`.
-  uint32_t lifecycle_request_nonce;
-  // Set by the PLUGIN to the request nonce once the action has
-  // been forwarded to the simulator — the "ack" half of
-  // request → ack → ready.
+  // Packed lifecycle request: high 32 bits = request nonce, low
+  // 32 bits = [`LifecycleRequest`] word (see
+  // [`pack_lifecycle_request`]). One atomic word = one coherent
+  // request. Writer: session host / harness (single requester;
+  // nonce comparison is equality-based, so wrapping is safe).
+  uint64_t lifecycle_request;
+  // Set by the PLUGIN to the request nonce once the simulator
+  // has ACCEPTED the action (service success) — the "ack" half
+  // of request → ack → ready. A request whose nonce equals this
+  // value is complete or duplicate; the executor never re-runs
+  // it.
   uint32_t lifecycle_ack_nonce;
-  // Flight-controller lifecycle state ([`FcState`] as u32) — the
-  // "ready" half of request → ack → ready. Writer: FC.
-  uint32_t fc_state;
-  // The `reset_generation` that `fc_state` refers to. `Ready`
-  // only counts when this equals the header's current generation.
-  // Writer: FC.
-  uint32_t fc_state_generation;
   // Written once per FC process start (any non-repeating value);
   // consumers detect an FC restart by a change here even though
   // the shm object identity is unchanged. Writer: FC.
   uint32_t fc_session_nonce;
+  // Packed FC status: high 32 bits = the `reset_generation` the
+  // state refers to, low 32 bits = [`FcState`] word (see
+  // [`pack_fc_status`]). One atomic word, so `Ready` can never
+  // be observed with a stale generation. `Ready` counts only
+  // when the packed generation equals the header's current
+  // `reset_generation`. Writer: FC.
+  uint64_t fc_status;
   // Runtime lockstep toggle: non-zero = the plugin blocks each
   // physics step on `fc_step_ack` (#265 — no longer load-time
   // SDF-only). Writer: session host / harness.

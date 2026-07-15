@@ -229,11 +229,13 @@ impl GzPluginBridge {
         self.session.ack_step(step);
     }
 
-    /// Publish the FC lifecycle state for the given generation
-    /// (#265's "ready" half; consumers trust `Ready` only when the
-    /// generation matches the current `reset_generation`).
-    pub fn set_fc_state(&self, state: FcState, generation: u32) {
-        self.session.set_fc_state(state, generation);
+    /// Publish the FC lifecycle state and the generation it refers
+    /// to as ONE packed atomic word (#265's "ready" half; consumers
+    /// trust `Ready` only when the packed generation matches the
+    /// current `reset_generation`, and the packing means they can
+    /// never observe a mismatched pair, #267).
+    pub fn set_fc_status(&self, state: FcState, generation: u32) {
+        self.session.set_fc_status(state, generation);
     }
 
     /// Stamp this FC process's session nonce so consumers can detect
@@ -246,7 +248,7 @@ impl GzPluginBridge {
     /// Post a lifecycle request (session-host / harness role) and
     /// return its nonce; the request is complete when
     /// [`Self::lifecycle_ack_nonce`] equals the nonce AND
-    /// [`Self::fc_state`] reports `Ready` for the current
+    /// [`Self::fc_status`] reports `Ready` for the current
     /// generation.
     pub fn post_lifecycle_request(&self, req: LifecycleRequest) -> u32 {
         self.session.post_lifecycle_request(req)
@@ -257,14 +259,10 @@ impl GzPluginBridge {
         self.session.lifecycle_ack_nonce()
     }
 
-    /// Current FC lifecycle state.
-    pub fn fc_state(&self) -> FcState {
-        self.session.fc_state()
-    }
-
-    /// Generation the FC state refers to.
-    pub fn fc_state_generation(&self) -> u32 {
-        self.session.fc_state_generation()
+    /// Current FC status as one coherent `(generation, state)`
+    /// pair.
+    pub fn fc_status(&self) -> (u32, FcState) {
+        self.session.fc_status()
     }
 
     /// Wait for a new simulation step and process it: waits for

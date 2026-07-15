@@ -6,7 +6,8 @@ use std::ffi::CString;
 use std::io;
 
 use aviate_xil_contract::{
-    seqlock_read, seqlock_write, validate_attach, AttachError, FcState, LifecycleRequest,
+    pack_fc_status, pack_lifecycle_request, seqlock_read, seqlock_write, unpack_fc_status,
+    unpack_lifecycle_request, validate_attach, AttachError, FcState, LifecycleRequest,
     SharedStateV2, EXPECTED_SIZE, LAYOUT_VERSION, MAGIC,
 };
 
@@ -336,34 +337,11 @@ impl ShmSession {
     }
 
     atomic_u32_accessor!(
-        /// Pending lifecycle action word ([`LifecycleRequest`]).
-        lifecycle_request_raw,
-        set_lifecycle_request_raw,
-        lifecycle_request
-    );
-    atomic_u32_accessor!(
-        /// Request nonce (bumped by the requester per request).
-        lifecycle_request_nonce,
-        set_lifecycle_request_nonce,
-        lifecycle_request_nonce
-    );
-    atomic_u32_accessor!(
-        /// Ack nonce (set by the simulation writer once forwarded).
+        /// Ack nonce (set by the simulation writer once the action
+        /// succeeded).
         lifecycle_ack_nonce,
         set_lifecycle_ack_nonce,
         lifecycle_ack_nonce
-    );
-    atomic_u32_accessor!(
-        /// FC lifecycle state word ([`FcState`]).
-        fc_state_raw,
-        set_fc_state_raw,
-        fc_state
-    );
-    atomic_u32_accessor!(
-        /// Generation the FC state refers to.
-        fc_state_generation,
-        set_fc_state_generation,
-        fc_state_generation
     );
     atomic_u32_accessor!(
         /// FC per-process nonce (consumers detect FC restarts).
@@ -384,32 +362,59 @@ impl ShmSession {
         target_rtf_percent
     );
 
-    /// Decoded pending lifecycle request.
-    pub fn lifecycle_request(&self) -> LifecycleRequest {
-        LifecycleRequest::from_u32(self.lifecycle_request_raw())
+    /// The pending lifecycle request as one coherent `(nonce,
+    /// request)` pair — a single packed atomic word, so no caller
+    /// can pair a fresh nonce with a stale request (#267).
+    pub fn lifecycle_request(&self) -> (u32, LifecycleRequest) {
+        // SAFETY: naturally-aligned u64 in the validated mapping.
+        let packed = unsafe {
+            AtomicU64::from_ptr(core::ptr::addr_of_mut!(
+                (*self.base).control.lifecycle_request
+            ))
+            .load(Ordering::Acquire)
+        };
+        unpack_lifecycle_request(packed)
     }
 
-    /// Post a lifecycle request: word first, nonce last (the nonce
-    /// bump is what the executor watches, so the request word is
-    /// already in place when the bump lands).
+    /// Post a lifecycle request as one packed atomic word and
+    /// return its nonce. Single-requester protocol: completion (or
+    /// duplication) is `lifecycle_ack_nonce == nonce`; the executor
+    /// never re-runs an acked nonce, and nonce comparison is
+    /// equality-based so wrapping is harmless.
     pub fn post_lifecycle_request(&self, req: LifecycleRequest) -> u32 {
-        self.set_lifecycle_request_raw(req as u32);
-        let nonce = self.lifecycle_request_nonce().wrapping_add(1);
-        self.set_lifecycle_request_nonce(nonce);
+        let (prev_nonce, _) = self.lifecycle_request();
+        let nonce = prev_nonce.wrapping_add(1);
+        // SAFETY: as above.
+        unsafe {
+            AtomicU64::from_ptr(core::ptr::addr_of_mut!(
+                (*self.base).control.lifecycle_request
+            ))
+            .store(pack_lifecycle_request(nonce, req), Ordering::Release);
+        }
         nonce
     }
 
-    /// Decoded FC lifecycle state.
-    pub fn fc_state(&self) -> FcState {
-        FcState::from_u32(self.fc_state_raw())
+    /// The FC status as one coherent `(generation, state)` pair —
+    /// a single packed atomic word, so `Ready` can never be
+    /// observed with a stale generation (#267). `Ready` counts only
+    /// when the generation equals [`Self::reset_generation`].
+    pub fn fc_status(&self) -> (u32, FcState) {
+        // SAFETY: as above.
+        let packed = unsafe {
+            AtomicU64::from_ptr(core::ptr::addr_of_mut!((*self.base).control.fc_status))
+                .load(Ordering::Acquire)
+        };
+        unpack_fc_status(packed)
     }
 
-    /// Publish the FC state together with the generation it refers
-    /// to (generation first so `Ready` never pairs with a stale
-    /// generation).
-    pub fn set_fc_state(&self, state: FcState, generation: u32) {
-        self.set_fc_state_generation(generation);
-        self.set_fc_state_raw(state as u32);
+    /// Publish the FC state and the generation it refers to as one
+    /// packed atomic word.
+    pub fn set_fc_status(&self, state: FcState, generation: u32) {
+        // SAFETY: as above.
+        unsafe {
+            AtomicU64::from_ptr(core::ptr::addr_of_mut!((*self.base).control.fc_status))
+                .store(pack_fc_status(generation, state), Ordering::Release);
+        }
     }
 }
 
