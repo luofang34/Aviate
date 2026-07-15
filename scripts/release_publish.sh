@@ -122,6 +122,11 @@ verify_published() {
 
 publish_or_skip() {
     local c=$1 v=$2 decision
+    # Build the archive now, in dependency order: aviate-core is a leaf, and
+    # aviate is reached only after aviate-core is on the registry, so its
+    # `=<version>` pin resolves without a patch. This is the archive the
+    # checksum comparison and (for a new version) `cargo publish` will use.
+    cargo package -p "$c" --locked --no-verify
     decision="$(classify_version "$c" "$v")"
     case "$decision" in
         skip)

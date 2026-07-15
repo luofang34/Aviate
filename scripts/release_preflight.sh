@@ -16,11 +16,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Package both crates. aviate-core is a leaf and is fully build-verified;
-# aviate is packaged without the verify build because aviate-core is not on
-# the registry yet — the archive bytes are exactly what publish would upload.
+# Package both crates. aviate-core is a leaf and is fully build-verified.
+# aviate exact-pins `aviate-core =<version>`, which is not on the registry
+# until the release publishes it, so packaging aviate here would fail the
+# index lookup. A resolution-only patch to the local aviate-core lets it
+# package now; the patch does not change the packaged manifest (still
+# `=<version>`) or the archive bytes, so this is what publish will upload.
 cargo package -p aviate-core --locked
-cargo package -p aviate --locked --no-verify
+cargo package -p aviate --locked --no-verify \
+    --config 'patch.crates-io.aviate-core.path="aviate-core"'
 
 for crate in aviate-core aviate; do
     archive="target/package/${crate}-${VERSION}.crate"
