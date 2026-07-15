@@ -74,11 +74,24 @@ fn canonical_hash_distinguishes_each_cascade_gain() {
     probe!(vel_i, 0, 0.1);
     probe!(vel_d, 2, 0.05);
     probe!(vel_max_roll_pitch, 0.05);
+    probe!(vel_max_yaw_step, 0.05);
     probe!(vel_accel_ff, -0.3);
     probe!(att_p, 1, 0.05);
+    probe!(att_max_rate_cmd, 0.5);
     probe!(rate_p, 0, 0.5);
     probe!(rate_d, 2, 0.01);
     probe!(rate_d_lpf_alpha, 0.1);
+}
+
+#[test]
+fn canonical_hash_distinguishes_hover_thrust_norm() {
+    // The hover trim rides next to the cascade gains in the hash
+    // feed and in `controller_tuning_identity`; a feed regression
+    // here would let lockstep peers fly different trims silently.
+    let baseline = ResolvedKernelConfig::default().canonical_hash();
+    let mut cfg = ResolvedKernelConfig::default();
+    cfg.hover_thrust_norm = Normalized(cfg.hover_thrust_norm.0 + 0.1);
+    assert_ne!(baseline, cfg.canonical_hash());
 }
 
 #[test]

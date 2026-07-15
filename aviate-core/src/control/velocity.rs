@@ -28,14 +28,6 @@ use crate::types::{
     FloatExt, MetersPerSecond, MetersPerSecondSquared, Normalized, Radians, Scalar,
 };
 
-/// Per-step clamp on the applied commanded-vs-current yaw error
-/// [rad]: a large heading setpoint change slews the vehicle through
-/// intermediate attitude setpoints instead of stepping the attitude
-/// loop. Stateless — the clamp re-evaluates against measured yaw each
-/// cycle, so the vehicle converges on the commanded heading at the
-/// attitude loop's own pace.
-const MAX_YAW_ERROR_STEP: Scalar = 0.6;
-
 /// Persistent state owned by the velocity loop. Lives inside
 /// `MultirotorRuntimeState`, not on the controller struct — the
 /// controller carries only tuning (`CascadeGains`).
@@ -321,7 +313,7 @@ impl VelocityController {
         // Yaw: hold current unless the command carries a heading
         // setpoint (DRQ: guided modes must honor commanded heading).
         // The applied yaw target is the current yaw plus the wrapped
-        // error clamped to MAX_YAW_ERROR_STEP, composed with the
+        // error clamped to `vel_max_yaw_step`, composed with the
         // freshly-computed roll/pitch. Small-angle composition is fine
         // here: the velocity loop's tilt cap is in tens of degrees,
         // not hundreds.
@@ -334,7 +326,8 @@ impl VelocityController {
             while err < -PI {
                 err += 2.0 * PI;
             }
-            let applied = cur_yaw + err.clamp(-MAX_YAW_ERROR_STEP, MAX_YAW_ERROR_STEP);
+            let applied =
+                cur_yaw + err.clamp(-self.gains.vel_max_yaw_step, self.gains.vel_max_yaw_step);
             Quaternion::from_axis_angle(Vector3::new(0.0, 0.0, 1.0), applied)
         } else {
             Quaternion::new(current_att.w, 0.0, 0.0, current_att.z).normalize()

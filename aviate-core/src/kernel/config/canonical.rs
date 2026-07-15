@@ -287,10 +287,12 @@ fn feed_cascade_gains(h: &mut Fnv1a64, g: &CascadeGains) {
         h.feed_f32(*v);
     }
     h.feed_f32(g.vel_max_roll_pitch);
+    h.feed_f32(g.vel_max_yaw_step);
     h.feed_f32(g.vel_accel_ff);
     for v in &g.att_p {
         h.feed_f32(*v);
     }
+    h.feed_f32(g.att_max_rate_cmd);
     for v in g.rate_p.iter().chain(&g.rate_d) {
         h.feed_f32(*v);
     }

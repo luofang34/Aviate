@@ -50,6 +50,16 @@ pub struct CascadeGains {
     /// Maximum roll/pitch tilt the velocity loop is allowed to
     /// command (radians). Bounds horizontal acceleration.
     pub vel_max_roll_pitch: Scalar,
+    /// Per-cycle clamp on the applied commanded-vs-current yaw
+    /// error (radians): a large heading setpoint change slews the
+    /// vehicle through intermediate attitude setpoints instead of
+    /// stepping the attitude loop by up to half a revolution.
+    /// Stateless — re-evaluated against measured yaw each cycle,
+    /// so the vehicle converges on the commanded heading at the
+    /// attitude loop's own pace. Together with `att_p[2]` this
+    /// sets the effective heading-acquisition rate — an
+    /// airframe/mission preference, hence tuning.
+    pub vel_max_yaw_step: Scalar,
     /// Acceleration-feedforward scale [0..1]. `1.0` = full
     /// feedforward (vehicle commanded the thrust needed for
     /// the desired acceleration at every step, without waiting
@@ -69,6 +79,16 @@ pub struct CascadeGains {
     /// Attitude loop P gains (rad/s per rad of attitude error),
     /// per roll/pitch/yaw.
     pub att_p: [Scalar; 3],
+    /// Maximum body-frame angular rate the attitude loop may
+    /// demand from the rate loop, per axis (rad/s). Without this
+    /// cap the P-controller demands `gain · error` rad/s for
+    /// arbitrarily large attitude errors — at a 90° error that is
+    /// `gain · π/2` rad/s, which saturates the rate loop against
+    /// gyro and induces a recovery overshoot far larger than the
+    /// original error. The servoable rate is an airframe-authority
+    /// property (torque authority against inertia), so the cap is
+    /// tuning, not an algorithm invariant.
+    pub att_max_rate_cmd: Scalar,
 
     /// Rate loop P gains (normalized-torque per rad/s), per axis.
     pub rate_p: [Scalar; 3],
@@ -131,6 +151,10 @@ impl CascadeGains {
             // pathology.
             vel_i: [0.05, 0.05, 0.05],
             vel_max_roll_pitch: 0.35, // ~20°
+            // ~34° of applied heading error per cycle: heading
+            // changes ramp through intermediate setpoints instead
+            // of stepping the attitude loop.
+            vel_max_yaw_step: 0.6,
             // Disabled. The current finite-difference accel_ff
             // (Δvel_sp / dt) is unfiltered, so any gz-side
             // position noise becomes a giant spurious horizontal
@@ -182,6 +206,11 @@ impl CascadeGains {
             // collective, and the yaw rate D term damps the
             // overshoot a P-only loop rings with at this gain.
             att_p: [3.5, 3.5, 2.5],
+            // An X500-class multirotor cannot servo body rates
+            // beyond a few rad/s without spending thrust authority
+            // on torque rather than lift; 3 rad/s keeps the rate
+            // command inside plant authority.
+            att_max_rate_cmd: 3.0,
             rate_p: [0.30, 0.30, 0.60],
             rate_d: [0.0, 0.0, 0.05],
             rate_d_lpf_alpha: 0.5,
@@ -212,6 +241,18 @@ impl CascadeGains {
         if !self.vel_max_roll_pitch.is_finite() || self.vel_max_roll_pitch < 0.0 {
             return Err(CascadeGainsError::NonNegativeGain {
                 name: "vel_max_roll_pitch",
+                axis: 0,
+            });
+        }
+        if !self.vel_max_yaw_step.is_finite() || self.vel_max_yaw_step < 0.0 {
+            return Err(CascadeGainsError::NonNegativeGain {
+                name: "vel_max_yaw_step",
+                axis: 0,
+            });
+        }
+        if !self.att_max_rate_cmd.is_finite() || self.att_max_rate_cmd < 0.0 {
+            return Err(CascadeGainsError::NonNegativeGain {
+                name: "att_max_rate_cmd",
                 axis: 0,
             });
         }
@@ -318,6 +359,32 @@ mod tests {
             g.validate(),
             Err(CascadeGainsError::NonNegativeGain {
                 name: "vel_max_roll_pitch",
+                axis: 0,
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_negative_max_yaw_step() {
+        let mut g = CascadeGains::x500_defaults();
+        g.vel_max_yaw_step = -0.1;
+        assert!(matches!(
+            g.validate(),
+            Err(CascadeGainsError::NonNegativeGain {
+                name: "vel_max_yaw_step",
+                axis: 0,
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_negative_att_max_rate_cmd() {
+        let mut g = CascadeGains::x500_defaults();
+        g.att_max_rate_cmd = f32::NEG_INFINITY;
+        assert!(matches!(
+            g.validate(),
+            Err(CascadeGainsError::NonNegativeGain {
+                name: "att_max_rate_cmd",
                 axis: 0,
             })
         ));

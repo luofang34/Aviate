@@ -1,8 +1,9 @@
 //! The lockstep-hashed `ResolvedKernelConfig` must carry the SAME
-//! tuning the flying controller was constructed from, and app-owned
-//! builder construction must be indistinguishable on the wire from
-//! the construction it replaced: the resolved-config hash and the
-//! algorithm-identity hash are pinned to the retired factory's values.
+//! tuning the flying controller was constructed from, and the wire
+//! identity of the X500 build is pinned: the resolved-config hash and
+//! the algorithm-identity hash may move only as a reviewed decision
+//! (a tuning change, or an extension of the hashed tuning surface),
+//! never as a construction-path accident.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -31,7 +32,11 @@ fn config_and_controller_share_one_gains_source() {
 #[test]
 fn app_built_kernel_matches_pre_change_identity() {
     let kernel = build_x500_kernel().expect("binding check must accept the single-source build");
-    assert_eq!(kernel.cfg().canonical_hash(), 0xbb2e_268f_867c_9e9c);
+    // Canonical-hash pin. Moves when the hashed tuning surface or its
+    // encoding changes — e.g. a `CascadeGains` field addition — even
+    // when every flown value is unchanged; the algorithm-identity pin
+    // below is the witness that the control law itself is the same.
+    assert_eq!(kernel.cfg().canonical_hash(), 0xe133_513c_7b5d_ed17);
     assert_eq!(
         kernel.pipeline().algorithm_identity_hash(),
         0x20ce_8c48_7287_24d5
