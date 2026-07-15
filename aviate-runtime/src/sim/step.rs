@@ -130,7 +130,10 @@ where
                     .pre_arm
                     // Throttle-low gate: commanded collective below 1 % of maximum
                     // thrust (force domain).
-                    .update_throttle(cmd.setpoint.collective_thrust.0 < 0.01);
+                    .update_throttle(
+                        cmd.setpoint.collective_thrust
+                            < aviate_core::kernel_types::THROTTLE_LOW_MAX_COLLECTIVE,
+                    );
             }
             match &sys_cmd {
                 SystemCommand::Arm => {

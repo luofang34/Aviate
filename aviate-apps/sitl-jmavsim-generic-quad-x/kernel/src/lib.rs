@@ -26,15 +26,13 @@ use aviate_runtime::sitl_timestamp;
 pub fn build_x500_kernel(
 ) -> Result<DefaultAviateKernel<MultirotorController, QuadXMixerX500>, KernelBuildError> {
     let gains = CascadeGains::x500_defaults();
-    // Force-domain hover trim (#140): the explicit migration of the
-    // X500's legacy SPEED-domain seed 0.77 through the quadratic
-    // rotor curve, thrust = speed², so 0.77² = 0.5929 — equivalently
-    // weight / max_thrust = 20.25 N / 34.19 N. The boundary curve
-    // maps it back to the identical 0.77 rotor-speed command at trim
-    // (X500 parity pinned by
+    // Force-domain hover trim (#140): weight / max_thrust =
+    // 20.25 N / 34.19 N ≈ 0.5929 for the X500 — equivalently 0.77²,
+    // where 0.77 is the boundary rotor-speed command the quadratic
+    // curve produces at trim (pinned by
     // `v1_speed_seed_squared_round_trips_through_the_quadratic_curve`).
-    // The formal trim sweep (#140) re-derives the value with saved
-    // evidence before the preset may change it.
+    // Changing this value requires measured trim evidence (#140
+    // acceptance), not a hand edit.
     let hover = NormalizedThrust(0.5929);
     let cfg = ResolvedKernelConfig {
         cascade_gains: gains,

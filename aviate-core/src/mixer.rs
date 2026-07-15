@@ -11,6 +11,14 @@ pub trait Mixer {
     /// (mixer-class identity) and same lockstep gating role.
     const ALGORITHM_ID: u64;
 
+    /// Compile-time geometry identity. The builder refuses a kernel
+    /// whose resolved configuration declares a different
+    /// `mixer_geometry` than the compiled mixer carries, so a preset
+    /// resolved for one geometry cannot silently drive another
+    /// (#140): the declaration in the canonical hash and the code
+    /// that flies are bound at construction.
+    const GEOMETRY: crate::kernel::config::MixerGeometry;
+
     fn mix(&self, axis: &AxisCommand) -> ActuatorCmd;
 }
 
@@ -55,6 +63,9 @@ impl Mixer for QuadXMixer {
     // saturated-regime outputs, so lockstep must not match a v1
     // image.
     const ALGORITHM_ID: u64 = 0x4D49_5851_5541_4432; // "MIXQUAD2"
+
+    const GEOMETRY: crate::kernel::config::MixerGeometry =
+        crate::kernel::config::MixerGeometry::QuadX;
 
     fn mix(&self, axis: &AxisCommand) -> ActuatorCmd {
         quad_actuator_cmd(
@@ -128,6 +139,9 @@ impl Mixer for QuadXMixerX500 {
     // "mixer.quad_x_x500.v2" — v2 for the same desaturation change
     // as "mixer.quad_x.v2".
     const ALGORITHM_ID: u64 = 0x4D49_5851_5835_5632; // "MIXQX5V2"
+
+    const GEOMETRY: crate::kernel::config::MixerGeometry =
+        crate::kernel::config::MixerGeometry::QuadXX500;
 
     fn mix(&self, axis: &AxisCommand) -> ActuatorCmd {
         quad_actuator_cmd(

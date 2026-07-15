@@ -616,7 +616,7 @@ impl BoardStep for MicoAirBoard {
                         .checks
                         .pre_arm
                         // Throttle-low gate: collective below 1 % of max thrust (force domain).
-                        .update_throttle(flight_cmd.setpoint.collective_thrust.0 < 0.01);
+                        .update_throttle(flight_cmd.setpoint.collective_thrust < aviate_core::kernel_types::THROTTLE_LOW_MAX_COLLECTIVE);
                 }
             }
         }
@@ -680,14 +680,15 @@ fn create_kernel() -> HwKernel {
     // hardware path takes the same verified construction road as the
     // SITL apps.
     let gains = aviate_core::control::cascade_gains::CascadeGains::x500_defaults();
-    // Force-domain hover trim (#140): explicit migration of the
-    // X500-class SPEED-domain seed 0.77 through the quadratic rotor
-    // curve (thrust = speed²), so 0.77² = 0.5929. The declared
-    // QuadraticRotor curve must be applied exactly once where the
-    // PWM/ESC write path lands — actuator output on this board is
-    // not implemented yet, and that implementation MUST route
-    // through `ActuatorCurveKind::boundary_command`, never
-    // reinterpret units itself.
+    // Force-domain hover trim (#140): weight / max_thrust ≈ 0.5929
+    // for the X500-class frame (0.77² — 0.77 is the boundary
+    // rotor-speed command at trim under the quadratic curve). The
+    // declared QuadraticRotor curve MUST be applied exactly once
+    // where the PWM/ESC write path lands
+    // (`ActuatorCurveKind::boundary_command`); the write path itself
+    // never reinterprets units. Actuator output on this board is a
+    // fake (#170 lineage) — the gate above is the contract for the
+    // real implementation.
     let hover: f32 = 0.5929;
     let cfg = aviate_core::kernel::config::ResolvedKernelConfig {
         cascade_gains: gains,
@@ -754,7 +755,7 @@ impl MicoAirBoard {
                     .checks
                     .pre_arm
                     // Throttle-low gate: collective below 1 % of max thrust (force domain).
-                    .update_throttle(cmd.setpoint.collective_thrust.0 < 0.01);
+                    .update_throttle(cmd.setpoint.collective_thrust < aviate_core::kernel_types::THROTTLE_LOW_MAX_COLLECTIVE);
             }
             SystemCommand::Arm => {
                 if self.kernel.arm().is_ok() {

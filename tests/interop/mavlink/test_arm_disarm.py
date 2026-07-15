@@ -19,7 +19,9 @@ from conftest import MavConnection, VEHICLE_BASE_PORT
 # - baro_healthy: pressure 100-2000 mbar
 # - mag_healthy: valid magnetometer data
 # - sensor_count >= 100 (EKF convergence)
-# - last_thrust < 0.1 (throttle low)
+# - last_thrust below THROTTLE_LOW_MAX_COLLECTIVE (0.01, force-domain
+#   NormalizedThrust fraction of max total thrust — see
+#   aviate-core/src/kernel_types.rs)
 
 
 class TestPreArmChecks:
@@ -68,7 +70,8 @@ class TestPreArmChecks:
         gcs.send_attitude_target(1, 1, thrust=0.5)
         time.sleep(0.05)
 
-        # Attempt to arm - should be denied (thrust >= 0.1)
+        # Attempt to arm - should be denied (thrust 0.5 is far above
+        # THROTTLE_LOW_MAX_COLLECTIVE = 0.01, force domain)
         result = gcs.send_arm_command(arm=True)
         assert not result, "Arm should be denied with throttle not low"
 

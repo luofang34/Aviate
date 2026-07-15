@@ -26,6 +26,17 @@ pub const CRITICAL_FAULTS: FaultFlags = FaultFlags::ALL_IMU_FAILED
 /// Default command timeout in milliseconds
 pub const DEFAULT_COMMAND_TIMEOUT_MS: u32 = 500;
 
+/// Throttle-low gate for the pre-arm check: a commanded collective
+/// AT or ABOVE this force-domain fraction of maximum thrust blocks
+/// arming (stick-safety, PreArmFlags::THROTTLE_LOW). 1 % of maximum
+/// FORCE — a deliberate safety policy value, not a unit artifact:
+/// it sits strictly below the cascade's disarmed-collective gate
+/// (2 %, `DISARMED_COLLECTIVE_THRESHOLD`), so a collective that
+/// permits arming is always also inside the on-ground gate that
+/// silences axis torque.
+pub const THROTTLE_LOW_MAX_COLLECTIVE: crate::types::NormalizedThrust =
+    crate::types::NormalizedThrust(0.01);
+
 // --- Spec §18: Timing Constants ---
 
 /// Control loop period in microseconds (1 kHz)
@@ -415,4 +426,23 @@ pub struct HealthReport {
     pub transition_state: ConfigTransitionState,
     pub faults: FaultFlags,
     pub channel_health: ChannelHealthV1,
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#[allow(clippy::assertions_on_constants)] // bounds tests pin constants by design
+mod throttle_low_tests {
+    use super::THROTTLE_LOW_MAX_COLLECTIVE;
+    use crate::control::law_invariants::DISARMED_COLLECTIVE_THRESHOLD;
+
+    #[test]
+    fn throttle_low_gate_sits_inside_the_disarmed_gate() {
+        // Lower bound: a zero threshold would let arming proceed at
+        // ANY commanded collective. Upper bound: arming must only be
+        // possible while the cascade's on-ground gate still silences
+        // axis torque, so the throttle-low ceiling stays strictly
+        // below the disarmed-collective threshold.
+        assert!(THROTTLE_LOW_MAX_COLLECTIVE.0 > 0.0);
+        assert!(THROTTLE_LOW_MAX_COLLECTIVE.0 < DISARMED_COLLECTIVE_THRESHOLD);
+    }
 }

@@ -242,6 +242,9 @@ mod tests {
     impl Mixer for DummyMixer {
         const ALGORITHM_ID: u64 = 0x4D49_5854_4553_5431; // "MIXTEST1"
 
+        const GEOMETRY: crate::kernel::config::MixerGeometry =
+            crate::kernel::config::MixerGeometry::QuadX;
+
         fn mix(&self, _axis: &crate::control::AxisCommand) -> ActuatorCmd {
             ActuatorCmd::default()
         }

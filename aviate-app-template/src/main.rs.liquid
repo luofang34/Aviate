@@ -92,8 +92,8 @@ fn build_kernel() -> Result<
 
     let gains = CascadeGains::x500_defaults();
     // Force-domain hover trim (#140): weight / max thrust for the
-    // X500 (explicit conversion of the legacy speed-domain 0.77
-    // through the quadratic rotor law, 0.77 squared).
+    // X500 (20.25 N / 34.19 N ≈ 0.5929; the quadratic boundary curve
+    // commands √0.5929 = 0.77 of max rotor speed at trim).
     let hover = NormalizedThrust(0.5929);
     let cfg = ResolvedKernelConfig {
         cascade_gains: gains,

@@ -194,12 +194,12 @@ impl core::fmt::Display for PresetError {
 impl AirframePreset {
     /// Hover trim seed as force-domain `NormalizedThrust` (#140) —
     /// the ONLY accessor for the seed. Schema 2 stores force
-    /// directly. Schema 1 predates the force-domain contract: with a
-    /// quadratic plant its seed was the BOUNDARY (rotor-speed)
-    /// command at trim, so the explicit conversion is `seed²`; a
-    /// linear plant's boundary command already IS the thrust
-    /// fraction. The conversion lives here, once, so no caller can
-    /// silently reinterpret a V1 value as force.
+    /// directly. Schema 1 defines its seed as the BOUNDARY
+    /// (rotor-speed) command at trim: with a quadratic plant the
+    /// explicit conversion is `seed²`; a linear plant's boundary
+    /// command already IS the thrust fraction. The conversion lives
+    /// here, once, so no caller can silently reinterpret a schema-1
+    /// value as force.
     pub fn hover_thrust_force_seed(&self) -> f32 {
         match (self.schema_version, self.actuator_curve) {
             (1, ActuatorCurve::Quadratic) => self.hover_thrust_seed * self.hover_thrust_seed,
