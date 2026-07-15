@@ -165,9 +165,26 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # Match the release workflow's checkout so this job exercises the
+          # exact lockfile check the release runs (standalone crates need the
+          # external/ submodules).
+          submodules: recursive
 
       - name: Install release toolchain (pinned to match the release workflow)
         uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Verify committed lockfiles are up to date (--locked)
+        run: ./scripts/check_release_lockfiles.sh
+
+      - name: Verify package contents (license texts + corrected safety wording)
+        run: ./scripts/check_release_package_contents.sh
+
+      - name: Feature matrix and documentation (mirrors the release job)
+        run: |
+          set -euo pipefail
+          cargo check -p aviate-core --locked --no-default-features
+          cargo check -p aviate-core --locked --all-features
+          RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked -p aviate-core -p aviate
 
       - name: Publish-decision self-test (mocked, no network)
         run: bash scripts/release_publish.sh --self-test
