@@ -591,6 +591,9 @@ jobs:
   sitl_build:
     name: SITL Build (Gazebo XIL)
     runs-on: ubuntu-latest
+    # Cold-cache cargo + plugin cmake builds dominate this job; the warm
+    # path finishes in a few minutes.
+    timeout-minutes: 30
     outputs:
       shard_matrix: ${{ steps.shards.outputs.matrix }}
     steps:
@@ -598,21 +601,19 @@ jobs:
         with:
           submodules: recursive
 
-      # Gazebo Harmonic (gz-sim8 / gz-transport13 / gz-msgs10 / gz-plugin2)
-      # from the OSRF apt repo, plus the toolchain the C++ plugin and the
-      # serialport-backed gcs-test need. The plugin links protobuf via
-      # gz-msgs10; libudev is a transitive serialport build dependency.
+      # Guards the install script's retry/timeout policy: an unreachable
+      # fetch must fail within the declared bound, never hang the job.
+      - name: Gazebo install bound self-test
+        timeout-minutes: 2
+        run: ./scripts/install_gazebo_harmonic.sh --self-test
+
+      # Package sets, bounded-retry policy, and phase markers live in the
+      # script so every SITL job shares one install entry point. The step
+      # timeout is the backstop that turns a mirror stall into a fast
+      # failure of this required gate.
       - name: Install Gazebo Harmonic + build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y curl lsb-release gnupg cmake build-essential \
-            libudev-dev libprotobuf-dev protobuf-compiler libabsl-dev
-          sudo curl https://packages.osrfoundation.org/gazebo.gpg \
-            --output /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
-            | sudo tee /etc/apt/sources.list.d/gazebo-stable.list
-          sudo apt-get update
-          sudo apt-get install -y gz-harmonic
+        timeout-minutes: 6
+        run: ./scripts/install_gazebo_harmonic.sh build
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -669,6 +670,11 @@ jobs:
     name: SITL Missions (Gazebo XIL) / ${{ matrix.name }}
     needs: sitl_build
     runs-on: ubuntu-latest
+    # Budget: the 3-5 minute mission envelope plus bounded setup
+    # (checkout, Gazebo install, artifact download). A shard that cannot
+    # finish inside this bound is failing, not pending — the timeout
+    # fails this required gate rather than holding CI Success open.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.sitl_build.outputs.shard_matrix) }}
@@ -678,16 +684,8 @@ jobs:
           submodules: recursive
 
       - name: Install Gazebo Harmonic runtime
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y curl lsb-release gnupg \
-            xvfb libgl1-mesa-dri libegl1 mesa-utils
-          sudo curl https://packages.osrfoundation.org/gazebo.gpg \
-            --output /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
-            | sudo tee /etc/apt/sources.list.d/gazebo-stable.list
-          sudo apt-get update
-          sudo apt-get install -y gz-harmonic
+        timeout-minutes: 6
+        run: ./scripts/install_gazebo_harmonic.sh runtime
 
       - name: Download shared SITL artifact
         uses: actions/download-artifact@v8
@@ -726,22 +724,18 @@ jobs:
     needs: sitl_build
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    # Non-blocking, but still bounded so a stalled quarantine run cannot
+    # burn runner minutes; quarantine membership may grow past one shard's
+    # mission envelope.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
 
       - name: Install Gazebo Harmonic runtime
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y curl lsb-release gnupg \
-            xvfb libgl1-mesa-dri libegl1 mesa-utils
-          sudo curl https://packages.osrfoundation.org/gazebo.gpg \
-            --output /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
-            | sudo tee /etc/apt/sources.list.d/gazebo-stable.list
-          sudo apt-get update
-          sudo apt-get install -y gz-harmonic
+        timeout-minutes: 6
+        run: ./scripts/install_gazebo_harmonic.sh runtime
 
       - name: Download shared SITL artifact
         uses: actions/download-artifact@v8
