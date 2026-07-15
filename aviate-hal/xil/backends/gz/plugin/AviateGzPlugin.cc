@@ -36,6 +36,15 @@ static_assert(offsetof(AviateSharedStateV2, control) == 384,
 static_assert(offsetof(AviateModelStateBlock, reset_generation) == 4,
               "snapshot generation offset drifted");
 
+// The protocol assumes the 8- and 4-byte lane accesses are real atomic
+// instructions. If a target lowered them to a lock, two PROCESSES
+// would take locks in different address spaces — no mutual exclusion
+// at all, and a silently torn block.
+static_assert(__atomic_always_lock_free(8, nullptr),
+              "8-byte atomics are not lock-free on this target");
+static_assert(__atomic_always_lock_free(4, nullptr),
+              "4-byte atomics are not lock-free on this target");
+
 namespace {
 
 // Atomic payload lanes — the C++ half of the rule aviate-xil-shm's
@@ -45,21 +54,29 @@ namespace {
 // memory model. A plain load/store or memcpy racing the peer
 // process's access is a data race — undefined behaviour in C++ and
 // Rust alike — however well the seqlock protocol behaves in
-// practice. f64/double lanes move as their bit patterns.
+// practice.
+//
+// The wire lanes are `uint64_t` bit patterns (contract v3), so the
+// atomic builtins operate on the lane's real type. v2 typed them
+// `double` and both sides had to reinterpret_cast a `double*` into a
+// `uint64_t*` to access them atomically — an object-access /
+// strict-aliasing hazard. Conversion now happens at the boundary,
+// through memcpy, which is the only well-defined way to reinterpret
+// an object's bytes in C++.
 
-inline double LoadLaneRelaxed(const double* p)
+inline double LoadLaneRelaxed(const uint64_t* p)
 {
-    uint64_t bits = __atomic_load_n(reinterpret_cast<const uint64_t*>(p), __ATOMIC_RELAXED);
+    uint64_t bits = __atomic_load_n(p, __ATOMIC_RELAXED);
     double out;
     std::memcpy(&out, &bits, sizeof(out));
     return out;
 }
 
-inline void StoreLaneRelaxed(double* p, double v)
+inline void StoreLaneRelaxed(uint64_t* p, double v)
 {
     uint64_t bits;
     std::memcpy(&bits, &v, sizeof(bits));
-    __atomic_store_n(reinterpret_cast<uint64_t*>(p), bits, __ATOMIC_RELAXED);
+    __atomic_store_n(p, bits, __ATOMIC_RELAXED);
 }
 
 }  // namespace
@@ -188,7 +205,7 @@ void AviateGzPlugin::PreUpdate(
         }
         double lanes[8];
         for (size_t i = 0; i < 8; ++i) {
-            lanes[i] = LoadLaneRelaxed(&shm_->command.motor_vel[i]);
+            lanes[i] = LoadLaneRelaxed(&shm_->command.motor_vel_bits[i]);
         }
         uint32_t n = __atomic_load_n(&shm_->command.num_motors, __ATOMIC_RELAXED);
         // LoadLoad barrier before the re-read: an acquire LOAD only
@@ -237,6 +254,16 @@ void AviateGzPlugin::PostUpdate(
         resetGeneration_ = __atomic_add_fetch(
             &shm_->header.reset_generation, 1, __ATOMIC_ACQ_REL);
         modelEntity_ = gz::sim::kNullEntity;
+        // Retire the outgoing snapshot in the same act. Until the new
+        // world publishes its first step the block still holds the
+        // PREVIOUS epoch's pose — valid, coherent, and from a world
+        // that no longer exists. Publishing valid = 0 through the
+        // state seqlock stops a reader consuming it; the reader's
+        // generation double-check is the second line of defence.
+        __atomic_add_fetch(&shm_->state.seq, 1, __ATOMIC_ACQ_REL);
+        __atomic_store_n(&shm_->state.valid, 0u, __ATOMIC_RELAXED);
+        __atomic_store_n(&shm_->state.reset_generation, resetGeneration_, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&shm_->state.seq, 1, __ATOMIC_RELEASE);
         std::cout << "[AviateGzPlugin] world reset detected (time rewound); generation -> "
                   << resetGeneration_ << std::endl;
     }
@@ -282,12 +309,12 @@ void AviateGzPlugin::PostUpdate(
     __atomic_store_n(&shm_->state.sim_step, simStep_, __ATOMIC_RELAXED);
     __atomic_store_n(&shm_->state.time_us, timeUs, __ATOMIC_RELAXED);
     for (size_t i = 0; i < 3; ++i) {
-        StoreLaneRelaxed(&shm_->state.pos[i], pos[i]);
-        StoreLaneRelaxed(&shm_->state.vel[i], vel[i]);
-        StoreLaneRelaxed(&shm_->state.ang_vel[i], angVel[i]);
+        StoreLaneRelaxed(&shm_->state.pos_bits[i], pos[i]);
+        StoreLaneRelaxed(&shm_->state.vel_bits[i], vel[i]);
+        StoreLaneRelaxed(&shm_->state.ang_vel_bits[i], angVel[i]);
     }
     for (size_t i = 0; i < 4; ++i) {
-        StoreLaneRelaxed(&shm_->state.quat[i], quat[i]);
+        StoreLaneRelaxed(&shm_->state.quat_bits[i], quat[i]);
     }
     __atomic_store_n(&shm_->state.valid, 1u, __ATOMIC_RELAXED);
     __atomic_add_fetch(&shm_->state.seq, 1, __ATOMIC_RELEASE);
@@ -321,15 +348,24 @@ bool AviateGzPlugin::InitSharedMemory()
     }
 
     shm_ = static_cast<AviateSharedStateV2*>(ptr);
-    std::memset(shm_, 0, sizeof(AviateSharedStateV2));
 
-    // Fingerprint before the ready flag: an attacher that sees
-    // plugin_ready has a fully self-described block (#262). The
-    // SDF lockstep element seeds the shared gate word.
-    shm_->header.magic = AviateMAGIC;
-    shm_->header.layout_version = AviateLAYOUT_VERSION;
-    shm_->header.declared_size = static_cast<uint32_t>(sizeof(AviateSharedStateV2));
-    shm_->header.reset_generation = 1;
+    // The block is NOT cleared here. shm_open(O_CREAT) publishes the
+    // NAME before ftruncate sizes it, so from that instant an
+    // attacher may be mapping this object and atomically loading
+    // plugin_ready — a bulk memset would race those loads, which is
+    // a data race by definition. It is also unnecessary: a freshly
+    // created POSIX shm object is zero-filled and ftruncate
+    // zero-extends. Attachers see the pre-ftruncate window as a
+    // zero-sized object and retry.
+    //
+    // Fingerprint before the ready flag, every store atomic: an
+    // attacher that sees plugin_ready has a fully self-described
+    // block. The SDF lockstep element seeds the shared gate word.
+    __atomic_store_n(&shm_->header.magic, AviateMAGIC, __ATOMIC_RELAXED);
+    __atomic_store_n(&shm_->header.layout_version, AviateLAYOUT_VERSION, __ATOMIC_RELAXED);
+    __atomic_store_n(&shm_->header.declared_size,
+                     static_cast<uint32_t>(sizeof(AviateSharedStateV2)), __ATOMIC_RELAXED);
+    __atomic_store_n(&shm_->header.reset_generation, 1u, __ATOMIC_RELAXED);
     resetGeneration_ = 1;
     // Non-repeating per created object: a consumer whose writer
     // CRASHED keeps mapping the orphaned block (plugin_ready never
@@ -345,10 +381,11 @@ bool AviateGzPlugin::InitSharedMemory()
                 std::chrono::system_clock::now().time_since_epoch())
                 .count());
         uint64_t pid = static_cast<uint64_t>(getpid());
-        shm_->header.writer_incarnation =
-            ((nanos << 16) | (nanos >> 48)) ^ pid | 1ull;
+        __atomic_store_n(&shm_->header.writer_incarnation,
+                         (((nanos << 16) | (nanos >> 48)) ^ pid) | 1ull,
+                         __ATOMIC_RELAXED);
     }
-    shm_->control.lockstep_enabled = lockstep_ ? 1u : 0u;
+    __atomic_store_n(&shm_->control.lockstep_enabled, lockstep_ ? 1u : 0u, __ATOMIC_RELAXED);
     __atomic_store_n(&shm_->header.plugin_ready, 1u, __ATOMIC_RELEASE);
 
     std::cout << "[AviateGzPlugin] Shared memory initialized: " << shmName_

@@ -10,7 +10,7 @@ use std::ffi::CString;
 use std::io;
 
 use aviate_xil_contract::{
-    validate_attach, AttachError, SharedStateV2, EXPECTED_SIZE, LAYOUT_VERSION, MAGIC,
+    validate_attach, AttachError, SharedStateV2, WriterState, EXPECTED_SIZE, LAYOUT_VERSION, MAGIC,
 };
 
 use super::lanes::{load_u32, load_u64, store_u32, store_u64};
@@ -46,8 +46,19 @@ impl std::error::Error for AttachFailure {}
 impl Mapping {
     /// Create (or re-create) the shm object and initialize the
     /// header: unlink any stale object (macOS refuses `ftruncate` on
-    /// an existing one), zero the block, stamp the fingerprint, set
-    /// `reset_generation = 1`, publish `plugin_ready` last.
+    /// an existing one), size it, stamp the fingerprint, publish
+    /// `plugin_ready` last.
+    ///
+    /// The block is NOT cleared here. `shm_open(O_CREAT)` publishes
+    /// the NAME before `ftruncate` sizes it, so from that instant an
+    /// attacher may be mapping and atomically loading `plugin_ready`
+    /// — a bulk non-atomic clear would race those loads (Rust and
+    /// C++ both forbid mixing conflicting atomic and non-atomic
+    /// accesses without synchronisation). It is also unnecessary: a
+    /// freshly created POSIX shm object is zero-filled, and
+    /// `ftruncate` zero-extends. The creation window is visible to
+    /// attachers as a zero-sized object and is reported as
+    /// retryable [`AttachError::Initializing`].
     pub(crate) fn create(name: &str) -> io::Result<Self> {
         let cname = cstring(name)?;
         // SAFETY: plain libc calls on an owned CString; failure
@@ -86,10 +97,11 @@ impl Mapping {
                 return Err(e);
             }
             let base = ptr.cast::<SharedStateV2>();
-            core::ptr::write_bytes(ptr.cast::<u8>(), 0, EXPECTED_SIZE);
-            // The block is exclusively ours until plugin_ready is
-            // published, so the fingerprint stores need no atomics —
-            // the Release store below is what makes them visible.
+            // Every store is atomic even though nothing should be
+            // reading yet: an attacher is already permitted to load
+            // `plugin_ready` (the name is public), and mixing a
+            // non-atomic store with that concurrent atomic load is a
+            // data race by definition, not merely in practice.
             store_u64(core::ptr::addr_of_mut!((*base).header.magic), MAGIC);
             store_u32(
                 core::ptr::addr_of_mut!((*base).header.layout_version),
@@ -142,6 +154,13 @@ impl Mapping {
                 return Err(AttachFailure::Io(e));
             }
             let actual = st.st_size.max(0) as usize;
+            // Zero size is the writer's shm_open-before-ftruncate
+            // window: retryable, not a foreign object. Anything else
+            // short of the block IS foreign.
+            if actual == 0 {
+                libc::close(fd);
+                return Err(AttachFailure::Contract(AttachError::Initializing));
+            }
             if actual < EXPECTED_SIZE {
                 libc::close(fd);
                 return Err(AttachFailure::Contract(AttachError::MappingTooSmall {
@@ -249,31 +268,47 @@ impl Mapping {
     }
 }
 
-/// The `writer_incarnation` of whatever object the name resolves to
-/// RIGHT NOW, or `None` if it does not resolve. Maps the live object
-/// briefly rather than trusting this session's mapping, which is the
-/// whole point: a crashed writer's orphaned memory still answers
-/// every question about itself perfectly.
+/// What the name resolves to RIGHT NOW, relative to the incarnation
+/// the caller attached to. Maps the live object briefly rather than
+/// trusting the caller's mapping, which is the whole point: a
+/// crashed writer's orphaned memory answers every question about
+/// itself perfectly.
+///
+/// Applies the same fail-closed order as `attach`: readiness first
+/// (Acquire), then the fingerprint, then a re-check of readiness —
+/// so a block that is being torn down or re-created mid-inspection
+/// is reported as `Initializing`, never mistaken for a healthy peer.
 ///
 /// Inode identity is not an option — macOS reports `st_dev = 0` and
 /// `st_ino = 0` for every POSIX shm object, so two distinct objects
 /// are indistinguishable by stat.
 ///
-/// Slow path: three syscalls plus a transient mapping. Consumers
+/// Slow path: a few syscalls plus a transient mapping. Consumers
 /// poll it at staleness-check rates (~1 Hz), never per frame.
-pub(super) fn live_incarnation(name: &CString) -> Option<u64> {
+pub(super) fn writer_state(name: &CString, attached_incarnation: u64) -> WriterState {
     // SAFETY: plain libc calls on an owned CString; the fd is closed
-    // and the transient mapping unmapped on every path. Only the
-    // header's incarnation lane is read, atomically.
+    // and the transient mapping unmapped on every path. Only header
+    // lanes are read, atomically.
     unsafe {
         let fd = libc::shm_open(name.as_ptr(), libc::O_RDONLY, 0);
         if fd == -1 {
-            return None;
+            // The name is gone: the writer exited and unlinked. The
+            // caller's mapping is an orphan it keeps alive itself.
+            return WriterState::Gone;
         }
         let mut st: libc::stat = core::mem::zeroed();
-        if libc::fstat(fd, &mut st) == -1 || (st.st_size.max(0) as usize) < EXPECTED_SIZE {
+        if libc::fstat(fd, &mut st) == -1 {
             libc::close(fd);
-            return None;
+            return WriterState::Gone;
+        }
+        let actual = st.st_size.max(0) as usize;
+        if actual == 0 {
+            libc::close(fd);
+            return WriterState::Initializing;
+        }
+        if actual < EXPECTED_SIZE {
+            libc::close(fd);
+            return WriterState::ContractMismatch;
         }
         let ptr = libc::mmap(
             core::ptr::null_mut(),
@@ -285,13 +320,49 @@ pub(super) fn live_incarnation(name: &CString) -> Option<u64> {
         );
         libc::close(fd);
         if ptr == libc::MAP_FAILED {
-            return None;
+            return WriterState::Gone;
         }
         let base = ptr.cast::<SharedStateV2>();
-        let live = load_u64(core::ptr::addr_of!((*base).header.writer_incarnation));
+        let state = inspect(base, attached_incarnation);
         libc::munmap(ptr, EXPECTED_SIZE);
-        Some(live)
+        state
     }
+}
+
+/// Classify a transiently-mapped block. Readiness brackets the
+/// fingerprint read on both sides, so a writer that is still
+/// stamping (or already tearing down) is `Initializing` rather than
+/// a bogus `ContractMismatch` or a false `Current`.
+///
+/// # Safety
+/// `base` must point at an `EXPECTED_SIZE` mapping of a shm object.
+unsafe fn inspect(base: *const SharedStateV2, attached_incarnation: u64) -> WriterState {
+    let ready_first =
+        AtomicU32::from_ptr(core::ptr::addr_of!((*base).header.plugin_ready) as *mut u32)
+            .load(Ordering::Acquire);
+    if ready_first == 0 {
+        return WriterState::Initializing;
+    }
+    let magic = load_u64(core::ptr::addr_of!((*base).header.magic));
+    let version = load_u32(core::ptr::addr_of!((*base).header.layout_version));
+    let declared = load_u32(core::ptr::addr_of!((*base).header.declared_size));
+    let incarnation = load_u64(core::ptr::addr_of!((*base).header.writer_incarnation));
+    let ready_again =
+        AtomicU32::from_ptr(core::ptr::addr_of!((*base).header.plugin_ready) as *mut u32)
+            .load(Ordering::Acquire);
+    if ready_again == 0 {
+        // Readiness dropped while we looked: the values we just read
+        // may belong to a block being replaced. Say so instead of
+        // guessing.
+        return WriterState::Initializing;
+    }
+    if validate_attach(magic, version, declared, EXPECTED_SIZE).is_err() {
+        return WriterState::ContractMismatch;
+    }
+    if incarnation != attached_incarnation {
+        return WriterState::Replaced;
+    }
+    WriterState::Current
 }
 
 /// A value that never repeats across writers on this host: the

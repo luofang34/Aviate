@@ -5,7 +5,7 @@
 //! state}` snapshots. No C FFI remains on this path — the C++ in
 //! this backend is only the gz-sim system plugin itself.
 
-use aviate_xil_contract::SHM_NAME_BASE;
+use aviate_xil_contract::{WriterState, SHM_NAME_BASE};
 use aviate_xil_shm::{AttachFailure, FcSession, HostSession};
 use log::info;
 
@@ -203,6 +203,28 @@ impl GzPluginBridge {
     /// any freshness tracking — do not quarantine.
     pub fn reset_generation(&self) -> u32 {
         self.session.reset_generation()
+    }
+
+    /// What the plugin's shm name resolves to right now.
+    /// [`WriterState::Current`] is the only state in which this
+    /// bridge's reads and writes reach the live simulator.
+    pub fn writer_state(&self) -> WriterState {
+        self.session.writer_state()
+    }
+
+    /// Re-attach to whatever object the name resolves to now.
+    ///
+    /// Without this a bridge outlives its simulator: after a plugin
+    /// restart the old mapping keeps answering — serving the dead
+    /// world's final snapshot and swallowing every motor command
+    /// into memory no one reads — while looking perfectly healthy.
+    /// Callers drive it from [`Self::writer_state`].
+    pub fn reconnect(&mut self) -> Result<(), GzPluginError> {
+        self.session = FcSession::attach(&shm_name(self.instance)).map_err(|e| match e {
+            AttachFailure::Contract(_) => GzPluginError::ContractMismatch,
+            _ => GzPluginError::PluginNotRunning,
+        })?;
+        Ok(())
     }
 
     /// Current physics step count (coherent snapshot; 0 before the
