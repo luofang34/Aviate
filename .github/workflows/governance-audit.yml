@@ -1,0 +1,49 @@
+name: Governance Audit
+
+# Verifies that the live rulesets protecting `main` still match
+# docs/REPO_GOVERNANCE.md and records the JSON they were verified
+# from. Runs only on a schedule or manual dispatch, so it always
+# executes the default branch's workflow definition and script —
+# never pull-request code — and no token with administration read
+# access is ever exposed to a PR.
+
+on:
+  schedule:
+    # 09:17 UTC Mondays.
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Ruleset Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Drift-detection self-test (fixtures only, no credentials)
+        run: ./scripts/check_branch_protection.sh --self-test
+
+      - name: Audit live rulesets and record evidence
+        env:
+          # Falls back to the workflow token. If that token cannot see
+          # bypass_actors the audit fails and names the missing
+          # permission; the remedy is a GOVERNANCE_AUDIT_TOKEN secret
+          # holding a fine-grained PAT with read-only Administration
+          # scoped to this repository — never a broader token.
+          GH_TOKEN: ${{ secrets.GOVERNANCE_AUDIT_TOKEN || github.token }}
+          REPO: ${{ github.repository }}
+          EVIDENCE_DIR: governance-evidence
+        run: ./scripts/check_branch_protection.sh
+
+      # Evidence is written before assertions run, so a failing audit
+      # still uploads what it saw.
+      - name: Upload live JSON evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: governance-evidence
+          path: governance-evidence/
+          if-no-files-found: error
