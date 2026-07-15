@@ -163,17 +163,29 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - name: Create the GitHub Release for the tag (idempotent)
+      - name: Create or verify the GitHub Release for the tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            echo "Release ${GITHUB_REF_NAME} already exists — leaving it unchanged (rerun-safe)."
+          title="${GITHUB_REF_NAME}"
+          if info="$(gh release view "${GITHUB_REF_NAME}" --json tagName,name,isDraft,isPrerelease 2>/dev/null)"; then
+            # A release already exists (rerun): verify it is the published,
+            # non-draft, non-prerelease release for exactly this tag.
+            tag="$(jq -r '.tagName' <<<"$info")"
+            name="$(jq -r '.name' <<<"$info")"
+            draft="$(jq -r '.isDraft' <<<"$info")"
+            prerelease="$(jq -r '.isPrerelease' <<<"$info")"
+            [ "$tag" = "${GITHUB_REF_NAME}" ] || { echo "::error::existing release tag ${tag} != ${GITHUB_REF_NAME}"; exit 1; }
+            [ "$name" = "$title" ]            || { echo "::error::existing release title '${name}' != '${title}'"; exit 1; }
+            [ "$draft" = "false" ]            || { echo "::error::existing release ${GITHUB_REF_NAME} is a draft"; exit 1; }
+            [ "$prerelease" = "false" ]       || { echo "::error::existing release ${GITHUB_REF_NAME} is a prerelease"; exit 1; }
+            echo "Release ${GITHUB_REF_NAME} already exists and matches (tag/title/published) — verified."
             exit 0
           fi
           gh release create "${GITHUB_REF_NAME}" \
             --verify-tag \
-            --title "${GITHUB_REF_NAME}" \
+            --latest \
+            --title "$title" \
             --notes "Published \`aviate\` ${version} and \`aviate-core\` ${version} to crates.io via Trusted Publishing."
