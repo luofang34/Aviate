@@ -47,10 +47,44 @@ jobs:
       - name: Guard self-test
         run: ./scripts/check_algorithm_identity.sh --self-test
 
+      # Fail-closed for every path to a protected branch: PR ranges
+      # and push ranges (before..sha) alike, so a direct or
+      # admin-bypass push to main is adjudicated exactly like a PR.
       - name: Adjudicate production algorithm changes
-        if: github.event_name == 'pull_request'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+          PUSH_HEAD: ${{ github.sha }}
         run: |
-          ./scripts/check_algorithm_identity.sh             "${{ github.event.pull_request.base.sha }}"             "${{ github.event.pull_request.head.sha }}"
+          case "$EVENT_NAME" in
+            pull_request)
+              base="$PR_BASE"
+              head="$PR_HEAD"
+              ;;
+            push)
+              base="$PUSH_BASE"
+              head="$PUSH_HEAD"
+              # Branch creation or history rewrite: the before-SHA is
+              # all-zeros or unreachable; adjudicate from the merge
+              # base with main instead of waving the push through.
+              if [ -z "$base" ] || ! git rev-parse --quiet --verify "$base^{commit}" > /dev/null 2>&1; then
+                base="$(git merge-base origin/main "$head" 2> /dev/null || true)"
+              fi
+              ;;
+            *)
+              echo "fail-closed: unsupported event '$EVENT_NAME'" >&2
+              exit 1
+              ;;
+          esac
+          if [ -z "$base" ] || [ "$base" = "$head" ]; then
+            # No comparable range (e.g. main's own initial push):
+            # still prove the ledger is coherent at the head.
+            ./scripts/check_algorithm_identity.sh --structural "$head"
+          else
+            ./scripts/check_algorithm_identity.sh "$base" "$head"
+          fi
 
   app-template:
     name: App Template (generate + check)

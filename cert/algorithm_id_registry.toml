@@ -75,6 +75,7 @@
 [testing]
 "mixer.kernel_dummy.v1"      = 0x4D49_5854_4553_5431  # tests::DummyMixer
 "controller.test_stateful.v1"= 0x4354_4C54_4553_5431  # TestStatefulController
+"estimator.mode_gate_fixed.v1" = 0x4649_5845_4553_5431  # mode_entry_gating_tests::FixedEstimator
 "estimator.mock.v1"          = 0x4553_544D_4F43_4B00  # MockEstimator
 "controller.mock.v1"         = 0x4354_4C4D_4F43_4B00  # MockController
 "mixer.mock.v1"              = 0x4D49_584D_4F43_4B00  # MockMixer
