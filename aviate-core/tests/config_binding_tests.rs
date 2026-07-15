@@ -141,3 +141,29 @@ fn built_kernel_binding_cannot_be_separated_afterwards() {
         kernel.cfg().cascade_gains
     );
 }
+
+#[test]
+fn mixer_geometry_mismatch_is_rejected() {
+    // #140: the canonical-hashed geometry declaration and the
+    // compiled mixer must agree at construction — a config resolved
+    // for the X500 pattern cannot silently drive the generic quad-X
+    // mixer (opposite yaw signs).
+    use aviate_core::kernel::config::MixerGeometry;
+    let cfg = ResolvedKernelConfig {
+        mixer_geometry: MixerGeometry::QuadXX500,
+        ..ResolvedKernelConfig::default()
+    };
+    let controller = MultirotorController::from_gains(cfg.cascade_gains, cfg.hover_thrust_norm.0);
+    // QuadXMixer compiles GEOMETRY = QuadX.
+    let result = build_with(cfg, controller);
+    assert!(
+        matches!(
+            result,
+            Err(KernelBuildError::MixerGeometryMismatch {
+                declared: MixerGeometry::QuadXX500,
+                compiled: MixerGeometry::QuadX,
+            })
+        ),
+        "expected MixerGeometryMismatch, got {result:?}"
+    );
+}

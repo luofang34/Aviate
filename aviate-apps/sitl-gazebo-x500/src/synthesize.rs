@@ -340,8 +340,8 @@ pub fn rotate_world_to_body(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
 /// `√thrust`: `ω = √thrust · MAX_RPS`, making physical thrust
 /// linear in the kernel's command. At the X500's force-domain
 /// hover trim (20.25 N weight / 34.19 N max = 0.5929) this
-/// commands `√0.5929 · MAX_RPS = 0.77 · MAX_RPS` — the identical
-/// rotor speed the pre-migration speed-domain trim produced.
+/// commands `√0.5929 · MAX_RPS = 0.77 · MAX_RPS` — the rotor speed
+/// at which the X500 model's total thrust equals its weight.
 pub fn cmd_to_omega(curve: ActuatorCurveKind, thrust: f32) -> f64 {
     f64::from(curve.boundary_command(NormalizedThrust(thrust)).0) * MOTOR_MAX_RPS
 }

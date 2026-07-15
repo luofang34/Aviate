@@ -174,6 +174,9 @@ struct MockMixer;
 impl Mixer for MockMixer {
     const ALGORITHM_ID: u64 = 0x4D49_584D_4F43_4B00; // "MIXMOCK\0"
 
+    const GEOMETRY: aviate_core::kernel::config::MixerGeometry =
+        aviate_core::kernel::config::MixerGeometry::QuadX;
+
     fn mix(&self, _axis: &AxisCommand) -> ActuatorCmd {
         ActuatorCmd::default()
     }

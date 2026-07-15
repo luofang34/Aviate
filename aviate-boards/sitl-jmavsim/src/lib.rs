@@ -54,6 +54,21 @@ use aviate_hal_xil::{
     SimBaroData, SimGnssData, SimImuData, SimMagData, SimSensorPacket, SitlConfig, SitlIO,
 };
 pub use aviate_runtime::sitl_timestamp;
+
+/// Convert force-domain mixer outputs into boundary actuator
+/// commands in place — the single curve application point for the
+/// jMAVSim path (#140).
+fn apply_actuator_curve(
+    curve: aviate_core::kernel::config::ActuatorCurveKind,
+    cmd: &mut aviate_hal_xil::sim_types::SimActuatorCmd,
+) {
+    let n = usize::from(cmd.count).min(cmd.outputs.len());
+    for lane in &mut cmd.outputs[..n] {
+        *lane = curve
+            .boundary_command(aviate_core::types::NormalizedThrust(*lane))
+            .0;
+    }
+}
 use aviate_runtime::{loop_periods, SitlBoardInfo, SitlRunner, SitlTime};
 
 /// jMAVSim board configuration
@@ -229,9 +244,16 @@ where
         // 3. Run SitlRunner step (handles control loop, same as Gazebo)
         let actuator_cmd = self.runner.step();
 
-        // 4. Get actuator commands and send to jMAVSim via HilBackend
-        if let Some(sim_cmd) = self.runner.transport.take_actuator_cmd() {
-            // Forward to jMAVSim via MAVLink HIL
+        // 4. Get actuator commands and send to jMAVSim via HilBackend.
+        //
+        // Mixer outputs are force-domain per-motor thrust (#140); the
+        // resolved actuator curve converts them to the boundary
+        // command here, exactly once, before they reach the wire —
+        // jMAVSim's rotor model interprets HIL_ACTUATOR_CONTROLS as
+        // normalized rotor commands with quadratic thrust, the same
+        // plant shape as the gz X500.
+        if let Some(mut sim_cmd) = self.runner.transport.take_actuator_cmd() {
+            apply_actuator_curve(self.runner.kernel.cfg().actuator_curve, &mut sim_cmd);
             let _ = self.hil_backend.send_actuators(&sim_cmd);
         }
 
@@ -299,7 +321,10 @@ where
             .pre_arm
             // Throttle-low gate: commanded collective below 1 % of maximum
             // thrust (force domain).
-            .update_throttle(cmd.setpoint.collective_thrust.0 < 0.01);
+            .update_throttle(
+                cmd.setpoint.collective_thrust
+                    < aviate_core::kernel_types::THROTTLE_LOW_MAX_COLLECTIVE,
+            );
         let now_ticks = self.runner.transport.now().ticks;
         self.runner
             .ingress
@@ -393,5 +418,51 @@ mod tests {
         assert_eq!(config.local_port, 0); // Ephemeral port
         assert_eq!(config.simulator_port, 14560); // jMAVSim default
         assert_eq!(config.simulator_host, [127, 0, 0, 1]);
+    }
+
+    #[test]
+    fn boundary_applies_the_quadratic_curve_per_active_lane() {
+        // #140 boundary witness for the jMAVSim path: force-domain
+        // mixer outputs leave as sqrt boundary commands; inactive
+        // lanes are untouched.
+        use aviate_core::kernel::config::ActuatorCurveKind;
+        let mut cmd = aviate_hal_xil::sim_types::SimActuatorCmd {
+            outputs: [0.0; 16],
+            count: 4,
+            ..Default::default()
+        };
+        cmd.outputs[0] = 0.5929; // X500 force-domain hover trim
+        cmd.outputs[1] = 0.25;
+        cmd.outputs[2] = 1.0;
+        cmd.outputs[4] = 0.5929; // beyond count: must stay raw
+        super::apply_actuator_curve(ActuatorCurveKind::QuadraticRotor, &mut cmd);
+        assert!(
+            (cmd.outputs[0] - 0.77).abs() < 1e-6,
+            "trim -> 0.77 boundary"
+        );
+        assert!(
+            (cmd.outputs[1] - 0.5).abs() < 1e-6,
+            "0.25 force -> 0.5 speed"
+        );
+        assert!((cmd.outputs[2] - 1.0).abs() < 1e-6);
+        assert!(
+            (cmd.outputs[4] - 0.5929).abs() < 1e-9,
+            "inactive lane untouched"
+        );
+    }
+
+    #[test]
+    fn boundary_linear_curve_is_identity() {
+        use aviate_core::kernel::config::ActuatorCurveKind;
+        let mut cmd = aviate_hal_xil::sim_types::SimActuatorCmd {
+            outputs: [0.0; 16],
+            count: 2,
+            ..Default::default()
+        };
+        cmd.outputs[0] = 0.5929;
+        cmd.outputs[1] = 0.25;
+        super::apply_actuator_curve(ActuatorCurveKind::Linear, &mut cmd);
+        assert!((cmd.outputs[0] - 0.5929).abs() < 1e-9);
+        assert!((cmd.outputs[1] - 0.25).abs() < 1e-9);
     }
 }

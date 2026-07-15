@@ -43,6 +43,16 @@ pub enum KernelBuildError {
     /// The controller's effective tuning disagrees with the
     /// canonical-hashed configuration; both identities included.
     ControllerConfigMismatch(crate::control::ControllerConfigMismatch),
+    /// The resolved configuration declares a different mixer
+    /// geometry than the compiled mixer carries (#140): the
+    /// canonical-hashed declaration and the code that flies must
+    /// agree at construction.
+    MixerGeometryMismatch {
+        /// Geometry declared by `ResolvedKernelConfig`.
+        declared: crate::kernel::config::MixerGeometry,
+        /// Geometry the injected mixer type compiles with.
+        compiled: crate::kernel::config::MixerGeometry,
+    },
 }
 
 pub struct AviateKernelBuilder<E, V, M, S>
@@ -167,6 +177,13 @@ where
         controller
             .verify_config_binding(&self.cfg)
             .map_err(KernelBuildError::ControllerConfigMismatch)?;
+
+        if M::GEOMETRY != self.cfg.mixer_geometry {
+            return Err(KernelBuildError::MixerGeometryMismatch {
+                declared: self.cfg.mixer_geometry,
+                compiled: M::GEOMETRY,
+            });
+        }
 
         let checks = match self.pre_arm_required {
             Some(required) => KernelChecks::with_pre_arm_required(required),
