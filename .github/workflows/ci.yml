@@ -117,6 +117,35 @@ jobs:
       - name: Enforce control-limit classification (tuning vs invariant)
         run: ./scripts/check_control_limits.sh
 
+  # The C++ gz plugin consumes the cbindgen-generated contract header.
+  # Without this fast gate, a broken include path or a layout drift is
+  # only caught by the Gazebo build lane 20 minutes later — or, if that
+  # lane is skipped, becomes a cross-process runtime mystery. No Gazebo
+  # toolchain needed, just a C++ compiler.
+  xil-contract-header:
+    name: XIL Contract Header (C++ ABI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Adversarial fixtures first: the check below is only trusted
+      # when it demonstrably still rejects a drifted layout and a
+      # CMakeLists that stops declaring the header's directory.
+      - name: Guard self-test
+        run: ./scripts/check_xil_contract_header.sh --self-test
+
+      - name: Verify the C++ view of the contract matches the Rust layout
+        run: ./scripts/check_xil_contract_header.sh
+
+      # The checked-in header is cbindgen output; regenerating it must
+      # be a no-op, so a Rust layout edit cannot land without the
+      # header the plugin compiles against moving with it.
+      - name: Verify the generated header is in sync with the Rust source
+        run: cargo test -p aviate-xil-contract --test header_sync
+
   app-template:
     name: App Template (generate + check)
     runs-on: ubuntu-latest
@@ -822,6 +851,7 @@ jobs:
       - app-template
       - jmavsim-smoke
       - runtime-boundary
+      - xil-contract-header
       - feature-clippy
       - release-scripts
       - floors-lower-lint
