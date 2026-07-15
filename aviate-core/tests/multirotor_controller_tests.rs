@@ -775,3 +775,71 @@ fn altitude_hold_tracks_commanded_altitude_in_sim() {
         "altitude hold must converge to {target_alt} m, settled at {final_alt} m"
     );
 }
+
+// =============================================================================
+// Disarmed-gate boundary (law_invariants::DISARMED_COLLECTIVE_THRESHOLD)
+// =============================================================================
+
+#[test]
+fn disarm_gate_boundary_is_the_named_invariant() {
+    use aviate_core::control::law_invariants::DISARMED_COLLECTIVE_THRESHOLD;
+
+    let controller = MultirotorController::default();
+    let state = make_state();
+    let limits = make_limits();
+    let tilted = Quaternion::from_axis_angle(aviate_core::math::Vector3::new(1.0, 0.0, 0.0), 0.2);
+    let cmd_with_collective = |c: f32| Command {
+        mode: ControlMode::Attitude,
+        setpoint: Setpoint {
+            attitude: Some(tilted),
+            collective_thrust: Normalized(c),
+            ..Default::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: 1,
+        source: CommandSource::Pilot,
+    };
+    let flags = VehicleControlMode::from_control_mode(ControlMode::Attitude);
+
+    // Just below the threshold: axes silenced and loop memory reset,
+    // even with a pending attitude error and a wound integrator.
+    let mut runtime = MultirotorRuntimeState {
+        vel_sp_primed: true,
+        ..Default::default()
+    };
+    runtime.velocity_loop.integrator_ned.x = MetersPerSecond(1.5);
+    let below = controller.step(
+        &mut runtime,
+        &state,
+        &cmd_with_collective(DISARMED_COLLECTIVE_THRESHOLD - 1e-4),
+        &flags,
+        ConfigMode::Hover,
+        &limits,
+    );
+    assert_eq!(below.roll.0, 0.0);
+    assert_eq!(below.pitch.0, 0.0);
+    assert_eq!(below.yaw.0, 0.0);
+    assert_eq!(
+        runtime.velocity_loop.integrator_ned.x.0, 0.0,
+        "below the gate the velocity integrator must reset"
+    );
+    assert!(!runtime.vel_sp_primed);
+
+    // At the threshold (the gate compares with strict `<`): the
+    // cascade runs and the attitude error yields a live roll command.
+    let mut runtime = MultirotorRuntimeState::default();
+    let at = controller.step(
+        &mut runtime,
+        &state,
+        &cmd_with_collective(DISARMED_COLLECTIVE_THRESHOLD),
+        &flags,
+        ConfigMode::Hover,
+        &limits,
+    );
+    assert!(
+        at.roll.0.abs() > 1e-3,
+        "at the threshold the axes must be live, got roll {}",
+        at.roll.0
+    );
+}

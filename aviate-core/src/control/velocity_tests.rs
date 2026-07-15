@@ -397,3 +397,77 @@ fn tilt_command_inverts_at_180_deg_heading() {
         "north demand at nose-south must not roll, got roll={roll}"
     );
 }
+
+#[test]
+fn horizontal_accel_command_is_clamped_at_the_tilt_model_bound() {
+    // A velocity error commanding far more than 1 g of horizontal
+    // acceleration must saturate the tilt derivation at atan(1) =
+    // 45°. The authority cap is raised above 45° locally so the
+    // boundary observed here is MAX_HORIZONTAL_ACCEL_CMD_MPS2, not
+    // vel_max_roll_pitch.
+    let mut gains = CascadeGains::x500_defaults();
+    gains.vel_max_roll_pitch = 1.5; // ~86°, well past the model bound
+    let c = VelocityController::new(gains, 0.77);
+    let mut s = VelocityLoopState::default();
+    let setpoint = Vector3::new(
+        MetersPerSecond(1000.0), // ~1200 m/s² commanded before the clamp
+        MetersPerSecond(0.0),
+        MetersPerSecond(0.0),
+    );
+    let out = c.step(
+        &mut s,
+        setpoint,
+        zero_vel(),
+        AccelFeedforward::default(),
+        &Quaternion::IDENTITY,
+        None,
+        0.0,
+    );
+    let (_roll, pitch, _yaw) = out.attitude.to_euler();
+    // +x (north) error at yaw 0 → nose-down pitch of exactly
+    // -atan(clamp / g).
+    let expected = -MAX_HORIZONTAL_ACCEL_CMD_MPS2.atan2(STANDARD_GRAVITY_MPS2);
+    assert!(
+        (pitch - expected).abs() < 1e-3,
+        "pitch {pitch} must sit at the 1 g model bound {expected}"
+    );
+}
+
+#[test]
+fn tilt_compensation_is_floored_past_the_cos_floor() {
+    // Below the floor's angle the collective scales as 1/cos(tilt);
+    // past it, two different extreme tilts produce the SAME
+    // collective because the divisor is floored (amplification
+    // capped at 1 / TILT_COMP_COS_FLOOR = 2×). Hover trim is set low
+    // enough that the floored output stays inside the [0, 1] clamp.
+    let c = ctrl(0.4);
+    let tilt = |angle: Scalar| Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0), angle);
+    let collective_at = |att: &Quaternion| {
+        let mut s = VelocityLoopState::default();
+        c.step(
+            &mut s,
+            zero_vel(),
+            zero_vel(),
+            AccelFeedforward::default(),
+            att,
+            None,
+            0.0,
+        )
+        .collective
+        .0
+    };
+    // Level: no compensation. Pure roll of θ gives cos(tilt) = cos θ.
+    assert!((collective_at(&Quaternion::IDENTITY) - 0.4).abs() < 1e-5);
+    // Moderate tilt, cos(0.6) ≈ 0.83 > floor: true 1/cos scaling.
+    let moderate = collective_at(&tilt(0.6));
+    assert!((moderate - 0.4 / 0.6_f32.cos()).abs() < 1e-4);
+    // Past the floor (cos(1.3) ≈ 0.27, cos(1.45) ≈ 0.12 < 0.5): the
+    // divisor is pinned at the floor and stops tracking tilt.
+    let past_a = collective_at(&tilt(1.3));
+    let past_b = collective_at(&tilt(1.45));
+    assert!((past_a - 0.4 / TILT_COMP_COS_FLOOR).abs() < 1e-4);
+    assert!(
+        (past_a - past_b).abs() < 1e-6,
+        "past the floor the amplification must be capped, got {past_a} vs {past_b}"
+    );
+}
