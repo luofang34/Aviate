@@ -402,35 +402,49 @@ fn tilt_command_inverts_at_180_deg_heading() {
 fn horizontal_accel_command_is_clamped_at_the_tilt_model_bound() {
     // A velocity error commanding far more than 1 g of horizontal
     // acceleration must saturate the tilt derivation at atan(1) =
-    // 45°. The authority cap is raised above 45° locally so the
-    // boundary observed here is MAX_HORIZONTAL_ACCEL_CMD_MPS2, not
-    // vel_max_roll_pitch.
+    // 45° — on BOTH horizontal axes and in BOTH directions, since the
+    // clamp is per-axis and symmetric. The authority cap is raised
+    // above 45° locally so the boundary observed here is
+    // MAX_HORIZONTAL_ACCEL_CMD_MPS2, not vel_max_roll_pitch.
     let mut gains = CascadeGains::x500_defaults();
     gains.vel_max_roll_pitch = 1.5; // ~86°, well past the model bound
     let c = VelocityController::new(gains, 0.77);
-    let mut s = VelocityLoopState::default();
-    let setpoint = Vector3::new(
-        MetersPerSecond(1000.0), // ~1200 m/s² commanded before the clamp
-        MetersPerSecond(0.0),
-        MetersPerSecond(0.0),
-    );
-    let out = c.step(
-        &mut s,
-        setpoint,
-        zero_vel(),
-        AccelFeedforward::default(),
-        &Quaternion::IDENTITY,
-        None,
-        0.0,
-    );
-    let (_roll, pitch, _yaw) = out.attitude.to_euler();
-    // +x (north) error at yaw 0 → nose-down pitch of exactly
-    // -atan(clamp / g).
-    let expected = -MAX_HORIZONTAL_ACCEL_CMD_MPS2.atan2(STANDARD_GRAVITY_MPS2);
-    assert!(
-        (pitch - expected).abs() < 1e-3,
-        "pitch {pitch} must sit at the 1 g model bound {expected}"
-    );
+    let bound = MAX_HORIZONTAL_ACCEL_CMD_MPS2.atan2(STANDARD_GRAVITY_MPS2);
+    // (vel error x, vel error y) → (expected roll, expected pitch) at
+    // yaw 0: +x (north) pushes nose-down pitch, +y (east) pushes
+    // right-wing-down roll; each ~1200 m/s² before the clamp.
+    let cases = [
+        ("north", 1000.0, 0.0, 0.0, -bound),
+        ("south", -1000.0, 0.0, 0.0, bound),
+        ("east", 0.0, 1000.0, bound, 0.0),
+        ("west", 0.0, -1000.0, -bound, 0.0),
+    ];
+    for (name, vx, vy, want_roll, want_pitch) in cases {
+        let mut s = VelocityLoopState::default();
+        let setpoint = Vector3::new(
+            MetersPerSecond(vx),
+            MetersPerSecond(vy),
+            MetersPerSecond(0.0),
+        );
+        let out = c.step(
+            &mut s,
+            setpoint,
+            zero_vel(),
+            AccelFeedforward::default(),
+            &Quaternion::IDENTITY,
+            None,
+            0.0,
+        );
+        let (roll, pitch, _yaw) = out.attitude.to_euler();
+        assert!(
+            (pitch - want_pitch).abs() < 1e-3,
+            "{name}: pitch {pitch} must sit at the 1 g model bound {want_pitch}"
+        );
+        assert!(
+            (roll - want_roll).abs() < 1e-3,
+            "{name}: roll {roll} must sit at the 1 g model bound {want_roll}"
+        );
+    }
 }
 
 #[test]

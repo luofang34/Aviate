@@ -783,11 +783,14 @@ fn altitude_hold_tracks_commanded_altitude_in_sim() {
 #[test]
 fn disarm_gate_boundary_is_the_named_invariant() {
     use aviate_core::control::law_invariants::DISARMED_COLLECTIVE_THRESHOLD;
+    use aviate_core::control::rate::RateLoopState;
+    use aviate_core::control::velocity::VelocityLoopState;
+    use aviate_core::math::Vector3;
 
     let controller = MultirotorController::default();
     let state = make_state();
     let limits = make_limits();
-    let tilted = Quaternion::from_axis_angle(aviate_core::math::Vector3::new(1.0, 0.0, 0.0), 0.2);
+    let tilted = Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0), 0.2);
     let cmd_with_collective = |c: f32| Command {
         mode: ControlMode::Attitude,
         setpoint: Setpoint {
@@ -803,16 +806,41 @@ fn disarm_gate_boundary_is_the_named_invariant() {
     let flags = VehicleControlMode::from_control_mode(ControlMode::Attitude);
 
     // Just below the threshold: axes silenced and loop memory reset,
-    // even with a pending attitude error and a wound integrator.
+    // even with a pending attitude error and EVERY field of loop
+    // memory holding a non-default value — integrators, both
+    // derivative-filter states, and all three priming flags.
     let mut runtime = MultirotorRuntimeState {
         vel_sp_primed: true,
+        last_vel_sp_ned: Vector3::new(
+            MetersPerSecond(0.7),
+            MetersPerSecond(-0.8),
+            MetersPerSecond(0.9),
+        ),
         ..Default::default()
     };
-    runtime.velocity_loop.integrator_ned.x = MetersPerSecond(1.5);
+    runtime.velocity_loop.integrator_ned = Vector3::new(
+        MetersPerSecond(1.5),
+        MetersPerSecond(-2.5),
+        MetersPerSecond(0.5),
+    );
+    runtime.velocity_loop.last_vel_filt_ned = Vector3::new(
+        MetersPerSecond(0.3),
+        MetersPerSecond(-0.4),
+        MetersPerSecond(1.1),
+    );
+    runtime.velocity_loop.d_primed = true;
+    runtime.rate_loop.meas_filtered_prev = Vector3::new(
+        RadiansPerSecond(0.2),
+        RadiansPerSecond(-0.6),
+        RadiansPerSecond(1.3),
+    );
+    runtime.rate_loop.primed = true;
+
+    let below_collective = DISARMED_COLLECTIVE_THRESHOLD - 1e-4;
     let below = controller.step(
         &mut runtime,
         &state,
-        &cmd_with_collective(DISARMED_COLLECTIVE_THRESHOLD - 1e-4),
+        &cmd_with_collective(below_collective),
         &flags,
         ConfigMode::Hover,
         &limits,
@@ -820,10 +848,24 @@ fn disarm_gate_boundary_is_the_named_invariant() {
     assert_eq!(below.roll.0, 0.0);
     assert_eq!(below.pitch.0, 0.0);
     assert_eq!(below.yaw.0, 0.0);
+    // The gate passes the commanded collective through untouched —
+    // bit-exact, not approximately.
+    assert_eq!(below.collective.0, below_collective);
+    // Both loop states return exactly to their defaults: integrators,
+    // derivative-filter memories, and the d/rate priming flags.
     assert_eq!(
-        runtime.velocity_loop.integrator_ned.x.0, 0.0,
-        "below the gate the velocity integrator must reset"
+        runtime.velocity_loop,
+        VelocityLoopState::default(),
+        "below the gate the velocity loop state must reset to default"
     );
+    assert_eq!(
+        runtime.rate_loop,
+        RateLoopState::default(),
+        "below the gate the rate loop state must reset to default"
+    );
+    // Feedforward priming clears; the stale last_vel_sp_ned sample is
+    // deliberately left behind because the cleared priming flag makes
+    // it inert (the next closed-loop entry re-primes before use).
     assert!(!runtime.vel_sp_primed);
 
     // At the threshold (the gate compares with strict `<`): the

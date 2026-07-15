@@ -1391,13 +1391,14 @@ test_selector = "horizontal_accel_command_is_clamped_at_the_tilt_model_bound"
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/src/control/velocity_tests.rs::horizontal_accel_command_is_clamped_at_the_tilt_model_bound`
-drives the velocity loop with a horizontal velocity error large
-enough to demand well past 1 g and asserts the commanded tilt clamps
-at the ±1 g model-validity bound (45°) rather than at the raw
-demand — with the configurable `vel_max_roll_pitch` authority clamp
-raised out of the way so only the invariant binds. Witnesses
-LLR-CTL-206; the compile-time bounds block in law_invariants.rs pins
-the constant itself.
+drives the velocity loop with velocity errors demanding well past
+1 g in all four horizontal directions (+X, −X, +Y, −Y) and asserts
+the commanded tilt clamps at the ±1 g model-validity bound (±45°)
+on the corresponding axis with the cross axis level — per-axis and
+sign-symmetric, matching the requirement — with the configurable
+`vel_max_roll_pitch` authority clamp raised out of the way so only
+the invariant binds. Witnesses LLR-CTL-206; the compile-time bounds
+block in law_invariants.rs pins the constant itself.
 """
 traces_to = ["a36f2231-3434-409b-9568-1c78fa38d185"]
 
@@ -1427,12 +1428,15 @@ test_selector = "disarm_gate_boundary_is_the_named_invariant"
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/tests/multirotor_controller_tests.rs::disarm_gate_boundary_is_the_named_invariant`
-seeds a wound velocity integrator and primed feedforward, commands
-collective just below `DISARMED_COLLECTIVE_THRESHOLD` with a pending
-attitude error, and asserts zero axis commands and loop-memory
-reset; at the threshold itself (the gate compares with strict
-less-than) the same attitude error commands torque — pinning the
-named invariant, boundary semantics included, as the gate. Witnesses
-LLR-CTL-208.
+seeds every field of loop memory with non-default values —
+velocity-loop integrators and derivative-filter state, rate-loop
+derivative memory, and all three priming flags — commands collective
+just below `DISARMED_COLLECTIVE_THRESHOLD` with a pending attitude
+error, and asserts zero axis commands, bit-exact collective
+pass-through, both loop states equal to their defaults, and
+feedforward priming cleared; at the threshold itself (the gate
+compares with strict less-than) the same attitude error commands
+torque — pinning the named invariant, boundary semantics included,
+as the gate. Witnesses LLR-CTL-208.
 """
 traces_to = ["68fd3971-1759-4788-80bc-f36fd6e30a53"]
