@@ -1,26 +1,22 @@
 use crate::math::Quaternion;
 use crate::types::{RadiansPerSecond, Scalar};
 
-/// Maximum body-frame angular rate the attitude controller is
-/// allowed to demand from the rate loop, per axis (rad/s).
-/// Without this cap the P-controller demands gain·error rad/s
-/// for arbitrarily large attitude errors — at a 90° error that
-/// is `gain · π/2` rad/s, which then saturates the rate loop
-/// against gyro and induces a recovery overshoot far larger
-/// than the original error. Physically, a multirotor cannot
-/// servo angular rates beyond a few rad/s without losing
-/// thrust authority anyway (the rotors spend their thrust on
-/// torque rather than lift).
-const MAX_ATTITUDE_RATE_CMD: Scalar = 3.0;
-
 #[derive(Clone, Debug)]
 pub struct AttitudeController {
     pub gains: [Scalar; 3], // P gains for Roll, Pitch, Yaw error -> Rate
+    /// Per-axis cap on the commanded body rate (rad/s). Mirrors
+    /// `CascadeGains::att_max_rate_cmd` — airframe tuning covered
+    /// by the canonical config hash; the saturation rationale
+    /// lives on that field's doc.
+    pub max_rate_cmd: Scalar,
 }
 
 impl AttitudeController {
-    pub fn new(gains: [Scalar; 3]) -> Self {
-        Self { gains }
+    pub fn new(gains: [Scalar; 3], max_rate_cmd: Scalar) -> Self {
+        Self {
+            gains,
+            max_rate_cmd,
+        }
     }
 
     pub fn step(&self, setpoint: &Quaternion, current: &Quaternion) -> [RadiansPerSecond; 3] {
@@ -50,12 +46,9 @@ impl AttitudeController {
         let pitch_err = 2.0 * y;
         let yaw_err = 2.0 * z;
 
-        let roll_cmd =
-            (roll_err * self.gains[0]).clamp(-MAX_ATTITUDE_RATE_CMD, MAX_ATTITUDE_RATE_CMD);
-        let pitch_cmd =
-            (pitch_err * self.gains[1]).clamp(-MAX_ATTITUDE_RATE_CMD, MAX_ATTITUDE_RATE_CMD);
-        let yaw_cmd =
-            (yaw_err * self.gains[2]).clamp(-MAX_ATTITUDE_RATE_CMD, MAX_ATTITUDE_RATE_CMD);
+        let roll_cmd = (roll_err * self.gains[0]).clamp(-self.max_rate_cmd, self.max_rate_cmd);
+        let pitch_cmd = (pitch_err * self.gains[1]).clamp(-self.max_rate_cmd, self.max_rate_cmd);
+        let yaw_cmd = (yaw_err * self.gains[2]).clamp(-self.max_rate_cmd, self.max_rate_cmd);
 
         [
             RadiansPerSecond(roll_cmd),

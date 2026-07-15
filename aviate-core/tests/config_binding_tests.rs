@@ -63,9 +63,15 @@ fn every_gains_and_hover_field_mismatch_is_rejected() {
         ("vel_max_roll_pitch", |c| {
             c.cascade_gains.vel_max_roll_pitch += 0.125
         }),
+        ("vel_max_yaw_step", |c| {
+            c.cascade_gains.vel_max_yaw_step += 0.125
+        }),
         ("vel_accel_ff", |c| c.cascade_gains.vel_accel_ff += 0.125),
         ("vel_d", |c| c.cascade_gains.vel_d[2] += 0.125),
         ("att_p", |c| c.cascade_gains.att_p[0] += 0.125),
+        ("att_max_rate_cmd", |c| {
+            c.cascade_gains.att_max_rate_cmd += 0.125
+        }),
         ("rate_p", |c| c.cascade_gains.rate_p[1] += 0.125),
         ("rate_d", |c| c.cascade_gains.rate_d[2] += 0.125),
         ("rate_d_lpf_alpha", |c| {
@@ -98,10 +104,10 @@ fn every_gains_and_hover_field_mismatch_is_rejected() {
         );
     }
 
-    // Field-count pin: CascadeGains has 12 public tuning fields plus
+    // Field-count pin: CascadeGains has 14 public tuning fields plus
     // the hover seed. Adding a field without extending the sweep
     // fails here instead of silently escaping coverage.
-    assert_eq!(mutations.len(), 13);
+    assert_eq!(mutations.len(), 15);
 }
 
 #[test]

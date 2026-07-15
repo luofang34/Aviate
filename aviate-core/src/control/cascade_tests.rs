@@ -41,7 +41,7 @@ const K_PLANT_RAD_S2: f32 = 74.0;
 fn attitude_step_response_meets_llr_ctl_202() {
     let gains = CascadeGains::x500_defaults();
     gains.validate().unwrap();
-    let att = AttitudeController::new(gains.att_p);
+    let att = AttitudeController::new(gains.att_p, gains.att_max_rate_cmd);
     let rate = RateController::new(gains);
     let mut rate_state = RateLoopState::default();
 
@@ -208,7 +208,7 @@ fn zero_gains_zero_motion() {
     gains.att_p = [0.0; 3];
     gains.rate_p = [0.0; 3];
     gains.rate_d = [0.0; 3];
-    let att = AttitudeController::new(gains.att_p);
+    let att = AttitudeController::new(gains.att_p, gains.att_max_rate_cmd);
     let rate = RateController::new(gains);
     let mut rate_state = RateLoopState::default();
 

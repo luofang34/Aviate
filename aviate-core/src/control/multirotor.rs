@@ -179,7 +179,7 @@ impl MultirotorController {
             ),
             vel_ctrl: VelocityController::new(gains, hover_thrust_norm),
             rate_ctrl: RateController::new(gains),
-            att_ctrl: AttitudeController::new(gains.att_p),
+            att_ctrl: AttitudeController::new(gains.att_p, gains.att_max_rate_cmd),
         }
     }
 

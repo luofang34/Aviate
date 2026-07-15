@@ -21,7 +21,7 @@ const DEG_TO_RAD: f32 = core::f32::consts::PI / 180.0;
 
 #[test]
 fn level_setpoint_and_current_produces_zero_rate() {
-    let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+    let ctrl = AttitudeController::new([6.0, 6.0, 2.0], 3.0);
     let setpoint = Quaternion::IDENTITY;
     let current = Quaternion::IDENTITY;
 
@@ -38,7 +38,7 @@ fn level_setpoint_and_current_produces_zero_rate() {
 
 #[test]
 fn roll_error_produces_roll_rate_correction() {
-    let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+    let ctrl = AttitudeController::new([6.0, 6.0, 2.0], 3.0);
     let setpoint = Quaternion::IDENTITY;
     // 10 degrees roll
     let current = Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0), 10.0 * DEG_TO_RAD);
@@ -56,7 +56,7 @@ fn roll_error_produces_roll_rate_correction() {
 
 #[test]
 fn negative_roll_error_produces_positive_correction() {
-    let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+    let ctrl = AttitudeController::new([6.0, 6.0, 2.0], 3.0);
     let setpoint = Quaternion::IDENTITY;
     // -10 degrees roll
     let current = Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0), -10.0 * DEG_TO_RAD);
@@ -75,7 +75,7 @@ fn negative_roll_error_produces_positive_correction() {
 
 #[test]
 fn pitch_error_produces_pitch_rate_correction() {
-    let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+    let ctrl = AttitudeController::new([6.0, 6.0, 2.0], 3.0);
     let setpoint = Quaternion::IDENTITY;
     // 10 degrees nose-up pitch
     let current = Quaternion::from_axis_angle(Vector3::new(0.0, 1.0, 0.0), 10.0 * DEG_TO_RAD);
@@ -92,7 +92,7 @@ fn pitch_error_produces_pitch_rate_correction() {
 
 #[test]
 fn pitch_error_magnitude_check() {
-    let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+    let ctrl = AttitudeController::new([6.0, 6.0, 2.0], 3.0);
     let setpoint = Quaternion::IDENTITY;
     let angle = 10.0 * DEG_TO_RAD;
     let current = Quaternion::from_axis_angle(Vector3::new(0.0, 1.0, 0.0), angle);
@@ -116,7 +116,7 @@ fn pitch_error_magnitude_check() {
 
 #[test]
 fn yaw_error_produces_yaw_rate_correction() {
-    let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+    let ctrl = AttitudeController::new([6.0, 6.0, 2.0], 3.0);
     let setpoint = Quaternion::IDENTITY;
     // 30 degrees yaw
     let current = Quaternion::from_axis_angle(Vector3::new(0.0, 0.0, 1.0), 30.0 * DEG_TO_RAD);
@@ -134,7 +134,7 @@ fn yaw_error_produces_yaw_rate_correction() {
 
 #[test]
 fn inverted_roll_produces_large_correction() {
-    let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+    let ctrl = AttitudeController::new([6.0, 6.0, 2.0], 3.0);
     let setpoint = Quaternion::IDENTITY;
     // 180 degrees roll (inverted)
     let current = Quaternion::new(0.0, 1.0, 0.0, 0.0);
@@ -142,7 +142,7 @@ fn inverted_roll_produces_large_correction() {
     let rate_sp = ctrl.step(&setpoint, &current);
 
     // Unclamped demand would be 2 * 1.0 * 6.0 = 12 rad/s, but the
-    // attitude loop caps each axis at MAX_ATTITUDE_RATE_CMD = 3 rad/s
+    // attitude loop caps each axis at its max_rate_cmd (3 rad/s here)
     // so the rate loop is never asked to servo a physically
     // unattainable rate. The correction is at the negative authority
     // limit.
@@ -157,7 +157,7 @@ fn inverted_roll_produces_large_correction() {
 
 #[test]
 fn ninety_degree_pitch() {
-    let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+    let ctrl = AttitudeController::new([6.0, 6.0, 2.0], 3.0);
     let setpoint = Quaternion::IDENTITY;
     // 90 degrees pitch (vertical climb attitude)
     let current = Quaternion::from_axis_angle(Vector3::new(0.0, 1.0, 0.0), 90.0 * DEG_TO_RAD);
@@ -184,8 +184,8 @@ fn higher_gain_produces_larger_output() {
     let setpoint = Quaternion::IDENTITY;
     let current = Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0), angle);
 
-    let ctrl_low = AttitudeController::new([3.0, 3.0, 1.0]);
-    let ctrl_high = AttitudeController::new([6.0, 6.0, 2.0]);
+    let ctrl_low = AttitudeController::new([3.0, 3.0, 1.0], 3.0);
+    let ctrl_high = AttitudeController::new([6.0, 6.0, 2.0], 3.0);
 
     let rate_low = ctrl_low.step(&setpoint, &current);
     let rate_high = ctrl_high.step(&setpoint, &current);
@@ -198,7 +198,7 @@ fn higher_gain_produces_larger_output() {
 
 #[test]
 fn different_gains_per_axis() {
-    let ctrl = AttitudeController::new([2.0, 4.0, 8.0]);
+    let ctrl = AttitudeController::new([2.0, 4.0, 8.0], 3.0);
     let setpoint = Quaternion::IDENTITY;
 
     // Apply same small rotation to different axes and check ratio
@@ -222,7 +222,7 @@ fn different_gains_per_axis() {
 
 #[test]
 fn combined_roll_and_pitch_error() {
-    let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+    let ctrl = AttitudeController::new([6.0, 6.0, 2.0], 3.0);
     let setpoint = Quaternion::IDENTITY;
 
     // Combined rotation: 10 deg roll + 10 deg pitch
@@ -243,7 +243,7 @@ fn combined_roll_and_pitch_error() {
 
 #[test]
 fn very_small_error() {
-    let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+    let ctrl = AttitudeController::new([6.0, 6.0, 2.0], 3.0);
     let setpoint = Quaternion::IDENTITY;
     let current = Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0), 0.001); // ~0.06 deg
 
@@ -256,7 +256,7 @@ fn very_small_error() {
 #[test]
 fn quaternion_sign_ambiguity_handled() {
     // q and -q represent the same rotation
-    let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+    let ctrl = AttitudeController::new([6.0, 6.0, 2.0], 3.0);
     let setpoint = Quaternion::IDENTITY;
 
     let q = Quaternion::from_axis_angle(Vector3::new(1.0, 0.0, 0.0), 30.0 * DEG_TO_RAD);

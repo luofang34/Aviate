@@ -924,7 +924,7 @@ mod tests {
     // --- Attitude Controller Tests ---
     #[test]
     fn test_attitude_controller_level_correction() {
-        let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+        let ctrl = AttitudeController::new([6.0, 6.0, 2.0], 3.0);
         let setpoint = Quaternion::IDENTITY; // Level flight
                                              // Tilted current: 10 deg pitch (approx)
         let current = Quaternion::from_axis_angle(Vector3::new(0.0, 1.0, 0.0), 0.1745); // 0.1745 rad = 10 deg pitch
@@ -952,7 +952,7 @@ mod tests {
 
     #[test]
     fn test_attitude_controller_inverted() {
-        let ctrl = AttitudeController::new([6.0, 6.0, 2.0]);
+        let ctrl = AttitudeController::new([6.0, 6.0, 2.0], 3.0);
         let setpoint = Quaternion::IDENTITY;
         // Inverted current (180 deg roll around X-axis)
         let current = Quaternion::new(0.0, 1.0, 0.0, 0.0); // Exactly 180 deg roll
@@ -962,7 +962,7 @@ mod tests {
         // For 180 deg roll error, q_err = [0, -1, 0, 0], so
         // roll_err = 2 * x = -2.0 and the unclamped demand would be
         // -2.0 * 6.0 = -12 rad/s. The attitude loop caps each axis at
-        // MAX_ATTITUDE_RATE_CMD = 3 rad/s, so the roll command
+        // its max_rate_cmd (3 rad/s here), so the roll command
         // saturates at the negative authority limit.
         assert!(
             (rate_sp[0].0 - (-3.0)).abs() < 1e-5,

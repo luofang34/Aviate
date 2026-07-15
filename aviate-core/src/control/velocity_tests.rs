@@ -222,7 +222,7 @@ fn commanded_heading_steers_the_attitude_setpoint_yaw() {
 
 #[test]
 fn large_heading_error_is_slew_clamped() {
-    // A 3 rad heading change applies at most MAX_YAW_ERROR_STEP
+    // A 3 rad heading change applies at most `vel_max_yaw_step`
     // per cycle so the vehicle turns smoothly instead of the
     // attitude loop being stepped half a revolution.
     let c = ctrl(0.77);
@@ -236,7 +236,7 @@ fn large_heading_error_is_slew_clamped() {
         Some(Radians(3.0)),
         0.0,
     );
-    assert!((yaw_of(&out.attitude) - MAX_YAW_ERROR_STEP).abs() < 1e-4);
+    assert!((yaw_of(&out.attitude) - c.gains.vel_max_yaw_step).abs() < 1e-4);
 }
 
 #[test]
