@@ -603,8 +603,7 @@ jobs:
       # the trace — REQ_PASS for satisfied, REQ_GAP for unsatisfied,
       # exit 2 on any GAP. Equivalent to the `--mode=bundle` gate the
       # cert profile documents, with the bundle generation step
-      # collapsed into the same job. Configured per
-      # docs/AVIATE_CORE_BEHAVIORAL_REQUIREMENTS.md §5.
+      # collapsed into the same job.
       #
       # NB: this re-runs `cargo test --workspace` inside the evidence
       # check. It overlaps with the dedicated test job but is required
