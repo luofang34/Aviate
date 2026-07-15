@@ -18,6 +18,8 @@ aviate-app-sitl-gazebo-x500-kernel = { path = "kernel" }
 # The boundary conversion consumes the resolved actuator-curve
 # contract (`ActuatorCurveKind::boundary_command`, #140).
 aviate-core = { path = "../../aviate-core" }
+# Lifecycle/time-control words of the shared block (#265).
+aviate-xil-contract = { path = "../../aviate-hal/xil/contract" }
 aviate-board-sitl-gazebo = { path = "../../aviate-boards/sitl-gazebo", features = ["gz-plugin"] }
 aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor", features = ["x500"] }
 aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", features = ["gz-plugin"] }

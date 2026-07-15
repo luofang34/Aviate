@@ -31,6 +31,8 @@ use std::time::{Duration, Instant};
 
 use aviate_backend_gz::{AviateModelState, GzPluginBridge};
 use aviate_board_sitl_gazebo::GazeboSitlBoard;
+use aviate_core::checks::pre_arm::PreArmFlags;
+use aviate_xil_contract::FcState;
 
 use crate::noise::{NoiseRng, NoiseTier};
 use crate::synthesize::{apply_packet_noise, cmd_to_omega, synthesize_packet};
@@ -66,6 +68,22 @@ fn main() -> std::io::Result<()> {
         .map_err(|e| std::io::Error::other(format!("gz plugin: {e:?}")))?;
     log::info!("connected to AviateGzPlugin");
 
+    // Runtime control plane (#265): stamp this FC process into the
+    // block (consumers detect an FC restart by the nonce changing
+    // while the shm object identity stays the same), then walk the
+    // Converging -> Ready state machine against the current world
+    // generation.
+    let session_nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_micros() as u32)
+        .unwrap_or(1)
+        | 1; // never zero
+    plugin.set_fc_session_nonce(session_nonce);
+    let mut fc_generation = plugin.reset_generation();
+    let mut fc_ready = false;
+    plugin.set_fc_state(FcState::Converging, fc_generation);
+    let mut last_step_acked: u64 = 0;
+
     let mut last_state: Option<AviateModelState> = None;
     let mut last_t_us: u64 = 0;
     // Position-derived NED velocity from the previous synth call.
@@ -88,6 +106,28 @@ fn main() -> std::io::Result<()> {
     let mut next_tick = Instant::now() + cycle;
 
     loop {
+        // 0. Lifecycle (#265): a generation bump means the world was
+        //    reset. Rebuild the kernel IN-PROCESS (no pkill, no
+        //    restart race), drop the finite-difference synth history
+        //    (its deltas would spike across the discontinuity), and
+        //    re-converge before reporting Ready.
+        let generation = plugin.reset_generation();
+        if generation != fc_generation {
+            log::info!("world reset detected (generation {fc_generation} -> {generation}); rebuilding kernel in-process");
+            plugin.set_fc_state(FcState::Resetting, generation);
+            board = GazeboSitlBoard::new_with_retry(
+                aviate_app_sitl_gazebo_x500_kernel::build_x500_kernel,
+                10,
+                200,
+            )?;
+            last_state = None;
+            last_t_us = 0;
+            last_ned_vel = [0.0; 3];
+            fc_generation = generation;
+            fc_ready = false;
+            plugin.set_fc_state(FcState::Converging, fc_generation);
+        }
+
         // 1. Read the latest ground-truth model state from the plugin.
         if let Some(state) = plugin.get_model_state() {
             // 2. Synthesize a sensor packet from ground truth. The
@@ -132,13 +172,50 @@ fn main() -> std::io::Result<()> {
             log::warn!("set_motor_speeds failed: {e:?}");
         }
 
-        // 5. Pace the loop. We do not lock to gz sim_step here — the
-        //    plugin's `lockstep` setting (off by default in our smoke
-        //    world) decides whether gz advances independently.
-        let now = Instant::now();
-        if now < next_tick {
-            std::thread::sleep(next_tick - now);
+        // 5. Publish lifecycle state: Ready once the estimator has
+        //    converged for the CURRENT generation (#265's "ready"
+        //    half — consumers gate on state == Ready AND generation
+        //    == reset_generation).
+        let ekf_converged = board
+            .kernel()
+            .state
+            .checks
+            .pre_arm
+            .current
+            .contains(PreArmFlags::EKF_CONVERGED);
+        if ekf_converged != fc_ready {
+            fc_ready = ekf_converged;
+            let state = if fc_ready {
+                FcState::Ready
+            } else {
+                FcState::Converging
+            };
+            log::info!("fc lifecycle -> {state:?} (generation {fc_generation})");
+            plugin.set_fc_state(state, fc_generation);
         }
-        next_tick += cycle;
+
+        // 6. Acknowledge the step we consumed: the FC liveness
+        //    heartbeat, and — when lockstep is enabled at runtime —
+        //    the gate the plugin blocks its next physics step on.
+        let consumed_step = last_state.as_ref().map(|s| s.sim_step).unwrap_or(0);
+        if consumed_step > last_step_acked {
+            plugin.ack_step(consumed_step);
+            last_step_acked = consumed_step;
+        }
+
+        // 7. Pace the loop. Wall-clock pacing applies only in
+        //    real-time (non-lockstep) mode; under runtime lockstep
+        //    (#265) the sim blocks on our ack, so sleeping to a wall
+        //    tick would throttle 4x / as-fast-as-possible runs back
+        //    to 1x. There the pacing is the arrival of new steps.
+        if plugin.lockstep_enabled() {
+            next_tick = Instant::now() + cycle;
+        } else {
+            let now = Instant::now();
+            if now < next_tick {
+                std::thread::sleep(next_tick - now);
+            }
+            next_tick += cycle;
+        }
     }
 }

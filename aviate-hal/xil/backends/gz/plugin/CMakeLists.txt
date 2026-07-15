@@ -73,6 +73,9 @@ target_link_libraries(AviateGzPlugin
 
 target_include_directories(AviateGzPlugin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    # Rust-owned shm contract (#262): the cbindgen-generated header
+    # is the single layout source; never mirror it by hand.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../contract/include
 )
 
 # Install plugin to standard gz-sim plugin path

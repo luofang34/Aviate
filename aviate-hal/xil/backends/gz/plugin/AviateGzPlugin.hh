@@ -1,9 +1,16 @@
 // Aviate Gazebo Plugin - gz-sim System Plugin
 //
-// This plugin runs inside gz-sim and provides zero-copy access to the
-// EntityComponentManager (ECM) for reading physics state and commanding actuators.
+// Runs inside gz-sim: publishes ground-truth model state into the
+// aviate-xil-contract shared-memory block, forwards motor commands
+// from the block to the rotor model, and executes the runtime
+// control plane (#265): lifecycle requests (reset/stop/start with
+// request -> ack), a runtime lockstep gate, and real-time-factor
+// forwarding.
 //
-// The plugin writes state to shared memory that can be read by Rust via FFI.
+// POLICY-FREE BY DESIGN: this C++ stays a gz API adapter. The layout
+// is the cbindgen-generated aviate_xil_contract.h (Rust-owned, #262);
+// unit conversion, actuator curves, and configuration interpretation
+// all live on the Rust side.
 
 #ifndef AVIATE_GZ_PLUGIN_HH
 #define AVIATE_GZ_PLUGIN_HH
@@ -15,17 +22,10 @@
 #include <memory>
 #include <string>
 
-#include "shared_state.h"
+#include "aviate_xil_contract.h"
 
 namespace aviate {
 
-/// Aviate gz-sim System Plugin
-///
-/// This plugin:
-/// 1. Reads model pose/velocity from ECM each simulation step
-/// 2. Writes state to shared memory for Rust FFI access
-/// 3. Reads motor commands from shared memory
-/// 4. Applies motor velocities to the model
 class AviateGzPlugin
     : public gz::sim::System,
       public gz::sim::ISystemConfigure,
@@ -36,29 +36,33 @@ public:
     AviateGzPlugin();
     ~AviateGzPlugin() override;
 
-    // ISystemConfigure - called once when plugin is loaded
     void Configure(
         const gz::sim::Entity& entity,
         const std::shared_ptr<const sdf::Element>& sdf,
         gz::sim::EntityComponentManager& ecm,
         gz::sim::EventManager& eventMgr) override;
 
-    // ISystemPreUpdate - called before physics step (for applying commands)
     void PreUpdate(
         const gz::sim::UpdateInfo& info,
         gz::sim::EntityComponentManager& ecm) override;
 
-    // ISystemPostUpdate - called after physics step (for reading state)
     void PostUpdate(
         const gz::sim::UpdateInfo& info,
         const gz::sim::EntityComponentManager& ecm) override;
 
 private:
-    /// Initialize shared memory
     bool InitSharedMemory();
-
-    /// Clean up shared memory
     void CleanupSharedMemory();
+
+    /// Consume a pending lifecycle request from the control block
+    /// and forward it to the world-control / set-physics services.
+    /// The ack nonce is written only after the service reports
+    /// success, so a requester that never sees the ack knows the
+    /// action did not happen.
+    void ServiceLifecycleRequests();
+
+    /// Forward a changed target RTF to the physics engine.
+    void ServiceRtfRequests();
 
     /// Instance ID for multi-vehicle support
     int instance_{0};
@@ -66,35 +70,42 @@ private:
     /// Model name to track
     std::string modelName_;
 
-    /// Model entity
+    /// Model entity (re-resolved after a world reset)
     gz::sim::Entity modelEntity_{gz::sim::kNullEntity};
 
-    /// Shared memory pointer
-    AviateSharedState* sharedState_{nullptr};
-
-    /// Shared memory file descriptor
-    int shmFd_{-1};
+    /// Shared block (aviate-xil-contract layout v2)
+    AviateSharedStateV2* shm_{nullptr};
 
     /// Shared memory name (instance-specific)
     std::string shmName_;
 
-    /// Last motor command sequence (to detect new commands)
-    uint32_t lastMotorSeq_{0};
+    /// World name for control/physics service paths
+    std::string worldName_;
 
     /// Motor topic name (instance-specific)
     std::string motorTopic_;
 
-    /// gz-transport node for publishing motor commands
+    /// gz-transport node for publishing and service calls
     gz::transport::Node node_;
 
     /// Motor command publisher
     gz::transport::Node::Publisher motorPub_;
 
-    /// Lockstep mode enabled
-    bool lockstep_{false};
+    /// Timeout for the lockstep wait (microseconds)
+    uint64_t lockstepTimeoutUs_{10000};
 
-    /// Timeout for lockstep wait (microseconds)
-    uint64_t lockstepTimeoutUs_{10000};  // 10ms default
+    /// Monotonic physics-step counter (kept OUT of shm until
+    /// published under the seqlock)
+    uint64_t simStep_{0};
+
+    /// Last published sim time, for world-reset (rewind) detection
+    uint64_t lastTimeUs_{0};
+
+    /// Whether at least one state snapshot has been published
+    bool timePublished_{false};
+
+    /// Last RTF percent forwarded to set_physics
+    uint32_t lastRtfPercent_{100};
 };
 
 }  // namespace aviate
