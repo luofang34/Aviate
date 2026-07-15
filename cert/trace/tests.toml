@@ -1382,3 +1382,57 @@ for LLR-CTL-203; the Gazebo XIL `hover_stability` mission carries the
 full 6-DOF physical bound under the `sitl-missions` CI lane.
 """
 traces_to = ["79ec1f95-d04d-4f28-a346-727a3d3f8ecb"]
+
+[[tests]]
+uid = "16b30742-8d37-408f-bf93-6f98b6d1879e"
+id = "TST-CTL-206"
+title = "horizontal_accel_command_is_clamped_at_the_tilt_model_bound"
+test_selector = "horizontal_accel_command_is_clamped_at_the_tilt_model_bound"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/src/control/velocity_tests.rs::horizontal_accel_command_is_clamped_at_the_tilt_model_bound`
+drives the velocity loop with a horizontal velocity error large
+enough to demand well past 1 g and asserts the commanded tilt clamps
+at the ±1 g model-validity bound (45°) rather than at the raw
+demand — with the configurable `vel_max_roll_pitch` authority clamp
+raised out of the way so only the invariant binds. Witnesses
+LLR-CTL-206; the compile-time bounds block in law_invariants.rs pins
+the constant itself.
+"""
+traces_to = ["a36f2231-3434-409b-9568-1c78fa38d185"]
+
+[[tests]]
+uid = "0f68e74d-36bb-4519-9fa3-12eea151c7c1"
+id = "TST-CTL-207"
+title = "tilt_compensation_is_floored_past_the_cos_floor"
+test_selector = "tilt_compensation_is_floored_past_the_cos_floor"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/src/control/velocity_tests.rs::tilt_compensation_is_floored_past_the_cos_floor`
+steps the velocity loop at level, moderate, and extreme tilts with
+zero velocity error: at moderate tilt collective scales as the true
+`1 / cos(tilt)`, and past 60° two different extreme tilts produce
+the SAME collective because the divisor is pinned at
+`TILT_COMP_COS_FLOOR` (amplification capped at 2x). Witnesses
+LLR-CTL-207; the compile-time bounds block in law_invariants.rs pins
+the floor as a valid cosine whose reciprocal is at most 2.
+"""
+traces_to = ["1caee619-367d-41a0-90ca-3deda8d4d8d4"]
+
+[[tests]]
+uid = "a7ab3f2e-d5a9-49c0-b15e-f0f35cfb178c"
+id = "TST-CTL-208"
+title = "disarm_gate_boundary_is_the_named_invariant"
+test_selector = "disarm_gate_boundary_is_the_named_invariant"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/multirotor_controller_tests.rs::disarm_gate_boundary_is_the_named_invariant`
+seeds a wound velocity integrator and primed feedforward, commands
+collective just below `DISARMED_COLLECTIVE_THRESHOLD` with a pending
+attitude error, and asserts zero axis commands and loop-memory
+reset; at the threshold itself (the gate compares with strict
+less-than) the same attitude error commands torque — pinning the
+named invariant, boundary semantics included, as the gate. Witnesses
+LLR-CTL-208.
+"""
+traces_to = ["68fd3971-1759-4788-80bc-f36fd6e30a53"]

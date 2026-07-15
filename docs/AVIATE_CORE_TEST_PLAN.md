@@ -41,7 +41,7 @@ abbreviate the HLR rows. `scripts/check_test_plan_sync.py`
 | `HLR-CTL-201` | Rate-loop setpoint tracking | LLR-CTL-201 | TST-CTL-201 |
 | `HLR-CTL-202` | Attitude step response bounded | LLR-CTL-202, LLR-CTL-205 | TST-CTL-202, TST-CTL-205 |
 | `HLR-CTL-203` | Hover hold within bounds | LLR-CTL-203 | TST-CTL-203; `hover_stability` mission adds real-physics confirmation; cert-grade bounds tracked by DRQ-CTL-002 |
-| `HLR-CTL-204` | Authority limits under saturation | LLR-CTL-204 | TST-CTL-204 |
+| `HLR-CTL-204` | Authority limits under saturation | LLR-CTL-204, LLR-CTL-206, LLR-CTL-207, LLR-CTL-208 | TST-CTL-204, TST-CTL-206, TST-CTL-207, TST-CTL-208 |
 | `HLR-MIX-201` | Actuator outputs inside [0.0, 1.0] | LLR-MIX-201 | TST-MIX-201 |
 | `HLR-MIX-202` | QuadX zero-command symmetry | LLR-MIX-202 | TST-MIX-202 |
 | `HLR-MIX-203` | Sanitizer safe-pattern fallback | LLR-MIX-203, LLR-MIX-204 | TST-MIX-203, TST-MIX-204 |

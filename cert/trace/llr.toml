@@ -1990,3 +1990,82 @@ verification_methods = ["test"]
 modules = ["aviate-core/tests/kernel.rs"]
 derived = false
 traces_to = ["3fcf8206-d100-4323-a7ea-67187012d42a"]
+
+[[requirements]]
+uid = "a36f2231-3434-409b-9568-1c78fa38d185"
+id = "LLR-CTL-206"
+title = "Velocity loop bounds the horizontal acceleration command to the tilt-model validity limit"
+owner = "aviate-core@aviate"
+description = """
+The velocity loop in `VelocityController::step()` SHALL clamp the
+commanded horizontal acceleration on each NED axis to
+±`MAX_HORIZONTAL_ACCEL_CMD_MPS2` (= standard gravity) BEFORE the
+acceleration→tilt map `atan(a / g)`. The bound is an algorithm
+invariant, not tuning: at 1 g the map commands 45° of tilt, the edge
+of the region where the decoupled horizontal/vertical thrust split
+stays honest; beyond it the map's slope collapses while tilt
+compensation grows without bound. The airframe's actual tilt
+authority is the separate configurable clamp
+`CascadeGains::vel_max_roll_pitch`, applied after this bound.
+Classified in cert/control_limits_registry.toml (DRQ-CTL-004).
+"""
+verification_methods = ["test"]
+modules = [
+    "aviate-core/src/control/velocity.rs",
+    "aviate-core/src/control/law_invariants.rs",
+]
+derived = false
+traces_to = ["3c1fba89-90d3-4b4d-9f86-357cc2c3d955"]
+
+[[requirements]]
+uid = "1caee619-367d-41a0-90ca-3deda8d4d8d4"
+id = "LLR-CTL-207"
+title = "Tilt-compensation collective amplification is bounded to 2x"
+owner = "aviate-core@aviate"
+description = """
+The velocity loop's vertical tilt compensation (collective divided
+by `cos(tilt)`) SHALL floor its denominator at
+`TILT_COMP_COS_FLOOR` = 0.5 (= cos 60°), bounding the amplification
+factor at 2x. The raw factor is unbounded as tilt approaches 90°; a
+tumbling or recovering vehicle must not be able to pin its motors on
+numeric grounds alone. Past 60° of tilt the vehicle is outside the
+cascade's controlled envelope and the mixer's per-motor clamp
+absorbs the residual. The floor is a numeric-safety invariant of the
+compensation formula, classified in
+cert/control_limits_registry.toml (DRQ-CTL-004).
+"""
+verification_methods = ["test"]
+modules = [
+    "aviate-core/src/control/velocity.rs",
+    "aviate-core/src/control/law_invariants.rs",
+]
+derived = false
+traces_to = ["3c1fba89-90d3-4b4d-9f86-357cc2c3d955"]
+
+[[requirements]]
+uid = "68fd3971-1759-4788-80bc-f36fd6e30a53"
+id = "LLR-CTL-208"
+title = "Collective below the disarmed threshold silences axis commands and resets loop memory"
+owner = "aviate-core@aviate"
+description = """
+When the commanded collective entering the multirotor cascade's
+thrust gate is below `DISARMED_COLLECTIVE_THRESHOLD` (2 % of full
+scale), `MultirotorController::step()` SHALL emit zero roll, pitch
+and yaw commands, pass the collective through unchanged, and reset
+all accumulated loop memory (velocity-loop integrators and
+derivative filter, rate-loop derivative memory, feedforward
+priming), so a later takeoff starts from clean state. The threshold
+gates mode logic, not loop strength, and is deliberately not
+tunable: raised into the flyable range it would silence attitude
+control in flight. Classified in cert/control_limits_registry.toml
+(DRQ-CTL-004). Distinct from the kernel-level disarmed safe-pattern
+path (LLR-FLT-201/202), which acts on lifecycle state rather than
+commanded thrust.
+"""
+verification_methods = ["test"]
+modules = [
+    "aviate-core/src/control/multirotor.rs",
+    "aviate-core/src/control/law_invariants.rs",
+]
+derived = false
+traces_to = ["3c1fba89-90d3-4b4d-9f86-357cc2c3d955"]
