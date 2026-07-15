@@ -86,14 +86,20 @@ fn build_kernel() -> Result<
     use aviate_core::control::multirotor::MultirotorController;
     use aviate_core::kernel::builder::AviateKernelBuilder;
     use aviate_core::kernel::config::ResolvedKernelConfig;
+    use aviate_core::kernel::config::{ActuatorCurveKind, MixerGeometry};
     use aviate_core::mixer::{ModeConfig, QuadXMixerX500, Sanitizer};
-    use aviate_core::types::Normalized;
+    use aviate_core::types::NormalizedThrust;
 
     let gains = CascadeGains::x500_defaults();
-    let hover = Normalized(0.77);
+    // Force-domain hover trim (#140): weight / max thrust for the
+    // X500 (explicit conversion of the legacy speed-domain 0.77
+    // through the quadratic rotor law, 0.77 squared).
+    let hover = NormalizedThrust(0.5929);
     let cfg = ResolvedKernelConfig {
         cascade_gains: gains,
         hover_thrust_norm: hover,
+        mixer_geometry: MixerGeometry::QuadXX500,
+        actuator_curve: ActuatorCurveKind::QuadraticRotor,
         mode_config: ModeConfig {
             mode: aviate_core::control::ConfigMode::Hover,
             groups: &[],
