@@ -19,6 +19,9 @@
 //! fix for transient overshoot.
 
 use crate::control::cascade_gains::CascadeGains;
+use crate::control::law_invariants::{
+    MAX_HORIZONTAL_ACCEL_CMD_MPS2, STANDARD_GRAVITY_MPS2, TILT_COMP_COS_FLOOR,
+};
 use crate::math::{Quaternion, Vector3};
 #[allow(unused_imports)] // FloatExt needed for no_std math methods
 use crate::types::{
@@ -203,7 +206,7 @@ impl VelocityController {
         // `−a_ned_z·trim/g` because at hover trim is `m·g/max_thrust`
         // — the linearization around hover trim that the rest of
         // the velocity loop already assumes.
-        let g_si: Scalar = 9.81;
+        let g_si: Scalar = STANDARD_GRAVITY_MPS2;
         let ff_z = -accel_ff.accel_ned.z.0 * (trim / g_si) * self.gains.vel_accel_ff;
         let z_correction = (p_z + i_z + d_z + ff_z).clamp(-max_dn, max_up);
         let z_saturated = z_correction == -max_dn || z_correction == max_up;
@@ -217,12 +220,13 @@ impl VelocityController {
         // vehicle descends faster than commanded. Compensation
         // factor is `1 / cos(tilt)`, where `cos(tilt) = R[2,2]`
         // (the third column of the body→world rotation matrix
-        // dotted with world +z). Floored at 0.5 to avoid
-        // unbounded amplification when the vehicle is past 60°
-        // tilt and recovering — the mixer's per-motor clamp will
-        // handle the residual.
+        // dotted with world +z). Floored to avoid unbounded
+        // amplification when the vehicle is tilted past the
+        // floor's angle and recovering — the mixer's per-motor
+        // clamp will handle the residual (see `law_invariants`
+        // for the floor's WHY).
         let r22 = 1.0 - 2.0 * (current_att.x * current_att.x + current_att.y * current_att.y);
-        let cos_tilt = r22.max(0.5);
+        let cos_tilt = r22.max(TILT_COMP_COS_FLOOR);
         let collective_cmd = collective_unscaled / cos_tilt;
         let collective = Normalized(collective_cmd.clamp(0.0, 1.0));
 
@@ -237,8 +241,18 @@ impl VelocityController {
         let acc_y_cmd = error.y * self.gains.vel_p[1]
             + state.integrator_ned.y.0 * self.gains.vel_i[1]
             + accel_ff.accel_ned.y.0 * self.gains.vel_accel_ff;
-        let acc_x_clamped = acc_x_cmd.clamp(-g_si, g_si);
-        let acc_y_clamped = acc_y_cmd.clamp(-g_si, g_si);
+        // Model-validity clamp at 1 g per axis: the atan tilt
+        // conversion below is only honest to 45° of commanded
+        // tilt (see `law_invariants` for the WHY). The tighter
+        // authority bound is the `vel_max_roll_pitch` tilt cap.
+        let acc_x_clamped = acc_x_cmd.clamp(
+            -MAX_HORIZONTAL_ACCEL_CMD_MPS2,
+            MAX_HORIZONTAL_ACCEL_CMD_MPS2,
+        );
+        let acc_y_clamped = acc_y_cmd.clamp(
+            -MAX_HORIZONTAL_ACCEL_CMD_MPS2,
+            MAX_HORIZONTAL_ACCEL_CMD_MPS2,
+        );
         // The acceleration command is in NED, but roll/pitch are
         // body-frame tilts composed AFTER the yaw quaternion — so
         // the command must first rotate by −yaw into the vehicle's

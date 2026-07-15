@@ -251,6 +251,7 @@ pub mod cascade_gains;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod cascade_tests;
 pub mod envelope;
+pub mod law_invariants;
 pub mod position;
 pub mod rate;
 pub mod velocity;

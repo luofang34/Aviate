@@ -6,6 +6,7 @@
 
 use crate::control::attitude::AttitudeController;
 use crate::control::cascade_gains::CascadeGains;
+use crate::control::law_invariants::DISARMED_COLLECTIVE_THRESHOLD;
 use crate::control::position::PositionController;
 use crate::control::rate::{RateController, RateLoopState};
 use crate::control::velocity::{AccelFeedforward, VelocityController, VelocityLoopState};
@@ -399,9 +400,9 @@ impl VehicleController for MultirotorController {
         // physically support. This gate is also what keeps the
         // desaturation's collective boost from spinning motors
         // on the ground — with the axes silenced the boost is a
-        // no-op.
-        const DISARMED_THRESHOLD: Scalar = 0.02;
-        if collective_sp.0 < DISARMED_THRESHOLD {
+        // no-op. The threshold itself is an algorithm invariant
+        // (see `law_invariants` for the WHY), not tuning.
+        if collective_sp.0 < DISARMED_COLLECTIVE_THRESHOLD {
             runtime.velocity_loop.reset();
             runtime.rate_loop.reset();
             runtime.vel_sp_primed = false;
