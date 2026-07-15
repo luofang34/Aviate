@@ -38,7 +38,11 @@ fn cross_process_child_reader() {
         return;
     };
     let reader = ConsumerSession::attach(&name).expect("child must attach to the parent's block");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    // Generous: a torn read fails on the very first sample, so this
+    // deadline only ever forgives scheduling — CI runners are slow,
+    // contended, and run this under coverage instrumentation while
+    // the sibling cross-process test spins its own two processes.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
     // Count DISTINCT, strictly advancing steps. Counting reads would
     // let this pass by re-reading one frozen snapshot 5000 times —
     // which is exactly what a broken publisher looks like.
@@ -83,9 +87,18 @@ fn cross_process_child_motor_writer() {
         return;
     };
     let fc = FcSession::attach(&name).expect("child FC must attach");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    // Publish until the PARENT has seen enough and kills us. A fixed
+    // iteration budget makes the parent race the child's lifetime:
+    // on a slower, CPU-contended runner the child finishes its quota
+    // and exits before a starved parent has sampled its quota, and
+    // the test fails for scheduling reasons rather than for a
+    // protocol defect. The consumer decides when it is done; this
+    // deadline is only a safety net against an abandoned child —
+    // kept just above the parent's own budget so a parent that dies
+    // on an assertion cannot leave a process spinning a CI core.
+    let safety = std::time::Instant::now() + std::time::Duration::from_secs(150);
     let mut i = 0u64;
-    while std::time::Instant::now() < deadline && i < 200_000 {
+    while std::time::Instant::now() < safety {
         i = i.wrapping_add(1);
         let v = i as f64;
         fc.write_motor_command(&[v, v * 2.0, v * 3.0, v * 4.0]);
@@ -115,7 +128,7 @@ fn cross_process_reader_never_sees_a_torn_snapshot() {
         .expect("spawn the reader child");
 
     let mut i = 0u64;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);
     loop {
         match child.try_wait().expect("poll the child") {
             Some(status) => {
@@ -173,7 +186,7 @@ fn cross_process_motor_commands_are_coherent() {
         .spawn()
         .expect("spawn the motor-writer child");
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     let mut distinct = 0u32;
     let mut last_first = 0.0_f64;
     while distinct < 2_000 {
@@ -181,6 +194,13 @@ fn cross_process_motor_commands_are_coherent() {
             std::time::Instant::now() < deadline,
             "saw only {distinct} distinct motor commands from the child"
         );
+        // A child that died is a failure to report, not a reason to
+        // spin until the deadline and blame timing.
+        if let Some(status) = child.try_wait().expect("poll the motor child") {
+            panic!(
+                "the motor-writer child exited early ({status}) after {distinct} distinct commands"
+            );
+        }
         if let Some((lanes, n)) = writer.read_motor_command() {
             if lanes[0] == 0.0 {
                 continue; // nothing published yet
