@@ -10,7 +10,7 @@ Public entry point for **Aviate**, a minimal, deterministic, hard-real-time inne
 
 ```toml
 [dependencies]
-aviate = "0.1.0"
+aviate = "0.1"
 ```
 
 `#![no_std]`, `#![forbid(unsafe_code)]`.
