@@ -132,6 +132,7 @@ status per DRQ, mirroring the `status` field there
 | `DRQ-CTL-001` | Closed | Tuning lives in `ResolvedKernelConfig.cascade_gains` + `hover_thrust_norm`; `verify_config_binding` rejects controller/config mismatch at build (`aviate-core/tests/config_binding_tests.rs`) |
 | `DRQ-CTL-002` | Open | Controller-gain tuning to cert-grade hover/position bounds; visible as the quarantined `attitude_control` mission in the manifest |
 | `DRQ-CTL-003` | Open | Closed-loop position hold end to end; `square_course` is quarantined, `hover_trim_check` (open-loop) and `closed_loop_landing` are manual evidence campaigns |
+| `DRQ-CTL-004` | Closed | Control limits classified as hashed tuning (`CascadeGains` + mutation sweeps) or registered invariants (`aviate-core/src/control/law_invariants.rs`); enforced by `scripts/check_control_limits.sh` against `cert/control_limits_registry.toml` |
 | `DRQ-FLT-001` | Closed | Per-cycle slew writer: `ResolvedKernelConfig.slew_limit_per_cycle` + `aviate-core/src/kernel/slew.rs::apply_slew_limit`, witnessed by TST-FLT-208 |
 | `DRQ-MORPH-001` | Closed | Same slew writer; TST-FLT-208 traces to LLR-MORPH-202. Non-zero per-airframe limits are config tuning that becomes binding when a morphing airframe ships |
 

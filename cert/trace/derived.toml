@@ -345,3 +345,57 @@ slew_limit_per_cycle values — the limiter is in place, so that is
 an airframe configuration decision, not a kernel change.
 """
 safety_impact = "low"
+
+[[requirements]]
+uid = "c093b1a7-a7e0-4e18-91fb-fb73ec8c5f20"
+id = "DRQ-CTL-004"
+status = "closed"
+title = "Behavior-shaping control limits are classified: hashed tuning or registered invariants"
+owner = "aviate-core@aviate"
+description = """
+Every behavior-shaping numeric limit in the control law SHALL be one
+of exactly two things: (a) airframe tuning — a validated
+`CascadeGains` field covered by `ResolvedKernelConfig::canonical_hash`
+and `controller_tuning_identity` and probed field-by-field by both
+mutation sweeps (the canonical-hash sweep in
+aviate-core/src/kernel/config/canonical/tests.rs and the builder
+binding sweep in aviate-core/tests/config_binding_tests.rs); or (b)
+an algorithm invariant — a named constant in
+`aviate-core/src/control/law_invariants.rs` with a WHY rationale,
+compile-time bounds, and a behavior boundary test, adjudicated by the
+algorithm-identity gate through the controller-owned tree.
+
+Classified under this contract: `att_max_rate_cmd` (3.0 rad/s
+attitude-rate command cap) and `vel_max_yaw_step` (0.6 rad per-cycle
+yaw-error step) are tuning; `DISARMED_COLLECTIVE_THRESHOLD` (0.02
+normalized collective ground-gate epsilon),
+`MAX_HORIZONTAL_ACCEL_CMD_MPS2` (1 g tilt-model validity clamp),
+`TILT_COMP_COS_FLOOR` (0.5 cosine floor, 2x amplification cap) and
+`STANDARD_GRAVITY_MPS2` (9.81) are invariants.
+
+The classification is executable: `scripts/check_control_limits.sh`
+(CI job `control-limits`) checks every float literal in the
+production control tree against `cert/control_limits_registry.toml`
+and fails on an unregistered constant (even one with a structural
+value), on a registry/struct mismatch, on a tuning field missing its
+hash feed or either mutation probe, and on an invariant whose source
+value drifts from its registered pin. Behavior witnesses:
+`horizontal_accel_command_is_clamped_at_the_tilt_model_bound` and
+`tilt_compensation_is_floored_past_the_cos_floor` (velocity_tests.rs),
+`disarm_gate_boundary_is_the_named_invariant`
+(tests/multirotor_controller_tests.rs), and the gate's own
+`--self-test` fixtures.
+"""
+rationale = """
+A bare constant in a controller implementation body is invisible to
+lockstep: two channels can disagree on it only by running different
+firmware, but nothing forces the next such constant to be reviewed as
+either tuning (which must be hash-covered so config divergence blocks
+lockstep entry) or an invariant (which must carry rationale, bounds,
+and identity adjudication). Leaving the distinction implicit makes
+the canonical configuration incomplete and invites unreviewed
+behavior changes hidden inside "refactors". The registry makes the
+next constant fail CI until its author decides — and documents —
+which of the two assurance paths it takes.
+"""
+safety_impact = "medium"
