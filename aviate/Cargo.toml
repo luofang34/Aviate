@@ -26,7 +26,7 @@ test-hooks = ["aviate-core/test-hooks"]
 # `aviate X.Y.Z` always resolves `aviate-core X.Y.Z`. `default-features =
 # false` hands feature selection to the facade's own features above. The
 # release process bumps this pin together with the workspace version.
-aviate-core = { path = "../aviate-core", version = "=0.1.2", default-features = false }
+aviate-core = { path = "../aviate-core", version = "=0.1.3", default-features = false }
 
 [lints]
 workspace = true
