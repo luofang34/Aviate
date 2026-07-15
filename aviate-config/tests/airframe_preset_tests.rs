@@ -1,5 +1,6 @@
-//! AirframePresetV1 contract tests (#75): the shipped x500 preset
-//! parses and validates; every rejection rule actually rejects.
+//! AirframePreset contract tests (#75, #140): the shipped x500
+//! preset parses and validates; every rejection rule actually
+//! rejects; the hover seed reaches consumers force-domain only.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -15,7 +16,9 @@ fn shipped_x500_preset_parses_and_validates() {
     assert_eq!(p.mixer, MixerKind::QuadXX500);
     assert_eq!(p.motor_count, 4);
     assert_eq!(p.actuator_curve, ActuatorCurve::Quadratic);
-    assert!((p.hover_thrust_seed - 0.77).abs() < 1e-6);
+    // V1 quadratic seed 0.77 is a boundary (rotor-speed) value; the
+    // only accessor converts it explicitly to force: 0.77² = 0.5929.
+    assert!((p.hover_thrust_force_seed() - 0.5929).abs() < 1e-6);
     assert_eq!(p.gains.att_p, [3.5, 3.5, 2.5]);
     assert!((p.limits.max_altitude - 100.0).abs() < 1e-6);
 }
@@ -39,10 +42,32 @@ fn unknown_mixer_kind_is_rejected() {
 }
 
 #[test]
-fn wrong_schema_version_is_rejected() {
-    let text = X500.replace("schema_version = 1", "schema_version = 2");
-    let err = preset_from_toml_str(&text).expect_err("v2 must fail a v1 parser");
+fn unknown_schema_version_is_rejected() {
+    let text = X500.replace("schema_version = 1", "schema_version = 3");
+    let err = preset_from_toml_str(&text).expect_err("schema 3 must fail this parser");
     assert!(err.contains("schema_version"), "{err}");
+}
+
+#[test]
+fn schema_2_seed_is_force_domain_verbatim() {
+    // Schema 2 defines the seed as force: no conversion applies.
+    let text = X500
+        .replace("schema_version = 1", "schema_version = 2")
+        .replace("hover_thrust_seed = 0.77", "hover_thrust_seed = 0.5929");
+    let p = preset_from_toml_str(&text).expect("schema 2 must parse");
+    assert!((p.hover_thrust_force_seed() - 0.5929).abs() < 1e-6);
+}
+
+#[test]
+fn v1_linear_seed_passes_through_unconverted() {
+    // A linear plant's V1 boundary command already IS the thrust
+    // fraction — the explicit conversion is the identity there.
+    let text = X500.replace(
+        "actuator_curve = \"quadratic\"",
+        "actuator_curve = \"linear\"",
+    );
+    let p = preset_from_toml_str(&text).expect("linear V1 must parse");
+    assert!((p.hover_thrust_force_seed() - 0.77).abs() < 1e-6);
 }
 
 #[test]

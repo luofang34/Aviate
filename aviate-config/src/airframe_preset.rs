@@ -1,4 +1,4 @@
-//! `AirframePresetV1` — the single versioned airframe data contract
+//! `AirframePreset` — the single versioned airframe data contract
 //! (#75, consolidating #120's config side).
 //!
 //! A preset selects *data* within the compiled controller family; it
@@ -6,6 +6,19 @@
 //! `ALGORITHM_ID` (`deny_unknown_fields` rejects the attempt). The
 //! app maps [`MixerKind`] onto its compiled mixer types and fails
 //! startup on anything it does not recognize.
+//!
+//! Two schema versions share this layout and differ ONLY in the
+//! domain of the hover seed (#140):
+//!
+//! * `schema_version = 1` — the seed is the BOUNDARY command at trim
+//!   (for a quadratic plant, a rotor-speed fraction).
+//! * `schema_version = 2` — the seed is force-domain
+//!   `NormalizedThrust` (weight / max thrust).
+//!
+//! The seed field is private so no consumer can read it raw:
+//! [`AirframePreset::hover_thrust_force_seed`] is the only accessor,
+//! and it performs the explicit per-schema conversion — a V1 value
+//! can never be silently reinterpreted as force.
 //!
 //! Parsing follows this crate's DAL rule: TOML once at startup,
 //! validated to a typed value, or fail to arm.
@@ -110,9 +123,10 @@ pub struct LimitsPreset {
 /// The versioned airframe preset.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AirframePresetV1 {
-    /// Must be `1`. A future incompatible layout bumps the number and
-    /// gets its own struct; a v1 parser refuses anything else.
+pub struct AirframePreset {
+    /// `1` or `2` — same layout, different hover-seed domain (see
+    /// the module docs). A future incompatible LAYOUT bumps past 2
+    /// and gets its own struct; this parser refuses anything else.
     pub schema_version: u32,
     /// Human-readable airframe name (logs/telemetry).
     pub name: String,
@@ -120,10 +134,10 @@ pub struct AirframePresetV1 {
     pub mixer: MixerKind,
     /// Number of motors; must agree with the mixer geometry.
     pub motor_count: u8,
-    /// Hover trim seed. Domain is defined by `actuator_curve` until
-    /// #140 lands the NormalizedThrust contract end to end; see the
-    /// preset file comments.
-    pub hover_thrust_seed: f32,
+    /// Hover trim seed in the schema's domain. Private on purpose:
+    /// read it through [`Self::hover_thrust_force_seed`], which owns
+    /// the explicit V1→force conversion.
+    hover_thrust_seed: f32,
     /// Plant curve between cascade output and boundary command.
     pub actuator_curve: ActuatorCurve,
     /// Cascade tuning.
@@ -159,7 +173,10 @@ impl core::fmt::Display for PresetError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             PresetError::UnsupportedSchema { found } => {
-                write!(f, "unsupported preset schema_version {found} (expected 1)")
+                write!(
+                    f,
+                    "unsupported preset schema_version {found} (expected 1 or 2)"
+                )
             }
             PresetError::FieldOutOfRange { field } => {
                 write!(f, "preset field {field} is non-finite or out of range")
@@ -174,11 +191,26 @@ impl core::fmt::Display for PresetError {
     }
 }
 
-impl AirframePresetV1 {
+impl AirframePreset {
+    /// Hover trim seed as force-domain `NormalizedThrust` (#140) —
+    /// the ONLY accessor for the seed. Schema 2 stores force
+    /// directly. Schema 1 predates the force-domain contract: with a
+    /// quadratic plant its seed was the BOUNDARY (rotor-speed)
+    /// command at trim, so the explicit conversion is `seed²`; a
+    /// linear plant's boundary command already IS the thrust
+    /// fraction. The conversion lives here, once, so no caller can
+    /// silently reinterpret a V1 value as force.
+    pub fn hover_thrust_force_seed(&self) -> f32 {
+        match (self.schema_version, self.actuator_curve) {
+            (1, ActuatorCurve::Quadratic) => self.hover_thrust_seed * self.hover_thrust_seed,
+            _ => self.hover_thrust_seed,
+        }
+    }
+
     /// Validate the preset. Called by the loader; apps must not use a
     /// preset that fails here (fail to arm, not fly-with-defaults).
     pub fn validate(&self) -> Result<(), PresetError> {
-        if self.schema_version != 1 {
+        if self.schema_version != 1 && self.schema_version != 2 {
             return Err(PresetError::UnsupportedSchema {
                 found: self.schema_version,
             });
@@ -276,9 +308,9 @@ impl AirframePresetV1 {
 /// Returns the TOML parse error (unknown fields included, via
 /// `deny_unknown_fields`) or the first [`PresetError`] as a string —
 /// startup code aborts arming on any of them.
-pub fn preset_from_toml_str(text: &str) -> Result<AirframePresetV1, alloc::string::String> {
+pub fn preset_from_toml_str(text: &str) -> Result<AirframePreset, alloc::string::String> {
     use alloc::string::ToString;
-    let preset: AirframePresetV1 = toml::from_str(text).map_err(|e| e.to_string())?;
+    let preset: AirframePreset = toml::from_str(text).map_err(|e| e.to_string())?;
     preset.validate().map_err(|e| e.to_string())?;
     Ok(preset)
 }

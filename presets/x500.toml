@@ -1,16 +1,16 @@
-# AirframePresetV1: PX4-gazebo-models X500 (gz SITL).
+# AirframePreset (schema 1): PX4-gazebo-models X500 (gz SITL).
 #
 # The mixer geometry matters: the X500 spins CW on the FL+RR diagonal
 # — the generic quad-x mixer closes the yaw loop backwards on this
 # model.
 #
-# hover_thrust_seed is currently a SPEED-DOMAIN value (the gz rotor
-# boundary applies command linearly to rotor speed, so thrust goes as
-# the square — see #140). Once the NormalizedThrust contract lands,
-# this seed moves to the thrust domain (~0.59 for 20.25 N weight /
-# 34.19 N max) and actuator_curve drives the boundary conversion. Do
-# not "fix" the number before the contract; the formal trim sweep in
-# #140 re-derives it with saved evidence.
+# Schema-1 semantics: hover_thrust_seed is the BOUNDARY command at
+# trim (a rotor-speed fraction for this quadratic plant). The loader
+# exposes it only through `hover_thrust_force_seed()`, which converts
+# explicitly (0.77² = 0.5929 force-domain — 20.25 N weight / 34.19 N
+# max thrust). Migrating this file to schema_version = 2 rewrites the
+# seed itself in the force domain; that rewrite waits for the #140
+# trim sweep's measured value with saved evidence.
 
 schema_version = 1
 name = "x500"
