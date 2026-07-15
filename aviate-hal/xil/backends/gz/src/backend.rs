@@ -71,7 +71,11 @@ impl KinematicsBackend for GazeboBackend {
                 Ok(plugin) => {
                     // Enable lockstep if configured
                     if let LockstepMode::Lockstep { .. } = cfg.lockstep {
-                        plugin.set_lockstep(true);
+                        plugin.set_lockstep(true).map_err(|e| {
+                            BackendError::ConnectionFailed(format!(
+                                "lockstep requested but not armed: {e}"
+                            ))
+                        })?;
                     }
                     self.plugin = Some(plugin);
                     Ok(())

@@ -36,6 +36,34 @@ static_assert(offsetof(AviateSharedStateV2, control) == 384,
 static_assert(offsetof(AviateModelStateBlock, reset_generation) == 4,
               "snapshot generation offset drifted");
 
+namespace {
+
+// Atomic payload lanes — the C++ half of the rule aviate-xil-shm's
+// mapping.rs states for Rust: EVERY payload lane is read and written
+// atomically (relaxed) by BOTH sides. The seqlock supplies ordering
+// and the all-or-nothing snapshot; the atomics supply a defined
+// memory model. A plain load/store or memcpy racing the peer
+// process's access is a data race — undefined behaviour in C++ and
+// Rust alike — however well the seqlock protocol behaves in
+// practice. f64/double lanes move as their bit patterns.
+
+inline double LoadLaneRelaxed(const double* p)
+{
+    uint64_t bits = __atomic_load_n(reinterpret_cast<const uint64_t*>(p), __ATOMIC_RELAXED);
+    double out;
+    std::memcpy(&out, &bits, sizeof(out));
+    return out;
+}
+
+inline void StoreLaneRelaxed(double* p, double v)
+{
+    uint64_t bits;
+    std::memcpy(&bits, &v, sizeof(bits));
+    __atomic_store_n(reinterpret_cast<uint64_t*>(p), bits, __ATOMIC_RELAXED);
+}
+
+}  // namespace
+
 namespace aviate {
 
 AviateGzPlugin::AviateGzPlugin() = default;
@@ -159,9 +187,19 @@ void AviateGzPlugin::PreUpdate(
             continue;
         }
         double lanes[8];
-        std::memcpy(lanes, shm_->command.motor_vel, sizeof(lanes));
-        uint32_t n = shm_->command.num_motors;
-        uint32_t s2 = __atomic_load_n(&shm_->command.seq, __ATOMIC_ACQUIRE);
+        for (size_t i = 0; i < 8; ++i) {
+            lanes[i] = LoadLaneRelaxed(&shm_->command.motor_vel[i]);
+        }
+        uint32_t n = __atomic_load_n(&shm_->command.num_motors, __ATOMIC_RELAXED);
+        // LoadLoad barrier before the re-read: an acquire LOAD only
+        // stops later accesses from moving up, it does NOT stop the
+        // lane copy above from sinking BELOW the re-read — a
+        // weakly-ordered CPU will do exactly that, and a torn
+        // snapshot then escapes with both sequence reads agreeing.
+        // Same barrier Linux's read_seqretry() issues via smp_rmb(),
+        // and the same one aviate-xil-contract's Rust reader uses.
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        uint32_t s2 = __atomic_load_n(&shm_->command.seq, __ATOMIC_RELAXED);
         if (s1 == s2) {
             if (n > 8) n = 8;
             std::memcpy(lastMotorLanes_, lanes, sizeof(lanes));
@@ -240,14 +278,18 @@ void AviateGzPlugin::PostUpdate(
     // by reset_generation, which rides inside the same payload.
     simStep_ += 1;
     __atomic_add_fetch(&shm_->state.seq, 1, __ATOMIC_ACQ_REL);
-    shm_->state.reset_generation = resetGeneration_;
-    shm_->state.sim_step = simStep_;
-    shm_->state.time_us = timeUs;
-    std::memcpy(shm_->state.pos, pos, sizeof(pos));
-    std::memcpy(shm_->state.quat, quat, sizeof(quat));
-    std::memcpy(shm_->state.vel, vel, sizeof(vel));
-    std::memcpy(shm_->state.ang_vel, angVel, sizeof(angVel));
-    shm_->state.valid = 1;
+    __atomic_store_n(&shm_->state.reset_generation, resetGeneration_, __ATOMIC_RELAXED);
+    __atomic_store_n(&shm_->state.sim_step, simStep_, __ATOMIC_RELAXED);
+    __atomic_store_n(&shm_->state.time_us, timeUs, __ATOMIC_RELAXED);
+    for (size_t i = 0; i < 3; ++i) {
+        StoreLaneRelaxed(&shm_->state.pos[i], pos[i]);
+        StoreLaneRelaxed(&shm_->state.vel[i], vel[i]);
+        StoreLaneRelaxed(&shm_->state.ang_vel[i], angVel[i]);
+    }
+    for (size_t i = 0; i < 4; ++i) {
+        StoreLaneRelaxed(&shm_->state.quat[i], quat[i]);
+    }
+    __atomic_store_n(&shm_->state.valid, 1u, __ATOMIC_RELAXED);
     __atomic_add_fetch(&shm_->state.seq, 1, __ATOMIC_RELEASE);
 }
 
@@ -289,6 +331,23 @@ bool AviateGzPlugin::InitSharedMemory()
     shm_->header.declared_size = static_cast<uint32_t>(sizeof(AviateSharedStateV2));
     shm_->header.reset_generation = 1;
     resetGeneration_ = 1;
+    // Non-repeating per created object: a consumer whose writer
+    // CRASHED keeps mapping the orphaned block (plugin_ready never
+    // cleared, memory alive while mapped) and would serve the dead
+    // world's last snapshot forever. Comparing this against the
+    // incarnation of whatever the NAME resolves to now is the only
+    // way to tell the objects apart — macOS reports st_dev = st_ino
+    // = 0 for every POSIX shm object. Zero is reserved for
+    // "not stamped".
+    {
+        uint64_t nanos = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count());
+        uint64_t pid = static_cast<uint64_t>(getpid());
+        shm_->header.writer_incarnation =
+            ((nanos << 16) | (nanos >> 48)) ^ pid | 1ull;
+    }
     shm_->control.lockstep_enabled = lockstep_ ? 1u : 0u;
     __atomic_store_n(&shm_->header.plugin_ready, 1u, __ATOMIC_RELEASE);
 

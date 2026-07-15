@@ -67,6 +67,7 @@ static_assert(offsetof(AviateSharedStateV2, control) == 384, "control offset dri
 
 // The generation rides inside the seqlock payload: a consumer's
 // {generation, step, time, state} quadruple is one coherent read.
+static_assert(offsetof(AviateSharedStateHeader, writer_incarnation) == 24, "writer_incarnation drifted");
 static_assert(offsetof(AviateModelStateBlock, reset_generation) == 4, "snapshot generation drifted");
 static_assert(offsetof(AviateModelStateBlock, sim_step) == 8, "sim_step drifted");
 static_assert(offsetof(AviateModelStateBlock, time_us) == 16, "time_us drifted");
@@ -80,6 +81,25 @@ static_assert(offsetof(AviateControlBlock, fc_status) == 16, "fc_status drifted"
 static_assert(offsetof(AviateSharedStateV2, state) % 64 == 0, "state not cache-line aligned");
 static_assert(offsetof(AviateSharedStateV2, command) % 64 == 0, "command not cache-line aligned");
 static_assert(offsetof(AviateSharedStateV2, control) % 64 == 0, "control not cache-line aligned");
+
+// Alignment of every lane the two sides access atomically. An
+// under-aligned u64/f64 lane makes __atomic_load_n/AtomicU64 either
+// slow-path-lock or tear, silently, only on some hosts.
+static_assert(alignof(AviateSharedStateV2) >= 8, "block under-aligned");
+static_assert(alignof(AviateSharedStateHeader) >= 8, "header under-aligned");
+static_assert(alignof(AviateModelStateBlock) >= 8, "state block under-aligned");
+static_assert(alignof(AviateMotorCommandBlock) >= 8, "command block under-aligned");
+static_assert(alignof(AviateControlBlock) >= 8, "control block under-aligned");
+static_assert(offsetof(AviateModelStateBlock, sim_step) % 8 == 0, "sim_step lane under-aligned");
+static_assert(offsetof(AviateModelStateBlock, time_us) % 8 == 0, "time_us lane under-aligned");
+static_assert(offsetof(AviateModelStateBlock, pos) % 8 == 0, "pos lanes under-aligned");
+static_assert(offsetof(AviateModelStateBlock, quat) % 8 == 0, "quat lanes under-aligned");
+static_assert(offsetof(AviateModelStateBlock, vel) % 8 == 0, "vel lanes under-aligned");
+static_assert(offsetof(AviateModelStateBlock, ang_vel) % 8 == 0, "ang_vel lanes under-aligned");
+static_assert(offsetof(AviateMotorCommandBlock, motor_vel) % 8 == 0, "motor lanes under-aligned");
+static_assert(offsetof(AviateMotorCommandBlock, fc_step_ack) % 8 == 0, "fc_step_ack under-aligned");
+static_assert(offsetof(AviateControlBlock, lifecycle_request) % 8 == 0, "lifecycle word under-aligned");
+static_assert(offsetof(AviateControlBlock, fc_status) % 8 == 0, "fc_status word under-aligned");
 
 // Wire values consumers switch on.
 static_assert(AviateLifecycleRequest_None == 0, "LifecycleRequest::None drifted");

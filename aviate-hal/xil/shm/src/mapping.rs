@@ -5,39 +5,16 @@
 
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::ffi::CString;
-use std::io;
 
-use aviate_xil_contract::{
-    seqlock_read, seqlock_write, validate_attach, AttachError, SharedStateV2, EXPECTED_SIZE,
-    LAYOUT_VERSION, MAGIC,
-};
+use aviate_xil_contract::{seqlock_read, seqlock_write, SharedStateV2, EXPECTED_SIZE};
 
-/// Why an attach was refused.
-#[derive(Debug)]
-pub enum AttachFailure {
-    /// The shm object does not exist yet (writer not up) or the OS
-    /// refused the mapping.
-    Io(io::Error),
-    /// The object exists but is not a valid contract block.
-    Contract(AttachError),
-    /// The block validates but the simulation writer has not
-    /// published `plugin_ready` — retry once the writer is up. An
-    /// attacher must never read payload fields from a block whose
-    /// writer is absent or mid-initialization.
-    NotReady,
-}
+mod attach;
+mod lanes;
 
-impl core::fmt::Display for AttachFailure {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            AttachFailure::Io(e) => write!(f, "shm attach I/O failure: {e}"),
-            AttachFailure::Contract(e) => write!(f, "shm attach contract violation: {e:?}"),
-            AttachFailure::NotReady => write!(f, "shm block present but writer not ready"),
-        }
-    }
-}
+use attach::live_incarnation;
+pub use attach::AttachFailure;
 
-impl std::error::Error for AttachFailure {}
+use lanes::{load_f64_lanes, load_u32, load_u64, store_f64_lanes, store_u32, store_u64};
 
 /// One coherent `{generation, step, time, state}` snapshot taken
 /// under the model seqlock (#265: `sim_step`/`time_us` are the
@@ -57,7 +34,9 @@ pub struct ModelStateSnapshot {
     pub quat: [f64; 4],
     /// Linear velocity [m/s], world ENU.
     pub vel: [f64; 3],
-    /// Angular velocity [rad/s], body FLU.
+    /// Angular velocity [rad/s], world ENU (gz's
+    /// `WorldAngularVelocity` verbatim, NOT a body gyro; known
+    /// unreliable — see the contract's `ModelStateBlock::ang_vel`).
     pub ang_vel: [f64; 3],
 }
 
@@ -70,6 +49,14 @@ pub(crate) struct Mapping {
     name: CString,
     /// Creator unlinks the object on drop; attachers never do.
     owner: bool,
+    /// The `writer_incarnation` of the object this mapping was taken
+    /// from. A writer that dies and re-creates the object leaves
+    /// this mapping pointing at the OLD (still-mapped) memory, whose
+    /// last snapshot looks valid forever;
+    /// [`Mapping::writer_replaced`] re-reads the live name's
+    /// incarnation and compares, so a consumer can re-attach instead
+    /// of serving a frozen world.
+    incarnation: u64,
 }
 
 // SAFETY: the mapping is process-shared memory accessed only through
@@ -122,135 +109,6 @@ macro_rules! control_u64 {
 }
 
 impl Mapping {
-    /// Create (or re-create) the shm object and initialize the
-    /// header: unlink any stale object (macOS refuses `ftruncate` on
-    /// an existing one), zero the block, stamp the fingerprint, set
-    /// `reset_generation = 1`, publish `plugin_ready` last.
-    pub(crate) fn create(name: &str) -> io::Result<Self> {
-        let cname = cstring(name)?;
-        // SAFETY: plain libc calls on an owned CString; failure
-        // paths close what was opened; the block is exclusively ours
-        // between shm_open(O_CREAT after unlink) and plugin_ready.
-        unsafe {
-            libc::shm_unlink(cname.as_ptr());
-            let fd = libc::shm_open(
-                cname.as_ptr(),
-                libc::O_CREAT | libc::O_RDWR,
-                0o666 as libc::c_uint,
-            );
-            if fd == -1 {
-                return Err(io::Error::last_os_error());
-            }
-            if libc::ftruncate(fd, EXPECTED_SIZE as libc::off_t) == -1 {
-                let e = io::Error::last_os_error();
-                libc::close(fd);
-                libc::shm_unlink(cname.as_ptr());
-                return Err(e);
-            }
-            let ptr = libc::mmap(
-                core::ptr::null_mut(),
-                EXPECTED_SIZE,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                fd,
-                0,
-            );
-            // The fd is not needed after mmap; the mapping keeps the
-            // object alive.
-            libc::close(fd);
-            if ptr == libc::MAP_FAILED {
-                let e = io::Error::last_os_error();
-                libc::shm_unlink(cname.as_ptr());
-                return Err(e);
-            }
-            let base = ptr.cast::<SharedStateV2>();
-            core::ptr::write_bytes(ptr.cast::<u8>(), 0, EXPECTED_SIZE);
-            core::ptr::addr_of_mut!((*base).header.magic).write_volatile(MAGIC);
-            core::ptr::addr_of_mut!((*base).header.layout_version).write_volatile(LAYOUT_VERSION);
-            core::ptr::addr_of_mut!((*base).header.declared_size)
-                .write_volatile(EXPECTED_SIZE as u32);
-            core::ptr::addr_of_mut!((*base).header.reset_generation).write_volatile(1);
-            AtomicU32::from_ptr(core::ptr::addr_of_mut!((*base).header.plugin_ready))
-                .store(1, Ordering::Release);
-            Ok(Self {
-                base,
-                name: cname,
-                owner: true,
-            })
-        }
-    }
-
-    /// Attach to an existing object, failing closed on any contract
-    /// mismatch (#262) and on a writer that has not published
-    /// readiness. `read_only` maps `PROT_READ` over an `O_RDONLY`
-    /// descriptor, so the OS itself refuses consumer writes.
-    pub(crate) fn attach(name: &str, read_only: bool) -> Result<Self, AttachFailure> {
-        let cname = cstring(name).map_err(AttachFailure::Io)?;
-        // SAFETY: plain libc calls; payload fields are interpreted
-        // only after validate_attach passes on the fingerprint and
-        // plugin_ready is observed non-zero.
-        unsafe {
-            let oflag = if read_only {
-                libc::O_RDONLY
-            } else {
-                libc::O_RDWR
-            };
-            let fd = libc::shm_open(cname.as_ptr(), oflag, 0);
-            if fd == -1 {
-                return Err(AttachFailure::Io(io::Error::last_os_error()));
-            }
-            let mut st: libc::stat = core::mem::zeroed();
-            if libc::fstat(fd, &mut st) == -1 {
-                let e = io::Error::last_os_error();
-                libc::close(fd);
-                return Err(AttachFailure::Io(e));
-            }
-            let actual = st.st_size.max(0) as usize;
-            if actual < EXPECTED_SIZE {
-                libc::close(fd);
-                return Err(AttachFailure::Contract(AttachError::MappingTooSmall {
-                    actual,
-                }));
-            }
-            let prot = if read_only {
-                libc::PROT_READ
-            } else {
-                libc::PROT_READ | libc::PROT_WRITE
-            };
-            let ptr = libc::mmap(
-                core::ptr::null_mut(),
-                EXPECTED_SIZE,
-                prot,
-                libc::MAP_SHARED,
-                fd,
-                0,
-            );
-            libc::close(fd);
-            if ptr == libc::MAP_FAILED {
-                return Err(AttachFailure::Io(io::Error::last_os_error()));
-            }
-            let base = ptr.cast::<SharedStateV2>();
-            let magic = core::ptr::addr_of!((*base).header.magic).read_volatile();
-            let version = core::ptr::addr_of!((*base).header.layout_version).read_volatile();
-            let declared = core::ptr::addr_of!((*base).header.declared_size).read_volatile();
-            if let Err(e) = validate_attach(magic, version, declared, actual) {
-                libc::munmap(ptr, EXPECTED_SIZE);
-                return Err(AttachFailure::Contract(e));
-            }
-            let ready = AtomicU32::from_ptr(core::ptr::addr_of_mut!((*base).header.plugin_ready))
-                .load(Ordering::Acquire);
-            if ready == 0 {
-                libc::munmap(ptr, EXPECTED_SIZE);
-                return Err(AttachFailure::NotReady);
-            }
-            Ok(Self {
-                base,
-                name: cname,
-                owner: false,
-            })
-        }
-    }
-
     /// Simulation-world epoch (header authority; the same value
     /// rides inside every model snapshot).
     pub(crate) fn reset_generation(&self) -> u32 {
@@ -285,34 +143,58 @@ impl Mapping {
         }
     }
 
-    /// One coherent model snapshot, or `None` while no valid state
-    /// exists or the writer kept the seqlock busy.
+    /// One coherent model snapshot, or `None` when the writer is
+    /// gone, no valid state exists yet, or the writer kept the
+    /// seqlock busy for the whole retry budget.
     pub(crate) fn read_model_state(&self) -> Option<ModelStateSnapshot> {
-        // SAFETY: seq is a naturally-aligned u32; payload fields are
-        // copied with volatile reads inside the seqlock window, so a
-        // torn copy is discarded by the seq re-check.
+        // A writer that dropped or is mid-restart must not keep
+        // feeding its last snapshot forever: the payload would look
+        // perfectly valid and perfectly still. Consumers combine this
+        // with `writer_replaced()` for the crash-and-recreate case.
+        if !self.plugin_ready() {
+            return None;
+        }
+        // SAFETY: seq is a naturally-aligned u32; every payload lane
+        // is read atomically inside the seqlock window, so a torn
+        // copy is discarded by the seq re-check rather than being a
+        // data race.
         unsafe {
             let seq = AtomicU32::from_ptr(core::ptr::addr_of_mut!((*self.base).state.seq));
-            let snap = seqlock_read(seq, || {
+            let (valid, snapshot) = seqlock_read(seq, || {
                 (
-                    core::ptr::addr_of!((*self.base).state.valid).read_volatile(),
+                    load_u32(core::ptr::addr_of!((*self.base).state.valid)),
                     ModelStateSnapshot {
-                        reset_generation: core::ptr::addr_of!((*self.base).state.reset_generation)
-                            .read_volatile(),
-                        sim_step: core::ptr::addr_of!((*self.base).state.sim_step).read_volatile(),
-                        time_us: core::ptr::addr_of!((*self.base).state.time_us).read_volatile(),
-                        pos: core::ptr::addr_of!((*self.base).state.pos).read_volatile(),
-                        quat: core::ptr::addr_of!((*self.base).state.quat).read_volatile(),
-                        vel: core::ptr::addr_of!((*self.base).state.vel).read_volatile(),
-                        ang_vel: core::ptr::addr_of!((*self.base).state.ang_vel).read_volatile(),
+                        reset_generation: load_u32(core::ptr::addr_of!(
+                            (*self.base).state.reset_generation
+                        )),
+                        sim_step: load_u64(core::ptr::addr_of!((*self.base).state.sim_step)),
+                        time_us: load_u64(core::ptr::addr_of!((*self.base).state.time_us)),
+                        pos: load_f64_lanes(core::ptr::addr_of!((*self.base).state.pos)),
+                        quat: load_f64_lanes(core::ptr::addr_of!((*self.base).state.quat)),
+                        vel: load_f64_lanes(core::ptr::addr_of!((*self.base).state.vel)),
+                        ang_vel: load_f64_lanes(core::ptr::addr_of!((*self.base).state.ang_vel)),
                     },
                 )
             })?;
-            let (valid, snapshot) = snap;
             if valid == 0 {
                 return None;
             }
             Some(snapshot)
+        }
+    }
+
+    /// Whether the shm object this mapping was taken from has been
+    /// replaced — the writer crashed (leaving `plugin_ready` set in
+    /// the orphaned mapping) and created a fresh object under the
+    /// same name. The consumer must re-attach; this mapping can only
+    /// ever serve the dead world's last snapshot.
+    pub(crate) fn writer_replaced(&self) -> bool {
+        match live_incarnation(&self.name) {
+            // A name that no longer resolves is a writer that exited
+            // and unlinked — that is `plugin_ready == 0`, not a
+            // replacement.
+            None => false,
+            Some(live) => live != self.incarnation,
         }
     }
 
@@ -326,15 +208,26 @@ impl Mapping {
         unsafe {
             let seq = AtomicU32::from_ptr(core::ptr::addr_of_mut!((*self.base).state.seq));
             seqlock_write(seq, || {
-                core::ptr::addr_of_mut!((*self.base).state.reset_generation)
-                    .write_volatile(s.reset_generation);
-                core::ptr::addr_of_mut!((*self.base).state.sim_step).write_volatile(s.sim_step);
-                core::ptr::addr_of_mut!((*self.base).state.time_us).write_volatile(s.time_us);
-                core::ptr::addr_of_mut!((*self.base).state.pos).write_volatile(s.pos);
-                core::ptr::addr_of_mut!((*self.base).state.quat).write_volatile(s.quat);
-                core::ptr::addr_of_mut!((*self.base).state.vel).write_volatile(s.vel);
-                core::ptr::addr_of_mut!((*self.base).state.ang_vel).write_volatile(s.ang_vel);
-                core::ptr::addr_of_mut!((*self.base).state.valid).write_volatile(1);
+                store_u32(
+                    core::ptr::addr_of_mut!((*self.base).state.reset_generation),
+                    s.reset_generation,
+                );
+                store_u64(
+                    core::ptr::addr_of_mut!((*self.base).state.sim_step),
+                    s.sim_step,
+                );
+                store_u64(
+                    core::ptr::addr_of_mut!((*self.base).state.time_us),
+                    s.time_us,
+                );
+                store_f64_lanes(core::ptr::addr_of_mut!((*self.base).state.pos), &s.pos);
+                store_f64_lanes(core::ptr::addr_of_mut!((*self.base).state.quat), &s.quat);
+                store_f64_lanes(core::ptr::addr_of_mut!((*self.base).state.vel), &s.vel);
+                store_f64_lanes(
+                    core::ptr::addr_of_mut!((*self.base).state.ang_vel),
+                    &s.ang_vel,
+                );
+                store_u32(core::ptr::addr_of_mut!((*self.base).state.valid), 1);
             });
         }
     }
@@ -350,8 +243,14 @@ impl Mapping {
         unsafe {
             let seq = AtomicU32::from_ptr(core::ptr::addr_of_mut!((*self.base).command.seq));
             seqlock_write(seq, || {
-                core::ptr::addr_of_mut!((*self.base).command.motor_vel).write_volatile(lanes);
-                core::ptr::addr_of_mut!((*self.base).command.num_motors).write_volatile(n as u32);
+                store_f64_lanes(
+                    core::ptr::addr_of_mut!((*self.base).command.motor_vel),
+                    &lanes,
+                );
+                store_u32(
+                    core::ptr::addr_of_mut!((*self.base).command.num_motors),
+                    n as u32,
+                );
             });
         }
     }
@@ -364,8 +263,8 @@ impl Mapping {
             let seq = AtomicU32::from_ptr(core::ptr::addr_of_mut!((*self.base).command.seq));
             seqlock_read(seq, || {
                 (
-                    core::ptr::addr_of!((*self.base).command.motor_vel).read_volatile(),
-                    core::ptr::addr_of!((*self.base).command.num_motors).read_volatile(),
+                    load_f64_lanes(core::ptr::addr_of!((*self.base).command.motor_vel)),
+                    load_u32(core::ptr::addr_of!((*self.base).command.num_motors)),
                 )
             })
         }
@@ -447,8 +346,4 @@ impl Drop for Mapping {
             }
         }
     }
-}
-
-fn cstring(name: &str) -> io::Result<CString> {
-    CString::new(name).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in shm name"))
 }

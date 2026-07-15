@@ -105,7 +105,12 @@ impl SimulatorBackend for GazeboSimBackend {
 
     fn set_lockstep(&mut self, enabled: bool) {
         if let Some(ref bridge) = self.bridge {
-            bridge.set_lockstep(enabled);
+            // The trait cannot report failure, so surface it here:
+            // a run that quietly free-runs when the harness asked to
+            // step is non-reproducible evidence, not a minor warning.
+            if let Err(e) = bridge.set_lockstep(enabled) {
+                log::error!("lockstep {enabled} requested but not armed: {e}");
+            }
         }
     }
 

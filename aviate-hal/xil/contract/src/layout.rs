@@ -52,10 +52,22 @@ pub struct SharedStateHeader {
     pub reset_generation: u32,
     /// Non-zero while the plugin owns the mapping.
     pub plugin_ready: u32,
+    /// Non-repeating value stamped once per created object.
+    ///
+    /// This is how a consumer detects a writer that CRASHED and
+    /// re-created the block: the crashed writer never cleared
+    /// `plugin_ready`, and the orphaned object stays alive as long
+    /// as anyone maps it, so the stale mapping keeps serving the
+    /// dead world's last snapshot and looks perfectly healthy. The
+    /// consumer must therefore compare the incarnation of the object
+    /// the NAME resolves to now against the one it attached to —
+    /// POSIX shm cannot be told apart by inode (macOS reports
+    /// `st_dev = st_ino = 0` for every shm object).
+    pub writer_incarnation: u64,
     /// Reserved; zero. Pads the header to a full 64-byte cache-line
     /// block: each block of this layout is written by exactly one
     /// process, and no two writers ever share a line.
-    pub _reserved0: [u64; 5],
+    pub _reserved0: [u64; 4],
 }
 
 /// Ground-truth model state. Writer: gz plugin, under `seq`.
@@ -88,7 +100,15 @@ pub struct ModelStateBlock {
     pub quat: [f64; 4],
     /// Linear velocity [m/s], world ENU.
     pub vel: [f64; 3],
-    /// Angular velocity [rad/s], body FLU.
+    /// Angular velocity [rad/s] in the WORLD ENU frame — gz's
+    /// `WorldAngularVelocity` component verbatim, not a body-frame
+    /// gyro.
+    ///
+    /// Known unreliable: the component reports zero on this setup
+    /// even while the attitude quaternion shows sustained rotation,
+    /// so the X500 FC does not use it — `synthesize.rs` derives body
+    /// rates from successive `quat` samples instead. Treat this lane
+    /// as advisory until a consumer proves the component's fidelity.
     pub ang_vel: [f64; 3],
     /// Non-zero once the first physics step has been published.
     pub valid: u32,
@@ -354,6 +374,7 @@ const _: () = {
     assert!(offset_of!(SharedStateHeader, declared_size) == 12);
     assert!(offset_of!(SharedStateHeader, reset_generation) == 16);
     assert!(offset_of!(SharedStateHeader, plugin_ready) == 20);
+    assert!(offset_of!(SharedStateHeader, writer_incarnation) == 24);
 
     assert!(offset_of!(ModelStateBlock, seq) == 0);
     assert!(offset_of!(ModelStateBlock, reset_generation) == 4);
