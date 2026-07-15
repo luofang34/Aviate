@@ -5,13 +5,21 @@ version = "0.0.1"
 document_id = "AVIATE-DRQ-001"
 revision = "1"
 
-# Derived requirements arising from estimator-trait extraction.
-# Each one would otherwise be implicit in implementation choice;
-# recording them here documents the design decisions for review.
+# Derived requirements: design decisions and disclosed gaps that
+# would otherwise be implicit in implementation choice; recording
+# them here documents them for review.
+#
+# `status` is the machine-readable lifecycle marker; the test plan's
+# DRQ table must state the same value
+# (scripts/check_test_plan_sync.py enforces equality):
+#   open     — the gap is real and unclosed
+#   closed   — the contract is realized in code with a named witness
+#   standing — a recorded design decision, not a gap; nothing to close
 
 [[requirements]]
 uid = "33bcf660-ebb5-45e3-9548-5e30fb38a8d3"
 id = "DRQ-EST-001"
+status = "standing"
 title = "Estimator::reset() preserves construction-time tuning"
 owner = "aviate-core@aviate"
 description = """
@@ -36,6 +44,7 @@ safety_impact = "low"
 [[requirements]]
 uid = "0d086076-b799-4715-981f-4bb42e0d9b1e"
 id = "DRQ-CFG-001"
+status = "open"
 title = "load_config() returns InvalidFormat until the parser pipeline lands"
 owner = "aviate-core@aviate"
 description = """
@@ -80,6 +89,7 @@ safety_impact = "medium"
 [[requirements]]
 uid = "8dce106d-66a1-4746-838d-f14ffa5519c7"
 id = "DRQ-MIX-001"
+status = "open"
 title = "safe_output is currently a global fallback; per-mode safe_pattern is preferred"
 owner = "aviate-core@aviate"
 description = """
@@ -107,57 +117,56 @@ safety_impact = "low"
 [[requirements]]
 uid = "ded4be21-1286-4351-a1fa-508720317660"
 id = "DRQ-CTL-001"
-title = "Tunable controller gains belong in ResolvedKernelConfig, not on the controller struct"
+status = "closed"
+title = "Controller tuning lives in ResolvedKernelConfig; a builder-verified immutable copy is permitted on the controller"
 owner = "aviate-core@aviate"
 description = """
-Today's example controllers (`MultirotorController`,
-`FixedWingController`, `VtolController`) hold their P-only gain
-arrays as fields on `Self` (e.g.
-`MultirotorController.pos_ctrl.gains`, `.rate_ctrl.gains`). Per
-LLR-CTL-101's algorithm/state split, only firmware-constant
-algorithm identity belongs on `Self` — operator-tunable
-parameters belong in `ResolvedKernelConfig`, where HLR-CFG-001
-guarantees byte-equal cross-channel comparison and the
-`algorithm_identity_hash` companion (HLR-PIPE-002) deliberately
-does NOT cover them.
+Operator-tunable controller parameters live in
+`ResolvedKernelConfig` (`cascade_gains`, `hover_thrust_norm`), per
+LLR-CTL-101's algorithm/state split: only firmware-constant
+algorithm identity belongs on controller `Self`. `canonical_hash`
+folds both tuning fields, so HLR-CFG-001's byte-equal cross-channel
+comparison covers tuning — two channels with different applied
+tunings cannot pass lockstep entry while diverging in flight, even
+though `algorithm_identity_hash` (HLR-PIPE-002) deliberately
+excludes tunables.
 
-Concretely: two channels running the same compiled firmware but
-different operator-applied PID gain tuning would currently produce
-the same `algorithm_identity_hash` and pass lockstep entry while
-diverging in flight. Closing this requires moving the P-gain
-arrays out of the controller structs into a new
-`ResolvedKernelConfig.controller_gains: ControllerGains` field,
-indexed in some way the controller can read deterministically.
-
-Builder invariant: `AviateKernelBuilder::build` enforces
+Contract for controller-held tuning: a controller MAY hold a
+validated immutable copy of its tuning; it MUST NOT be an
+independent tuning source. `AviateKernelBuilder::build` enforces
 `VehicleController::verify_config_binding` — the controller's
-canonical tuning identity (the same FNV fold
-`ResolvedKernelConfig::controller_tuning_identity` produces over
-`cascade_gains` + `hover_thrust_norm`) must equal the resolved
+canonical tuning identity (the FNV fold
+`ResolvedKernelConfig::controller_tuning_identity` computes over
+`cascade_gains` + `hover_thrust_norm`; both sides call the same
+function, so the encodings cannot drift) must equal the resolved
 configuration's, or construction fails with a typed
 `ControllerConfigMismatch` carrying both identities. A controller
-and a config supplied independently therefore cannot disagree in
-a built kernel; the per-field mutation sweep in
-`aviate-core/tests/config_binding_tests.rs` pins every gains and
-hover field to this rejection path.
+and a config supplied independently therefore cannot disagree in a
+built kernel. The alternative contract — forbidding controller-held
+tuning entirely — is rejected: the copy lets `step()` read gains
+without indirection on the hot path, and the binding invariant
+makes silent divergence a construction failure rather than a
+flight-time hazard.
+
+Witnessed by the per-field mutation sweep in
+`aviate-core/tests/config_binding_tests.rs`, which pins every gains
+and hover field to the rejection path.
 """
 rationale = """
-Deferred for now because (a) today's gains are hardcoded
-constants in `Default::default()` rather than runtime-tunable
-input — the `algorithm_identity_hash` collision risk is
-hypothetical until the airframe crates start configuring gains
-externally; (b) the move requires designing a `ControllerGains`
-shape that's both extensible (multirotor needs 4 gain arrays;
-fixed-wing energy loop will need different tunables) and
-no_std-friendly. A follow-up PR introduces
-`ResolvedKernelConfig.controller_gains` and re-points each
-controller's `step` to read gains from cfg rather than `&self`.
+Without a recorded contract, a reviewer finding gain fields on a
+controller struct could read them as a violation of the
+algorithm/state split, or a future implementer could add a second
+tuning source that bypasses the binding check. The contract is:
+the resolved configuration is the single tuning authority; any
+controller-resident copy is legal only because the builder proves
+it identical before a kernel exists.
 """
 safety_impact = "medium"
 
 [[requirements]]
 uid = "c6c38eb8-20ec-45b3-93b3-a24a89be8bf6"
 id = "DRQ-CTL-002"
+status = "open"
 title = "Controller gain tuning to meet cert-grade hover and position bounds"
 owner = "aviate-core@aviate"
 description = """
@@ -213,6 +222,7 @@ safety_impact = "medium"
 [[requirements]]
 uid = "8e9c67e1-91bd-4183-94fd-304e49b40689"
 id = "DRQ-CTL-003"
+status = "open"
 title = "Closed-loop position control end-to-end"
 owner = "aviate-core@aviate"
 description = """
@@ -269,6 +279,7 @@ safety_impact = "medium"
 [[requirements]]
 uid = "a6c98ab3-41d3-4947-8361-250ace2adb69"
 id = "DRQ-FLT-001"
+status = "closed"
 title = "Command-loss safe-mode slew limit"
 owner = "aviate-core@aviate"
 description = """
@@ -276,47 +287,37 @@ HLR-FLT-204 / LLR-FLT-208 require that when the kernel switches
 to the command-loss-safe mode (due to `command_age_ms >=
 command_timeout_ms`), the actuator command delta between the cycle
 before the switch and the cycle of the switch respects a
-configured per-actuator slew limit. The kernel currently switches
-the output set point in one cycle without a slew-limited
-transition; the abrupt change is bounded by the safe pattern's
-own values but not by a rate-of-change limiter.
+configured per-actuator slew limit.
 
-Closing this requires:
-  1. A new `ResolvedKernelConfig.slew_limit_per_cycle:
-     [Normalized; MAX_ACTUATORS]` field.
-  2. A slew-limited writer at the end of `update_step` that clamps
-     the per-actuator output to within `slew_limit` of the previous
-     cycle's commanded output, with sign-aware behavior on direction
-     reversal.
-  3. The same machinery is needed for HLR-MORPH-202 / LLR-MORPH-202
-     (geometry-state delta) — see DRQ-MORPH-001.
-
-Items 1 and 2 are realized by `ResolvedKernelConfig.
-slew_limit_per_cycle` and `aviate-core/src/kernel/slew.rs::
-apply_slew_limit` (invoked between sanitization and result
-construction in `kernel_update.rs`). Witnessed by TST-FLT-208.
-Default value `[0.0; MAX_ACTUATORS]` disables the limiter per
-channel — existing airframes that don't opt in see no behavior
-change. Severe-fault early-return paths bypass the limiter so
-LLR-FLT-205 (NUMERIC_ERROR → immediate safe pattern) is
-preserved.
+The kernel satisfies this with a per-cycle slew writer:
+`ResolvedKernelConfig.slew_limit_per_cycle:
+[Normalized; MAX_ACTUATORS]` plus
+`aviate-core/src/kernel/slew.rs::apply_slew_limit`, invoked in
+`kernel_update.rs` after sanitization and before result
+construction, so controller-commanded bumps and sanitizer-induced
+substitutions both respect the per-cycle delta limit. A per-channel
+limit of zero disables the limiter for that channel, so airframes
+that do not opt in see no behavior change. Severe-fault
+early-return paths bypass the limiter so LLR-FLT-205
+(NUMERIC_ERROR → immediate safe pattern) is preserved. Witnessed by
+TST-FLT-208 (`aviate-core/tests/slew_limit_tests.rs`).
 """
 rationale = """
-The contract is real and matters for airframe protection
-(suddenly clamping a saturated motor to zero can shed lift faster
-than the body can rotate to compensate). The previous abrupt
-switch was "safe in expectation" — the safe pattern is itself a
-low-thrust idle — but didn't formally satisfy the slew-limit
-clause. The writer now closes the gap on the kernel side;
-per-airframe slew_limit values remain a tuning concern (deferred
-to the airframe-specific config PRs, since the cert-binding
-contract is the writer itself, not the chosen values).
+The contract matters for airframe protection: clamping a saturated
+motor to zero in one cycle can shed lift faster than the body can
+rotate to compensate. An abrupt un-slewed switch would be "safe in
+expectation" — the safe pattern is itself a low-thrust idle — but
+would not satisfy the slew-limit clause. Per-airframe
+slew_limit_per_cycle values remain a tuning concern for the
+airframe-specific configs; the cert-binding contract is the writer
+itself, not the chosen values.
 """
 safety_impact = "low"
 
 [[requirements]]
 uid = "addb460b-bd61-4944-a073-d9d253b20f2c"
 id = "DRQ-MORPH-001"
+status = "closed"
 title = "GeometryState mid-flight slew limit"
 owner = "aviate-core@aviate"
 description = """
@@ -324,23 +325,23 @@ HLR-MORPH-202 / LLR-MORPH-202 require that when `GeometryState`
 (continuous airframe-morph parameter — tilt-rotor angle,
 fold-arm position) updates by some `dGeom`, the resulting
 per-actuator command delta SHALL respect the configured slew
-limit. The kernel currently reads `GeometryState` as a parameter
-into the mixer with no inter-cycle smoothing — a step change in
-`GeometryState` produces an immediate step in mixer output.
+limit.
 
-Same closing path as DRQ-FLT-001: a `ResolvedKernelConfig.
-slew_limit_per_cycle` field and a slew-limited writer at the
-mixer's per-cycle output. Once DRQ-FLT-001 lands, this is a
-parameter-not-event question and can close immediately.
+The same per-cycle slew writer that satisfies DRQ-FLT-001 closes
+this: `aviate-core/src/kernel/slew.rs::apply_slew_limit` bounds the
+final per-actuator delta each cycle regardless of what moved it, so
+a geometry step propagating through the mixer is clamped exactly as
+a control-law switch is. Witnessed by TST-FLT-208, which traces to
+LLR-MORPH-202 as well as LLR-FLT-208.
 """
 rationale = """
 Current airframes (`aviate-airframe-multirotor`,
 `aviate-airframe-fixed-wing`) hold a fixed `GeometryState` for the
-duration of flight, so the contract is vacuously satisfied. The
-contract becomes binding for tilt-rotor / fold-arm /
-transformable airframes — at which point the slew limiter must
-already be in place. Capturing the DRQ here keeps the HLR honest:
-the property is a non-event under existing airframes, not a
-verified event.
+duration of flight and ship the zero (disabled) default limit, so
+the mechanism is exercised by test rather than by flight. The
+contract becomes operative for tilt-rotor / fold-arm /
+transformable airframes, which must ship non-zero
+slew_limit_per_cycle values — the limiter is in place, so that is
+an airframe configuration decision, not a kernel change.
 """
 safety_impact = "low"
