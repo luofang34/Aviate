@@ -18,26 +18,64 @@ even when their state shapes are identical.
 
 `cert/algorithm_id_registry.toml` is the identity ledger. Rotating an
 identity means: allocate a fresh, never-reused 64-bit ID for the new
-version, retire the old name with a behavior-based rationale, update
-the implementation's `ALGORITHM_ID` constant, and move the pinned
-aggregate in `identity_hash_is_stable_across_builds` — all in one
-commit.
+version, retire the old ID in a registry comment with a
+behavior-based rationale (retired IDs stay quoted in comments
+forever — that comment ledger is what the reuse check reads), update
+the implementation's `ALGORITHM_ID` constant, and — when the rotated
+implementation belongs to a pinned production bundle — move the
+pinned aggregates in `identity_hash_is_stable_across_builds` /
+`identity_hash_is_stable_across_builds_x500` and in
+`scripts/check_algorithm_identity.sh` — all in one commit. Never
+quote an active ID in a registry comment: the checker treats every
+commented hex literal as retired.
+
+Test-only identities are registered under `[testing]`. They stay
+outside the production allocation (a production implementation may
+never take a `[testing]` ID and vice versa) but participate in the
+global collision and reuse checks.
 
 ## Adjudication
 
-`scripts/check_algorithm_identity.sh` runs in CI on every pull request.
-Whenever a production estimator / controller / mixer / sanitizer
-implementation path changes, the change must be adjudicated by its
-author — neutrality is never inferred from the shape of the diff:
+`scripts/check_algorithm_identity.sh` runs in CI for pull requests
+and for pushes to protected branches (`before..sha`), so a direct or
+admin-bypass push to `main` is adjudicated exactly like a PR. A push
+whose `before` cannot be resolved (force-push, shallow or truncated
+fetch) fails closed; only a genuinely empty push (`before == sha`) or
+the creation of a branch already at `main` history may drop to the
+structural ledger check alone. Renames are adjudicated at both paths
+(`--no-renames`), so moving an implementation out of a managed tree
+does not escape the gate.
 
-- a behavior change rotates the identity (the diff touches the
-  registry), or
-- a behavior-neutral change carries an explicit commit trailer with a
-  rationale:
+The script maps every changed production file to the registry entries
+that own it; the gate is satisfied only by:
+
+- a rotation of **every** identity owning the changed file — each to
+  a numeric ID that appears nowhere in the base ledger (not active in
+  any section, not retired). Rotating one sibling of a shared file,
+  renaming a key while keeping its number, or swapping numbers
+  between entries does not count, and neither does editing an
+  unrelated registry entry or comment — or
+- an exact `Algorithm-Identity-Unchanged` git trailer on **every
+  commit** in the range that touches the non-rotated file:
 
   ```
   Algorithm-Identity-Unchanged: <why this cannot change observable behavior>
   ```
 
-A bare trailer without rationale text does not count. Test modules are
-outside the guard: they cannot change flight behavior.
+The trailer is parsed with `git interpret-trailers` from the final
+trailer block: look-alike keys, copies embedded mid-body, duplicated
+trailers, and bare trailers without rationale text all fail. When a
+trailer-adjudicated PR is squash-merged, keep the trailer as a proper
+trailer in the squash commit message — the push-range adjudication of
+`main` re-checks it.
+
+Independently of what changed, the script proves at the head
+revision: active IDs (including `[testing]`) are globally unique; no
+active ID reuses a retired one; every implementation's compiled
+constant equals its registry entry; every `ALGORITHM_ID` literal in
+the repo is registered in the right section; the generic quad-X and
+X500 production aggregates match their pins; and no ID active at base
+vanished from the ledger without a retirement record.
+
+Test modules are outside the path guard: they cannot change flight
+behavior.

@@ -59,10 +59,35 @@ jobs:
       - name: Guard self-test
         run: ./scripts/check_algorithm_identity.sh --self-test
 
+      # Fail-closed for every path to a protected branch: PR ranges
+      # and push ranges (before..sha) alike, so a direct or
+      # admin-bypass push to main is adjudicated exactly like a PR.
+      # Range resolution lives in the script (--push-range) so the
+      # self-test can exercise it: an unreachable before-SHA
+      # (force-push / truncated fetch) fails closed rather than
+      # degrading to a structural-only check. fetch-depth: 0 above
+      # keeps a normal push's before-SHA resolvable (it is an
+      # ancestor of the pushed sha).
       - name: Adjudicate production algorithm changes
-        if: github.event_name == 'pull_request'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+          PUSH_HEAD: ${{ github.sha }}
         run: |
-          ./scripts/check_algorithm_identity.sh             "${{ github.event.pull_request.base.sha }}"             "${{ github.event.pull_request.head.sha }}"
+          case "$EVENT_NAME" in
+            pull_request)
+              ./scripts/check_algorithm_identity.sh "$PR_BASE" "$PR_HEAD"
+              ;;
+            push)
+              ./scripts/check_algorithm_identity.sh --push-range "$PUSH_BASE" "$PUSH_HEAD" origin/main
+              ;;
+            *)
+              echo "fail-closed: unsupported event '$EVENT_NAME'" >&2
+              exit 1
+              ;;
+          esac
 
   app-template:
     name: App Template (generate + check)

@@ -216,4 +216,34 @@ mod tests {
              QuadXMixer / Sanitizer and the FNV folding loop"
         );
     }
+
+    #[test]
+    fn identity_hash_is_stable_across_builds_x500() {
+        // The X500 production bundle swaps QuadXMixerX500 in for
+        // QuadXMixer; every other member matches
+        // `identity_hash_is_stable_across_builds`.
+        // scripts/check_algorithm_identity.sh pins the same value
+        // from the registry side, so an aggregate drift is caught
+        // whether it enters through source constants or through
+        // cert/algorithm_id_registry.toml — rotate a bundle member
+        // and both pins must move in the same commit.
+        use crate::mixer::QuadXMixerX500;
+        const EXPECTED: u64 = 0x20ce_8c48_7287_24d5;
+        let actual = KernelPipeline::new(
+            Ekf::default(),
+            MultirotorController::default(),
+            QuadXMixerX500 {
+                timestamp_source: fake_ts,
+            },
+            Sanitizer,
+        )
+        .algorithm_identity_hash();
+        assert_eq!(
+            actual, EXPECTED,
+            "X500 algorithm_identity_hash drifted; \
+             check ALGORITHM_ID constants on Ekf / MultirotorController / \
+             QuadXMixerX500 / Sanitizer, the FNV folding loop, and the \
+             X500_AGGREGATE pin in scripts/check_algorithm_identity.sh"
+        );
+    }
 }
