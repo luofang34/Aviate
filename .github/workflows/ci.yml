@@ -102,6 +102,21 @@ jobs:
               ;;
           esac
 
+  control-limits:
+    name: Control Limits Registry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Adversarial fixtures first, so the classification check below
+      # is only trusted when it demonstrably still catches unregistered
+      # constants, registry drift, and missing mutation probes.
+      - name: Guard self-test
+        run: ./scripts/check_control_limits.sh --self-test
+
+      - name: Enforce control-limit classification (tuning vs invariant)
+        run: ./scripts/check_control_limits.sh
+
   app-template:
     name: App Template (generate + check)
     runs-on: ubuntu-latest
@@ -803,6 +818,7 @@ jobs:
       - governance-self-test
       - dialect-generation
       - identity-adjudication
+      - control-limits
       - app-template
       - jmavsim-smoke
       - runtime-boundary

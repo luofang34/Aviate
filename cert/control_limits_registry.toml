@@ -1,0 +1,99 @@
+# Behavior-shaping control-limit registry.
+#
+# Enforced by scripts/check_control_limits.sh (CI job `control-limits`):
+# every float literal in a production control-law file must be either
+# structural algebra (0.0, 1.0, 2.0, 0.5 — identities, sign flips,
+# doubling/halving of exact binary values), the default of a registered
+# [[tuning]] field, or the declaration of a registered [[invariant]]
+# constant. A new behavior-shaping constant therefore cannot land
+# unclassified; it must become one of:
+#
+#   * [[tuning]]    — a `CascadeGains` field: validated at construction,
+#                     fed into `ResolvedKernelConfig::canonical_hash` and
+#                     `controller_tuning_identity`, and probed by BOTH
+#                     per-field mutation sweeps (the canonical-hash sweep
+#                     in kernel/config/canonical/tests.rs and the builder
+#                     binding sweep in tests/config_binding_tests.rs).
+#                     The script proves all four properties per field.
+#
+#   * [[invariant]] — a named `Scalar` constant with a WHY rationale in a
+#                     domain module inside the controller-owned tree, so
+#                     the algorithm-identity gate adjudicates any change.
+#                     The value is pinned here: source drift without a
+#                     registry edit (a reviewed diff) fails CI.
+#
+# Scan boundary: `aviate-core/src/control.rs` and the production files
+# under `aviate-core/src/control/` (test modules and *tests.rs excluded).
+# Values that feed the config from outside that tree — e.g. an airframe
+# crate's hover trim — are covered by the canonical config hash, not by
+# this scan.
+
+# ------------------------------------------------------------- tuning
+# One entry per CascadeGains field; the script enforces the bijection.
+
+[[tuning]]
+field = "pos_p"
+
+[[tuning]]
+field = "pos_accel_limits"
+
+[[tuning]]
+field = "pos_vel_caps"
+
+[[tuning]]
+field = "vel_p"
+
+[[tuning]]
+field = "vel_i"
+
+[[tuning]]
+field = "vel_max_roll_pitch"
+
+[[tuning]]
+field = "vel_max_yaw_step"
+
+[[tuning]]
+field = "vel_accel_ff"
+
+[[tuning]]
+field = "vel_d"
+
+[[tuning]]
+field = "att_p"
+
+[[tuning]]
+field = "att_max_rate_cmd"
+
+[[tuning]]
+field = "rate_p"
+
+[[tuning]]
+field = "rate_d"
+
+[[tuning]]
+field = "rate_d_lpf_alpha"
+
+# --------------------------------------------------------- invariants
+# Rationale and bounds live on each constant's doc comment; behavior
+# boundary tests live in velocity_tests.rs (tilt-model clamp, cos
+# floor) and tests/multirotor_controller_tests.rs (disarm gate).
+
+[[invariant]]
+name = "STANDARD_GRAVITY_MPS2"
+file = "aviate-core/src/control/law_invariants.rs"
+value = "9.81"
+
+[[invariant]]
+name = "MAX_HORIZONTAL_ACCEL_CMD_MPS2"
+file = "aviate-core/src/control/law_invariants.rs"
+value = "STANDARD_GRAVITY_MPS2"
+
+[[invariant]]
+name = "DISARMED_COLLECTIVE_THRESHOLD"
+file = "aviate-core/src/control/law_invariants.rs"
+value = "0.02"
+
+[[invariant]]
+name = "TILT_COMP_COS_FLOOR"
+file = "aviate-core/src/control/law_invariants.rs"
+value = "0.5"
