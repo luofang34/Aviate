@@ -55,11 +55,17 @@ write_probe() {
     cat > "$1" <<'EOF'
 #include "aviate_xil_contract.h"
 #include <cstddef>
+#include <cstdint>
+
+// Pinned here so a version bump cannot land without this gate's
+// author noticing the protocol changed.
+static constexpr uint32_t AVIATE_XIL_LAYOUT_VERSION_EXPECTED = AviateLAYOUT_VERSION;
 
 // Layout freeze. These are the same numbers the Rust const asserts
 // pin and the plugin's own static_asserts repeat; a drift on either
 // side fails here.
 static_assert(sizeof(AviateSharedStateV2) == 448, "block size drifted");
+static_assert(AVIATE_XIL_LAYOUT_VERSION_EXPECTED == 3, "layout version drifted");
 static_assert(offsetof(AviateSharedStateV2, header) == 0, "header offset drifted");
 static_assert(offsetof(AviateSharedStateV2, state) == 64, "state offset drifted");
 static_assert(offsetof(AviateSharedStateV2, command) == 256, "command offset drifted");
@@ -92,16 +98,29 @@ static_assert(alignof(AviateMotorCommandBlock) >= 8, "command block under-aligne
 static_assert(alignof(AviateControlBlock) >= 8, "control block under-aligned");
 static_assert(offsetof(AviateModelStateBlock, sim_step) % 8 == 0, "sim_step lane under-aligned");
 static_assert(offsetof(AviateModelStateBlock, time_us) % 8 == 0, "time_us lane under-aligned");
-static_assert(offsetof(AviateModelStateBlock, pos) % 8 == 0, "pos lanes under-aligned");
-static_assert(offsetof(AviateModelStateBlock, quat) % 8 == 0, "quat lanes under-aligned");
-static_assert(offsetof(AviateModelStateBlock, vel) % 8 == 0, "vel lanes under-aligned");
-static_assert(offsetof(AviateModelStateBlock, ang_vel) % 8 == 0, "ang_vel lanes under-aligned");
-static_assert(offsetof(AviateMotorCommandBlock, motor_vel) % 8 == 0, "motor lanes under-aligned");
+static_assert(offsetof(AviateModelStateBlock, pos_bits) % 8 == 0, "pos lanes under-aligned");
+static_assert(offsetof(AviateModelStateBlock, quat_bits) % 8 == 0, "quat lanes under-aligned");
+static_assert(offsetof(AviateModelStateBlock, vel_bits) % 8 == 0, "vel lanes under-aligned");
+static_assert(offsetof(AviateModelStateBlock, ang_vel_bits) % 8 == 0, "ang_vel lanes under-aligned");
+static_assert(offsetof(AviateMotorCommandBlock, motor_vel_bits) % 8 == 0, "motor lanes under-aligned");
 static_assert(offsetof(AviateMotorCommandBlock, fc_step_ack) % 8 == 0, "fc_step_ack under-aligned");
 static_assert(offsetof(AviateControlBlock, lifecycle_request) % 8 == 0, "lifecycle word under-aligned");
 static_assert(offsetof(AviateControlBlock, fc_status) % 8 == 0, "fc_status word under-aligned");
 
 // Wire values consumers switch on.
+// Both processes rely on these being real atomic instructions: a
+// lock-based fallback would take locks in two address spaces and
+// provide no mutual exclusion at all.
+static_assert(__atomic_always_lock_free(8, nullptr), "8-byte atomics not lock-free");
+static_assert(__atomic_always_lock_free(4, nullptr), "4-byte atomics not lock-free");
+
+// Wire lanes are integer bit patterns, never floats: that is what
+// lets both sides use the atomic builtins on the lane's real type
+// instead of punning a double*.
+static_assert(sizeof(AviateModelStateBlock::pos_bits) == 3 * sizeof(uint64_t), "pos lanes not u64");
+static_assert(sizeof(AviateMotorCommandBlock::motor_vel_bits) == 8 * sizeof(uint64_t),
+              "motor lanes not u64");
+
 static_assert(AviateLifecycleRequest_None == 0, "LifecycleRequest::None drifted");
 static_assert(AviateLifecycleRequest_Reset == 1, "LifecycleRequest::Reset drifted");
 static_assert(AviateLifecycleRequest_Stop == 2, "LifecycleRequest::Stop drifted");

@@ -22,9 +22,17 @@
 /// by a test.)
 pub const MAGIC: u64 = 0x4156_4941_5445_475A;
 
-/// Layout version of [`SharedStateV2`]. Any layout change bumps this;
-/// consumers reject a mismatch on attach.
-pub const LAYOUT_VERSION: u32 = 2;
+/// Layout version of [`SharedStateV2`]. Any layout OR protocol
+/// change bumps this; consumers reject a mismatch on attach.
+///
+/// v3: payload lanes are explicit `u64` bit patterns (v2 typed them
+/// `f64`/`double`, which forced both sides to pun a `double*` into a
+/// `uint64_t*` for atomic access — an object-access/aliasing hazard
+/// in C++ and a needless cast in Rust). v3 also adds
+/// `writer_incarnation` and requires the initialisation and reset
+/// protocols v2 lacked. An installed v2 plugin must NOT be accepted
+/// by a v3 endpoint: it publishes with the old protocol.
+pub const LAYOUT_VERSION: u32 = 3;
 
 /// POSIX shm object name base. Instance 0 uses
 /// [`SHM_NAME_INSTANCE_0`]; instance N appends `_N`.
@@ -32,6 +40,10 @@ pub const SHM_NAME_BASE: &str = "/aviate_gz_bridge";
 
 /// Instance-0 shm object name.
 pub const SHM_NAME_INSTANCE_0: &str = "/aviate_gz_bridge";
+
+mod attach_rules;
+
+pub use attach_rules::{validate_attach, AttachError, WriterState};
 
 /// Self-describing block header. Writer: gz plugin.
 #[repr(C)]
@@ -94,12 +106,21 @@ pub struct ModelStateBlock {
     pub sim_step: u64,
     /// Simulation time (µs). Rewinds to zero on a world reset.
     pub time_us: u64,
-    /// Position (m), world ENU.
-    pub pos: [f64; 3],
-    /// Orientation quaternion [w, x, y, z], ENU-world / FLU-body.
-    pub quat: [f64; 4],
-    /// Linear velocity [m/s], world ENU.
-    pub vel: [f64; 3],
+    /// Position (m), world ENU — IEEE-754 `f64` BIT PATTERNS.
+    ///
+    /// Every payload lane is a `u64` on the wire, not a `double`.
+    /// Both sides access lanes atomically, and typing them as
+    /// integers means neither side has to pun a `double*` into a
+    /// `uint64_t*` to do it: that pun is an object-access /
+    /// strict-aliasing hazard in C++ and an avoidable cast in Rust.
+    /// Convert at the boundary (`f64::from_bits` / `memcpy`), never
+    /// in the middle.
+    pub pos_bits: [u64; 3],
+    /// Orientation quaternion [w, x, y, z], ENU-world / FLU-body —
+    /// `f64` bit patterns (see [`Self::pos_bits`]).
+    pub quat_bits: [u64; 4],
+    /// Linear velocity [m/s], world ENU — `f64` bit patterns.
+    pub vel_bits: [u64; 3],
     /// Angular velocity [rad/s] in the WORLD ENU frame — gz's
     /// `WorldAngularVelocity` component verbatim, not a body-frame
     /// gyro.
@@ -109,7 +130,7 @@ pub struct ModelStateBlock {
     /// so the X500 FC does not use it — `synthesize.rs` derives body
     /// rates from successive `quat` samples instead. Treat this lane
     /// as advisory until a consumer proves the component's fidelity.
-    pub ang_vel: [f64; 3],
+    pub ang_vel_bits: [u64; 3],
     /// Non-zero once the first physics step has been published.
     pub valid: u32,
     /// Padding; zero.
@@ -128,10 +149,11 @@ pub struct MotorCommandBlock {
     pub seq: u32,
     /// Number of populated `motor_vel` lanes.
     pub num_motors: u32,
-    /// Rotor angular-velocity setpoints [rad/s]. The FC applies the
-    /// resolved actuator curve BEFORE writing — values here are
+    /// Rotor angular-velocity setpoints [rad/s] as `f64` bit
+    /// patterns (see [`ModelStateBlock::pos_bits`]). The FC applies
+    /// the resolved actuator curve BEFORE writing — values here are
     /// boundary commands, never force-domain thrust (#140).
-    pub motor_vel: [f64; 8],
+    pub motor_vel_bits: [u64; 8],
     /// Last `sim_step` the FC finished processing. Doubles as the FC
     /// liveness heartbeat and as the lockstep acknowledgement the
     /// plugin blocks on. Accessed as a bare aligned atomic, OUTSIDE
@@ -291,65 +313,6 @@ impl FcState {
     }
 }
 
-/// Attach-time validation failure. Every variant names what was
-/// found so a mismatch is diagnosable from the error alone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AttachError {
-    /// First eight bytes were not [`MAGIC`].
-    BadMagic {
-        /// Value found at offset 0.
-        found: u64,
-    },
-    /// Layout version differs from this crate's.
-    VersionMismatch {
-        /// Version found in the header.
-        found: u32,
-    },
-    /// The writer declared a different structure size than this
-    /// crate compiled.
-    DeclaredSizeMismatch {
-        /// `declared_size` found in the header.
-        found: u32,
-    },
-    /// The mapped object is smaller than the structure. (Larger is
-    /// legal: macOS rounds `st_size` up to the page, so the check is
-    /// `actual < expected` fails — never `==`.)
-    MappingTooSmall {
-        /// Object size reported by the OS.
-        actual: usize,
-    },
-}
-
-/// Fail-closed attach validation (#262): magic, layout version,
-/// declared size, and mapped-object size must all agree before a
-/// single payload field is interpreted.
-pub fn validate_attach(
-    magic: u64,
-    layout_version: u32,
-    declared_size: u32,
-    actual_object_size: usize,
-) -> Result<(), AttachError> {
-    if actual_object_size < EXPECTED_SIZE {
-        return Err(AttachError::MappingTooSmall {
-            actual: actual_object_size,
-        });
-    }
-    if magic != MAGIC {
-        return Err(AttachError::BadMagic { found: magic });
-    }
-    if layout_version != LAYOUT_VERSION {
-        return Err(AttachError::VersionMismatch {
-            found: layout_version,
-        });
-    }
-    if declared_size as usize != EXPECTED_SIZE {
-        return Err(AttachError::DeclaredSizeMismatch {
-            found: declared_size,
-        });
-    }
-    Ok(())
-}
-
 // Layout freeze: any drift in size or field offset is a compile
 // error here before it can become a cross-process runtime bug.
 const _: () = {
@@ -380,15 +343,15 @@ const _: () = {
     assert!(offset_of!(ModelStateBlock, reset_generation) == 4);
     assert!(offset_of!(ModelStateBlock, sim_step) == 8);
     assert!(offset_of!(ModelStateBlock, time_us) == 16);
-    assert!(offset_of!(ModelStateBlock, pos) == 24);
-    assert!(offset_of!(ModelStateBlock, quat) == 48);
-    assert!(offset_of!(ModelStateBlock, vel) == 80);
-    assert!(offset_of!(ModelStateBlock, ang_vel) == 104);
+    assert!(offset_of!(ModelStateBlock, pos_bits) == 24);
+    assert!(offset_of!(ModelStateBlock, quat_bits) == 48);
+    assert!(offset_of!(ModelStateBlock, vel_bits) == 80);
+    assert!(offset_of!(ModelStateBlock, ang_vel_bits) == 104);
     assert!(offset_of!(ModelStateBlock, valid) == 128);
 
     assert!(offset_of!(MotorCommandBlock, seq) == 0);
     assert!(offset_of!(MotorCommandBlock, num_motors) == 4);
-    assert!(offset_of!(MotorCommandBlock, motor_vel) == 8);
+    assert!(offset_of!(MotorCommandBlock, motor_vel_bits) == 8);
     assert!(offset_of!(MotorCommandBlock, fc_step_ack) == 72);
 
     assert!(offset_of!(ControlBlock, lifecycle_request) == 0);
@@ -429,6 +392,12 @@ mod tests {
         assert!(matches!(
             validate_attach(MAGIC, LAYOUT_VERSION, EXPECTED_SIZE as u32, 216),
             Err(AttachError::MappingTooSmall { actual: 216 })
+        ));
+        // The creation window (name published, ftruncate pending) is
+        // retryable, never a contract violation.
+        assert!(matches!(
+            validate_attach(0, 0, 0, 0),
+            Err(AttachError::Initializing)
         ));
     }
 

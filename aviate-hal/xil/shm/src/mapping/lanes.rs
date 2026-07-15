@@ -26,36 +26,30 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 // the generated C header.
 // ---------------------------------------------------------------
 
+/// Read `N` `f64` lanes stored as bit patterns, converting at the
+/// boundary. The wire type is `u64` precisely so no side has to pun
+/// a float pointer into an integer one to access it atomically.
+///
 /// # Safety
-/// `p` must be an 8-byte-aligned lane inside a validated mapping,
-/// accessed only through these helpers.
+/// `p` must be an 8-byte-aligned lane array inside a validated
+/// mapping, accessed only through these helpers.
 #[inline]
-pub(crate) unsafe fn load_f64(p: *const f64) -> f64 {
-    f64::from_bits(AtomicU64::from_ptr(p as *mut u64).load(Ordering::Relaxed))
+pub(crate) unsafe fn load_f64_lanes<const N: usize>(p: *const [u64; N]) -> [f64; N] {
+    let base = p.cast::<u64>();
+    core::array::from_fn(|i| {
+        f64::from_bits(AtomicU64::from_ptr(base.add(i) as *mut u64).load(Ordering::Relaxed))
+    })
 }
 
+/// Write `N` `f64` lanes as bit patterns.
+///
 /// # Safety
-/// See [`load_f64`].
+/// See [`load_f64_lanes`].
 #[inline]
-pub(crate) unsafe fn store_f64(p: *mut f64, v: f64) {
-    AtomicU64::from_ptr(p.cast::<u64>()).store(v.to_bits(), Ordering::Relaxed);
-}
-
-/// # Safety
-/// See [`load_f64`].
-#[inline]
-pub(crate) unsafe fn load_f64_lanes<const N: usize>(p: *const [f64; N]) -> [f64; N] {
-    let base = p.cast::<f64>();
-    core::array::from_fn(|i| load_f64(base.add(i)))
-}
-
-/// # Safety
-/// See [`load_f64`].
-#[inline]
-pub(crate) unsafe fn store_f64_lanes<const N: usize>(p: *mut [f64; N], v: &[f64; N]) {
-    let base = p.cast::<f64>();
+pub(crate) unsafe fn store_f64_lanes<const N: usize>(p: *mut [u64; N], v: &[f64; N]) {
+    let base = p.cast::<u64>();
     for (i, lane) in v.iter().enumerate() {
-        store_f64(base.add(i), *lane);
+        AtomicU64::from_ptr(base.add(i)).store(lane.to_bits(), Ordering::Relaxed);
     }
 }
 

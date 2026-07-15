@@ -31,6 +31,7 @@ use std::time::{Duration, Instant};
 
 use aviate_backend_gz::{AviateModelState, GzPluginBridge};
 use aviate_board_sitl_gazebo::GazeboSitlBoard;
+use aviate_xil_contract::WriterState;
 
 use crate::noise::{NoiseRng, NoiseTier};
 use crate::synthesize::{apply_packet_noise, cmd_to_omega, synthesize_packet};
@@ -62,7 +63,7 @@ fn main() -> std::io::Result<()> {
     // ~15–20 s on a cold cache (gz-sim doing first-time dlopen +
     // physics init); the previous 5 s window timed out before the
     // shm region was populated.
-    let plugin = GzPluginBridge::connect_with_retry(240, 250)
+    let mut plugin = GzPluginBridge::connect_with_retry(240, 250)
         .map_err(|e| std::io::Error::other(format!("gz plugin: {e:?}")))?;
     log::info!("connected to AviateGzPlugin");
 
@@ -87,7 +88,52 @@ fn main() -> std::io::Result<()> {
     let cycle = Duration::from_micros(CYCLE_PERIOD_US);
     let mut next_tick = Instant::now() + cycle;
 
+    // Re-attach checks are a slow path: a few syscalls plus a
+    // transient mapping. At 1 kHz that is pure overhead, so poll the
+    // writer's identity about once a second — a restart takes far
+    // longer than that to matter.
+    let writer_check_every = 1_000;
+    let mut cycles_since_writer_check: u32 = 0;
+
     loop {
+        // 0. Has the simulator we are bound to been replaced?
+        //    Without this the FC outlives its plugin: the old
+        //    mapping keeps serving the dead world's final snapshot
+        //    and every motor command lands in memory no one reads,
+        //    all while looking perfectly healthy.
+        cycles_since_writer_check += 1;
+        if cycles_since_writer_check >= writer_check_every {
+            cycles_since_writer_check = 0;
+            match plugin.writer_state() {
+                WriterState::Current => {}
+                state @ (WriterState::Replaced | WriterState::Gone) => {
+                    log::warn!("simulator {state:?}; re-attaching to the live block");
+                    match GzPluginBridge::connect_with_retry(240, 250) {
+                        Ok(fresh) => {
+                            plugin = fresh;
+                            last_state = None;
+                            last_t_us = 0;
+                            last_ned_vel = [0.0; 3];
+                            log::info!("re-attached to AviateGzPlugin");
+                        }
+                        Err(e) => {
+                            return Err(std::io::Error::other(format!(
+                                "simulator {state:?} and re-attach failed: {e:?}"
+                            )));
+                        }
+                    }
+                }
+                WriterState::Initializing => {
+                    log::debug!("simulator initializing; keeping the current attachment");
+                }
+                WriterState::ContractMismatch => {
+                    return Err(std::io::Error::other(
+                        "the live shm block no longer matches this build's contract",
+                    ));
+                }
+            }
+        }
+
         // 1. Read the latest ground-truth model state from the plugin.
         if let Some(state) = plugin.get_model_state() {
             // 2. Synthesize a sensor packet from ground truth. The

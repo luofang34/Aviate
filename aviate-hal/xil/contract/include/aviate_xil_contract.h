@@ -15,9 +15,17 @@
 // by a test.)
 #define AviateMAGIC 4708031005397960538
 
-// Layout version of [`SharedStateV2`]. Any layout change bumps this;
-// consumers reject a mismatch on attach.
-#define AviateLAYOUT_VERSION 2
+// Layout version of [`SharedStateV2`]. Any layout OR protocol
+// change bumps this; consumers reject a mismatch on attach.
+//
+// v3: payload lanes are explicit `u64` bit patterns (v2 typed them
+// `f64`/`double`, which forced both sides to pun a `double*` into a
+// `uint64_t*` for atomic access — an object-access/aliasing hazard
+// in C++ and a needless cast in Rust). v3 also adds
+// `writer_incarnation` and requires the initialisation and reset
+// protocols v2 lacked. An installed v2 plugin must NOT be accepted
+// by a v3 endpoint: it publishes with the old protocol.
+#define AviateLAYOUT_VERSION 3
 
 // Retry budget for [`seqlock_read`]: with a 1 kHz writer a reader
 // virtually never observes more than one in-flight write; a bounded
@@ -131,12 +139,21 @@ typedef struct AviateModelStateBlock {
   uint64_t sim_step;
   // Simulation time (µs). Rewinds to zero on a world reset.
   uint64_t time_us;
-  // Position (m), world ENU.
-  double pos[3];
-  // Orientation quaternion [w, x, y, z], ENU-world / FLU-body.
-  double quat[4];
-  // Linear velocity [m/s], world ENU.
-  double vel[3];
+  // Position (m), world ENU — IEEE-754 `f64` BIT PATTERNS.
+  //
+  // Every payload lane is a `u64` on the wire, not a `double`.
+  // Both sides access lanes atomically, and typing them as
+  // integers means neither side has to pun a `double*` into a
+  // `uint64_t*` to do it: that pun is an object-access /
+  // strict-aliasing hazard in C++ and an avoidable cast in Rust.
+  // Convert at the boundary (`f64::from_bits` / `memcpy`), never
+  // in the middle.
+  uint64_t pos_bits[3];
+  // Orientation quaternion [w, x, y, z], ENU-world / FLU-body —
+  // `f64` bit patterns (see [`Self::pos_bits`]).
+  uint64_t quat_bits[4];
+  // Linear velocity [m/s], world ENU — `f64` bit patterns.
+  uint64_t vel_bits[3];
   // Angular velocity [rad/s] in the WORLD ENU frame — gz's
   // `WorldAngularVelocity` component verbatim, not a body-frame
   // gyro.
@@ -146,7 +163,7 @@ typedef struct AviateModelStateBlock {
   // so the X500 FC does not use it — `synthesize.rs` derives body
   // rates from successive `quat` samples instead. Treat this lane
   // as advisory until a consumer proves the component's fidelity.
-  double ang_vel[3];
+  uint64_t ang_vel_bits[3];
   // Non-zero once the first physics step has been published.
   uint32_t valid;
   // Padding; zero.
@@ -163,10 +180,11 @@ typedef struct AviateMotorCommandBlock {
   uint32_t seq;
   // Number of populated `motor_vel` lanes.
   uint32_t num_motors;
-  // Rotor angular-velocity setpoints [rad/s]. The FC applies the
-  // resolved actuator curve BEFORE writing — values here are
+  // Rotor angular-velocity setpoints [rad/s] as `f64` bit
+  // patterns (see [`ModelStateBlock::pos_bits`]). The FC applies
+  // the resolved actuator curve BEFORE writing — values here are
   // boundary commands, never force-domain thrust (#140).
-  double motor_vel[8];
+  uint64_t motor_vel_bits[8];
   // Last `sim_step` the FC finished processing. Doubles as the FC
   // liveness heartbeat and as the lockstep acknowledgement the
   // plugin blocks on. Accessed as a bare aligned atomic, OUTSIDE

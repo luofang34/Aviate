@@ -4,7 +4,7 @@
 
 use aviate_xil_contract::{
     pack_fc_status, pack_lifecycle_request, unpack_fc_status, unpack_lifecycle_request, FcState,
-    LifecycleRequest,
+    LifecycleRequest, WriterState,
 };
 
 use crate::mapping::{AttachFailure, Mapping, ModelStateSnapshot};
@@ -22,20 +22,22 @@ macro_rules! shared_readers {
             self.mapping.plugin_ready()
         }
 
-        /// Whether the shm object behind this mapping has been
-        /// REPLACED — the writer crashed (so `plugin_ready` stayed
-        /// set in the now-orphaned memory) and created a fresh
-        /// object under the same name. This mapping can then only
-        /// serve the dead world's final snapshot forever, so the
-        /// consumer must re-attach.
+        /// What the name behind this mapping resolves to right now.
         ///
-        /// The full staleness protocol for a consumer is: stop
-        /// trusting the source when `plugin_ready()` goes false
-        /// (clean writer exit — `read_model_state` already returns
-        /// `None`), and re-attach when this returns true (writer
-        /// crash + recreate).
-        pub fn writer_replaced(&self) -> bool {
-            self.mapping.writer_replaced()
+        /// This is the whole staleness protocol in one call, and it
+        /// cannot be a boolean: a writer that exited (`Gone`) and a
+        /// writer that is still the same one (`Current`) are
+        /// opposite conclusions that a `replaced: bool` collapses
+        /// into the same `false`, leaving an orphaned mapping
+        /// looking healthy forever.
+        ///
+        /// * [`WriterState::Current`] — reads are trustworthy.
+        /// * [`WriterState::Replaced`] / [`WriterState::Gone`] —
+        ///   re-attach; this mapping only serves a dead world.
+        /// * [`WriterState::Initializing`] — retry shortly.
+        /// * [`WriterState::ContractMismatch`] — fail closed.
+        pub fn writer_state(&self) -> WriterState {
+            self.mapping.writer_state()
         }
 
         /// One coherent `{generation, step, time, state}` snapshot.
@@ -120,8 +122,15 @@ impl SimWriterSession {
     }
 
     /// Bump the world epoch (world reset) and return the new value.
+    ///
+    /// Retires the outgoing snapshot in the same act: the previous
+    /// epoch's pose stays in the block until the new world publishes
+    /// its first step, and it is valid and coherent — just from a
+    /// world that no longer exists.
     pub fn bump_reset_generation(&self) -> u32 {
-        self.mapping.bump_reset_generation()
+        let generation = self.mapping.bump_reset_generation();
+        self.mapping.invalidate_model_state(generation);
+        generation
     }
 
     /// One coherent motor-command snapshot: `(velocities, count)`.

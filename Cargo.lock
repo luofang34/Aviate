@@ -125,6 +125,7 @@ dependencies = [
  "aviate-board-sitl-gazebo",
  "aviate-core",
  "aviate-hal-xil",
+ "aviate-xil-contract",
  "env_logger",
  "log",
 ]

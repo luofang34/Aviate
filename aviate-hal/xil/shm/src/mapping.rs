@@ -6,12 +6,12 @@
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::ffi::CString;
 
-use aviate_xil_contract::{seqlock_read, seqlock_write, SharedStateV2, EXPECTED_SIZE};
+use aviate_xil_contract::{seqlock_read, seqlock_write, SharedStateV2, WriterState, EXPECTED_SIZE};
 
 mod attach;
 mod lanes;
 
-use attach::live_incarnation;
+use attach::writer_state;
 pub use attach::AttachFailure;
 
 use lanes::{load_f64_lanes, load_u32, load_u64, store_f64_lanes, store_u32, store_u64};
@@ -121,6 +121,24 @@ impl Mapping {
         }
     }
 
+    /// Retire the current snapshot: publish `valid = 0` through the
+    /// state seqlock so no reader can consume the previous epoch's
+    /// pose while the new world spins up. Simulation-writer role.
+    pub(crate) fn invalidate_model_state(&self, generation: u32) {
+        // SAFETY: writer-side seqlock publish, same as
+        // write_model_state.
+        unsafe {
+            let seq = AtomicU32::from_ptr(core::ptr::addr_of_mut!((*self.base).state.seq));
+            seqlock_write(seq, || {
+                store_u32(core::ptr::addr_of_mut!((*self.base).state.valid), 0);
+                store_u32(
+                    core::ptr::addr_of_mut!((*self.base).state.reset_generation),
+                    generation,
+                );
+            });
+        }
+    }
+
     /// Bump the world epoch (simulation-writer role only).
     pub(crate) fn bump_reset_generation(&self) -> u32 {
         // SAFETY: as above.
@@ -169,14 +187,27 @@ impl Mapping {
                         )),
                         sim_step: load_u64(core::ptr::addr_of!((*self.base).state.sim_step)),
                         time_us: load_u64(core::ptr::addr_of!((*self.base).state.time_us)),
-                        pos: load_f64_lanes(core::ptr::addr_of!((*self.base).state.pos)),
-                        quat: load_f64_lanes(core::ptr::addr_of!((*self.base).state.quat)),
-                        vel: load_f64_lanes(core::ptr::addr_of!((*self.base).state.vel)),
-                        ang_vel: load_f64_lanes(core::ptr::addr_of!((*self.base).state.ang_vel)),
+                        pos: load_f64_lanes(core::ptr::addr_of!((*self.base).state.pos_bits)),
+                        quat: load_f64_lanes(core::ptr::addr_of!((*self.base).state.quat_bits)),
+                        vel: load_f64_lanes(core::ptr::addr_of!((*self.base).state.vel_bits)),
+                        ang_vel: load_f64_lanes(core::ptr::addr_of!(
+                            (*self.base).state.ang_vel_bits
+                        )),
                     },
                 )
             })?;
             if valid == 0 {
+                return None;
+            }
+            // Double-check the epoch. The snapshot carries the
+            // generation it was published under; the header carries
+            // the generation the world is in NOW. Between a reset
+            // bumping the header and the next publish landing, the
+            // block still holds the PREVIOUS epoch's pose — valid,
+            // coherent, and from a world that no longer exists.
+            // Serving it would teleport a consumer back into the
+            // pre-reset flight.
+            if snapshot.reset_generation != self.reset_generation() {
                 return None;
             }
             Some(snapshot)
@@ -188,14 +219,8 @@ impl Mapping {
     /// the orphaned mapping) and created a fresh object under the
     /// same name. The consumer must re-attach; this mapping can only
     /// ever serve the dead world's last snapshot.
-    pub(crate) fn writer_replaced(&self) -> bool {
-        match live_incarnation(&self.name) {
-            // A name that no longer resolves is a writer that exited
-            // and unlinked — that is `plugin_ready == 0`, not a
-            // replacement.
-            None => false,
-            Some(live) => live != self.incarnation,
-        }
+    pub(crate) fn writer_state(&self) -> WriterState {
+        writer_state(&self.name, self.incarnation)
     }
 
     /// Publish a model snapshot (simulation-writer role). The
@@ -220,11 +245,14 @@ impl Mapping {
                     core::ptr::addr_of_mut!((*self.base).state.time_us),
                     s.time_us,
                 );
-                store_f64_lanes(core::ptr::addr_of_mut!((*self.base).state.pos), &s.pos);
-                store_f64_lanes(core::ptr::addr_of_mut!((*self.base).state.quat), &s.quat);
-                store_f64_lanes(core::ptr::addr_of_mut!((*self.base).state.vel), &s.vel);
+                store_f64_lanes(core::ptr::addr_of_mut!((*self.base).state.pos_bits), &s.pos);
                 store_f64_lanes(
-                    core::ptr::addr_of_mut!((*self.base).state.ang_vel),
+                    core::ptr::addr_of_mut!((*self.base).state.quat_bits),
+                    &s.quat,
+                );
+                store_f64_lanes(core::ptr::addr_of_mut!((*self.base).state.vel_bits), &s.vel);
+                store_f64_lanes(
+                    core::ptr::addr_of_mut!((*self.base).state.ang_vel_bits),
                     &s.ang_vel,
                 );
                 store_u32(core::ptr::addr_of_mut!((*self.base).state.valid), 1);
@@ -244,7 +272,7 @@ impl Mapping {
             let seq = AtomicU32::from_ptr(core::ptr::addr_of_mut!((*self.base).command.seq));
             seqlock_write(seq, || {
                 store_f64_lanes(
-                    core::ptr::addr_of_mut!((*self.base).command.motor_vel),
+                    core::ptr::addr_of_mut!((*self.base).command.motor_vel_bits),
                     &lanes,
                 );
                 store_u32(
@@ -263,7 +291,7 @@ impl Mapping {
             let seq = AtomicU32::from_ptr(core::ptr::addr_of_mut!((*self.base).command.seq));
             seqlock_read(seq, || {
                 (
-                    load_f64_lanes(core::ptr::addr_of!((*self.base).command.motor_vel)),
+                    load_f64_lanes(core::ptr::addr_of!((*self.base).command.motor_vel_bits)),
                     load_u32(core::ptr::addr_of!((*self.base).command.num_motors)),
                 )
             })
