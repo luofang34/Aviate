@@ -234,16 +234,25 @@ impl Mapping {
                 libc::munmap(ptr, EXPECTED_SIZE);
                 return Err(AttachFailure::NotReady);
             }
-            // And demand a LIVE writer. A crashed writer's block
-            // passes every in-memory check above — name, size,
-            // fingerprint, ready, incarnation all survive the crash —
-            // so without the lease probe a consumer happily attaches
-            // to a corpse and trusts its frozen final snapshot. A
-            // probe that cannot run is not a verdict: its error
-            // propagates instead of being read as either answer.
+            // And demand that THIS block's writer is the live one.
+            // A crashed writer's block passes every in-memory check
+            // above — name, size, fingerprint, ready, incarnation
+            // all survive the crash — so without the lease probe a
+            // consumer happily attaches to a corpse and trusts its
+            // frozen final snapshot. And a held lease alone is not
+            // enough: between a successor's grant and its object
+            // creation, the name still resolves to the corpse while
+            // "some writer" is genuinely alive — the grant's counter
+            // must equal the incarnation just read from the header,
+            // or this mapping belongs to a writer the lease does not
+            // vouch for. Mismatch is NotReady (the successor's
+            // object is coming); a probe that cannot run is not a
+            // verdict, and its error propagates instead of being
+            // read as either answer.
             match super::lease::writer_liveness(name) {
-                super::lease::WriterLiveness::Alive => {}
-                super::lease::WriterLiveness::Dead => {
+                super::lease::WriterLiveness::Alive(lease_incarnation)
+                    if lease_incarnation == incarnation => {}
+                super::lease::WriterLiveness::Alive(_) | super::lease::WriterLiveness::Dead => {
                     libc::munmap(ptr, EXPECTED_SIZE);
                     return Err(AttachFailure::NotReady);
                 }
@@ -258,87 +267,6 @@ impl Mapping {
                 owner: false,
                 incarnation,
                 lease: None,
-            })
-        }
-    }
-}
-
-impl Mapping {
-    /// Create the object at SIZE ZERO — the `shm_open`-published,
-    /// not-yet-`ftruncate`d window. Test-only, like
-    /// [`Mapping::create_mid_init_for_test`]: the real window is
-    /// microseconds wide, so the regression test manufactures it.
-    /// The returned value holds the lease and the (unsized) object;
-    /// dropping it unlinks the name.
-    #[cfg(test)]
-    pub(crate) fn create_zero_sized_for_test(name: &str) -> io::Result<ZeroSizedObject> {
-        let lease = super::lease::WriterLease::acquire(name)?;
-        let cname = cstring(name)?;
-        // SAFETY: plain libc calls; the fd is closed immediately (the
-        // named object persists until unlinked in Drop).
-        unsafe {
-            libc::shm_unlink(cname.as_ptr());
-            let fd = libc::shm_open(
-                cname.as_ptr(),
-                libc::O_CREAT | libc::O_RDWR,
-                0o666 as libc::c_uint,
-            );
-            if fd == -1 {
-                return Err(io::Error::last_os_error());
-            }
-            libc::close(fd);
-        }
-        Ok(ZeroSizedObject {
-            name: cname,
-            _lease: lease,
-        })
-    }
-
-    /// Create the object and stamp NOTHING — models a writer caught
-    /// mid-initialisation (block zeroed, fingerprint not yet
-    /// written, `plugin_ready` still 0). Test-only: it exists so the
-    /// attach order has a regression test, because that window is
-    /// otherwise microseconds wide and unhittable on demand.
-    #[cfg(test)]
-    pub(crate) fn create_mid_init_for_test(name: &str) -> io::Result<Self> {
-        let lease = super::lease::WriterLease::acquire(name)?;
-        let cname = cstring(name)?;
-        // SAFETY: same libc sequence as `create`, minus the
-        // fingerprint and readiness publication.
-        unsafe {
-            libc::shm_unlink(cname.as_ptr());
-            let fd = libc::shm_open(
-                cname.as_ptr(),
-                libc::O_CREAT | libc::O_RDWR,
-                0o666 as libc::c_uint,
-            );
-            if fd == -1 {
-                return Err(io::Error::last_os_error());
-            }
-            if libc::ftruncate(fd, EXPECTED_SIZE as libc::off_t) == -1 {
-                let e = io::Error::last_os_error();
-                libc::close(fd);
-                return Err(e);
-            }
-            let ptr = libc::mmap(
-                core::ptr::null_mut(),
-                EXPECTED_SIZE,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                fd,
-                0,
-            );
-            libc::close(fd);
-            if ptr == libc::MAP_FAILED {
-                return Err(io::Error::last_os_error());
-            }
-            core::ptr::write_bytes(ptr.cast::<u8>(), 0, EXPECTED_SIZE);
-            Ok(Self {
-                base: ptr.cast::<SharedStateV2>(),
-                name: cname,
-                owner: true,
-                incarnation: 0,
-                lease: Some(lease),
             })
         }
     }
@@ -441,18 +369,30 @@ unsafe fn inspect(base: *const SharedStateV2, attached_incarnation: u64) -> Writ
     WriterState::Current
 }
 
-/// Downgrade `Current` to `Gone` when no live process holds the
-/// writer lease: every in-block signal survives a crash, so only the
+/// Bind a raw `Current` to the lease before letting it stand:
+/// every in-block signal survives a crash, so only the
 /// kernel-released lock can distinguish "same healthy writer" from
-/// "corpse of the writer I attached to".
+/// "corpse of the writer I attached to" — and only the lock's
+/// COUNTER can distinguish "my writer is alive" from "somebody is
+/// alive". A raw `Current` proves the name still resolves to the
+/// attached incarnation; the lease must vouch for that same
+/// incarnation, or a successor mid-takeover (grant persisted,
+/// object not yet replaced) would revive the corpse as healthy.
 ///
-/// A probe that cannot run also downgrades — fail closed. `Current`
-/// is a promise that reads are trustworthy, and a broken probe
-/// cannot back that promise; `Gone` halts the caller's I/O, and the
-/// re-attach it triggers runs the same probe through
-/// [`Mapping::attach`], which propagates the underlying error as
-/// [`AttachFailure::Io`] instead of swallowing it.
-pub(super) fn confirm_alive(name: &CString, state: WriterState) -> WriterState {
+/// * lease incarnation == attachment incarnation → `Current`.
+/// * held by a different incarnation → `Replaced`: this
+///   attachment's writer has a live successor; re-attach.
+/// * lease free → `Gone`.
+/// * probe broken → `Gone`, fail closed. `Current` is a promise
+///   that reads are trustworthy, and a broken probe cannot back
+///   that promise; the re-attach this triggers runs the same probe
+///   through [`Mapping::attach`], which propagates the underlying
+///   error as [`AttachFailure::Io`] instead of swallowing it.
+pub(super) fn confirm_alive(
+    name: &CString,
+    attached_incarnation: u64,
+    state: WriterState,
+) -> WriterState {
     match state {
         WriterState::Current => {
             let liveness = name
@@ -465,7 +405,12 @@ pub(super) fn confirm_alive(name: &CString, state: WriterState) -> WriterState {
                     ))
                 });
             match liveness {
-                super::lease::WriterLiveness::Alive => WriterState::Current,
+                super::lease::WriterLiveness::Alive(lease_incarnation)
+                    if lease_incarnation == attached_incarnation =>
+                {
+                    WriterState::Current
+                }
+                super::lease::WriterLiveness::Alive(_) => WriterState::Replaced,
                 super::lease::WriterLiveness::Dead | super::lease::WriterLiveness::Unknown(_) => {
                     WriterState::Gone
                 }
@@ -479,22 +424,5 @@ fn cstring(name: &str) -> io::Result<CString> {
     CString::new(name).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in shm name"))
 }
 
-/// Test-only handle for a zero-sized shm object (see
-/// [`Mapping::create_zero_sized_for_test`]).
 #[cfg(test)]
-#[derive(Debug)]
-pub(crate) struct ZeroSizedObject {
-    name: CString,
-    _lease: super::lease::WriterLease,
-}
-
-#[cfg(test)]
-impl Drop for ZeroSizedObject {
-    fn drop(&mut self) {
-        // SAFETY: unlinking the name we created; mappings (none) are
-        // unaffected.
-        unsafe {
-            libc::shm_unlink(self.name.as_ptr());
-        }
-    }
-}
+mod test_support;

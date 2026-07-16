@@ -127,7 +127,7 @@ impl Mapping {
     }
 
     /// Retire the current snapshot: publish `valid = 0` through the
-    /// state seqlock so no reader can consume the previous epoch's
+    /// state seqlock so no reader can consume the retired epoch's
     /// pose while the new world spins up. Simulation-writer role.
     pub(crate) fn invalidate_model_state(&self, generation: u32) {
         // SAFETY: writer-side seqlock publish, same as
@@ -208,7 +208,7 @@ impl Mapping {
             // generation it was published under; the header carries
             // the generation the world is in NOW. Between a reset
             // bumping the header and the next publish landing, the
-            // block still holds the PREVIOUS epoch's pose — valid,
+            // block still holds the retired epoch's pose — valid,
             // coherent, and from a world that no longer exists.
             // Serving it would teleport a consumer back into the
             // pre-reset flight.
@@ -225,7 +225,11 @@ impl Mapping {
     /// same name. The consumer must re-attach; this mapping can only
     /// ever serve the dead world's last snapshot.
     pub(crate) fn writer_state(&self) -> WriterState {
-        confirm_alive(&self.name, writer_state(&self.name, self.incarnation))
+        confirm_alive(
+            &self.name,
+            self.incarnation,
+            writer_state(&self.name, self.incarnation),
+        )
     }
 
     /// The incarnation this mapping was stamped with or attached to.

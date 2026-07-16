@@ -67,7 +67,13 @@ fn liveness_is_alive_only_while_the_exclusive_lock_is_held() {
     assert!(matches!(writer_liveness(&name), WriterLiveness::Dead));
 
     let lease = WriterLease::acquire(&name).unwrap();
-    assert!(matches!(writer_liveness(&name), WriterLiveness::Alive));
+    // Alive carries WHICH writer is alive: the probe's counter must
+    // be the very incarnation this grant received, or callers could
+    // not tell "my writer lives" from "somebody lives".
+    match writer_liveness(&name) {
+        WriterLiveness::Alive(incarnation) => assert_eq!(incarnation, lease.incarnation()),
+        other => panic!("a held lease must probe Alive, got {other:?}"),
+    }
 
     // Release: the file remains (it carries the counter and is
     // never unlinked), and the verdict flips to Dead. The flip is
@@ -82,7 +88,7 @@ fn liveness_is_alive_only_while_the_exclusive_lock_is_held() {
     loop {
         match writer_liveness(&name) {
             WriterLiveness::Dead => break,
-            WriterLiveness::Alive if std::time::Instant::now() < deadline => {
+            WriterLiveness::Alive(_) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(4));
             }
             other => panic!("a released lease must converge to Dead, got {other:?}"),
@@ -108,7 +114,7 @@ fn an_unreadable_lease_file_is_unknown_not_a_verdict() {
         WriterLiveness::Unknown(e) => {
             assert_eq!(e.raw_os_error(), Some(libc::EACCES));
         }
-        WriterLiveness::Alive => panic!("an unreadable lease read as a live writer"),
+        WriterLiveness::Alive(_) => panic!("an unreadable lease read as a live writer"),
         WriterLiveness::Dead => {
             panic!("an unreadable lease read as a dead writer — data would flow on a broken probe")
         }

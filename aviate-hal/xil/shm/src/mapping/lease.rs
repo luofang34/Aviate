@@ -114,13 +114,10 @@ fn flock_nb(fd: libc::c_int, op: libc::c_int) -> FlockOutcome {
     }
 }
 
-/// Advance the incarnation counter stored in the lease file's first
-/// 8 bytes (little-endian). Caller must hold the exclusive lock on
-/// `fd` — the lock is what makes read-increment-write atomic across
-/// processes. A file shorter than 8 bytes (canonically: freshly
-/// created and empty) reads as zero-padded, so the first grant on a
-/// fresh file yields 1.
-fn advance_counter(fd: libc::c_int) -> io::Result<u64> {
+/// Read the counter in the lease file's first 8 bytes
+/// (little-endian). A file shorter than 8 bytes (canonically:
+/// freshly created and empty) reads as zero-padded.
+fn read_counter(fd: libc::c_int) -> io::Result<u64> {
     let mut buf = [0u8; 8];
     let mut n = 0usize;
     while n < buf.len() {
@@ -146,7 +143,15 @@ fn advance_counter(fd: libc::c_int) -> io::Result<u64> {
         }
         n += rc as usize;
     }
-    let mut next = u64::from_le_bytes(buf).wrapping_add(1);
+    Ok(u64::from_le_bytes(buf))
+}
+
+/// Advance the incarnation counter in the lease file. Caller must
+/// hold the exclusive lock on `fd` — the lock is what makes
+/// read-increment-write atomic across processes; the first grant on
+/// a fresh (empty) file yields 1.
+fn advance_counter(fd: libc::c_int) -> io::Result<u64> {
+    let mut next = read_counter(fd)?.wrapping_add(1);
     if next == 0 {
         next = 1;
     }
@@ -281,8 +286,15 @@ impl Drop for WriterLease {
 /// kept separate from its verdict.
 #[derive(Debug)]
 pub(crate) enum WriterLiveness {
-    /// A live process holds the exclusive writer lock.
-    Alive,
+    /// A live process holds the exclusive writer lock. The carried
+    /// value is the counter its grant persisted — the incarnation of
+    /// the writer that IS alive. A held lease alone proves only that
+    /// some writer lives; callers must compare this against the
+    /// incarnation they attached to, because between a successor's
+    /// grant and its object creation the NAME still resolves to the
+    /// predecessor's corpse, and "some writer is alive" would revive
+    /// it.
+    Alive(u64),
     /// No process holds it — the writer exited or crashed, or none
     /// has ever run on this host (no lease file).
     Dead,
@@ -294,10 +306,20 @@ pub(crate) enum WriterLiveness {
 
 /// Probe the lease for `shm_name` with a non-blocking SHARED lock:
 /// a HELD verdict (`EWOULDBLOCK`/`EAGAIN` — nothing else) proves a
-/// live exclusive holder; a granted probe lock proves there is none
-/// and is released immediately. A missing lease file means no writer
-/// has ever run on this host — equally dead. Every other outcome is
+/// live exclusive holder, and the counter is then read to say WHICH
+/// writer that is; a granted probe lock proves there is none and is
+/// released immediately. A missing lease file means no writer has
+/// ever run on this host — equally dead. Every other outcome —
+/// including a held lock whose counter cannot be read — is
 /// [`WriterLiveness::Unknown`].
+///
+/// The counter is read AFTER the held verdict, so the value belongs
+/// to a grant no older than the holder observed. One window remains
+/// open by nature: inside `acquire`, between the flock being granted
+/// and the counter's pwrite landing, a probe reads the prior value —
+/// microseconds, unclosable from outside the lock, and every caller
+/// of this function re-polls, so the misread converges on the next
+/// poll.
 pub(crate) fn writer_liveness(shm_name: &str) -> WriterLiveness {
     let Ok(path) = CString::new(lease_path(shm_name)) else {
         return WriterLiveness::Unknown(io::Error::new(
@@ -318,12 +340,16 @@ pub(crate) fn writer_liveness(shm_name: &str) -> WriterLiveness {
             };
         }
         let outcome = flock_nb(fd, libc::LOCK_SH);
-        libc::close(fd); // also releases the probe lock if taken
-        match outcome {
-            FlockOutcome::Held => WriterLiveness::Alive,
+        let verdict = match outcome {
+            FlockOutcome::Held => match read_counter(fd) {
+                Ok(incarnation) => WriterLiveness::Alive(incarnation),
+                Err(e) => WriterLiveness::Unknown(e),
+            },
             FlockOutcome::Acquired => WriterLiveness::Dead,
             FlockOutcome::Failed(e) => WriterLiveness::Unknown(e),
-        }
+        };
+        libc::close(fd); // also releases the probe lock if taken
+        verdict
     }
 }
 

@@ -418,7 +418,7 @@ void AviateGzPlugin::PostUpdate(
         modelEntity_ = gz::sim::kNullEntity;
         // Retire the outgoing snapshot in the same act. Until the new
         // world publishes its first step the block still holds the
-        // PREVIOUS epoch's pose — valid, coherent, and from a world
+        // retired epoch's pose — valid, coherent, and from a world
         // that no longer exists. Publishing valid = 0 through the
         // state seqlock stops a reader consuming it; the reader's
         // generation double-check is the second line of defence.
