@@ -163,7 +163,7 @@ impl SimWriterSession {
     /// and consumers re-key their freshness tracking on the new
     /// generation instead of re-attaching.
     ///
-    /// Retires the outgoing snapshot in the same act: the previous
+    /// Retires the outgoing snapshot in the same act: the retired
     /// epoch's pose stays in the block until the new world publishes
     /// its first step, and it is valid and coherent — just from a
     /// world that no longer exists.

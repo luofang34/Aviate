@@ -375,3 +375,94 @@ fn a_crashed_writer_is_gone_then_replaced_after_restart() {
     std::fs::remove_file(&ready_path).ok();
     std::fs::remove_file(&go_path).ok();
 }
+
+#[test]
+fn a_paused_successor_does_not_revive_the_corpse() {
+    if std::env::var(CROSS_PROC_ENV).is_ok()
+        || std::env::var(CROSS_PROC_MOTOR_ENV).is_ok()
+        || std::env::var(CROSS_PROC_CRASH_ENV).is_ok()
+    {
+        return; // this process IS a child; do not recurse
+    }
+    // The takeover window: a successor has taken the lease (its
+    // grant is persisted) but has not yet unlinked the corpse or
+    // created its own object, so the NAME still resolves to the
+    // predecessor's block while "some writer" is genuinely alive.
+    // The pause is deterministic — the successor here is a bare
+    // lease this test holds for as long as it likes.
+    let name = unique_name("ps");
+    let ready_path = std::env::temp_dir().join(format!("avxt_up_ps_{}", std::process::id()));
+    let go_path = std::env::temp_dir().join(format!("avxt_go_ps_{}", std::process::id()));
+    std::fs::remove_file(&ready_path).ok();
+    std::fs::remove_file(&go_path).ok();
+
+    let mut child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+        .args([
+            "--exact",
+            "roles::tests::cross_process::cross_process_child_crashing_writer",
+            "--nocapture",
+        ])
+        .env(CROSS_PROC_CRASH_ENV, &name)
+        .env(CROSS_PROC_READY_ENV, &ready_path)
+        .env(CROSS_PROC_GO_ENV, &go_path)
+        .spawn()
+        .expect("spawn the crashing writer");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while !ready_path.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "child never brought its world up"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let consumer = ConsumerSession::attach(&name).expect("attach to the live child world");
+    assert_eq!(consumer.writer_state(), WriterState::Current);
+
+    std::fs::write(&go_path, b"die").expect("send go signal");
+    let status = child.wait().expect("reap the child");
+    assert!(!status.success(), "the child must have died by abort");
+    assert_eq!(consumer.writer_state(), WriterState::Gone);
+
+    // Successor acquires the lease and PAUSES. Its grant advanced
+    // the counter past the corpse's incarnation before acquire
+    // returned, so the mismatch below is deterministic, not a race
+    // this test happens to win.
+    let paused = crate::mapping::lease::WriterLease::acquire(&name)
+        .expect("take over a crashed writer's lease");
+    assert_eq!(
+        paused.incarnation(),
+        consumer.mapping.incarnation().wrapping_add(1),
+        "the successor's grant is the corpse's incarnation + 1"
+    );
+
+    // A fresh attach finds the corpse at the name — valid
+    // fingerprint, ready flag intact, a genuinely live lease holder
+    // — and must still refuse it, retryably: the live writer is not
+    // the block's writer.
+    assert!(
+        matches!(ConsumerSession::attach(&name), Err(AttachFailure::NotReady)),
+        "a corpse must not be attachable on the strength of its successor's lease"
+    );
+    // The existing consumer must not flip back to Current either:
+    // its writer has a live successor, and Replaced is what sends
+    // it to re-attach (which stays NotReady until the successor's
+    // object is up).
+    assert_eq!(
+        consumer.writer_state(),
+        WriterState::Replaced,
+        "a corpse must not read as Current on the strength of its successor's lease"
+    );
+
+    // The paused successor completes: the corpse is replaced and
+    // the world becomes attachable again.
+    drop(paused);
+    let fresh = SimWriterSession::create(&name).expect("successor completes the takeover");
+    assert_eq!(consumer.writer_state(), WriterState::Replaced);
+    let reattached = ConsumerSession::attach(&name).expect("attach to the successor's world");
+    assert_eq!(reattached.writer_state(), WriterState::Current);
+    drop(fresh);
+
+    std::fs::remove_file(&ready_path).ok();
+    std::fs::remove_file(&go_path).ok();
+}

@@ -316,7 +316,7 @@ fn a_departed_writer_is_gone_not_current() {
 #[test]
 fn a_reset_retires_the_previous_epochs_snapshot() {
     // Between the generation bump and the new world's first publish,
-    // the block still holds the OLD epoch's pose: valid, coherent,
+    // the block still holds the retired epoch's pose: valid, coherent,
     // and from a world that no longer exists.
     let name = unique_name("rg");
     let writer = SimWriterSession::create(&name).unwrap();
@@ -366,7 +366,7 @@ fn a_reset_retires_the_previous_epochs_snapshot() {
 #[test]
 fn a_snapshot_from_a_stale_epoch_is_refused() {
     // Direct pin of the reader's generation double-check: a
-    // publisher that keeps stamping the OLD epoch after a bump (a
+    // publisher that keeps stamping the retired epoch after a bump (a
     // writer that has not noticed the reset) must not be believed.
     let name = unique_name("se");
     let writer = SimWriterSession::create(&name).unwrap();

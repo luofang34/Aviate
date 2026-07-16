@@ -139,6 +139,13 @@ typedef struct AviateSharedStateHeader {
   // fail to take over an actively held name rather than unlink a
   // live peer's object. The lease file itself is never unlinked
   // (removing a lock file races its next locker).
+  //
+  // Liveness and identity must be checked TOGETHER: a held lease
+  // proves some writer is alive, and only its counter says which.
+  // Between a successor's grant and its object creation the name
+  // still resolves to the predecessor's block, so an attachment
+  // is current only while the active grant's counter equals this
+  // field — "somebody is alive" must never revive a corpse.
   uint64_t writer_incarnation;
   // Reserved; zero. Pads the header to a full 64-byte cache-line
   // block: each block of this layout is written by exactly one
