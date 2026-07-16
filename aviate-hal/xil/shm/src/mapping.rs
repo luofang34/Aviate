@@ -10,7 +10,7 @@ use aviate_xil_contract::{seqlock_read, seqlock_write, SharedStateV2, WriterStat
 
 mod attach;
 mod lanes;
-mod lease;
+pub(crate) mod lease;
 
 pub use attach::AttachFailure;
 use attach::{confirm_alive, writer_state};
@@ -52,13 +52,13 @@ pub(crate) struct Mapping {
     owner: bool,
     /// Held for the writer's whole life; `None` for attachers. The
     /// kernel releases it on any exit, so its held/free state is the
-    /// liveness signal `writer_alive` probes.
+    /// liveness signal `writer_liveness` probes.
     lease: Option<lease::WriterLease>,
     /// The `writer_incarnation` of the object this mapping was taken
     /// from. A writer that dies and re-creates the object leaves
-    /// this mapping pointing at the OLD (still-mapped) memory, whose
-    /// last snapshot looks valid forever;
-    /// [`Mapping::writer_replaced`] re-reads the live name's
+    /// this mapping pointing at the dead object's (still-mapped)
+    /// memory, whose last snapshot looks valid forever;
+    /// [`Mapping::writer_state`] re-reads the live name's
     /// incarnation and compares, so a consumer can re-attach instead
     /// of serving a frozen world.
     incarnation: u64,
@@ -173,7 +173,7 @@ impl Mapping {
         // A writer that dropped or is mid-restart must not keep
         // feeding its last snapshot forever: the payload would look
         // perfectly valid and perfectly still. Consumers combine this
-        // with `writer_replaced()` for the crash-and-recreate case.
+        // with `writer_state()` for the crash-and-recreate case.
         if !self.plugin_ready() {
             return None;
         }
@@ -226,6 +226,12 @@ impl Mapping {
     /// ever serve the dead world's last snapshot.
     pub(crate) fn writer_state(&self) -> WriterState {
         confirm_alive(&self.name, writer_state(&self.name, self.incarnation))
+    }
+
+    /// The incarnation this mapping was stamped with or attached to.
+    #[cfg(test)]
+    pub(crate) fn incarnation(&self) -> u64 {
+        self.incarnation
     }
 
     /// Publish a model snapshot (simulation-writer role). The

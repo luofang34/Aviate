@@ -353,13 +353,14 @@ fn a_crashed_writer_is_gone_then_replaced_after_restart() {
     );
 
     // Crash-restart: a fresh writer takes the (kernel-released)
-    // lease and creates a new object; the old consumer sees the
-    // identity change and re-attaches into the new world.
+    // lease and creates a new object; the consumer still holding
+    // the corpse's mapping sees the identity change and re-attaches
+    // into the new world.
     let fresh = SimWriterSession::create(&name).expect("restart over a crashed predecessor");
     assert_eq!(
         consumer.writer_state(),
         WriterState::Replaced,
-        "after a restart the old attachment must see a new identity"
+        "after a restart the pre-crash attachment must see a new identity"
     );
     let reattached = ConsumerSession::attach(&name).expect("re-attach to the restarted world");
     assert_eq!(reattached.writer_state(), WriterState::Current);

@@ -81,9 +81,13 @@ macro_rules! shared_readers {
             unpack_fc_status(self.mapping.fc_status_packed())
         }
 
-        /// FC per-process nonce — consumers detect an FC restart by
-        /// a change here even though the shm object identity is
-        /// unchanged.
+        /// FC session nonce — watchers detect an FC restart or
+        /// re-attach by a change here even though the shm object
+        /// identity is unchanged. Owned by the FC endpoint:
+        /// [`FcSession::attach`] stamps `previous + 1` (wrapping,
+        /// zero skipped — zero means no FC has ever attached to
+        /// this object). Compare for equality only; the value
+        /// wraps.
         pub fn fc_session_nonce(&self) -> u32 {
             self.mapping.fc_session_nonce()
         }
@@ -117,8 +121,8 @@ impl SimWriterSession {
     /// * **Writer (re)start — THIS call.** A new shm object with a
     ///   fresh `writer_incarnation`. Consumers attached to the
     ///   previous object observe [`WriterState::Replaced`] and must
-    ///   re-attach; their old mapping can only ever serve the dead
-    ///   world's final snapshot.
+    ///   re-attach; the orphaned mapping can only ever serve the
+    ///   dead world's final snapshot.
     /// * **World reset — [`Self::bump_reset_generation`].** The SAME
     ///   object, epoch bumped in place. Consumers keep their
     ///   attachment (`writer_state()` stays
@@ -189,10 +193,27 @@ pub struct FcSession {
 
 impl FcSession {
     /// Attach read-write; fails closed on fingerprint or readiness.
+    ///
+    /// An attachment IS a session: attaching stamps the next
+    /// `fc_session_nonce` — the previous value advanced by
+    /// `wrapping_add(1)` with zero skipped, since zero is reserved
+    /// for "no FC has ever attached". The FC endpoint is the only
+    /// writer of the word, and stamping here (rather than trusting
+    /// each binary to remember) is what lets a watcher tell "the
+    /// same FC, still alive" from "an FC re-attached behind my
+    /// back". Watchers compare for equality only: the counter
+    /// wraps, and its ordering carries no meaning across a writer
+    /// restart (a fresh object resets it to zero).
     pub fn attach(name: &str) -> Result<Self, AttachFailure> {
-        Ok(Self {
+        let session = Self {
             mapping: Mapping::attach(name, false)?,
-        })
+        };
+        let mut next = session.mapping.fc_session_nonce().wrapping_add(1);
+        if next == 0 {
+            next = 1;
+        }
+        session.mapping.set_fc_session_nonce(next);
+        Ok(session)
     }
 
     shared_readers!();
@@ -221,13 +242,6 @@ impl FcSession {
     pub fn set_fc_status(&self, state: FcState, generation: u32) {
         self.mapping
             .set_fc_status_packed(pack_fc_status(generation, state));
-    }
-
-    /// Stamp this FC session's identity nonce (once per
-    /// attachment). Watchers detect an FC restart by a change here
-    /// even though the shm object identity is unchanged.
-    pub fn set_fc_session_nonce(&self, nonce: u32) {
-        self.mapping.set_fc_session_nonce(nonce);
     }
 }
 
