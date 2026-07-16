@@ -8,8 +8,8 @@
 use std::os::unix::fs::PermissionsExt;
 
 use super::{
-    classify_flock, flock_nb, lease_path, writer_liveness, FlockOutcome, FlockVerdict, WriterLease,
-    WriterLiveness,
+    classify_flock, flock_nb, lease_path, token_path, writer_liveness, FlockOutcome, FlockVerdict,
+    WriterLease, WriterLiveness,
 };
 
 fn unique_name(tag: &str) -> String {
@@ -17,6 +17,30 @@ fn unique_name(tag: &str) -> String {
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("/avt_ls_{tag}_{}_{n}", std::process::id())
+}
+
+/// Poll until the probe converges on a fully-dead verdict. The flip
+/// after a release is not instantaneous under load: a fork() in ANY
+/// thread of this test binary (the cross-process tests spawn
+/// children) pins a just-released lock until the child execs, and
+/// the kernel offers no event to wait on for that — so convergence
+/// is a bounded poll, exactly like the consumers built on it.
+fn assert_converges_to_dead(name: &str, incarnation: u64) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match writer_liveness(name, incarnation) {
+            WriterLiveness::Dead {
+                takeover_in_progress: false,
+            } => break,
+            WriterLiveness::Alive
+            | WriterLiveness::Dead {
+                takeover_in_progress: true,
+            } if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(4));
+            }
+            other => panic!("a released lease must converge to Dead, got {other:?}"),
+        }
+    }
 }
 
 #[test]
@@ -61,43 +85,85 @@ fn a_bad_descriptor_is_a_failure_not_a_held_lease() {
 }
 
 #[test]
-fn liveness_is_alive_only_while_the_exclusive_lock_is_held() {
+fn liveness_is_per_incarnation_not_per_name() {
     let name = unique_name("lv");
-    // No lease file yet: no writer has ever run.
-    assert!(matches!(writer_liveness(&name), WriterLiveness::Dead));
+    // No lease has ever existed: every incarnation is dead.
+    assert!(matches!(
+        writer_liveness(&name, 1),
+        WriterLiveness::Dead {
+            takeover_in_progress: false
+        }
+    ));
 
     let lease = WriterLease::acquire(&name).unwrap();
-    // Alive carries WHICH writer is alive: the probe's counter must
-    // be the very incarnation this grant received, or callers could
-    // not tell "my writer lives" from "somebody lives".
-    match writer_liveness(&name) {
-        WriterLiveness::Alive(incarnation) => assert_eq!(incarnation, lease.incarnation()),
-        other => panic!("a held lease must probe Alive, got {other:?}"),
+    let granted = lease.incarnation();
+    // The probe answers for ONE writer. The held token vouches for
+    // the incarnation this grant received — and for no other, or
+    // callers could not tell "my writer lives" from "somebody
+    // lives".
+    assert!(matches!(
+        writer_liveness(&name, granted),
+        WriterLiveness::Alive
+    ));
+    match writer_liveness(&name, granted.wrapping_sub(1)) {
+        WriterLiveness::Dead {
+            takeover_in_progress,
+        } => assert!(
+            takeover_in_progress,
+            "the held global lease must qualify a dead predecessor as replaced"
+        ),
+        other => panic!("a foreign incarnation read as {other:?}, not Dead"),
     }
 
-    // Release: the file remains (it carries the counter and is
-    // never unlinked), and the verdict flips to Dead. The flip is
-    // not instantaneous under load: a fork() in ANY thread of this
-    // test binary (the cross-process tests spawn children) pins the
-    // just-released lock until the child execs, and the kernel
-    // offers no event to wait on for that — so this convergence
-    // check is a bounded poll, exactly like the consumers built on
-    // it.
+    // Release: the lease file remains (it carries the counter and is
+    // never unlinked), and the verdict flips to fully dead.
     drop(lease);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    loop {
-        match writer_liveness(&name) {
-            WriterLiveness::Dead => break,
-            WriterLiveness::Alive(_) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(4));
-            }
-            other => panic!("a released lease must converge to Dead, got {other:?}"),
-        }
-    }
+    assert_converges_to_dead(&name, granted);
 }
 
 #[test]
-fn an_unreadable_lease_file_is_unknown_not_a_verdict() {
+fn a_grant_paused_before_its_counter_write_probes_dead() {
+    // THE takeover window at its widest: the successor holds the
+    // global lease but has not advanced the counter, so the lease
+    // file still carries the predecessor's incarnation. A verdict
+    // built on "the lock is held, and the counter says whose it is"
+    // reads the corpse's own number back and calls it alive; the
+    // token verdict must read Dead throughout.
+    let name = unique_name("pw");
+    let predecessor = WriterLease::acquire(&name).unwrap();
+    let corpse = predecessor.incarnation();
+    drop(predecessor); // the "crash"; the kernel released its locks
+
+    let paused = WriterLease::acquire_global_only_for_test(&name).unwrap();
+    match writer_liveness(&name, corpse) {
+        WriterLiveness::Dead {
+            takeover_in_progress,
+        } => assert!(
+            takeover_in_progress,
+            "the paused grant holds the global lease; the death is a takeover"
+        ),
+        other => panic!("the pre-counter window revived the corpse: {other:?}"),
+    }
+
+    // The window closes: the paused grant completes as a real one
+    // and only ITS incarnation reads alive.
+    drop(paused);
+    let successor = WriterLease::acquire(&name).unwrap();
+    assert_eq!(successor.incarnation(), corpse.wrapping_add(1));
+    assert!(matches!(
+        writer_liveness(&name, successor.incarnation()),
+        WriterLiveness::Alive
+    ));
+    assert!(matches!(
+        writer_liveness(&name, corpse),
+        WriterLiveness::Dead {
+            takeover_in_progress: true
+        }
+    ));
+}
+
+#[test]
+fn an_unreadable_token_file_is_unknown_not_a_verdict() {
     // SAFETY: geteuid has no preconditions.
     if unsafe { libc::geteuid() } == 0 {
         // Root bypasses file modes; the EACCES this test constructs
@@ -105,22 +171,36 @@ fn an_unreadable_lease_file_is_unknown_not_a_verdict() {
         return;
     }
     let name = unique_name("ur");
-    let path = lease_path(&name);
-    std::fs::write(&path, [0u8; 8]).unwrap();
-    let mode_zero = std::fs::Permissions::from_mode(0o000);
-    std::fs::set_permissions(&path, mode_zero).unwrap();
+    let path = token_path(&name, 7);
+    std::fs::write(&path, b"").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
 
-    match writer_liveness(&name) {
+    match writer_liveness(&name, 7) {
         WriterLiveness::Unknown(e) => {
             assert_eq!(e.raw_os_error(), Some(libc::EACCES));
         }
-        WriterLiveness::Alive(_) => panic!("an unreadable lease read as a live writer"),
-        WriterLiveness::Dead => {
-            panic!("an unreadable lease read as a dead writer — data would flow on a broken probe")
+        WriterLiveness::Alive => panic!("an unreadable token read as a live writer"),
+        WriterLiveness::Dead { .. } => {
+            panic!("an unreadable token read as a dead writer — data would flow on a broken probe")
         }
     }
 
+    // The same discipline for the global lease: with the token
+    // absent the writer is provably dead, but the takeover question
+    // is answered by a probe that cannot run — Unknown, not a guess.
+    let name2 = unique_name("ug");
+    let global = lease_path(&name2);
+    std::fs::write(&global, [0u8; 8]).unwrap();
+    std::fs::set_permissions(&global, std::fs::Permissions::from_mode(0o000)).unwrap();
+    match writer_liveness(&name2, 1) {
+        WriterLiveness::Unknown(e) => {
+            assert_eq!(e.raw_os_error(), Some(libc::EACCES));
+        }
+        other => panic!("an unreadable global lease read as a verdict: {other:?}"),
+    }
+
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::set_permissions(&global, std::fs::Permissions::from_mode(0o644)).unwrap();
 }
 
 #[test]
@@ -132,6 +212,12 @@ fn the_lease_counter_is_monotonic_and_skips_zero() {
     drop(first);
     let second = WriterLease::acquire(&name).unwrap();
     assert_eq!(second.incarnation(), a.wrapping_add(1));
+    // The successor retired its predecessor's token file: the value
+    // can never be granted again, so the file could only accumulate.
+    assert!(
+        !std::path::Path::new(&token_path(&name, a)).exists(),
+        "a grant must unlink its predecessor's token"
+    );
     drop(second);
 
     // Wrap: a counter at u64::MAX advances past the reserved zero.

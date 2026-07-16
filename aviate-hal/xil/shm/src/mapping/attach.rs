@@ -237,22 +237,21 @@ impl Mapping {
             // And demand that THIS block's writer is the live one.
             // A crashed writer's block passes every in-memory check
             // above — name, size, fingerprint, ready, incarnation
-            // all survive the crash — so without the lease probe a
-            // consumer happily attaches to a corpse and trusts its
-            // frozen final snapshot. And a held lease alone is not
-            // enough: between a successor's grant and its object
-            // creation, the name still resolves to the corpse while
-            // "some writer" is genuinely alive — the grant's counter
-            // must equal the incarnation just read from the header,
-            // or this mapping belongs to a writer the lease does not
-            // vouch for. Mismatch is NotReady (the successor's
-            // object is coming); a probe that cannot run is not a
+            // all survive the crash — so without the liveness probe
+            // a consumer happily attaches to a corpse and trusts its
+            // frozen final snapshot. The probe is of the incarnation
+            // just read from the header, and only that writer's own
+            // token can answer it: a successor mid-takeover holds
+            // the GLOBAL lease while the name still resolves to the
+            // corpse, and "some writer is alive" must never revive
+            // it. Dead is NotReady (a takeover in progress means the
+            // successor's object is coming; no takeover means a
+            // restart will); a probe that cannot run is not a
             // verdict, and its error propagates instead of being
             // read as either answer.
-            match super::lease::writer_liveness(name) {
-                super::lease::WriterLiveness::Alive(lease_incarnation)
-                    if lease_incarnation == incarnation => {}
-                super::lease::WriterLiveness::Alive(_) | super::lease::WriterLiveness::Dead => {
+            match super::lease::writer_liveness(name, incarnation) {
+                super::lease::WriterLiveness::Alive => {}
+                super::lease::WriterLiveness::Dead { .. } => {
                     libc::munmap(ptr, EXPECTED_SIZE);
                     return Err(AttachFailure::NotReady);
                 }
@@ -369,20 +368,21 @@ unsafe fn inspect(base: *const SharedStateV2, attached_incarnation: u64) -> Writ
     WriterState::Current
 }
 
-/// Bind a raw `Current` to the lease before letting it stand:
-/// every in-block signal survives a crash, so only the
-/// kernel-released lock can distinguish "same healthy writer" from
-/// "corpse of the writer I attached to" — and only the lock's
-/// COUNTER can distinguish "my writer is alive" from "somebody is
-/// alive". A raw `Current` proves the name still resolves to the
-/// attached incarnation; the lease must vouch for that same
-/// incarnation, or a successor mid-takeover (grant persisted,
-/// object not yet replaced) would revive the corpse as healthy.
+/// Bind a raw `Current` to the attached incarnation's own liveness
+/// token before letting it stand: every in-block signal survives a
+/// crash, so only a kernel-released lock can distinguish "same
+/// healthy writer" from "corpse of the writer I attached to" — and
+/// only THAT writer's token can answer for it. A successor
+/// mid-takeover holds the global lease while the name still
+/// resolves to the corpse, and no verdict built on the global lease
+/// (held, or held-plus-counter — the counter is the predecessor's
+/// until the successor's pwrite lands) may revive the corpse as
+/// healthy.
 ///
-/// * lease incarnation == attachment incarnation → `Current`.
-/// * held by a different incarnation → `Replaced`: this
+/// * the attached incarnation's token is held → `Current`.
+/// * dead with a takeover in progress → `Replaced`: this
 ///   attachment's writer has a live successor; re-attach.
-/// * lease free → `Gone`.
+/// * dead with no takeover → `Gone`.
 /// * probe broken → `Gone`, fail closed. `Current` is a promise
 ///   that reads are trustworthy, and a broken probe cannot back
 ///   that promise; the re-attach this triggers runs the same probe
@@ -397,7 +397,7 @@ pub(super) fn confirm_alive(
         WriterState::Current => {
             let liveness = name
                 .to_str()
-                .map(super::lease::writer_liveness)
+                .map(|n| super::lease::writer_liveness(n, attached_incarnation))
                 .unwrap_or_else(|_| {
                     super::lease::WriterLiveness::Unknown(io::Error::new(
                         io::ErrorKind::InvalidInput,
@@ -405,15 +405,14 @@ pub(super) fn confirm_alive(
                     ))
                 });
             match liveness {
-                super::lease::WriterLiveness::Alive(lease_incarnation)
-                    if lease_incarnation == attached_incarnation =>
-                {
-                    WriterState::Current
+                super::lease::WriterLiveness::Alive => WriterState::Current,
+                super::lease::WriterLiveness::Dead {
+                    takeover_in_progress: true,
+                } => WriterState::Replaced,
+                super::lease::WriterLiveness::Dead {
+                    takeover_in_progress: false,
                 }
-                super::lease::WriterLiveness::Alive(_) => WriterState::Replaced,
-                super::lease::WriterLiveness::Dead | super::lease::WriterLiveness::Unknown(_) => {
-                    WriterState::Gone
-                }
+                | super::lease::WriterLiveness::Unknown(_) => WriterState::Gone,
             }
         }
         other => other,

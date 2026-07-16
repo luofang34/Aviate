@@ -82,12 +82,23 @@ inline void StoreLaneRelaxed(uint64_t* p, double v)
 
 // The C++ half of the writer lease. The Rust side
 // (aviate-xil-shm's mapping/lease.rs) owns the protocol; both sides
-// must derive the same path and semantics without sharing code:
-// an exclusive flock on /tmp/<name>.lease, held for the writer's
-// whole life, released by the kernel on any exit including a crash.
-// The lease file is never unlinked — removing a lock file races its
-// next locker (two processes lock two different inodes behind one
-// path).
+// must derive the same paths and semantics without sharing code.
+// The writer holds TWO exclusive flocks for its whole life, both
+// released by the kernel on any exit including a crash:
+//
+// * the global lease /tmp/<name>.lease — serializes writers and
+//   carries the incarnation counter. Never unlinked: removing a
+//   lock file races its next locker (two processes lock two
+//   different inodes behind one path).
+// * the incarnation token /tmp/<name>.lease.<incarnation> — locked
+//   by the grant BEFORE the value can reach any block header, so a
+//   consumer probing "is the writer that stamped THIS incarnation
+//   alive?" gets an answer only that writer's own lock can give. A
+//   successor mid-takeover holds the global lease while the name
+//   still resolves to the corpse — the token is what stops that
+//   from reviving it. The grant unlinks its PREDECESSOR's token
+//   (the value is never granted twice; a probe racing the unlink
+//   reads "unlocked", the verdict the unlink preserves).
 std::string LeasePath(const std::string& shmName)
 {
     std::string base = shmName;
@@ -97,16 +108,23 @@ std::string LeasePath(const std::string& shmName)
     return "/tmp/" + base + ".lease";
 }
 
+std::string TokenPath(const std::string& shmName, uint64_t incarnation)
+{
+    return LeasePath(shmName) + "." + std::to_string(incarnation);
+}
+
 // Advance the incarnation counter in the lease file's first 8 bytes
-// (little-endian, mirroring lease.rs). Caller holds the exclusive
-// lock — that is what makes read-increment-write atomic across
-// processes. A file shorter than 8 bytes (canonically: freshly
-// created and empty) reads as zero-padded, so the first grant
-// yields 1. `wrapping` is uint64_t's native overflow; zero is
-// skipped because the block reserves it for "not stamped". The
-// value is persisted BEFORE any block carries it, so a writer that
-// dies between grant and stamp merely burns a number.
-bool AdvanceLeaseCounter(int fd, uint64_t* next)
+// (little-endian, mirroring lease.rs), reporting the previous value
+// too — the grant retires the predecessor's token file by it.
+// Caller holds the exclusive lock — that is what makes
+// read-increment-write atomic across processes. A file shorter than
+// 8 bytes (canonically: freshly created and empty) reads as
+// zero-padded, so the first grant yields 1. `wrapping` is
+// uint64_t's native overflow; zero is skipped because the block
+// reserves it for "not stamped". The value is persisted BEFORE any
+// block carries it, so a writer that dies between grant and stamp
+// merely burns a number.
+bool AdvanceLeaseCounter(int fd, uint64_t* prev, uint64_t* next)
 {
     uint8_t buf[8] = {0};
     size_t got = 0;
@@ -128,6 +146,7 @@ bool AdvanceLeaseCounter(int fd, uint64_t* next)
     for (size_t i = 0; i < sizeof(buf); ++i) {
         value |= static_cast<uint64_t>(buf[i]) << (8 * i);
     }
+    *prev = value;
     value += 1;
     if (value == 0) {
         value = 1;
@@ -155,9 +174,7 @@ bool AdvanceLeaseCounter(int fd, uint64_t* next)
     return true;
 }
 
-// Take the writer lease and advance its incarnation counter, or
-// return -1 (a live writer holds it, or the environment is broken —
-// each is logged distinctly).
+// Take an exclusive flock, or say precisely why not.
 //
 // flock results are classified by errno, mirroring lease.rs: EINTR
 // is a signal, not a verdict, and is retried; ONLY
@@ -165,16 +182,51 @@ bool AdvanceLeaseCounter(int fd, uint64_t* next)
 // errno is a broken probe and fails loudly rather than reading as
 // "held".
 //
-// O_CLOEXEC is load-bearing: flock locks ride the open file
-// description, which survives fork+exec, so without it any child
-// this process spawns keeps the lease alive after the writer exits.
-// The bounded retry sees through the same mechanism in the other
-// direction: a fork() anywhere in a lease-holding process briefly
-// pins a just-released lock (the child's duplicated fd holds it
-// until exec), so a held verdict only counts once it has persisted
-// past that window. A live writer holds its lease for its whole
-// life; 100 ms separates the two cleanly.
-int AcquireWriterLease(const std::string& shmName, uint64_t* incarnationOut)
+// The bounded retry sees through a fork-window pin: a fork()
+// anywhere in a lock-holding process briefly pins a just-released
+// lock (the child's duplicated fd holds it until exec), so a held
+// verdict only counts once it has persisted past that window. A
+// live writer holds its locks for its whole life; 100 ms separates
+// the two cleanly.
+bool LockExclusiveWithRetry(int fd, const std::string& path)
+{
+    constexpr int kAttempts = 25;
+    for (int attempt = 0; attempt < kAttempts; ++attempt) {
+        int rc;
+        do {
+            rc = flock(fd, LOCK_EX | LOCK_NB);
+        } while (rc == -1 && errno == EINTR);
+        if (rc == 0) {
+            return true;
+        }
+        if (errno != EWOULDBLOCK && errno != EAGAIN) {
+            std::cerr << "[AviateGzPlugin] flock failed on " << path
+                      << ": " << strerror(errno)
+                      << " (not a held lease; refusing to guess)" << std::endl;
+            return false;
+        }
+        if (attempt + 1 < kAttempts) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(4));
+        }
+    }
+    std::cerr << "[AviateGzPlugin] another live process holds "
+              << path << std::endl;
+    return false;
+}
+
+// Take the writer lease — the global lock, the counter advance, and
+// the incarnation token, in that order, all BEFORE the incarnation
+// is reported and can reach a block header. Returns the global
+// lease fd and sets *tokenFdOut, or returns -1 with both closed (a
+// live writer holds the name, or the environment is broken — each
+// is logged distinctly).
+//
+// O_CLOEXEC on both fds is load-bearing: flock locks ride the open
+// file description, which survives fork+exec, so without it any
+// child this process spawns keeps the locks alive after the writer
+// exits.
+int AcquireWriterLease(const std::string& shmName, uint64_t* incarnationOut,
+                       int* tokenFdOut)
 {
     const std::string path = LeasePath(shmName);
     int fd = open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0666);
@@ -183,36 +235,44 @@ int AcquireWriterLease(const std::string& shmName, uint64_t* incarnationOut)
                   << ": " << strerror(errno) << std::endl;
         return -1;
     }
-    constexpr int kAttempts = 25;
-    for (int attempt = 0; attempt < kAttempts; ++attempt) {
-        int rc;
-        do {
-            rc = flock(fd, LOCK_EX | LOCK_NB);
-        } while (rc == -1 && errno == EINTR);
-        if (rc == 0) {
-            if (!AdvanceLeaseCounter(fd, incarnationOut)) {
-                std::cerr << "[AviateGzPlugin] lease counter I/O failed on "
-                          << path << ": " << strerror(errno) << std::endl;
-                close(fd);
-                return -1;
-            }
-            return fd;
-        }
-        if (errno != EWOULDBLOCK && errno != EAGAIN) {
-            std::cerr << "[AviateGzPlugin] flock failed on " << path
-                      << ": " << strerror(errno)
-                      << " (not a held lease; refusing to guess)" << std::endl;
-            close(fd);
-            return -1;
-        }
-        if (attempt + 1 < kAttempts) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(4));
-        }
+    if (!LockExclusiveWithRetry(fd, path)) {
+        close(fd);
+        return -1;
     }
-    std::cerr << "[AviateGzPlugin] another live writer holds "
-              << path << std::endl;
-    close(fd);
-    return -1;
+    uint64_t prev = 0;
+    if (!AdvanceLeaseCounter(fd, &prev, incarnationOut)) {
+        std::cerr << "[AviateGzPlugin] lease counter I/O failed on "
+                  << path << ": " << strerror(errno) << std::endl;
+        close(fd);
+        return -1;
+    }
+    // The token. Nothing can hold it exclusively — the value has
+    // never been granted before — but a consumer's transient shared
+    // probe or a fork pin can briefly conflict, hence the same
+    // bounded retry.
+    const std::string token = TokenPath(shmName, *incarnationOut);
+    int tokenFd = open(token.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0666);
+    if (tokenFd == -1) {
+        std::cerr << "[AviateGzPlugin] cannot open token file " << token
+                  << ": " << strerror(errno) << std::endl;
+        close(fd);
+        return -1;
+    }
+    if (!LockExclusiveWithRetry(tokenFd, token)) {
+        close(tokenFd);
+        close(fd);
+        return -1;
+    }
+    // Retire the predecessor's token: its writer is dead (a live
+    // one would still hold the global lease this grant just won),
+    // the value is never granted again, and a probe racing the
+    // unlink reads "unlocked" — the verdict the unlink preserves.
+    // Best effort: a leftover file is litter, not a hazard.
+    if (prev != 0 && prev != *incarnationOut) {
+        (void) unlink(TokenPath(shmName, prev).c_str());
+    }
+    *tokenFdOut = tokenFd;
+    return fd;
 }
 
 // Whether the name currently resolves to the object that stamped
@@ -491,7 +551,7 @@ bool AviateGzPlugin::InitSharedMemory()
     // identity stamped below is already burned before any block
     // carries it.
     uint64_t leaseIncarnation = 0;
-    leaseFd_ = AcquireWriterLease(shmName_, &leaseIncarnation);
+    leaseFd_ = AcquireWriterLease(shmName_, &leaseIncarnation, &tokenFd_);
     if (leaseFd_ == -1) {
         std::cerr << "[AviateGzPlugin] cannot own " << shmName_
                   << "; not initializing shared memory" << std::endl;
@@ -507,8 +567,7 @@ bool AviateGzPlugin::InitSharedMemory()
     if (fd == -1) {
         std::cerr << "[AviateGzPlugin] shm_open failed for " << shmName_
                   << ": " << strerror(errno) << std::endl;
-        close(leaseFd_);
-        leaseFd_ = -1;
+        ReleaseWriterLease();
         return false;
     }
 
@@ -518,8 +577,7 @@ bool AviateGzPlugin::InitSharedMemory()
         // A failed creation must not leave a half-made object
         // behind the published name.
         shm_unlink(shmName_.c_str());
-        close(leaseFd_);
-        leaseFd_ = -1;
+        ReleaseWriterLease();
         return false;
     }
 
@@ -529,8 +587,7 @@ bool AviateGzPlugin::InitSharedMemory()
     if (ptr == MAP_FAILED) {
         std::cerr << "[AviateGzPlugin] mmap failed: " << strerror(errno) << std::endl;
         shm_unlink(shmName_.c_str());
-        close(leaseFd_);
-        leaseFd_ = -1;
+        ReleaseWriterLease();
         return false;
     }
 
@@ -591,9 +648,21 @@ void AviateGzPlugin::CleanupSharedMemory()
             shm_unlink(shmName_.c_str());
         }
     }
-    // Release the lease only after the unlink: freeing it earlier
+    // Release the locks only after the unlink: freeing them earlier
     // would let a new writer win the lease while the name still
     // resolves to our dying object.
+    ReleaseWriterLease();
+}
+
+void AviateGzPlugin::ReleaseWriterLease()
+{
+    // Token first: from that instant probes of this incarnation read
+    // Dead, while the still-held global lease bars a successor from
+    // unlinking a name that may still resolve to our block.
+    if (tokenFd_ != -1) {
+        close(tokenFd_);
+        tokenFd_ = -1;
+    }
     if (leaseFd_ != -1) {
         close(leaseFd_);
         leaseFd_ = -1;

@@ -291,17 +291,22 @@ fn cross_process_child_crashing_writer() {
     std::process::abort();
 }
 
-#[test]
-fn a_crashed_writer_is_gone_then_replaced_after_restart() {
-    if std::env::var(CROSS_PROC_ENV).is_ok()
+/// True in a re-executed child of any flavor; the takeover tests
+/// must not recurse inside one.
+fn is_cross_proc_child() -> bool {
+    std::env::var(CROSS_PROC_ENV).is_ok()
         || std::env::var(CROSS_PROC_MOTOR_ENV).is_ok()
         || std::env::var(CROSS_PROC_CRASH_ENV).is_ok()
-    {
-        return; // this process IS a child; do not recurse
-    }
-    let name = unique_name("cr");
-    let ready_path = std::env::temp_dir().join(format!("avxt_up_{}", std::process::id()));
-    let go_path = std::env::temp_dir().join(format!("avxt_go_{}", std::process::id()));
+}
+
+/// The shared prologue of every writer-death test: spawn a child
+/// writer, attach to its live world, crash it, and prove the corpse
+/// is Gone and un-attachable while every in-block signal still
+/// describes a healthy world. Returns the attached consumer holding
+/// the corpse's mapping.
+fn crash_a_writer_under_observation(name: &str, tag: &str) -> ConsumerSession {
+    let ready_path = std::env::temp_dir().join(format!("avxt_up_{tag}_{}", std::process::id()));
+    let go_path = std::env::temp_dir().join(format!("avxt_go_{tag}_{}", std::process::id()));
     std::fs::remove_file(&ready_path).ok();
     std::fs::remove_file(&go_path).ok();
 
@@ -311,7 +316,7 @@ fn a_crashed_writer_is_gone_then_replaced_after_restart() {
             "roles::tests::cross_process::cross_process_child_crashing_writer",
             "--nocapture",
         ])
-        .env(CROSS_PROC_CRASH_ENV, &name)
+        .env(CROSS_PROC_CRASH_ENV, name)
         .env(CROSS_PROC_READY_ENV, &ready_path)
         .env(CROSS_PROC_GO_ENV, &go_path)
         .spawn()
@@ -326,7 +331,7 @@ fn a_crashed_writer_is_gone_then_replaced_after_restart() {
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    let consumer = ConsumerSession::attach(&name).expect("attach to the live child world");
+    let consumer = ConsumerSession::attach(name).expect("attach to the live child world");
     assert_eq!(consumer.writer_state(), WriterState::Current);
     assert!(consumer.read_model_state().is_some());
 
@@ -348,9 +353,22 @@ fn a_crashed_writer_is_gone_then_replaced_after_restart() {
     );
     // And a NEW consumer must not be allowed to bind to the corpse.
     assert!(
-        matches!(ConsumerSession::attach(&name), Err(AttachFailure::NotReady)),
+        matches!(ConsumerSession::attach(name), Err(AttachFailure::NotReady)),
         "attaching to a dead writer's block must be refused"
     );
+
+    std::fs::remove_file(&ready_path).ok();
+    std::fs::remove_file(&go_path).ok();
+    consumer
+}
+
+#[test]
+fn a_crashed_writer_is_gone_then_replaced_after_restart() {
+    if is_cross_proc_child() {
+        return;
+    }
+    let name = unique_name("cr");
+    let consumer = crash_a_writer_under_observation(&name, "cr");
 
     // Crash-restart: a fresh writer takes the (kernel-released)
     // lease and creates a new object; the consumer still holding
@@ -371,63 +389,23 @@ fn a_crashed_writer_is_gone_then_replaced_after_restart() {
         "the fresh world has published no snapshot yet"
     );
     drop(fresh);
-
-    std::fs::remove_file(&ready_path).ok();
-    std::fs::remove_file(&go_path).ok();
 }
 
 #[test]
 fn a_paused_successor_does_not_revive_the_corpse() {
-    if std::env::var(CROSS_PROC_ENV).is_ok()
-        || std::env::var(CROSS_PROC_MOTOR_ENV).is_ok()
-        || std::env::var(CROSS_PROC_CRASH_ENV).is_ok()
-    {
-        return; // this process IS a child; do not recurse
+    if is_cross_proc_child() {
+        return;
     }
-    // The takeover window: a successor has taken the lease (its
-    // grant is persisted) but has not yet unlinked the corpse or
-    // created its own object, so the NAME still resolves to the
-    // predecessor's block while "some writer" is genuinely alive.
-    // The pause is deterministic — the successor here is a bare
-    // lease this test holds for as long as it likes.
+    // The takeover window AFTER identity publication: a successor
+    // holds a full grant (counter advanced, its own token held) but
+    // has not yet unlinked the corpse or created its own object, so
+    // the NAME still resolves to the predecessor's block while "some
+    // writer" is genuinely alive. The pause is deterministic — the
+    // successor here is a bare lease this test holds for as long as
+    // it likes.
     let name = unique_name("ps");
-    let ready_path = std::env::temp_dir().join(format!("avxt_up_ps_{}", std::process::id()));
-    let go_path = std::env::temp_dir().join(format!("avxt_go_ps_{}", std::process::id()));
-    std::fs::remove_file(&ready_path).ok();
-    std::fs::remove_file(&go_path).ok();
+    let consumer = crash_a_writer_under_observation(&name, "ps");
 
-    let mut child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
-        .args([
-            "--exact",
-            "roles::tests::cross_process::cross_process_child_crashing_writer",
-            "--nocapture",
-        ])
-        .env(CROSS_PROC_CRASH_ENV, &name)
-        .env(CROSS_PROC_READY_ENV, &ready_path)
-        .env(CROSS_PROC_GO_ENV, &go_path)
-        .spawn()
-        .expect("spawn the crashing writer");
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
-    while !ready_path.exists() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "child never brought its world up"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    let consumer = ConsumerSession::attach(&name).expect("attach to the live child world");
-    assert_eq!(consumer.writer_state(), WriterState::Current);
-
-    std::fs::write(&go_path, b"die").expect("send go signal");
-    let status = child.wait().expect("reap the child");
-    assert!(!status.success(), "the child must have died by abort");
-    assert_eq!(consumer.writer_state(), WriterState::Gone);
-
-    // Successor acquires the lease and PAUSES. Its grant advanced
-    // the counter past the corpse's incarnation before acquire
-    // returned, so the mismatch below is deterministic, not a race
-    // this test happens to win.
     let paused = crate::mapping::lease::WriterLease::acquire(&name)
         .expect("take over a crashed writer's lease");
     assert_eq!(
@@ -462,7 +440,50 @@ fn a_paused_successor_does_not_revive_the_corpse() {
     let reattached = ConsumerSession::attach(&name).expect("attach to the successor's world");
     assert_eq!(reattached.writer_state(), WriterState::Current);
     drop(fresh);
+}
 
-    std::fs::remove_file(&ready_path).ok();
-    std::fs::remove_file(&go_path).ok();
+#[test]
+fn a_grant_paused_before_its_counter_write_does_not_revive_the_corpse() {
+    if is_cross_proc_child() {
+        return;
+    }
+    // The takeover window BEFORE identity publication: the successor
+    // has won the global lease but not yet advanced the counter or
+    // taken its token, so the lease file still carries the CORPSE's
+    // incarnation. A liveness verdict built on the global lease —
+    // held, or held-plus-counter — reads the corpse's own number
+    // back and calls the corpse alive; the token verdict must read
+    // Dead throughout, because no grant ever touches another
+    // writer's token. The test-only hook freezes a real grant at
+    // exactly that instant.
+    let name = unique_name("pc");
+    let consumer = crash_a_writer_under_observation(&name, "pc");
+
+    let paused = crate::mapping::lease::WriterLease::acquire_global_only_for_test(&name)
+        .expect("hold the global lease before the counter write");
+
+    // A fresh attach finds the corpse at the name with a genuinely
+    // held global lease vouching for "some writer" — and must still
+    // refuse it, retryably.
+    assert!(
+        matches!(ConsumerSession::attach(&name), Err(AttachFailure::NotReady)),
+        "a corpse must not be attachable during the pre-counter takeover window"
+    );
+    // The existing consumer must never read Current here: its
+    // writer's token is kernel-released, whatever the global lease
+    // and its stale counter say.
+    assert_eq!(
+        consumer.writer_state(),
+        WriterState::Replaced,
+        "the pre-counter takeover window must not revive the corpse"
+    );
+
+    // The window closes: the paused grant completes as a real
+    // takeover and the world becomes attachable again.
+    drop(paused);
+    let fresh = SimWriterSession::create(&name).expect("successor completes the takeover");
+    assert_eq!(consumer.writer_state(), WriterState::Replaced);
+    let reattached = ConsumerSession::attach(&name).expect("attach to the successor's world");
+    assert_eq!(reattached.writer_state(), WriterState::Current);
+    drop(fresh);
 }

@@ -50,6 +50,7 @@ public:
 private:
     bool InitSharedMemory();
     void CleanupSharedMemory();
+    void ReleaseWriterLease();
 
     /// Instance ID for multi-vehicle support
     int instance_{0};
@@ -66,12 +67,20 @@ private:
     /// Shared memory name (instance-specific)
     std::string shmName_;
 
-    /// Writer lease fd: an exclusive flock on /tmp/<name>.lease held
-    /// for the plugin's whole life. The kernel releases it on ANY
-    /// exit including a crash, so consumers probe it as the liveness
-    /// signal; holding it is also what forbids a second writer from
-    /// unlinking this live object. -1 when not held.
+    /// Global writer lease fd: an exclusive flock on
+    /// /tmp/<name>.lease held for the plugin's whole life. The
+    /// kernel releases it on ANY exit including a crash; holding it
+    /// is what forbids a second writer from unlinking this live
+    /// object. -1 when not held.
     int leaseFd_{-1};
+
+    /// Incarnation token fd: an exclusive flock on
+    /// /tmp/<name>.lease.<incarnation>, also held for the plugin's
+    /// whole life. Consumers probe THIS lock as the liveness signal
+    /// for the incarnation they mapped — only this writer ever
+    /// holds it, so a successor mid-takeover can never make this
+    /// writer look alive. -1 when not held.
+    int tokenFd_{-1};
 
     /// The writer_incarnation this instance stamped, for the guarded
     /// unlink in CleanupSharedMemory
