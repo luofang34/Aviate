@@ -5,7 +5,7 @@
 // commands from the block to the rotor model.
 //
 // POLICY-FREE BY DESIGN: this C++ stays a gz API adapter. The layout
-// is the cbindgen-generated aviate_xil_contract.h (Rust-owned, #262);
+// is the cbindgen-generated aviate_xil_contract.h (Rust-owned);
 // unit conversion, actuator curves, and configuration interpretation
 // all live on the Rust side.
 
@@ -65,6 +65,17 @@ private:
 
     /// Shared memory name (instance-specific)
     std::string shmName_;
+
+    /// Writer lease fd: an exclusive flock on /tmp/<name>.lease held
+    /// for the plugin's whole life. The kernel releases it on ANY
+    /// exit including a crash, so consumers probe it as the liveness
+    /// signal; holding it is also what forbids a second writer from
+    /// unlinking this live object. -1 when not held.
+    int leaseFd_{-1};
+
+    /// The writer_incarnation this instance stamped, for the guarded
+    /// unlink in CleanupSharedMemory
+    uint64_t incarnation_{0};
 
     /// Motor topic name (instance-specific)
     std::string motorTopic_;

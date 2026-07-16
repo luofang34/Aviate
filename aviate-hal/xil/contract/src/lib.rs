@@ -1,6 +1,6 @@
 //! Rust-owned shared-memory contract between the Aviate gz-sim
 //! plugin (writer of model state), the flight controller (writer of
-//! motor commands), and read-only telemetry consumers (#262).
+//! motor commands), and read-only telemetry consumers.
 //!
 //! This crate is the single source of truth for the `#[repr(C)]`
 //! layout: the C++ plugin consumes the cbindgen-generated

@@ -2,7 +2,7 @@
 //!
 //! Connects the flight controller to the `AviateGzPlugin` running
 //! inside gz-sim through the Rust-owned shared-memory contract
-//! (`aviate-xil-contract`, #262).
+//! (`aviate-xil-contract`).
 //!
 //! ## Architecture
 //!

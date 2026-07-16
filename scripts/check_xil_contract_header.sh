@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Cross-language ABI gate for the XIL shm contract (#262).
+# Cross-language ABI gate for the XIL shm contract.
 #
 # The gz plugin is C++ and consumes the cbindgen-generated
 # `aviate_xil_contract.h`; the Rust side owns the layout. Two ways

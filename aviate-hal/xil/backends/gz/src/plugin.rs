@@ -1,6 +1,6 @@
 //! FC-side client for the AviateGzPlugin shared-memory block.
 //!
-//! Pure Rust over `aviate-xil-shm` (#262): fail-closed fingerprint
+//! Pure Rust over `aviate-xil-shm`: fail-closed fingerprint
 //! attach, proper seqlock reads, coherent `{generation, step, time,
 //! state}` snapshots. No C FFI remains on this path — the C++ in
 //! this backend is only the gz-sim system plugin itself.
@@ -103,6 +103,20 @@ fn shm_name(instance: u8) -> String {
     }
 }
 
+/// A nonzero value that never repeats across FC sessions on this
+/// host: pid folded with the wall clock, so a restarted FC (even
+/// with a reused pid, even within the same instant's resolution)
+/// stamps a different identity than the session it replaced. Zero is
+/// reserved for "no FC has attached".
+fn fresh_session_nonce() -> u32 {
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u32)
+        .unwrap_or(0);
+    (nanos.rotate_left(8) ^ pid) | 1
+}
+
 impl GzPluginBridge {
     /// Connect to instance 0.
     pub fn new() -> Result<Self, GzPluginError> {
@@ -111,10 +125,17 @@ impl GzPluginBridge {
 
     /// Connect to a specific vehicle instance. Fails closed if the
     /// block exists but does not carry the expected contract
-    /// fingerprint (#262).
+    /// fingerprint.
     pub fn for_instance(instance: u8) -> Result<Self, GzPluginError> {
         match FcSession::attach(&shm_name(instance)) {
-            Ok(session) => Ok(Self { session, instance }),
+            Ok(session) => {
+                // Every attachment IS a new FC session: stamping the
+                // nonce here (rather than trusting each binary to
+                // remember) is what lets the host tell "the same FC,
+                // still alive" from "an FC restarted behind my back".
+                session.set_fc_session_nonce(fresh_session_nonce());
+                Ok(Self { session, instance })
+            }
             Err(AttachFailure::Io(_)) | Err(AttachFailure::NotReady) => {
                 Err(GzPluginError::PluginNotRunning)
             }
@@ -178,7 +199,7 @@ impl GzPluginBridge {
     }
 
     /// Publish boundary rotor-speed commands (rad/s). The resolved
-    /// actuator curve is applied BEFORE this call (#140).
+    /// actuator curve is applied BEFORE this call.
     pub fn set_motor_speeds(&self, velocities: &[f64]) -> Result<(), GzPluginError> {
         self.session.write_motor_command(velocities);
         Ok(())
@@ -198,7 +219,7 @@ impl GzPluginBridge {
         self.session.plugin_ready()
     }
 
-    /// Simulation-world epoch: bumps on every world reset (#265).
+    /// Simulation-world epoch: bumps on every world reset.
     /// On a change, re-run estimator convergence and re-establish
     /// any freshness tracking — do not quarantine.
     pub fn reset_generation(&self) -> u32 {
@@ -224,6 +245,9 @@ impl GzPluginBridge {
             AttachFailure::Contract(_) => GzPluginError::ContractMismatch,
             _ => GzPluginError::PluginNotRunning,
         })?;
+        // A re-attachment is a new session to whoever is watching
+        // the control block, same as the initial attach.
+        self.session.set_fc_session_nonce(fresh_session_nonce());
         Ok(())
     }
 

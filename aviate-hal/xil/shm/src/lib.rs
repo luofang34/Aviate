@@ -1,5 +1,5 @@
 //! POSIX shared-memory transport for the [`aviate_xil_contract`]
-//! block (#262, #265).
+//! block.
 //!
 //! This is the ONE place in the SITL data plane that touches raw
 //! memory: `shm_open`/`mmap` plus volatile / atomic field access

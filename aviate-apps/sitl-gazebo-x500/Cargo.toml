@@ -16,7 +16,7 @@ path = "src/main.rs"
 # and this binary injects the result into the board.
 aviate-app-sitl-gazebo-x500-kernel = { path = "kernel" }
 # The boundary conversion consumes the resolved actuator-curve
-# contract (`ActuatorCurveKind::boundary_command`, #140).
+# contract (`ActuatorCurveKind::boundary_command`).
 aviate-core = { path = "../../aviate-core" }
 # The FC re-attaches when the simulator it is bound to is replaced;
 # WriterState is the contract's typed answer to "is my writer live?".
