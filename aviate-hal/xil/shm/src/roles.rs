@@ -204,6 +204,13 @@ impl FcSession {
     }
 
     /// Acknowledge a processed step: heartbeat + lockstep gate.
+    ///
+    /// One gate, one acker: when lockstep is armed the simulator
+    /// blocks each physics step on this word, and exactly one
+    /// session — whichever drives the lockstep session — may write
+    /// it. A second acker races the owner and re-opens the gate
+    /// while the owner is still processing. Endpoints that merely
+    /// consume steps heartbeat this only in free-run.
     pub fn ack_step(&self, step: u64) {
         self.mapping.ack_step(step);
     }

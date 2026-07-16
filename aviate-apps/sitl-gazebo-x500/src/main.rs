@@ -102,9 +102,9 @@ fn main() -> std::io::Result<()> {
     // memory the live simulator never reads (or worse, in a
     // half-initialized successor block).
     let mut sim_io_healthy = true;
-    // Highest sim_step this FC has consumed and acknowledged — the
-    // plugin's lockstep gate and the host's FC liveness signal.
-    let mut last_acked_step: Option<u64> = None;
+    // Highest sim_step this FC has consumed, so each step is
+    // heartbeat-acknowledged at most once.
+    let mut last_consumed_step: Option<u64> = None;
 
     loop {
         // 0. Has the simulator we are bound to been replaced?
@@ -127,7 +127,7 @@ fn main() -> std::io::Result<()> {
                             last_state = None;
                             last_t_us = 0;
                             last_ned_vel = [0.0; 3];
-                            last_acked_step = None;
+                            last_consumed_step = None;
                             sim_io_healthy = true;
                             log::info!("re-attached to AviateGzPlugin");
                         }
@@ -172,7 +172,7 @@ fn main() -> std::io::Result<()> {
                     synthesize_packet(&state, last_state.as_ref(), last_t_us, last_ned_vel);
                 apply_packet_noise(&mut packet, noise_tier, &mut noise_rng);
                 let state_time_us = state.time_us;
-                if last_acked_step != Some(state.sim_step) {
+                if last_consumed_step != Some(state.sim_step) {
                     consumed_step = Some(state.sim_step);
                 }
                 last_state = Some(state);
@@ -189,9 +189,9 @@ fn main() -> std::io::Result<()> {
         let cmd = board.step();
 
         // 4. Forward actuator outputs to gz-sim as rotor velocities,
-        //    then acknowledge the consumed step — ack AFTER the
-        //    motor write, so a lockstep simulator only advances once
-        //    this step's commands are in shared memory.
+        //    then heartbeat the consumed step AFTER the motor write,
+        //    so the step's commands are in shared memory before its
+        //    consumption is announced.
         //
         // Mixer outputs are normalized per-motor THRUST (force
         // domain). The resolved actuator curve — quadratic for the
@@ -209,8 +209,21 @@ fn main() -> std::io::Result<()> {
                 log::warn!("set_motor_speeds failed: {e:?}");
             }
             if let Some(step) = consumed_step {
-                plugin.ack_step(step);
-                last_acked_step = Some(step);
+                // One gate, one acker. Under lockstep, fc_step_ack
+                // is the word the simulator BLOCKS on, and it is
+                // owned by whichever session driver armed lockstep
+                // (the mission harness gates each physics step on
+                // its own read-act-ack cycle). A second acker races
+                // the owner: the gate opens whenever EITHER party
+                // runs, which on a starved host is exactly when the
+                // other — the actual controller — has fallen
+                // behind. In free-run the word gates nothing, so
+                // the FC heartbeats it as its per-step liveness
+                // signal.
+                if !plugin.lockstep_enabled() {
+                    plugin.ack_step(step);
+                }
+                last_consumed_step = Some(step);
             }
         }
 
