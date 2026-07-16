@@ -103,20 +103,6 @@ fn shm_name(instance: u8) -> String {
     }
 }
 
-/// A nonzero value that never repeats across FC sessions on this
-/// host: pid folded with the wall clock, so a restarted FC (even
-/// with a reused pid, even within the same instant's resolution)
-/// stamps a different identity than the session it replaced. Zero is
-/// reserved for "no FC has attached".
-fn fresh_session_nonce() -> u32 {
-    let pid = std::process::id();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u32)
-        .unwrap_or(0);
-    (nanos.rotate_left(8) ^ pid) | 1
-}
-
 impl GzPluginBridge {
     /// Connect to instance 0.
     pub fn new() -> Result<Self, GzPluginError> {
@@ -127,15 +113,11 @@ impl GzPluginBridge {
     /// block exists but does not carry the expected contract
     /// fingerprint.
     pub fn for_instance(instance: u8) -> Result<Self, GzPluginError> {
+        // FcSession::attach stamps the next fc_session_nonce — the
+        // session identity is the role endpoint's to own, not each
+        // caller's to remember.
         match FcSession::attach(&shm_name(instance)) {
-            Ok(session) => {
-                // Every attachment IS a new FC session: stamping the
-                // nonce here (rather than trusting each binary to
-                // remember) is what lets the host tell "the same FC,
-                // still alive" from "an FC restarted behind my back".
-                session.set_fc_session_nonce(fresh_session_nonce());
-                Ok(Self { session, instance })
-            }
+            Ok(session) => Ok(Self { session, instance }),
             Err(AttachFailure::Io(_)) | Err(AttachFailure::NotReady) => {
                 Err(GzPluginError::PluginNotRunning)
             }
@@ -241,13 +223,13 @@ impl GzPluginBridge {
     /// into memory no one reads — while looking perfectly healthy.
     /// Callers drive it from [`Self::writer_state`].
     pub fn reconnect(&mut self) -> Result<(), GzPluginError> {
+        // A re-attachment is a new session to whoever is watching
+        // the control block: FcSession::attach stamps the next
+        // fc_session_nonce, same as the initial attach.
         self.session = FcSession::attach(&shm_name(self.instance)).map_err(|e| match e {
             AttachFailure::Contract(_) => GzPluginError::ContractMismatch,
             _ => GzPluginError::PluginNotRunning,
         })?;
-        // A re-attachment is a new session to whoever is watching
-        // the control block, same as the initial attach.
-        self.session.set_fc_session_nonce(fresh_session_nonce());
         Ok(())
     }
 

@@ -237,10 +237,10 @@ fn clean_writer_exit_stops_the_stream() {
 
 #[test]
 fn a_second_writer_cannot_take_over_a_live_object() {
-    // The old creation path unconditionally shm_unlink'd before
-    // creating: a second writer — or an old writer's late cleanup —
-    // destroyed a LIVE peer's object out from under every consumer.
-    // The lease makes that a loud failure instead.
+    // An unconditional pre-create unlink would let a second
+    // writer — or a dying writer's late cleanup — destroy a LIVE
+    // peer's object out from under every consumer. The lease makes
+    // that a loud failure instead.
     let name = unique_name("dw");
     let first = SimWriterSession::create(&name).unwrap();
     first.write_model_state(&ModelStateSnapshot {
@@ -385,6 +385,105 @@ fn a_snapshot_from_a_stale_epoch_is_refused() {
         consumer.read_model_state(),
         None,
         "a snapshot stamped with a dead epoch must be refused"
+    );
+}
+
+#[test]
+fn incarnations_are_monotonic_across_rapid_restarts() {
+    // A same-process, same-instant restart is the case a pid- or
+    // clock-derived identity can collide on: the pid is identical
+    // and the clock may not have advanced past its granularity.
+    // The lease-counter identity is deterministic — each grant on
+    // one name advances by exactly one and never lands on zero.
+    let name = unique_name("rr");
+    let mut prev = 0u64;
+    for round in 0..5 {
+        let writer = SimWriterSession::create(&name).unwrap();
+        let inc = writer.mapping.incarnation();
+        assert_ne!(inc, 0, "zero is reserved for \"not stamped\"");
+        if round > 0 {
+            assert_eq!(
+                inc,
+                prev.wrapping_add(1),
+                "each grant advances the persisted counter by one"
+            );
+        }
+        prev = inc;
+        drop(writer);
+    }
+}
+
+#[test]
+fn a_rapid_same_process_restart_reads_replaced_not_current() {
+    // Identity/liveness binding: a consumer attached to one
+    // incarnation must see Current only while THAT writer is alive
+    // (liveness), and Replaced the instant a successor exists
+    // (identity) — even when predecessor and successor share a pid
+    // and an instant.
+    let name = unique_name("rp");
+    let first = SimWriterSession::create(&name).unwrap();
+    first.write_model_state(&ModelStateSnapshot {
+        reset_generation: 1,
+        sim_step: 1,
+        time_us: 1_000,
+        pos: [0.0; 3],
+        quat: [1.0, 0.0, 0.0, 0.0],
+        vel: [0.0; 3],
+        ang_vel: [0.0; 3],
+    });
+    let consumer = ConsumerSession::attach(&name).unwrap();
+    assert_eq!(consumer.writer_state(), WriterState::Current);
+
+    drop(first);
+    assert_eq!(
+        consumer.writer_state(),
+        WriterState::Gone,
+        "no successor yet: the lease is free, so the writer is dead"
+    );
+
+    let _second = SimWriterSession::create(&name).unwrap();
+    assert_eq!(
+        consumer.writer_state(),
+        WriterState::Replaced,
+        "a successor under the same pid in the same instant must read as a new identity"
+    );
+}
+
+#[test]
+fn fc_attachments_stamp_a_monotonic_session_nonce() {
+    let name = unique_name("sn");
+    let writer = SimWriterSession::create(&name).unwrap();
+    assert_eq!(
+        writer.fc_session_nonce(),
+        0,
+        "zero means no FC has ever attached"
+    );
+
+    let fc1 = FcSession::attach(&name).unwrap();
+    assert_eq!(writer.fc_session_nonce(), 1);
+    drop(fc1);
+
+    let _fc2 = FcSession::attach(&name).unwrap();
+    assert_eq!(
+        writer.fc_session_nonce(),
+        2,
+        "every attachment is a new session"
+    );
+}
+
+#[test]
+fn the_session_nonce_wraps_past_zero() {
+    let name = unique_name("sw");
+    let writer = SimWriterSession::create(&name).unwrap();
+    let fc = FcSession::attach(&name).unwrap();
+    fc.mapping.set_fc_session_nonce(u32::MAX);
+    drop(fc);
+
+    let _fc2 = FcSession::attach(&name).unwrap();
+    assert_eq!(
+        writer.fc_session_nonce(),
+        1,
+        "the wrap must skip zero — zero would read as \"no FC ever attached\""
     );
 }
 

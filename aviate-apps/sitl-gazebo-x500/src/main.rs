@@ -61,8 +61,8 @@ fn main() -> std::io::Result<()> {
     // a short retry loop is plenty.
     // 240 × 250ms = 60 s. Plugin Configure latency on macOS is
     // ~15–20 s on a cold cache (gz-sim doing first-time dlopen +
-    // physics init); the previous 5 s window timed out before the
-    // shm region was populated.
+    // physics init); a short single-digit-second window times out
+    // before the shm region is populated.
     let mut plugin = GzPluginBridge::connect_with_retry(240, 250)
         .map_err(|e| std::io::Error::other(format!("gz plugin: {e:?}")))?;
     log::info!("connected to AviateGzPlugin");

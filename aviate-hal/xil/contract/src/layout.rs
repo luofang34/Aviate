@@ -64,7 +64,15 @@ pub struct SharedStateHeader {
     pub reset_generation: u32,
     /// Non-zero while the plugin owns the mapping.
     pub plugin_ready: u32,
-    /// Non-repeating value stamped once per created object.
+    /// Monotonic identity stamped once per created object: the
+    /// value the writer's lease grant advanced the counter in the
+    /// lease file's first 8 bytes (little-endian) to. Each grant
+    /// applies `wrapping_add(1)` and skips zero — zero is reserved
+    /// for "not stamped" — under the exclusive lock, and persists
+    /// the value BEFORE any block carries it, so a writer that dies
+    /// between grant and stamp merely burns a number and two
+    /// writers can never share one. Identity is compared for
+    /// equality only; the counter wraps.
     ///
     /// This is how a consumer detects a writer that CRASHED and
     /// re-created the block: the crashed writer never cleared
@@ -209,9 +217,13 @@ pub struct ControlBlock {
     /// value is complete or duplicate; the executor never re-runs
     /// it.
     pub lifecycle_ack_nonce: u32,
-    /// Written once per FC process start (any non-repeating value);
-    /// consumers detect an FC restart by a change here even though
-    /// the shm object identity is unchanged. Writer: FC.
+    /// FC session identity, owned by the FC endpoint: each FC
+    /// attachment stamps the previous value advanced by
+    /// `wrapping_add(1)` with zero skipped — zero means no FC has
+    /// ever attached to this object (a fresh object resets it).
+    /// Watchers detect an FC restart or re-attach by comparing for
+    /// equality only; the counter wraps and its ordering carries no
+    /// meaning across a writer restart. Writer: FC.
     pub fc_session_nonce: u32,
     /// Packed FC status: high 32 bits = the `reset_generation` the
     /// state refers to, low 32 bits = [`FcState`] word (see

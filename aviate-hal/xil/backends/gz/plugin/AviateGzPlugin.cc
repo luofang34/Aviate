@@ -57,13 +57,13 @@ namespace {
 // Rust alike — however well the seqlock protocol behaves in
 // practice.
 //
-// The wire lanes are `uint64_t` bit patterns (contract v3), so the
-// atomic builtins operate on the lane's real type. v2 typed them
-// `double` and both sides had to reinterpret_cast a `double*` into a
-// `uint64_t*` to access them atomically — an object-access /
-// strict-aliasing hazard. Conversion now happens at the boundary,
-// through memcpy, which is the only well-defined way to reinterpret
-// an object's bytes in C++.
+// The wire lanes are `uint64_t` bit patterns, so the atomic
+// builtins operate on the lane's real type. Typing them `double`
+// would force a reinterpret_cast of a `double*` into a `uint64_t*`
+// at every atomic access — an object-access / strict-aliasing
+// hazard. Conversion happens at the boundary instead, through
+// memcpy, which is the only well-defined way to reinterpret an
+// object's bytes in C++.
 
 inline double LoadLaneRelaxed(const uint64_t* p)
 {
@@ -97,7 +97,73 @@ std::string LeasePath(const std::string& shmName)
     return "/tmp/" + base + ".lease";
 }
 
-// Take the writer lease, or return -1 if a live writer holds it.
+// Advance the incarnation counter in the lease file's first 8 bytes
+// (little-endian, mirroring lease.rs). Caller holds the exclusive
+// lock — that is what makes read-increment-write atomic across
+// processes. A file shorter than 8 bytes (canonically: freshly
+// created and empty) reads as zero-padded, so the first grant
+// yields 1. `wrapping` is uint64_t's native overflow; zero is
+// skipped because the block reserves it for "not stamped". The
+// value is persisted BEFORE any block carries it, so a writer that
+// dies between grant and stamp merely burns a number.
+bool AdvanceLeaseCounter(int fd, uint64_t* next)
+{
+    uint8_t buf[8] = {0};
+    size_t got = 0;
+    while (got < sizeof(buf)) {
+        ssize_t rc = pread(fd, buf + got, sizeof(buf) - got,
+                           static_cast<off_t>(got));
+        if (rc < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        if (rc == 0) {
+            break;  // EOF — the remaining bytes stay zero.
+        }
+        got += static_cast<size_t>(rc);
+    }
+    uint64_t value = 0;
+    for (size_t i = 0; i < sizeof(buf); ++i) {
+        value |= static_cast<uint64_t>(buf[i]) << (8 * i);
+    }
+    value += 1;
+    if (value == 0) {
+        value = 1;
+    }
+    uint8_t out[8];
+    for (size_t i = 0; i < sizeof(out); ++i) {
+        out[i] = static_cast<uint8_t>(value >> (8 * i));
+    }
+    size_t put = 0;
+    while (put < sizeof(out)) {
+        ssize_t rc = pwrite(fd, out + put, sizeof(out) - put,
+                            static_cast<off_t>(put));
+        if (rc < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        if (rc == 0) {
+            return false;
+        }
+        put += static_cast<size_t>(rc);
+    }
+    *next = value;
+    return true;
+}
+
+// Take the writer lease and advance its incarnation counter, or
+// return -1 (a live writer holds it, or the environment is broken —
+// each is logged distinctly).
+//
+// flock results are classified by errno, mirroring lease.rs: EINTR
+// is a signal, not a verdict, and is retried; ONLY
+// EWOULDBLOCK/EAGAIN proves a live exclusive holder; any other
+// errno is a broken probe and fails loudly rather than reading as
+// "held".
 //
 // O_CLOEXEC is load-bearing: flock locks ride the open file
 // description, which survives fork+exec, so without it any child
@@ -108,7 +174,7 @@ std::string LeasePath(const std::string& shmName)
 // until exec), so a held verdict only counts once it has persisted
 // past that window. A live writer holds its lease for its whole
 // life; 100 ms separates the two cleanly.
-int AcquireWriterLease(const std::string& shmName)
+int AcquireWriterLease(const std::string& shmName, uint64_t* incarnationOut)
 {
     const std::string path = LeasePath(shmName);
     int fd = open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0666);
@@ -119,13 +185,32 @@ int AcquireWriterLease(const std::string& shmName)
     }
     constexpr int kAttempts = 25;
     for (int attempt = 0; attempt < kAttempts; ++attempt) {
-        if (flock(fd, LOCK_EX | LOCK_NB) == 0) {
+        int rc;
+        do {
+            rc = flock(fd, LOCK_EX | LOCK_NB);
+        } while (rc == -1 && errno == EINTR);
+        if (rc == 0) {
+            if (!AdvanceLeaseCounter(fd, incarnationOut)) {
+                std::cerr << "[AviateGzPlugin] lease counter I/O failed on "
+                          << path << ": " << strerror(errno) << std::endl;
+                close(fd);
+                return -1;
+            }
             return fd;
+        }
+        if (errno != EWOULDBLOCK && errno != EAGAIN) {
+            std::cerr << "[AviateGzPlugin] flock failed on " << path
+                      << ": " << strerror(errno)
+                      << " (not a held lease; refusing to guess)" << std::endl;
+            close(fd);
+            return -1;
         }
         if (attempt + 1 < kAttempts) {
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
         }
     }
+    std::cerr << "[AviateGzPlugin] another live writer holds "
+              << path << std::endl;
     close(fd);
     return -1;
 }
@@ -399,16 +484,17 @@ void AviateGzPlugin::PostUpdate(
 
 bool AviateGzPlugin::InitSharedMemory()
 {
-    // The lease comes FIRST. Unlinking before owning the lease is
-    // how one writer destroys another's live object: an
-    // unconditional unlink here would pull a LIVE peer's block out
-    // from under every consumer. Refuse loudly instead of taking
-    // over.
-    leaseFd_ = AcquireWriterLease(shmName_);
+    // The lease comes FIRST. Unlinking a name without owning its
+    // lease would pull a LIVE peer's block out from under every
+    // consumer — refuse loudly instead of taking over. The grant
+    // also advances the persisted incarnation counter, so the
+    // identity stamped below is already burned before any block
+    // carries it.
+    uint64_t leaseIncarnation = 0;
+    leaseFd_ = AcquireWriterLease(shmName_, &leaseIncarnation);
     if (leaseFd_ == -1) {
-        std::cerr << "[AviateGzPlugin] another live writer holds "
-                  << LeasePath(shmName_)
-                  << "; refusing to take over " << shmName_ << std::endl;
+        std::cerr << "[AviateGzPlugin] cannot own " << shmName_
+                  << "; not initializing shared memory" << std::endl;
         return false;
     }
 
@@ -468,24 +554,18 @@ bool AviateGzPlugin::InitSharedMemory()
                      static_cast<uint32_t>(sizeof(AviateSharedStateV2)), __ATOMIC_RELAXED);
     __atomic_store_n(&shm_->header.reset_generation, 1u, __ATOMIC_RELAXED);
     resetGeneration_ = 1;
-    // Non-repeating per created object: a consumer whose writer
-    // CRASHED keeps mapping the orphaned block (plugin_ready never
-    // cleared, memory alive while mapped) and would serve the dead
-    // world's last snapshot forever. Comparing this against the
-    // incarnation of whatever the NAME resolves to now is the only
-    // way to tell the objects apart — macOS reports st_dev = st_ino
-    // = 0 for every POSIX shm object. Zero is reserved for
-    // "not stamped".
-    {
-        uint64_t nanos = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::system_clock::now().time_since_epoch())
-                .count());
-        uint64_t pid = static_cast<uint64_t>(getpid());
-        incarnation_ = (((nanos << 16) | (nanos >> 48)) ^ pid) | 1ull;
-        __atomic_store_n(&shm_->header.writer_incarnation, incarnation_,
-                         __ATOMIC_RELAXED);
-    }
+    // Monotonic per created object (the lease counter): a consumer
+    // whose writer CRASHED keeps mapping the orphaned block
+    // (plugin_ready never cleared, memory alive while mapped) and
+    // would serve the dead world's last snapshot forever. Comparing
+    // this against the incarnation of whatever the NAME resolves to
+    // now is the only way to tell the objects apart — macOS reports
+    // st_dev = st_ino = 0 for every POSIX shm object, and a
+    // pid-or-clock identity can collide on a rapid same-process
+    // restart. Zero is reserved for "not stamped".
+    incarnation_ = leaseIncarnation;
+    __atomic_store_n(&shm_->header.writer_incarnation, incarnation_,
+                     __ATOMIC_RELAXED);
     __atomic_store_n(&shm_->control.lockstep_enabled, lockstep_ ? 1u : 0u, __ATOMIC_RELAXED);
     __atomic_store_n(&shm_->header.plugin_ready, 1u, __ATOMIC_RELEASE);
 

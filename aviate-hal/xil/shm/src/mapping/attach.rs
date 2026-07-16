@@ -61,12 +61,13 @@ impl Mapping {
     /// retryable [`AttachError::Initializing`].
     pub(crate) fn create(name: &str) -> io::Result<Self> {
         let cname = cstring(name)?;
-        // The lease comes FIRST. Unlinking before owning the lease is
-        // how one writer destroys another's live object: the old
-        // unconditional unlink meant a second writer — or an old
-        // writer's late cleanup — silently pulled the block out from
-        // under every consumer. With the lease held, the unlink below
-        // can only ever remove a DEAD writer's leftover.
+        // The lease comes FIRST. Unlinking a name without owning its
+        // lease is how one writer destroys another's live object out
+        // from under every consumer; with the lease held, the unlink
+        // below can only ever remove a DEAD writer's leftover. The
+        // grant also advances the persisted incarnation counter, so
+        // the identity stamped below is already burned before any
+        // block carries it.
         let lease = super::lease::WriterLease::acquire(name)?;
         // SAFETY: plain libc calls on an owned CString; failure
         // paths close what was opened; the block is exclusively ours
@@ -119,7 +120,7 @@ impl Mapping {
                 EXPECTED_SIZE as u32,
             );
             store_u32(core::ptr::addr_of_mut!((*base).header.reset_generation), 1);
-            let incarnation = fresh_incarnation();
+            let incarnation = lease.incarnation();
             store_u64(
                 core::ptr::addr_of_mut!((*base).header.writer_incarnation),
                 incarnation,
@@ -166,9 +167,9 @@ impl Mapping {
             // window: retryable, not a foreign object. It must travel
             // as NotReady — callers translate the Contract channel
             // into a permanent, never-retried failure, which would
-            // turn this microsecond window back into the startup
-            // deadlock it used to be. Anything else short of the
-            // block IS foreign.
+            // turn this microsecond of normal startup into a
+            // deadlock. Anything else short of the block IS
+            // foreign.
             if actual == 0 {
                 libc::close(fd);
                 return Err(AttachFailure::NotReady);
@@ -237,10 +238,19 @@ impl Mapping {
             // passes every in-memory check above — name, size,
             // fingerprint, ready, incarnation all survive the crash —
             // so without the lease probe a consumer happily attaches
-            // to a corpse and trusts its frozen final snapshot.
-            if !super::lease::writer_alive(name) {
-                libc::munmap(ptr, EXPECTED_SIZE);
-                return Err(AttachFailure::NotReady);
+            // to a corpse and trusts its frozen final snapshot. A
+            // probe that cannot run is not a verdict: its error
+            // propagates instead of being read as either answer.
+            match super::lease::writer_liveness(name) {
+                super::lease::WriterLiveness::Alive => {}
+                super::lease::WriterLiveness::Dead => {
+                    libc::munmap(ptr, EXPECTED_SIZE);
+                    return Err(AttachFailure::NotReady);
+                }
+                super::lease::WriterLiveness::Unknown(e) => {
+                    libc::munmap(ptr, EXPECTED_SIZE);
+                    return Err(AttachFailure::Io(e));
+                }
             }
             Ok(Self {
                 base,
@@ -435,34 +445,34 @@ unsafe fn inspect(base: *const SharedStateV2, attached_incarnation: u64) -> Writ
 /// writer lease: every in-block signal survives a crash, so only the
 /// kernel-released lock can distinguish "same healthy writer" from
 /// "corpse of the writer I attached to".
+///
+/// A probe that cannot run also downgrades — fail closed. `Current`
+/// is a promise that reads are trustworthy, and a broken probe
+/// cannot back that promise; `Gone` halts the caller's I/O, and the
+/// re-attach it triggers runs the same probe through
+/// [`Mapping::attach`], which propagates the underlying error as
+/// [`AttachFailure::Io`] instead of swallowing it.
 pub(super) fn confirm_alive(name: &CString, state: WriterState) -> WriterState {
     match state {
         WriterState::Current => {
-            let alive = name
+            let liveness = name
                 .to_str()
-                .map(super::lease::writer_alive)
-                .unwrap_or(false);
-            if alive {
-                WriterState::Current
-            } else {
-                WriterState::Gone
+                .map(super::lease::writer_liveness)
+                .unwrap_or_else(|_| {
+                    super::lease::WriterLiveness::Unknown(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "shm name is not UTF-8",
+                    ))
+                });
+            match liveness {
+                super::lease::WriterLiveness::Alive => WriterState::Current,
+                super::lease::WriterLiveness::Dead | super::lease::WriterLiveness::Unknown(_) => {
+                    WriterState::Gone
+                }
             }
         }
         other => other,
     }
-}
-
-/// A value that never repeats across writers on this host: the
-/// creating process's id folded with the wall clock, so a restarted
-/// writer (same pid reused, or same instant) cannot collide with the
-/// object it replaced. Zero is reserved for "not stamped".
-fn fresh_incarnation() -> u64 {
-    let pid = std::process::id() as u64;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
-    (nanos.rotate_left(16) ^ pid) | 1
 }
 
 fn cstring(name: &str) -> io::Result<CString> {
