@@ -8,7 +8,7 @@
 //!
 //! ```text
 //! AviateGzPlugin (C++, loaded by Gazebo)
-//!        ↓ /aviate_gz_bridge shared block (aviate-xil-contract)
+//!        ↓ /aviate_gz_bridge_v3 shared block (aviate-xil-contract)
 //! plugin.rs — GzPluginBridge over aviate-xil-shm's FcSession
 //!        ↓ ENU→NED conversion
 //! SitlIO (simulator-neutral middleware)

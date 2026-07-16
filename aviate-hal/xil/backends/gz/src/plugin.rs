@@ -5,7 +5,7 @@
 //! state}` snapshots. No C FFI remains on this path — the C++ in
 //! this backend is only the gz-sim system plugin itself.
 
-use aviate_xil_contract::{WriterState, SHM_NAME_BASE};
+use aviate_xil_contract::{shm_name, ShmName, WriterState};
 use aviate_xil_shm::{AttachFailure, FcSession, HostSession};
 use log::info;
 
@@ -95,12 +95,8 @@ pub struct GzPluginBridge {
     instance: u8,
 }
 
-fn shm_name(instance: u8) -> String {
-    if instance == 0 {
-        SHM_NAME_BASE.to_string()
-    } else {
-        format!("{SHM_NAME_BASE}_{instance}")
-    }
+fn instance_name(instance: u8) -> ShmName {
+    shm_name(u32::from(instance))
 }
 
 impl GzPluginBridge {
@@ -116,7 +112,7 @@ impl GzPluginBridge {
         // FcSession::attach stamps the next fc_session_nonce — the
         // session identity is the role endpoint's to own, not each
         // caller's to remember.
-        match FcSession::attach(&shm_name(instance)) {
+        match FcSession::attach(&instance_name(instance)) {
             Ok(session) => Ok(Self { session, instance }),
             Err(AttachFailure::Io(_)) | Err(AttachFailure::NotReady) => {
                 Err(GzPluginError::PluginNotRunning)
@@ -226,7 +222,7 @@ impl GzPluginBridge {
         // A re-attachment is a new session to whoever is watching
         // the control block: FcSession::attach stamps the next
         // fc_session_nonce, same as the initial attach.
-        self.session = FcSession::attach(&shm_name(self.instance)).map_err(|e| match e {
+        self.session = FcSession::attach(&instance_name(self.instance)).map_err(|e| match e {
             AttachFailure::Contract(_) => GzPluginError::ContractMismatch,
             _ => GzPluginError::PluginNotRunning,
         })?;
@@ -262,7 +258,7 @@ impl GzPluginBridge {
     /// it is stepping deterministically while the simulator
     /// free-runs would produce quietly non-reproducible evidence.
     pub fn set_lockstep(&self, enabled: bool) -> Result<(), GzPluginError> {
-        let host = HostSession::attach(&shm_name(self.instance)).map_err(|e| match e {
+        let host = HostSession::attach(&instance_name(self.instance)).map_err(|e| match e {
             AttachFailure::Contract(_) => GzPluginError::ContractMismatch,
             _ => GzPluginError::PluginNotRunning,
         })?;

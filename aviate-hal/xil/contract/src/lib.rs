@@ -18,12 +18,14 @@
 #![no_std]
 
 mod layout;
+mod name;
 mod seqlock;
 
 pub use layout::{
     pack_fc_status, pack_lifecycle_request, unpack_fc_status, unpack_lifecycle_request,
     validate_attach, AttachError, ControlBlock, FcState, LifecycleRequest, ModelStateBlock,
     MotorCommandBlock, SharedStateHeader, SharedStateV2, WriterState, EXPECTED_SIZE,
-    LAYOUT_VERSION, MAGIC, SHM_NAME_BASE, SHM_NAME_INSTANCE_0,
+    LAYOUT_VERSION, MAGIC,
 };
+pub use name::{shm_name, ShmName, SHM_NAME_BASE, SHM_NAME_MAX};
 pub use seqlock::{seqlock_read, seqlock_write, SEQLOCK_MAX_RETRIES};

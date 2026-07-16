@@ -31,7 +31,7 @@
 //! a raw store through it would fault.
 //!
 //! ```compile_fail
-//! let c = aviate_xil_shm::ConsumerSession::attach("/aviate_gz_bridge").unwrap();
+//! let c = aviate_xil_shm::ConsumerSession::attach("/aviate_gz_bridge_v3").unwrap();
 //! c.write_motor_command(&[100.0]); // no such method on a consumer
 //! ```
 

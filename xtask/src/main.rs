@@ -516,10 +516,11 @@ fn run_cleanup() -> anyhow::Result<()> {
     // Clean up shared memory on Linux
     #[cfg(target_os = "linux")]
     {
-        let shm_path = Path::new("/dev/shm/aviate_gz_bridge");
+        let name = aviate_xil_contract::shm_name(0);
+        let shm_path = Path::new("/dev/shm").join(name.trim_start_matches('/'));
         if shm_path.exists() {
-            let _ = std::fs::remove_file(shm_path);
-            println!("  Cleaned: /dev/shm/aviate_gz_bridge");
+            let _ = std::fs::remove_file(&shm_path);
+            println!("  Cleaned: {}", shm_path.display());
         }
     }
 

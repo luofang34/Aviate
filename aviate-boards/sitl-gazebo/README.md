@@ -131,9 +131,9 @@ For multi-vehicle simulations, each instance uses separate ports:
 
 | Instance | Sensor Port | Actuator Port | Shared Memory |
 |----------|-------------|---------------|---------------|
-| 0 | 14560 | 14561 | /aviate_gz_bridge |
-| 1 | 14570 | 14571 | /aviate_gz_bridge_1 |
-| N | 14560+N*10 | 14561+N*10 | /aviate_gz_bridge_N |
+| 0 | 14560 | 14561 | /aviate_gz_bridge_v3 |
+| 1 | 14570 | 14571 | /aviate_gz_bridge_v3_1 |
+| N | 14560+N*10 | 14561+N*10 | /aviate_gz_bridge_v3_N |
 
 Set via environment variable:
 ```bash

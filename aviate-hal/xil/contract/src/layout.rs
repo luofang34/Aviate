@@ -34,13 +34,6 @@ pub const MAGIC: u64 = 0x4156_4941_5445_475A;
 /// by a v3 endpoint: it publishes with the old protocol.
 pub const LAYOUT_VERSION: u32 = 3;
 
-/// POSIX shm object name base. Instance 0 uses
-/// [`SHM_NAME_INSTANCE_0`]; instance N appends `_N`.
-pub const SHM_NAME_BASE: &str = "/aviate_gz_bridge";
-
-/// Instance-0 shm object name.
-pub const SHM_NAME_INSTANCE_0: &str = "/aviate_gz_bridge";
-
 mod attach_rules;
 
 pub use attach_rules::{validate_attach, AttachError, WriterState};
@@ -101,7 +94,8 @@ pub struct SharedStateHeader {
     /// because they survive it:
     ///
     /// * the GLOBAL lease (`/tmp/<shm name without leading
-    ///   slash>.lease` — e.g. `/tmp/aviate_gz_bridge.lease`), whose
+    ///   slash>.lease` — e.g. `/tmp/aviate_gz_bridge_v3.lease`),
+    ///   whose
     ///   first 8 bytes hold this counter and which enforces
     ///   single-writer ownership: a second writer must fail to take
     ///   over an actively held name rather than unlink a live
@@ -109,7 +103,7 @@ pub struct SharedStateHeader {
     ///   lock file races its next locker).
     /// * the incarnation TOKEN (the global lease path with the
     ///   incarnation appended — e.g.
-    ///   `/tmp/aviate_gz_bridge.lease.7`), locked by the grant
+    ///   `/tmp/aviate_gz_bridge_v3.lease.7`), locked by the grant
     ///   BEFORE the value can reach any block header. "Is the
     ///   writer that stamped THIS field alive?" is answered by
     ///   probing the token alone. The global lease can never vouch
