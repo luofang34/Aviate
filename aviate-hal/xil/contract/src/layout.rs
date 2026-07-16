@@ -94,23 +94,34 @@ pub struct SharedStateHeader {
     ///   object, same incarnation, same mappings. Consumers re-key
     ///   their freshness tracking and keep their attachment.
     ///
-    /// LIVENESS is carried outside the block: the writer holds an
-    /// exclusive advisory lock on a lease file for its whole life
-    /// (`/tmp/<shm name without leading slash>.lease` — e.g.
-    /// `/tmp/aviate_gz_bridge.lease`), which the kernel releases on
-    /// ANY exit including a crash. In-block flags cannot prove a
-    /// writer is alive, precisely because they survive it. The lease
-    /// also enforces single-writer ownership: a second writer must
-    /// fail to take over an actively held name rather than unlink a
-    /// live peer's object. The lease file itself is never unlinked
-    /// (removing a lock file races its next locker).
+    /// LIVENESS is carried outside the block, per incarnation. The
+    /// writer holds two exclusive advisory locks for its whole life,
+    /// both released by the kernel on ANY exit including a crash —
+    /// in-block flags cannot prove a writer is alive, precisely
+    /// because they survive it:
     ///
-    /// Liveness and identity must be checked TOGETHER: a held lease
-    /// proves some writer is alive, and only its counter says which.
-    /// Between a successor's grant and its object creation the name
-    /// still resolves to the predecessor's block, so an attachment
-    /// is current only while the active grant's counter equals this
-    /// field — "somebody is alive" must never revive a corpse.
+    /// * the GLOBAL lease (`/tmp/<shm name without leading
+    ///   slash>.lease` — e.g. `/tmp/aviate_gz_bridge.lease`), whose
+    ///   first 8 bytes hold this counter and which enforces
+    ///   single-writer ownership: a second writer must fail to take
+    ///   over an actively held name rather than unlink a live
+    ///   peer's object. This file is never unlinked (removing a
+    ///   lock file races its next locker).
+    /// * the incarnation TOKEN (the global lease path with the
+    ///   incarnation appended — e.g.
+    ///   `/tmp/aviate_gz_bridge.lease.7`), locked by the grant
+    ///   BEFORE the value can reach any block header. "Is the
+    ///   writer that stamped THIS field alive?" is answered by
+    ///   probing the token alone. The global lease can never vouch
+    ///   for a corpse: between a successor's grant and its object
+    ///   creation the name still resolves to the predecessor's
+    ///   block while the global lease is genuinely held — and the
+    ///   counter on file is still the predecessor's until the
+    ///   successor's write lands — so any verdict built on it
+    ///   revives the corpse. No grant ever touches another writer's
+    ///   token. A successor unlinks its predecessor's token file:
+    ///   the value is never granted twice, and a probe racing the
+    ///   unlink reads "unlocked", the verdict the unlink preserves.
     pub writer_incarnation: u64,
     /// Reserved; zero. Pads the header to a full 64-byte cache-line
     /// block: each block of this layout is written by exactly one

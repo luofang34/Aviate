@@ -51,8 +51,9 @@ pub(crate) struct Mapping {
     /// Creator unlinks the object on drop; attachers never do.
     owner: bool,
     /// Held for the writer's whole life; `None` for attachers. The
-    /// kernel releases it on any exit, so its held/free state is the
-    /// liveness signal `writer_liveness` probes.
+    /// kernel releases its locks on any exit, so the held/free state
+    /// of this writer's own incarnation token is the liveness signal
+    /// `writer_liveness` probes.
     lease: Option<lease::WriterLease>,
     /// The `writer_incarnation` of the object this mapping was taken
     /// from. A writer that dies and re-creates the object leaves
