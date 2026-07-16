@@ -3,7 +3,7 @@
 //! Architecture:
 //!
 //! ```text
-//! gz sim ── AviateGzPlugin.dylib ── POSIX shm /aviate_gz_bridge ── this binary
+//! gz sim ── AviateGzPlugin.dylib ── POSIX shm /aviate_gz_bridge_v3 ── this binary
 //!                model state (ENU)                    │
 //!                                                     │ synthesize NED
 //!                                                     ▼

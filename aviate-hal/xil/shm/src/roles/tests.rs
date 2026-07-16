@@ -489,3 +489,5 @@ fn the_session_nonce_wraps_past_zero() {
 
 #[path = "tests/cross_process.rs"]
 mod cross_process;
+#[path = "tests/namespace.rs"]
+mod namespace;

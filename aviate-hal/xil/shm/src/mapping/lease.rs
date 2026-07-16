@@ -54,8 +54,8 @@
 use std::ffi::CString;
 use std::io;
 
-/// The global lease path for a shm name: `/aviate_gz_bridge` →
-/// `/tmp/aviate_gz_bridge.lease`. `/tmp` because both sides of the
+/// The global lease path for a shm name: `/aviate_gz_bridge_v3` →
+/// `/tmp/aviate_gz_bridge_v3.lease`. `/tmp` because both sides of the
 /// contract (this crate and the C++ plugin) must derive the same
 /// path without sharing code, and per-user temp dirs differ between
 /// processes started from different environments.
@@ -64,7 +64,7 @@ pub(crate) fn lease_path(shm_name: &str) -> String {
 }
 
 /// The incarnation-token path: the global lease path with the
-/// incarnation appended (`/tmp/aviate_gz_bridge.lease.7`).
+/// incarnation appended (`/tmp/aviate_gz_bridge_v3.lease.7`).
 pub(crate) fn token_path(shm_name: &str, incarnation: u64) -> String {
     format!("{}.{incarnation}", lease_path(shm_name))
 }

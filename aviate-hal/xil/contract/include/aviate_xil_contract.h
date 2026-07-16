@@ -8,6 +8,56 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* The versioned shm namespace. The `_vN` suffix is the
+ * incompatible contract major (AviateLAYOUT_VERSION), not a
+ * release number: a stale writer built against an older layout
+ * writes at obsolete offsets BEFORE any validation can reject
+ * it, so breaking bumps rename the rendezvous itself. The
+ * retired unversioned name must never be created or opened. */
+#define AviateSHM_NAME_BASE "/aviate_gz_bridge_v3"
+#define AviateSHM_NAME_MAX 31
+
+/* Canonical shm name for a bridge instance: 0 is the base name
+ * itself, N > 0 appends "_N". Writes a NUL-terminated string into
+ * `buf`; every instance fits in AviateSHM_NAME_MAX + 1 bytes.
+ * Returns 0 on success, -1 if `buf_len` is too small. Never open
+ * the retired unversioned name — see the namespace note above. */
+static inline int aviate_shm_instance_name(uint32_t instance, char *buf, size_t buf_len)
+{
+    const char *base = AviateSHM_NAME_BASE;
+    size_t base_len = 0;
+    size_t n_digits = 0;
+    size_t total;
+    size_t i;
+    char digits[10]; /* u32 max has 10 decimal digits */
+    while (base[base_len] != '\0') {
+        base_len++;
+    }
+    if (instance > 0u) {
+        uint32_t v = instance;
+        while (v > 0u) {
+            digits[n_digits++] = (char)('0' + (v % 10u));
+            v /= 10u;
+        }
+    }
+    total = base_len + (n_digits > 0 ? n_digits + 1 : 0);
+    if (total > (size_t)AviateSHM_NAME_MAX || total + 1 > buf_len) {
+        return -1;
+    }
+    for (i = 0; i < base_len; i++) {
+        buf[i] = base[i];
+    }
+    if (n_digits > 0) {
+        buf[base_len] = '_';
+        for (i = 0; i < n_digits; i++) {
+            buf[base_len + 1 + i] = digits[n_digits - 1 - i];
+        }
+    }
+    buf[total] = '\0';
+    return 0;
+}
+
+
 // First eight bytes of the block: ASCII `AVIATEGZ` big-endian. A
 // consumer that attaches to anything else is looking at a foreign
 // or torn mapping and must fail closed. (Spelled as a literal so
@@ -136,7 +186,8 @@ typedef struct AviateSharedStateHeader {
   // because they survive it:
   //
   // * the GLOBAL lease (`/tmp/<shm name without leading
-  //   slash>.lease` — e.g. `/tmp/aviate_gz_bridge.lease`), whose
+  //   slash>.lease` — e.g. `/tmp/aviate_gz_bridge_v3.lease`),
+  //   whose
   //   first 8 bytes hold this counter and which enforces
   //   single-writer ownership: a second writer must fail to take
   //   over an actively held name rather than unlink a live
@@ -144,7 +195,7 @@ typedef struct AviateSharedStateHeader {
   //   lock file races its next locker).
   // * the incarnation TOKEN (the global lease path with the
   //   incarnation appended — e.g.
-  //   `/tmp/aviate_gz_bridge.lease.7`), locked by the grant
+  //   `/tmp/aviate_gz_bridge_v3.lease.7`), locked by the grant
   //   BEFORE the value can reach any block header. "Is the
   //   writer that stamped THIS field alive?" is answered by
   //   probing the token alone. The global lease can never vouch

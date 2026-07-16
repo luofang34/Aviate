@@ -11,6 +11,76 @@
 
 use std::path::PathBuf;
 
+/// The canonical C constructor for an instance's shm name, shipped
+/// INSIDE the generated header so the C++ plugin runs the exact code
+/// the agreement test exercises. The two `#define`s it consumes are
+/// formatted from the Rust constants below — the values have exactly
+/// one home, `src/name.rs`. Byte-for-byte agreement with the Rust
+/// [`aviate_xil_contract::shm_name`] is proven by the executable
+/// probe in `tests/name_agreement.rs`.
+const NAME_FN_C: &str = r#"
+/* Canonical shm name for a bridge instance: 0 is the base name
+ * itself, N > 0 appends "_N". Writes a NUL-terminated string into
+ * `buf`; every instance fits in AviateSHM_NAME_MAX + 1 bytes.
+ * Returns 0 on success, -1 if `buf_len` is too small. Never open
+ * the retired unversioned name — see the namespace note above. */
+static inline int aviate_shm_instance_name(uint32_t instance, char *buf, size_t buf_len)
+{
+    const char *base = AviateSHM_NAME_BASE;
+    size_t base_len = 0;
+    size_t n_digits = 0;
+    size_t total;
+    size_t i;
+    char digits[10]; /* u32 max has 10 decimal digits */
+    while (base[base_len] != '\0') {
+        base_len++;
+    }
+    if (instance > 0u) {
+        uint32_t v = instance;
+        while (v > 0u) {
+            digits[n_digits++] = (char)('0' + (v % 10u));
+            v /= 10u;
+        }
+    }
+    total = base_len + (n_digits > 0 ? n_digits + 1 : 0);
+    if (total > (size_t)AviateSHM_NAME_MAX || total + 1 > buf_len) {
+        return -1;
+    }
+    for (i = 0; i < base_len; i++) {
+        buf[i] = base[i];
+    }
+    if (n_digits > 0) {
+        buf[base_len] = '_';
+        for (i = 0; i < n_digits; i++) {
+            buf[base_len + 1 + i] = digits[n_digits - 1 - i];
+        }
+    }
+    buf[total] = '\0';
+    return 0;
+}
+"#;
+
+fn shm_namespace_block() -> String {
+    let mut block = String::from(
+        "\n/* The versioned shm namespace. The `_vN` suffix is the\n \
+         * incompatible contract major (AviateLAYOUT_VERSION), not a\n \
+         * release number: a stale writer built against an older layout\n \
+         * writes at obsolete offsets BEFORE any validation can reject\n \
+         * it, so breaking bumps rename the rendezvous itself. The\n \
+         * retired unversioned name must never be created or opened. */\n",
+    );
+    block.push_str(&format!(
+        "#define AviateSHM_NAME_BASE \"{}\"\n",
+        aviate_xil_contract::SHM_NAME_BASE
+    ));
+    block.push_str(&format!(
+        "#define AviateSHM_NAME_MAX {}\n",
+        aviate_xil_contract::SHM_NAME_MAX
+    ));
+    block.push_str(NAME_FN_C);
+    block
+}
+
 fn generate() -> String {
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let config = cbindgen::Config {
@@ -28,6 +98,7 @@ fn generate() -> String {
              * failing test prints the fresh text). */"
                 .into(),
         ),
+        after_includes: Some(shm_namespace_block()),
         export: cbindgen::ExportConfig {
             include: vec![
                 "SharedStateV2".into(),
@@ -38,6 +109,11 @@ fn generate() -> String {
                 "LifecycleRequest".into(),
                 "FcState".into(),
             ],
+            // The namespace constants ride in `after_includes` above
+            // (cbindgen cannot emit `&str` consts, and the constructor
+            // must see both defines before its body) — suppress the
+            // native export so AviateSHM_NAME_MAX is not defined twice.
+            exclude: vec!["SHM_NAME_BASE".into(), "SHM_NAME_MAX".into()],
             prefix: Some("Aviate".into()),
             ..Default::default()
         },

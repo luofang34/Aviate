@@ -1030,6 +1030,7 @@ version = "0.1.3"
 dependencies = [
  "aviate-backend-gz",
  "aviate-hal-xil",
+ "aviate-xil-contract",
  "clap",
  "env_logger",
  "libc",
@@ -2751,6 +2752,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aviate-xil-contract",
  "cargo_metadata",
  "probe-rs",
  "regex",

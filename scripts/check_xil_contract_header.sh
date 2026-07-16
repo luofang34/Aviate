@@ -121,6 +121,27 @@ static_assert(sizeof(AviateModelStateBlock::pos_bits) == 3 * sizeof(uint64_t), "
 static_assert(sizeof(AviateMotorCommandBlock::motor_vel_bits) == 8 * sizeof(uint64_t),
               "motor lanes not u64");
 
+// The versioned shm namespace is load-bearing: a stale writer built
+// against an older layout writes at obsolete offsets BEFORE any
+// validation can reject it, so the rendezvous name itself carries
+// the contract major. Pinned here like the layout version above; the
+// executable Rust↔C++ agreement lives in the contract crate's
+// name_agreement test.
+constexpr bool aviate_probe_str_eq(const char* a, const char* b)
+{
+    for (; *a != '\0' || *b != '\0'; ++a, ++b) {
+        if (*a != *b) { return false; }
+    }
+    return true;
+}
+static_assert(aviate_probe_str_eq(AviateSHM_NAME_BASE, "/aviate_gz_bridge_v3"),
+              "shm namespace drifted");
+static_assert(AviateSHM_NAME_MAX == 31, "shm name limit drifted");
+// The canonical constructor must ship in the header the plugin
+// compiles against — not just the defines it is built from.
+static constexpr int (*aviate_probe_name_fn)(uint32_t, char*, size_t) = &aviate_shm_instance_name;
+static_assert(aviate_probe_name_fn != nullptr, "name constructor missing");
+
 static_assert(AviateLifecycleRequest_None == 0, "LifecycleRequest::None drifted");
 static_assert(AviateLifecycleRequest_Reset == 1, "LifecycleRequest::Reset drifted");
 static_assert(AviateLifecycleRequest_Stop == 2, "LifecycleRequest::Stop drifted");
@@ -192,6 +213,17 @@ self_test() {
         exit 1
     fi
     echo "self-test ok: drifted layout is rejected"
+
+    # A header whose shm NAMESPACE drifted must FAIL — the versioned
+    # name is what keeps stale pre-v3 writers out of the block, so
+    # the gate must prove it notices a silent rename.
+    sed 's/aviate_gz_bridge_v3/aviate_gz_bridge_vX/g' \
+        "$CONTRACT_INC/aviate_xil_contract.h" > "$tmp/inc/aviate_xil_contract.h"
+    if "$cxx" -std=c++17 -fsyntax-only -I "$tmp/inc" "$tmp/probe.cc" 2>/dev/null; then
+        echo "SELF_TEST FAIL: a drifted shm namespace passed the probe" >&2
+        exit 1
+    fi
+    echo "self-test ok: drifted shm namespace is rejected"
 
     # A CMakeLists that stops declaring the contract include directory
     # must FAIL — this is the exact break the Gazebo lane caught.

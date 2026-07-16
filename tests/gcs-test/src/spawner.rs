@@ -446,13 +446,9 @@ fn cleanup_orphan_aviate_sitl_processes() {
     // `shm_unlink` returns ENOENT silently when nothing's there.
     #[cfg(target_family = "unix")]
     unsafe {
-        for instance in 0u8..4 {
-            let name = if instance == 0 {
-                std::ffi::CString::new("/aviate_gz_bridge").ok()
-            } else {
-                std::ffi::CString::new(format!("/aviate_gz_bridge_{}", instance)).ok()
-            };
-            if let Some(name) = name {
+        for instance in 0u32..4 {
+            let name = aviate_xil_contract::shm_name(instance);
+            if let Ok(name) = std::ffi::CString::new(name.as_str()) {
                 libc::shm_unlink(name.as_ptr());
             }
         }
@@ -472,8 +468,17 @@ fn cleanup_orphan_aviate_sitl_processes() {
 fn cleanup_gazebo_shm() {
     #[cfg(target_os = "linux")]
     {
-        let _ = std::fs::remove_file("/dev/shm/aviate_gz_bridge");
+        let _ = std::fs::remove_file(shm_mirror_path());
     }
+}
+
+/// The Linux `/dev/shm` mirror file of the instance-0 shm object —
+/// the object name minus its leading slash, derived from the
+/// contract's naming authority.
+#[cfg(target_os = "linux")]
+fn shm_mirror_path() -> std::path::PathBuf {
+    let name = aviate_xil_contract::shm_name(0);
+    Path::new("/dev/shm").join(name.trim_start_matches('/'))
 }
 
 /// Wait for Gazebo shared memory to be ready.
@@ -487,7 +492,7 @@ fn cleanup_gazebo_shm() {
 fn wait_for_shm(timeout: Duration) -> bool {
     #[cfg(target_os = "linux")]
     {
-        let shm_path = Path::new("/dev/shm/aviate_gz_bridge");
+        let shm_path = shm_mirror_path();
         let start = Instant::now();
         while start.elapsed() < timeout {
             if shm_path.exists() {

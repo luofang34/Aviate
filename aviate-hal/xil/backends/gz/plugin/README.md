@@ -15,7 +15,7 @@ Zero-copy bridge between gz-sim (Gazebo Harmonic) and Aviate SITL via shared mem
 │  └───────────────────────┬─────────────────────────────────┘    │
 └──────────────────────────┼──────────────────────────────────────┘
                            │ POSIX Shared Memory
-                           │ /aviate_gz_bridge
+                           │ /aviate_gz_bridge_v3
 ┌──────────────────────────┼──────────────────────────────────────┐
 │  ┌───────────────────────▼─────────────────────────────────┐    │
 │  │           libaviate_gz_bridge.so (C Interface)          │    │
@@ -97,7 +97,7 @@ Use `enu_to_ned()` and `enu_vel_to_ned()` helper functions for conversion.
 
 ## Shared Memory Structure
 
-The plugin and bridge communicate via POSIX shared memory (`/aviate_gz_bridge`):
+The plugin and bridge communicate via POSIX shared memory (`/aviate_gz_bridge_v3`):
 
 ```c
 struct SharedState {

@@ -11,6 +11,7 @@ default = ["hardware"]
 hardware = ["dep:probe-rs"]
 
 [dependencies]
+aviate-xil-contract = { path = "../aviate-hal/xil/contract" }
 serialport = "4.5"
 anyhow = "1.0"
 regex = "1.10"

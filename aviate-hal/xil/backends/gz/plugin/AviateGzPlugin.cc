@@ -327,16 +327,30 @@ void AviateGzPlugin::Configure(
     if (sdf->HasElement("instance")) {
         instance_ = sdf->Get<int>("instance");
     }
+    // Fail closed BEFORE any shm work: a negative instance has no
+    // name in the contract's namespace, and casting it through
+    // uint32_t would silently rendezvous on a garbage name.
+    if (instance_ < 0) {
+        std::cerr << "[AviateGzPlugin] invalid instance " << instance_
+                  << " (must be >= 0); plugin disabled" << std::endl;
+        return;
+    }
 
     motorTopic_ = "/" + modelName_ + "/command/motor_speed";
     if (sdf->HasElement("motor_topic")) {
         motorTopic_ = sdf->Get<std::string>("motor_topic");
     }
 
-    shmName_ = "/aviate_gz_bridge";
-    if (instance_ != 0) {
-        shmName_ += "_" + std::to_string(instance_);
+    // The contract header owns the versioned namespace and the
+    // instance-name rule; never spell the name locally.
+    char shmNameBuf[AviateSHM_NAME_MAX + 1];
+    if (aviate_shm_instance_name(static_cast<uint32_t>(instance_),
+                                 shmNameBuf, sizeof shmNameBuf) != 0) {
+        std::cerr << "[AviateGzPlugin] cannot construct shm name for instance "
+                  << instance_ << "; plugin disabled" << std::endl;
+        return;
     }
+    shmName_ = shmNameBuf;
 
     lockstep_ = false;
     if (sdf->HasElement("lockstep")) {

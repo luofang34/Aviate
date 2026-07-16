@@ -23,6 +23,7 @@ gazebo = [
 [dependencies]
 aviate-hal-xil = { path = "../../aviate-hal/xil" }
 aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", optional = true }
+aviate-xil-contract = { path = "../../aviate-hal/xil/contract" }
 libc = "0.2"
 
 clap = { version = "4", features = ["derive"] }
