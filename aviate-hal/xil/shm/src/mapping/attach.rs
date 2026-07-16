@@ -61,6 +61,13 @@ impl Mapping {
     /// retryable [`AttachError::Initializing`].
     pub(crate) fn create(name: &str) -> io::Result<Self> {
         let cname = cstring(name)?;
+        // The lease comes FIRST. Unlinking before owning the lease is
+        // how one writer destroys another's live object: the old
+        // unconditional unlink meant a second writer — or an old
+        // writer's late cleanup — silently pulled the block out from
+        // under every consumer. With the lease held, the unlink below
+        // can only ever remove a DEAD writer's leftover.
+        let lease = super::lease::WriterLease::acquire(name)?;
         // SAFETY: plain libc calls on an owned CString; failure
         // paths close what was opened; the block is exclusively ours
         // between shm_open(O_CREAT after unlink) and plugin_ready.
@@ -124,12 +131,13 @@ impl Mapping {
                 name: cname,
                 owner: true,
                 incarnation,
+                lease: Some(lease),
             })
         }
     }
 
     /// Attach to an existing object, failing closed on any contract
-    /// mismatch (#262) and on a writer that has not published
+    /// mismatch and on a writer that has not published
     /// readiness. `read_only` maps `PROT_READ` over an `O_RDONLY`
     /// descriptor, so the OS itself refuses consumer writes.
     pub(crate) fn attach(name: &str, read_only: bool) -> Result<Self, AttachFailure> {
@@ -155,11 +163,15 @@ impl Mapping {
             }
             let actual = st.st_size.max(0) as usize;
             // Zero size is the writer's shm_open-before-ftruncate
-            // window: retryable, not a foreign object. Anything else
-            // short of the block IS foreign.
+            // window: retryable, not a foreign object. It must travel
+            // as NotReady — callers translate the Contract channel
+            // into a permanent, never-retried failure, which would
+            // turn this microsecond window back into the startup
+            // deadlock it used to be. Anything else short of the
+            // block IS foreign.
             if actual == 0 {
                 libc::close(fd);
-                return Err(AttachFailure::Contract(AttachError::Initializing));
+                return Err(AttachFailure::NotReady);
             }
             if actual < EXPECTED_SIZE {
                 libc::close(fd);
@@ -209,17 +221,69 @@ impl Mapping {
                 return Err(AttachFailure::Contract(e));
             }
             let incarnation = load_u64(core::ptr::addr_of!((*base).header.writer_incarnation));
+            // Re-check readiness AFTER reading the fingerprint and
+            // incarnation: a writer tearing down or being replaced
+            // mid-inspection cleared the flag, and the values just
+            // read may straddle two objects' lifetimes. Same bracket
+            // `inspect` uses.
+            let ready_again =
+                AtomicU32::from_ptr(core::ptr::addr_of_mut!((*base).header.plugin_ready))
+                    .load(Ordering::Acquire);
+            if ready_again == 0 {
+                libc::munmap(ptr, EXPECTED_SIZE);
+                return Err(AttachFailure::NotReady);
+            }
+            // And demand a LIVE writer. A crashed writer's block
+            // passes every in-memory check above — name, size,
+            // fingerprint, ready, incarnation all survive the crash —
+            // so without the lease probe a consumer happily attaches
+            // to a corpse and trusts its frozen final snapshot.
+            if !super::lease::writer_alive(name) {
+                libc::munmap(ptr, EXPECTED_SIZE);
+                return Err(AttachFailure::NotReady);
+            }
             Ok(Self {
                 base,
                 name: cname,
                 owner: false,
                 incarnation,
+                lease: None,
             })
         }
     }
 }
 
 impl Mapping {
+    /// Create the object at SIZE ZERO — the `shm_open`-published,
+    /// not-yet-`ftruncate`d window. Test-only, like
+    /// [`Mapping::create_mid_init_for_test`]: the real window is
+    /// microseconds wide, so the regression test manufactures it.
+    /// The returned value holds the lease and the (unsized) object;
+    /// dropping it unlinks the name.
+    #[cfg(test)]
+    pub(crate) fn create_zero_sized_for_test(name: &str) -> io::Result<ZeroSizedObject> {
+        let lease = super::lease::WriterLease::acquire(name)?;
+        let cname = cstring(name)?;
+        // SAFETY: plain libc calls; the fd is closed immediately (the
+        // named object persists until unlinked in Drop).
+        unsafe {
+            libc::shm_unlink(cname.as_ptr());
+            let fd = libc::shm_open(
+                cname.as_ptr(),
+                libc::O_CREAT | libc::O_RDWR,
+                0o666 as libc::c_uint,
+            );
+            if fd == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            libc::close(fd);
+        }
+        Ok(ZeroSizedObject {
+            name: cname,
+            _lease: lease,
+        })
+    }
+
     /// Create the object and stamp NOTHING — models a writer caught
     /// mid-initialisation (block zeroed, fingerprint not yet
     /// written, `plugin_ready` still 0). Test-only: it exists so the
@@ -227,6 +291,7 @@ impl Mapping {
     /// otherwise microseconds wide and unhittable on demand.
     #[cfg(test)]
     pub(crate) fn create_mid_init_for_test(name: &str) -> io::Result<Self> {
+        let lease = super::lease::WriterLease::acquire(name)?;
         let cname = cstring(name)?;
         // SAFETY: same libc sequence as `create`, minus the
         // fingerprint and readiness publication.
@@ -263,6 +328,7 @@ impl Mapping {
                 name: cname,
                 owner: true,
                 incarnation: 0,
+                lease: Some(lease),
             })
         }
     }
@@ -365,6 +431,27 @@ unsafe fn inspect(base: *const SharedStateV2, attached_incarnation: u64) -> Writ
     WriterState::Current
 }
 
+/// Downgrade `Current` to `Gone` when no live process holds the
+/// writer lease: every in-block signal survives a crash, so only the
+/// kernel-released lock can distinguish "same healthy writer" from
+/// "corpse of the writer I attached to".
+pub(super) fn confirm_alive(name: &CString, state: WriterState) -> WriterState {
+    match state {
+        WriterState::Current => {
+            let alive = name
+                .to_str()
+                .map(super::lease::writer_alive)
+                .unwrap_or(false);
+            if alive {
+                WriterState::Current
+            } else {
+                WriterState::Gone
+            }
+        }
+        other => other,
+    }
+}
+
 /// A value that never repeats across writers on this host: the
 /// creating process's id folded with the wall clock, so a restarted
 /// writer (same pid reused, or same instant) cannot collide with the
@@ -380,4 +467,24 @@ fn fresh_incarnation() -> u64 {
 
 fn cstring(name: &str) -> io::Result<CString> {
     CString::new(name).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in shm name"))
+}
+
+/// Test-only handle for a zero-sized shm object (see
+/// [`Mapping::create_zero_sized_for_test`]).
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct ZeroSizedObject {
+    name: CString,
+    _lease: super::lease::WriterLease,
+}
+
+#[cfg(test)]
+impl Drop for ZeroSizedObject {
+    fn drop(&mut self) {
+        // SAFETY: unlinking the name we created; mappings (none) are
+        // unaffected.
+        unsafe {
+            libc::shm_unlink(self.name.as_ptr());
+        }
+    }
 }

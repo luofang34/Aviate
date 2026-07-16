@@ -20,9 +20,14 @@ pub enum WriterState {
     /// its writer is live. The only state in which reads are
     /// trustworthy.
     Current,
-    /// The name does not resolve: the writer exited and unlinked.
-    /// This session's mapping is an orphan kept alive only by
-    /// itself — it must not be treated as healthy.
+    /// No live writer stands behind the name: it does not resolve
+    /// (clean exit unlinked it), or it resolves but no process holds
+    /// the writer lease (the writer crashed without cleanup — POSIX
+    /// shm outlives its creator, so the name, the ready flag and the
+    /// incarnation all survive the crash and the block answers every
+    /// question about itself as if it were healthy). Either way this
+    /// session's mapping serves a dead world: stop reading, stop
+    /// writing, and re-attach once a new writer appears.
     Gone,
     /// The name resolves to an object that has not finished
     /// initialising (still zero-sized, or readiness not yet
@@ -77,7 +82,7 @@ pub enum AttachError {
     Initializing,
 }
 
-/// Fail-closed attach validation (#262): magic, layout version,
+/// Fail-closed attach validation: magic, layout version,
 /// declared size, and mapped-object size must all agree before a
 /// single payload field is interpreted.
 pub fn validate_attach(

@@ -95,7 +95,7 @@ fn lifecycle_request_ack_ready_handshake() {
     assert_eq!(nonce, 1);
 
     // Sim side reads ONE coherent (nonce, request) pair — no hidden
-    // read-order convention (#267) — performs the world reset, acks
+    // read-order convention — performs the world reset, acks
     // only after success, bumps the generation.
     let (req_nonce, req) = sim.lifecycle_request();
     assert_eq!((req_nonce, req), (nonce, LifecycleRequest::Reset));
@@ -229,51 +229,69 @@ fn clean_writer_exit_stops_the_stream() {
     );
 }
 
+// The writer-crash scenarios live in tests/cross_process.rs: a
+// crash means the PROCESS died and the kernel released its lease,
+// which `mem::forget` inside this process cannot model — a forgotten
+// writer's lease fd stays open here, so the lease (correctly!)
+// reports it alive.
+
 #[test]
-fn consumer_detects_a_replaced_writer_and_can_reattach() {
-    // Writer CRASH (no cleanup): plugin_ready stays set in the
-    // orphaned memory and the object stays alive because we still
-    // map it, so `plugin_ready` alone cannot detect this. The new
-    // writer creates a fresh object under the same name; the old
-    // mapping would otherwise serve the dead world's last snapshot
-    // forever.
-    let name = unique_name("rp");
-    let crashed = SimWriterSession::create(&name).unwrap();
-    crashed.write_model_state(&ModelStateSnapshot {
+fn a_second_writer_cannot_take_over_a_live_object() {
+    // The old creation path unconditionally shm_unlink'd before
+    // creating: a second writer — or an old writer's late cleanup —
+    // destroyed a LIVE peer's object out from under every consumer.
+    // The lease makes that a loud failure instead.
+    let name = unique_name("dw");
+    let first = SimWriterSession::create(&name).unwrap();
+    first.write_model_state(&ModelStateSnapshot {
         reset_generation: 1,
-        sim_step: 9,
-        time_us: 9_000,
-        pos: [7.0, 7.0, 7.0],
+        sim_step: 3,
+        time_us: 3_000,
+        pos: [1.0, 1.0, 1.0],
         quat: [1.0, 0.0, 0.0, 0.0],
         vel: [0.0; 3],
         ang_vel: [0.0; 3],
     });
     let consumer = ConsumerSession::attach(&name).unwrap();
-    assert!(consumer.read_model_state().is_some());
-    assert_eq!(consumer.writer_state(), WriterState::Current);
 
-    // Model the crash: no Drop runs, so no ready-clear and no unlink.
-    core::mem::forget(crashed);
-    let _fresh = SimWriterSession::create(&name).unwrap();
-
+    let second = SimWriterSession::create(&name);
     assert!(
-        consumer.read_model_state().is_some(),
-        "precondition: the orphaned mapping still looks perfectly valid"
-    );
-    assert_eq!(
-        consumer.writer_state(),
-        WriterState::Replaced,
-        "the consumer must be able to see that the world moved on"
+        second.is_err(),
+        "a live writer's object must not be silently taken over"
     );
 
-    let reattached = ConsumerSession::attach(&name).unwrap();
-    assert_eq!(reattached.writer_state(), WriterState::Current);
-    assert_eq!(reattached.reset_generation(), 1);
-    assert_eq!(
-        reattached.read_model_state(),
-        None,
-        "the fresh world has published no snapshot yet"
-    );
+    // And the failed attempt must not have damaged the live world.
+    assert_eq!(consumer.writer_state(), WriterState::Current);
+    assert!(consumer.read_model_state().is_some());
+
+    // Once the first writer exits cleanly, the name is free again.
+    drop(first);
+    let _third = SimWriterSession::create(&name).unwrap();
+}
+
+#[test]
+fn zero_sized_creation_window_is_retryable() {
+    // shm_open(O_CREAT) publishes the name before ftruncate sizes
+    // it. An attacher landing in that window must get a RETRYABLE
+    // refusal: the Contract channel is translated by callers into a
+    // permanent never-retried failure, which would turn this
+    // microsecond of normal startup into a deadlock. The mid-init
+    // test below cannot catch this — its object is already
+    // full-sized — so this one manufactures a real zero-length
+    // POSIX object.
+    let name = unique_name("zs");
+    let zero = crate::mapping::Mapping::create_zero_sized_for_test(&name).unwrap();
+    match ConsumerSession::attach(&name) {
+        Err(AttachFailure::NotReady) => {}
+        other => panic!("zero-sized window must be NotReady, got {other:?}"),
+    }
+
+    // The window closes: a real writer replaces it and the same
+    // consumer retry succeeds end to end.
+    drop(zero);
+    let _writer = SimWriterSession::create(&name).unwrap();
+    let consumer = ConsumerSession::attach(&name).unwrap();
+    assert_eq!(consumer.writer_state(), WriterState::Current);
 }
 
 #[test]
@@ -324,6 +342,11 @@ fn a_reset_retires_the_previous_epochs_snapshot() {
         None,
         "the pre-reset pose must not survive the reset"
     );
+    // Contract: a reset bumps the epoch IN PLACE. Same object, same
+    // incarnation, same attachment — a consumer re-keys, it does NOT
+    // re-attach. (Re-creation is the writer-restart path, pinned in
+    // the cross-process crash test.)
+    assert_eq!(consumer.writer_state(), WriterState::Current);
 
     // The new world publishes; the consumer resumes, in the new epoch.
     writer.write_model_state(&ModelStateSnapshot {

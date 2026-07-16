@@ -7,8 +7,11 @@
 //! real child process so neither side can be reasoned about by the
 //! other's compiler.
 
+use aviate_xil_contract::WriterState;
+
 use super::super::{ConsumerSession, FcSession, ModelStateSnapshot, SimWriterSession};
 use super::unique_name;
+use crate::AttachFailure;
 
 const CROSS_PROC_ENV: &str = "AVXT_CROSS_PROC_NAME";
 const CROSS_PROC_MOTOR_ENV: &str = "AVXT_CROSS_PROC_MOTOR";
@@ -234,4 +237,140 @@ fn cross_process_motor_commands_are_coherent() {
 
     child.kill().ok();
     child.wait().ok();
+}
+
+// ---------------------------------------------------------------
+// Writer death. A crash means the PROCESS died: the kernel releases
+// the writer lease while every in-block signal — name, size,
+// fingerprint, ready flag, incarnation — survives and keeps
+// describing a perfectly healthy world. Only a real child process
+// can model that; `mem::forget` in-process keeps the lease fd open
+// and the lease (correctly) still reports the writer alive.
+// ---------------------------------------------------------------
+
+const CROSS_PROC_CRASH_ENV: &str = "AVXT_CROSS_PROC_CRASH";
+/// Path the parent watches to know the child's block is up.
+const CROSS_PROC_READY_ENV: &str = "AVXT_CROSS_PROC_READY";
+/// Path whose appearance tells the child to crash.
+const CROSS_PROC_GO_ENV: &str = "AVXT_CROSS_PROC_GO";
+
+/// The crashing writer, in the child: create, publish one snapshot,
+/// signal readiness, wait for the go-file, then die WITHOUT any
+/// cleanup — no ready-clear, no unlink, no lease release except the
+/// kernel's own on process death.
+#[test]
+fn cross_process_child_crashing_writer() {
+    let Ok(name) = std::env::var(CROSS_PROC_CRASH_ENV) else {
+        return;
+    };
+    let ready_path = std::env::var(CROSS_PROC_READY_ENV).expect("ready path");
+    let go_path = std::env::var(CROSS_PROC_GO_ENV).expect("go path");
+
+    let writer = SimWriterSession::create(&name).expect("child writer must create");
+    writer.write_model_state(&ModelStateSnapshot {
+        reset_generation: 1,
+        sim_step: 9,
+        time_us: 9_000,
+        pos: [7.0, 7.0, 7.0],
+        quat: [1.0, 0.0, 0.0, 0.0],
+        vel: [0.0; 3],
+        ang_vel: [0.0; 3],
+    });
+    std::fs::write(&ready_path, b"up").expect("signal readiness");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while !std::path::Path::new(&go_path).exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no go signal; refusing to spin forever"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    // Crash. abort() runs no destructors: the lease is released by
+    // the KERNEL, not by Drop — which is the entire point.
+    std::process::abort();
+}
+
+#[test]
+fn a_crashed_writer_is_gone_then_replaced_after_restart() {
+    if std::env::var(CROSS_PROC_ENV).is_ok()
+        || std::env::var(CROSS_PROC_MOTOR_ENV).is_ok()
+        || std::env::var(CROSS_PROC_CRASH_ENV).is_ok()
+    {
+        return; // this process IS a child; do not recurse
+    }
+    let name = unique_name("cr");
+    let ready_path = std::env::temp_dir().join(format!("avxt_up_{}", std::process::id()));
+    let go_path = std::env::temp_dir().join(format!("avxt_go_{}", std::process::id()));
+    std::fs::remove_file(&ready_path).ok();
+    std::fs::remove_file(&go_path).ok();
+
+    let mut child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+        .args([
+            "--exact",
+            "roles::tests::cross_process::cross_process_child_crashing_writer",
+            "--nocapture",
+        ])
+        .env(CROSS_PROC_CRASH_ENV, &name)
+        .env(CROSS_PROC_READY_ENV, &ready_path)
+        .env(CROSS_PROC_GO_ENV, &go_path)
+        .spawn()
+        .expect("spawn the crashing writer");
+
+    // Wait for the child's world, then attach and verify it is live.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while !ready_path.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "child never brought its world up"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let consumer = ConsumerSession::attach(&name).expect("attach to the live child world");
+    assert_eq!(consumer.writer_state(), WriterState::Current);
+    assert!(consumer.read_model_state().is_some());
+
+    // Kill it — and PROVE the death was a crash, not a clean exit.
+    std::fs::write(&go_path, b"die").expect("send go signal");
+    let status = child.wait().expect("reap the child");
+    assert!(
+        !status.success(),
+        "the child must have died by abort, not exited cleanly: {status}"
+    );
+
+    // Crash WITHOUT replacement: no in-block signal changed, yet the
+    // writer must read as Gone — this is the case a boolean or an
+    // incarnation-only check calls healthy forever.
+    assert_eq!(
+        consumer.writer_state(),
+        WriterState::Gone,
+        "a dead writer's intact block must not read as Current"
+    );
+    // And a NEW consumer must not be allowed to bind to the corpse.
+    assert!(
+        matches!(ConsumerSession::attach(&name), Err(AttachFailure::NotReady)),
+        "attaching to a dead writer's block must be refused"
+    );
+
+    // Crash-restart: a fresh writer takes the (kernel-released)
+    // lease and creates a new object; the old consumer sees the
+    // identity change and re-attaches into the new world.
+    let fresh = SimWriterSession::create(&name).expect("restart over a crashed predecessor");
+    assert_eq!(
+        consumer.writer_state(),
+        WriterState::Replaced,
+        "after a restart the old attachment must see a new identity"
+    );
+    let reattached = ConsumerSession::attach(&name).expect("re-attach to the restarted world");
+    assert_eq!(reattached.writer_state(), WriterState::Current);
+    assert_eq!(reattached.reset_generation(), 1);
+    assert_eq!(
+        reattached.read_model_state(),
+        None,
+        "the fresh world has published no snapshot yet"
+    );
+    drop(fresh);
+
+    std::fs::remove_file(&ready_path).ok();
+    std::fs::remove_file(&go_path).ok();
 }

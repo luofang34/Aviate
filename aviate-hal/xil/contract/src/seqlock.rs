@@ -1,4 +1,4 @@
-//! Seqlock protocol over the shared blocks (#262).
+//! Seqlock protocol over the shared blocks.
 //!
 //! The writer makes `seq` odd before touching the payload and even
 //! after; a reader takes a payload snapshot between two even, equal

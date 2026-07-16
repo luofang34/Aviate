@@ -10,14 +10,15 @@ use aviate_xil_contract::{seqlock_read, seqlock_write, SharedStateV2, WriterStat
 
 mod attach;
 mod lanes;
+mod lease;
 
-use attach::writer_state;
 pub use attach::AttachFailure;
+use attach::{confirm_alive, writer_state};
 
 use lanes::{load_f64_lanes, load_u32, load_u64, store_f64_lanes, store_u32, store_u64};
 
 /// One coherent `{generation, step, time, state}` snapshot taken
-/// under the model seqlock (#265: `sim_step`/`time_us` are the
+/// under the model seqlock (`sim_step`/`time_us` are the
 /// sim-time authority; the generation rides inside the same read so
 /// a snapshot can never be attributed to the wrong epoch).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -49,6 +50,10 @@ pub(crate) struct Mapping {
     name: CString,
     /// Creator unlinks the object on drop; attachers never do.
     owner: bool,
+    /// Held for the writer's whole life; `None` for attachers. The
+    /// kernel releases it on any exit, so its held/free state is the
+    /// liveness signal `writer_alive` probes.
+    lease: Option<lease::WriterLease>,
     /// The `writer_incarnation` of the object this mapping was taken
     /// from. A writer that dies and re-creates the object leaves
     /// this mapping pointing at the OLD (still-mapped) memory, whose
@@ -220,7 +225,7 @@ impl Mapping {
     /// same name. The consumer must re-attach; this mapping can only
     /// ever serve the dead world's last snapshot.
     pub(crate) fn writer_state(&self) -> WriterState {
-        writer_state(&self.name, self.incarnation)
+        confirm_alive(&self.name, writer_state(&self.name, self.incarnation))
     }
 
     /// Publish a model snapshot (simulation-writer role). The
@@ -262,7 +267,7 @@ impl Mapping {
 
     /// Publish motor boundary commands (FC role). Values are
     /// boundary rotor-speed commands — the actuator curve is applied
-    /// BEFORE this call (#140).
+    /// BEFORE this call.
     pub(crate) fn write_motor_command(&self, velocities: &[f64]) {
         let n = velocities.len().min(8);
         let mut lanes = [0.0_f64; 8];
@@ -345,7 +350,7 @@ impl Mapping {
         fc_session_nonce
     );
     control_u32!(
-        /// Runtime lockstep toggle (#265).
+        /// Runtime lockstep toggle.
         lockstep_enabled_raw,
         set_lockstep_enabled_raw,
         lockstep_enabled
@@ -362,15 +367,34 @@ impl Drop for Mapping {
     fn drop(&mut self) {
         // SAFETY: base came from a successful EXPECTED_SIZE mmap and
         // is unmapped exactly once; only the creator clears the
-        // ready flag and unlinks the name.
+        // ready flag and unlinks the name — and only after
+        // re-resolving the NAME and finding its own object there.
+        // Reading the incarnation through `self.base` could not
+        // check that: our own mapping always answers with the value
+        // we stamped, replaced or not.
         unsafe {
             if self.owner {
+                // `Initializing` at owner-drop can only be our own
+                // never-readied object (the mid-init test helper):
+                // while we hold the lease no successor can exist,
+                // and a foreign protocol writer would have needed
+                // the lease too.
+                let ours = matches!(
+                    writer_state(&self.name, self.incarnation),
+                    WriterState::Current | WriterState::Initializing
+                );
                 AtomicU32::from_ptr(core::ptr::addr_of_mut!((*self.base).header.plugin_ready))
                     .store(0, Ordering::Release);
-            }
-            libc::munmap(self.base.cast(), EXPECTED_SIZE);
-            if self.owner {
-                libc::shm_unlink(self.name.as_ptr());
+                libc::munmap(self.base.cast(), EXPECTED_SIZE);
+                if ours {
+                    libc::shm_unlink(self.name.as_ptr());
+                }
+                // Release the lease only after the unlink: freeing
+                // it earlier would let a new writer win the lease
+                // while the name still resolves to our dying object.
+                drop(self.lease.take());
+            } else {
+                libc::munmap(self.base.cast(), EXPECTED_SIZE);
             }
         }
     }

@@ -1,7 +1,7 @@
 //! The checked-in C header must equal what cbindgen generates from
 //! the Rust definitions — the C++ plugin compiles against that
 //! header, so drift between the two IS the cross-language ABI bug
-//! this crate exists to prevent (#262).
+//! this crate exists to prevent.
 //!
 //! On mismatch the test prints the freshly generated text; update
 //! `include/aviate_xil_contract.h` with it (never edit the header by

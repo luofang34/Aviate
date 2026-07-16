@@ -14,6 +14,7 @@
 #include <gz/plugin/Register.hh>
 #include <gz/msgs/actuators.pb.h>
 
+#include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -77,6 +78,82 @@ inline void StoreLaneRelaxed(uint64_t* p, double v)
     uint64_t bits;
     std::memcpy(&bits, &v, sizeof(bits));
     __atomic_store_n(p, bits, __ATOMIC_RELAXED);
+}
+
+// The C++ half of the writer lease. The Rust side
+// (aviate-xil-shm's mapping/lease.rs) owns the protocol; both sides
+// must derive the same path and semantics without sharing code:
+// an exclusive flock on /tmp/<name>.lease, held for the writer's
+// whole life, released by the kernel on any exit including a crash.
+// The lease file is never unlinked — removing a lock file races its
+// next locker (two processes lock two different inodes behind one
+// path).
+std::string LeasePath(const std::string& shmName)
+{
+    std::string base = shmName;
+    if (!base.empty() && base.front() == '/') {
+        base.erase(0, 1);
+    }
+    return "/tmp/" + base + ".lease";
+}
+
+// Take the writer lease, or return -1 if a live writer holds it.
+//
+// O_CLOEXEC is load-bearing: flock locks ride the open file
+// description, which survives fork+exec, so without it any child
+// this process spawns keeps the lease alive after the writer exits.
+// The bounded retry sees through the same mechanism in the other
+// direction: a fork() anywhere in a lease-holding process briefly
+// pins a just-released lock (the child's duplicated fd holds it
+// until exec), so a held verdict only counts once it has persisted
+// past that window. A live writer holds its lease for its whole
+// life; 100 ms separates the two cleanly.
+int AcquireWriterLease(const std::string& shmName)
+{
+    const std::string path = LeasePath(shmName);
+    int fd = open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0666);
+    if (fd == -1) {
+        std::cerr << "[AviateGzPlugin] cannot open lease file " << path
+                  << ": " << strerror(errno) << std::endl;
+        return -1;
+    }
+    constexpr int kAttempts = 25;
+    for (int attempt = 0; attempt < kAttempts; ++attempt) {
+        if (flock(fd, LOCK_EX | LOCK_NB) == 0) {
+            return fd;
+        }
+        if (attempt + 1 < kAttempts) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(4));
+        }
+    }
+    close(fd);
+    return -1;
+}
+
+// Whether the name currently resolves to the object that stamped
+// `incarnation`. Asking our own mapping would be circular — it
+// always answers with the value we stamped — so resolve the NAME.
+bool NameResolvesToIncarnation(const std::string& shmName, uint64_t incarnation)
+{
+    int fd = shm_open(shmName.c_str(), O_RDONLY, 0);
+    if (fd == -1) {
+        return false;
+    }
+    struct stat st = {};
+    if (fstat(fd, &st) == -1 ||
+        st.st_size < static_cast<off_t>(sizeof(AviateSharedStateV2))) {
+        close(fd);
+        return false;
+    }
+    void* ptr = mmap(nullptr, sizeof(AviateSharedStateV2), PROT_READ, MAP_SHARED, fd, 0);
+    close(fd);
+    if (ptr == MAP_FAILED) {
+        return false;
+    }
+    const auto* blk = static_cast<const AviateSharedStateV2*>(ptr);
+    const uint64_t live = __atomic_load_n(&blk->header.writer_incarnation, __ATOMIC_ACQUIRE);
+    munmap(ptr, sizeof(AviateSharedStateV2));
+    return live == incarnation;
 }
 
 }  // namespace
@@ -300,7 +377,7 @@ void AviateGzPlugin::PostUpdate(
     }
 
     // Publish one coherent {generation, step, time, state} snapshot
-    // under the model seqlock: odd while writing, even after (#262).
+    // under the model seqlock: odd while writing, even after.
     // sim_step stays monotonic across resets — epochs are told apart
     // by reset_generation, which rides inside the same payload.
     simStep_ += 1;
@@ -322,20 +399,41 @@ void AviateGzPlugin::PostUpdate(
 
 bool AviateGzPlugin::InitSharedMemory()
 {
-    // Always unlink any prior segment first: macOS disallows
-    // ftruncate on an existing POSIX shm object.
+    // The lease comes FIRST. Unlinking before owning the lease is
+    // how one writer destroys another's live object: an
+    // unconditional unlink here would pull a LIVE peer's block out
+    // from under every consumer. Refuse loudly instead of taking
+    // over.
+    leaseFd_ = AcquireWriterLease(shmName_);
+    if (leaseFd_ == -1) {
+        std::cerr << "[AviateGzPlugin] another live writer holds "
+                  << LeasePath(shmName_)
+                  << "; refusing to take over " << shmName_ << std::endl;
+        return false;
+    }
+
+    // With the lease held, this can only remove a DEAD writer's
+    // leftover (macOS also disallows ftruncate on an existing POSIX
+    // shm object, so a fresh object is required either way).
     (void) shm_unlink(shmName_.c_str());
 
     int fd = shm_open(shmName_.c_str(), O_CREAT | O_RDWR, 0666);
     if (fd == -1) {
         std::cerr << "[AviateGzPlugin] shm_open failed for " << shmName_
                   << ": " << strerror(errno) << std::endl;
+        close(leaseFd_);
+        leaseFd_ = -1;
         return false;
     }
 
     if (ftruncate(fd, sizeof(AviateSharedStateV2)) == -1) {
         std::cerr << "[AviateGzPlugin] ftruncate failed: " << strerror(errno) << std::endl;
         close(fd);
+        // A failed creation must not leave a half-made object
+        // behind the published name.
+        shm_unlink(shmName_.c_str());
+        close(leaseFd_);
+        leaseFd_ = -1;
         return false;
     }
 
@@ -344,6 +442,9 @@ bool AviateGzPlugin::InitSharedMemory()
     close(fd);
     if (ptr == MAP_FAILED) {
         std::cerr << "[AviateGzPlugin] mmap failed: " << strerror(errno) << std::endl;
+        shm_unlink(shmName_.c_str());
+        close(leaseFd_);
+        leaseFd_ = -1;
         return false;
     }
 
@@ -381,8 +482,8 @@ bool AviateGzPlugin::InitSharedMemory()
                 std::chrono::system_clock::now().time_since_epoch())
                 .count());
         uint64_t pid = static_cast<uint64_t>(getpid());
-        __atomic_store_n(&shm_->header.writer_incarnation,
-                         (((nanos << 16) | (nanos >> 48)) ^ pid) | 1ull,
+        incarnation_ = (((nanos << 16) | (nanos >> 48)) ^ pid) | 1ull;
+        __atomic_store_n(&shm_->header.writer_incarnation, incarnation_,
                          __ATOMIC_RELAXED);
     }
     __atomic_store_n(&shm_->control.lockstep_enabled, lockstep_ ? 1u : 0u, __ATOMIC_RELAXED);
@@ -397,10 +498,25 @@ bool AviateGzPlugin::InitSharedMemory()
 void AviateGzPlugin::CleanupSharedMemory()
 {
     if (shm_) {
+        // Unlink only if the name still resolves to OUR object.
+        // While the lease is held no successor can exist, so this is
+        // belt-and-braces — but it must resolve the NAME: our own
+        // mapping always answers with the incarnation we stamped,
+        // replaced or not.
+        const bool ours = NameResolvesToIncarnation(shmName_, incarnation_);
         __atomic_store_n(&shm_->header.plugin_ready, 0u, __ATOMIC_RELEASE);
         munmap(shm_, sizeof(AviateSharedStateV2));
         shm_ = nullptr;
-        shm_unlink(shmName_.c_str());
+        if (ours) {
+            shm_unlink(shmName_.c_str());
+        }
+    }
+    // Release the lease only after the unlink: freeing it earlier
+    // would let a new writer win the lease while the name still
+    // resolves to our dying object.
+    if (leaseFd_ != -1) {
+        close(leaseFd_);
+        leaseFd_ = -1;
     }
 }
 

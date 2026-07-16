@@ -33,7 +33,7 @@
 // hanging the reader forever.
 #define AviateSEQLOCK_MAX_RETRIES 16
 
-// Lifecycle actions a session host / harness may request (#265).
+// Lifecycle actions a session host / harness may request.
 enum AviateLifecycleRequest
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint32_t
@@ -95,7 +95,7 @@ typedef struct AviateSharedStateHeader {
   // Simulation-world epoch: 1 on plugin configure, +1 on every
   // world reset. A consumer that sees this change re-establishes
   // its freshness tracking instead of quarantining the source —
-  // the "telemetry dies after reset" fix (#265).
+  // the "telemetry dies after reset" fix.
   uint32_t reset_generation;
   // Non-zero while the plugin owns the mapping.
   uint32_t plugin_ready;
@@ -110,6 +110,27 @@ typedef struct AviateSharedStateHeader {
   // the NAME resolves to now against the one it attached to —
   // POSIX shm cannot be told apart by inode (macOS reports
   // `st_dev = st_ino = 0` for every shm object).
+  //
+  // OBJECT-RECREATION VS EPOCH-BUMP is a contract, not an
+  // accident of implementation:
+  //
+  // * A writer (re)start CREATES a new object — new incarnation,
+  //   `reset_generation` back at 1. Consumers observe `Replaced`
+  //   and must re-attach.
+  // * A world reset bumps `reset_generation` IN PLACE — same
+  //   object, same incarnation, same mappings. Consumers re-key
+  //   their freshness tracking and keep their attachment.
+  //
+  // LIVENESS is carried outside the block: the writer holds an
+  // exclusive advisory lock on a lease file for its whole life
+  // (`/tmp/<shm name without leading slash>.lease` — e.g.
+  // `/tmp/aviate_gz_bridge.lease`), which the kernel releases on
+  // ANY exit including a crash. In-block flags cannot prove a
+  // writer is alive, precisely because they survive it. The lease
+  // also enforces single-writer ownership: a second writer must
+  // fail to take over an actively held name rather than unlink a
+  // live peer's object. The lease file itself is never unlinked
+  // (removing a lock file races its next locker).
   uint64_t writer_incarnation;
   // Reserved; zero. Pads the header to a full 64-byte cache-line
   // block: each block of this layout is written by exactly one
@@ -122,7 +143,7 @@ typedef struct AviateSharedStateHeader {
 // `sim_step` and `time_us` live INSIDE the seqlock payload so a
 // reader obtains a coherent `{step, time, state}` snapshot in one
 // consistent read — the authority for aligning telemetry to sim
-// time under acceleration (#265).
+// time under acceleration.
 typedef struct AviateModelStateBlock {
   // Seqlock: odd while the plugin is writing. Readers retry on
   // odd or changed values (see [`crate::seqlock_read`]).
@@ -183,7 +204,7 @@ typedef struct AviateMotorCommandBlock {
   // Rotor angular-velocity setpoints [rad/s] as `f64` bit
   // patterns (see [`ModelStateBlock::pos_bits`]). The FC applies
   // the resolved actuator curve BEFORE writing — values here are
-  // boundary commands, never force-domain thrust (#140).
+  // boundary commands, never force-domain thrust.
   uint64_t motor_vel_bits[8];
   // Last `sim_step` the FC finished processing. Doubles as the FC
   // liveness heartbeat and as the lockstep acknowledgement the
@@ -197,13 +218,13 @@ typedef struct AviateMotorCommandBlock {
   uint64_t _reserved1[6];
 } AviateMotorCommandBlock;
 
-// Runtime control plane (#265). Field-per-owner; every field is a
+// Runtime control plane. Field-per-owner; every field is a
 // single naturally-aligned word accessed atomically. Compound pairs
 // that must be read consistently — `(nonce, request)` and
 // `(generation, state)` — are PACKED into one `u64` each, so no
 // reader can pair a fresh nonce with a stale request word or
-// `Ready` with a stale generation (#267: typed coherent snapshots,
-// not hidden read-order conventions).
+// `Ready` with a stale generation — typed coherent snapshots,
+// not hidden read-order conventions.
 typedef struct AviateControlBlock {
   // Packed lifecycle request: high 32 bits = request nonce, low
   // 32 bits = [`LifecycleRequest`] word (see
@@ -229,8 +250,8 @@ typedef struct AviateControlBlock {
   // `reset_generation`. Writer: FC.
   uint64_t fc_status;
   // Runtime lockstep toggle: non-zero = the plugin blocks each
-  // physics step on `fc_step_ack` (#265 — no longer load-time
-  // SDF-only). Writer: session host / harness.
+  // physics step on `fc_step_ack`; runtime-writable, not a
+  // load-time SDF constant. Writer: session host / harness.
   uint32_t lockstep_enabled;
   // Target real-time factor in percent: 100 = 1×, 400 = 4×,
   // 0 = as-fast-as-possible. The plugin forwards changes to the

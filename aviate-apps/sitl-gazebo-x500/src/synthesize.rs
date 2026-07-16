@@ -328,7 +328,7 @@ pub fn rotate_world_to_body(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
 }
 
 /// Convert a mixer output — normalized per-motor THRUST, force
-/// domain (#140) — into the quad rotor angular-velocity setpoint
+/// domain — into the quad rotor angular-velocity setpoint
 /// (rad/s) for the X500's `MulticopterMotorModelSystem`.
 ///
 /// This is the one place the resolved actuator curve is applied:

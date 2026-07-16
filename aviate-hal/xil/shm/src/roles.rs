@@ -41,6 +41,18 @@ macro_rules! shared_readers {
         }
 
         /// One coherent `{generation, step, time, state}` snapshot.
+        ///
+        /// Generation authority: the HEADER `reset_generation` is
+        /// the epoch of record, and every snapshot carries a copy
+        /// inside its seqlock payload. This read serves a snapshot
+        /// only when the two agree — a pose whose payload generation
+        /// trails the header belongs to a world that no longer
+        /// exists and is answered with `None`, exactly like an
+        /// unpublished or retired snapshot. Consumers therefore
+        /// never need to cross-check the pair themselves; comparing
+        /// a returned snapshot's `reset_generation` against their
+        /// OWN last-seen value tells them a reset happened, not
+        /// whether the data is trustworthy.
         pub fn read_model_state(&self) -> Option<ModelStateSnapshot> {
             self.mapping.read_model_state()
         }
@@ -98,6 +110,23 @@ pub struct SimWriterSession {
 
 impl SimWriterSession {
     /// Create (or re-create) the block and publish readiness.
+    ///
+    /// This is one half of the identity contract, and the two halves
+    /// must not be confused:
+    ///
+    /// * **Writer (re)start — THIS call.** A new shm object with a
+    ///   fresh `writer_incarnation`. Consumers attached to the
+    ///   previous object observe [`WriterState::Replaced`] and must
+    ///   re-attach; their old mapping can only ever serve the dead
+    ///   world's final snapshot.
+    /// * **World reset — [`Self::bump_reset_generation`].** The SAME
+    ///   object, epoch bumped in place. Consumers keep their
+    ///   attachment (`writer_state()` stays
+    ///   [`WriterState::Current`]) and re-key on the new generation.
+    ///
+    /// Creation also takes the writer lease first: if a live writer
+    /// holds this name, creation fails with `WouldBlock` instead of
+    /// unlinking the peer's object out from under its consumers.
     pub fn create(name: &str) -> std::io::Result<Self> {
         Ok(Self {
             mapping: Mapping::create(name)?,
@@ -122,6 +151,13 @@ impl SimWriterSession {
     }
 
     /// Bump the world epoch (world reset) and return the new value.
+    ///
+    /// The other half of the identity contract stated on
+    /// [`Self::create`]: a reset happens IN PLACE. The object, its
+    /// `writer_incarnation`, and every consumer's attachment all
+    /// survive — `writer_state()` stays [`WriterState::Current`] —
+    /// and consumers re-key their freshness tracking on the new
+    /// generation instead of re-attaching.
     ///
     /// Retires the outgoing snapshot in the same act: the previous
     /// epoch's pose stays in the block until the new world publishes
@@ -162,7 +198,7 @@ impl FcSession {
     shared_readers!();
 
     /// Publish motor boundary commands (rotor speed, rad/s — the
-    /// actuator curve is applied BEFORE this call, #140).
+    /// actuator curve is applied BEFORE this call).
     pub fn write_motor_command(&self, velocities: &[f64]) {
         self.mapping.write_motor_command(velocities);
     }
@@ -180,7 +216,9 @@ impl FcSession {
             .set_fc_status_packed(pack_fc_status(generation, state));
     }
 
-    /// Stamp this FC process's session nonce (once at startup).
+    /// Stamp this FC session's identity nonce (once per
+    /// attachment). Watchers detect an FC restart by a change here
+    /// even though the shm object identity is unchanged.
     pub fn set_fc_session_nonce(&self, nonce: u32) {
         self.mapping.set_fc_session_nonce(nonce);
     }
@@ -216,7 +254,7 @@ impl HostSession {
         nonce
     }
 
-    /// Toggle lockstep at runtime (#265).
+    /// Toggle lockstep at runtime.
     pub fn set_lockstep(&self, enabled: bool) {
         self.mapping
             .set_lockstep_enabled_raw(if enabled { 1 } else { 0 });
