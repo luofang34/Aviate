@@ -1,0 +1,39 @@
+# Aviate Application Configuration
+# App: sitl-gazebo-x500
+
+[app]
+id = "sitl-gazebo-x500"
+board = "sitl-gazebo"
+airframe = "x500"
+env = "sitl"
+
+# Estimate-stream rates. ATTITUDE_QUATERNION and LOCAL_POSITION_NED
+# are emitted from the same estimator-cycle snapshot, so both carry
+# the same time_boot_ms — consumers that budget inter-group
+# acquisition skew (Pilotage: 300 ms) see one clock, not two.
+[telemetry]
+frame_size = 280
+queue_len = 32
+heartbeat_hz = 1
+attitude_hz = 10
+position_hz = 4
+estimator_status_hz = 4
+
+[security]
+profile = "none"
+
+# Telemetry stream: the FIXED consumer endpoint (Pilotage's estimate
+# link listens here). This address never follows a commander — a
+# gcs-test run commanding the vehicle must not steal the stream.
+# Multi-instance setups override it per process with
+# AVIATE_TELEMETRY_ENDPOINT=host:port.
+[[transports]]
+protocol = "mavlink"
+port = "udp"
+roles = ["telemetry"]
+endpoint = "127.0.0.1:14550"
+
+[simulator]
+backend = "gazebo"
+headless = true
+lockstep = false

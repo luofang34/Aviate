@@ -216,6 +216,11 @@ where
     pub fn init_telemetry(&mut self, cfg: &aviate_config::AppConfig, loop_hz: u32) {
         self.runner.init_telemetry(cfg, loop_hz);
     }
+
+    /// Whether telemetry is live (see [`SitlRunner::telemetry_enabled`]).
+    pub fn telemetry_enabled(&self) -> bool {
+        self.runner.telemetry_enabled()
+    }
 }
 
 /// Board info for Gazebo SITL

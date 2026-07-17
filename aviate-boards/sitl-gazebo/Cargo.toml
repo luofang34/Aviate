@@ -23,6 +23,12 @@ aviate-hal-xil = { path = "../../aviate-hal/xil" }
 aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", optional = true }
 log = "0.4"
 
+[dev-dependencies]
+# The telemetry-stream tests fly the real production kernel — the
+# closest in-process stand-in for the sitl-gazebo-x500 binary.
+aviate-app-sitl-gazebo-x500-kernel = { path = "../../aviate-apps/sitl-gazebo-x500/kernel" }
+aviate-link = { path = "../../aviate-link", features = ["config"] }
+
 [package.metadata.aviate-board]
 chip = "xil"           # Special: simulator, no flashing
 programmer = "none"    # Simulator board, no programming

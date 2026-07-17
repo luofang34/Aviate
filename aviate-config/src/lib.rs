@@ -38,7 +38,8 @@ pub use parser::from_toml_str;
 pub use types::*;
 pub use validation::validate;
 
-// Convenience for desktop/SITL tools (std only)
+/// Read and parse an app config from a file path (desktop/SITL
+/// tools; embedded targets embed the TOML and use [`from_toml_str`]).
 #[cfg(feature = "std")]
 pub fn load_config_from_path(path: &std::path::Path) -> Result<AppConfig, ConfigError> {
     let content = std::fs::read_to_string(path).map_err(|_| ConfigError::IoError)?;

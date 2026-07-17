@@ -123,6 +123,7 @@ dependencies = [
  "aviate-app-sitl-gazebo-x500-kernel",
  "aviate-backend-gz",
  "aviate-board-sitl-gazebo",
+ "aviate-config",
  "aviate-core",
  "aviate-hal-xil",
  "aviate-xil-contract",
@@ -185,11 +186,13 @@ version = "0.1.3"
 name = "aviate-board-sitl-gazebo"
 version = "0.1.3"
 dependencies = [
+ "aviate-app-sitl-gazebo-x500-kernel",
  "aviate-backend-gz",
  "aviate-config",
  "aviate-core",
  "aviate-hal-io",
  "aviate-hal-xil",
+ "aviate-link",
  "aviate-runtime",
  "log",
 ]

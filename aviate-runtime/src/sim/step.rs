@@ -163,14 +163,13 @@ where
             self.ingress.receive(sys_cmd, now_ticks);
         }
 
-        // 4b. Sync Telemetry target address from SitlIO
-        //     SitlIO handles incoming MAVLink and learns the GCS address (e.g. gcs-test ephemeral port).
-        //     We must update the TelemetryTask to send data to that address.
-        if let Some(ref mut telem) = self.telemetry {
-            if let Some(addr) = self.transport.gcs_addr() {
-                telem.frame_tx_mut().set_addr(addr);
-            }
-        }
+        // Deliberately NO telemetry re-targeting here: the stream's
+        // endpoint is fixed at `init_telemetry` from config. Learning
+        // the commander's address governs command ACKs and heartbeat
+        // replies inside SitlIO only — re-pointing the estimate
+        // stream at whichever peer commanded last silently starves
+        // the configured consumer (a GCS watching 14550 goes dark
+        // the moment a test harness sends one command).
 
         // 5. Initialize EKF once we have sensor data.
         //

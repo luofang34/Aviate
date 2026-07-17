@@ -39,10 +39,47 @@ use crate::synthesize::{apply_packet_noise, cmd_to_omega, synthesize_packet};
 /// Cycle period for the FC loop (1 kHz, matching loop_periods::GAZEBO_US).
 const CYCLE_PERIOD_US: u64 = 1_000;
 
+/// The app configuration, embedded at build time (low-DAL parse
+/// happens once at startup; the control loop never touches TOML).
+const APP_CONFIG_TOML: &str = include_str!("../AviateApp.toml");
+
+/// Parse + validate the embedded app config. An unparseable or
+/// invalid config refuses startup — flying with a silently
+/// reinterpreted config is worse than not flying.
+fn load_app_config() -> std::io::Result<aviate_config::AppConfig> {
+    let mut cfg = aviate_config::from_toml_str(APP_CONFIG_TOML)
+        .map_err(|e| std::io::Error::other(format!("AviateApp.toml failed to parse: {e:?}")))?;
+    aviate_config::validate(&cfg)
+        .map_err(|e| std::io::Error::other(format!("AviateApp.toml failed validation: {e:?}")))?;
+    apply_telemetry_endpoint_override(&mut cfg);
+    Ok(cfg)
+}
+
+/// `AVIATE_TELEMETRY_ENDPOINT=host:port` re-points the telemetry
+/// stream for multi-instance setups; the single-instance default
+/// lives in AviateApp.toml. The override lands in the config before
+/// `init_telemetry`, so validation and endpoint parsing treat it
+/// exactly like a configured value.
+fn apply_telemetry_endpoint_override(cfg: &mut aviate_config::AppConfig) {
+    let Ok(endpoint) = std::env::var("AVIATE_TELEMETRY_ENDPOINT") else {
+        return;
+    };
+    for transport in &mut cfg.transports {
+        if transport.roles.iter().any(|r| r == "telemetry") {
+            log::info!("telemetry endpoint override: {endpoint}");
+            transport.endpoint = Some(endpoint);
+            return;
+        }
+    }
+    log::warn!("AVIATE_TELEMETRY_ENDPOINT set but no telemetry-role transport in AviateApp.toml");
+}
+
 fn main() -> std::io::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     log::info!("aviate sitl-gazebo-x500 starting");
+
+    let app_config = load_app_config()?;
 
     let mut board = GazeboSitlBoard::new_with_retry(
         aviate_app_sitl_gazebo_x500_kernel::build_x500_kernel,
@@ -50,6 +87,14 @@ fn main() -> std::io::Result<()> {
         200,
     )?;
     log::info!("board constructed");
+
+    // Estimate/telemetry stream (heartbeat, attitude, position,
+    // estimator status) to the configured fixed endpoint. Refusals
+    // are loud but non-fatal: the FC flies without a GCS watching.
+    board.init_telemetry(&app_config, (1_000_000 / CYCLE_PERIOD_US) as u32);
+    if !board.telemetry_enabled() {
+        log::warn!("running without a telemetry stream (see errors above)");
+    }
 
     // The one boundary conversion: the resolved configuration
     // declares the plant's actuator curve; every mixer output passes

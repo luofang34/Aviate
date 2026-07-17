@@ -24,6 +24,10 @@ aviate-xil-contract = { path = "../../aviate-hal/xil/contract" }
 aviate-board-sitl-gazebo = { path = "../../aviate-boards/sitl-gazebo", features = ["gz-plugin"] }
 aviate-airframe-multirotor = { path = "../../aviate-airframes/multirotor", features = ["x500"] }
 aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", features = ["gz-plugin"] }
+# App configuration (telemetry endpoint + rates): parsed once at
+# startup from the embedded AviateApp.toml (`from_toml_str` — the
+# no_std API; nothing here reads config from disk).
+aviate-config = { path = "../../aviate-config" }
 aviate-hal-xil = { path = "../../aviate-hal/xil" }
 log = "0.4"
 env_logger = "0.11"
