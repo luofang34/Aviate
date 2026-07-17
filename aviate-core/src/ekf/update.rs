@@ -127,13 +127,13 @@ impl Ekf {
             }
 
             // QFE origin referencing. The ISA formula yields absolute
-            // MSL pressure altitude, but `pos.z` is local-origin-relative
-            // — as is the GNSS height fused into the same state. Latch a
+            // MSL pressure altitude, but `pos.z` is local-origin-relative  // COV:EXCL(phantom DA: grcov debug-info attribution onto this line)
+            // — as is the GNSS height fused into the same state. Latch a  // COV:EXCL(phantom DA: grcov debug-info attribution onto this line)
             // datum on the first accepted sample so the initial innovation
-            // is ≈0 (`z_meas == pos.z`); thereafter a scalar random-walk
-            // estimator lets GNSS-anchored height pull the datum onto the
-            // true origin and tracks slow ground-pressure drift. Without
-            // this, an elevated site's pressure-altitude offset (≈1658 m
+            // is ≈0 (`z_meas == pos.z`); thereafter a scalar random-walk  // COV:EXCL(phantom DA: grcov debug-info attribution onto this line)
+            // estimator lets GNSS-anchored height pull the datum onto the  // COV:EXCL(phantom DA: grcov debug-info attribution onto this line)
+            // true origin and tracks slow ground-pressure drift. Without  // COV:EXCL(phantom DA: grcov debug-info attribution onto this line)
+            // this, an elevated site's pressure-altitude offset (≈1658 m  // COV:EXCL(phantom DA: grcov debug-info attribution onto this line)
             // in Denver) is a standing innovation that gates baro out
             // forever.
             // COV:EXCL_START(phantom DA: grcov attributes a debug-info region
@@ -267,12 +267,12 @@ impl Ekf {
         let (roll, pitch, yaw_est) = state.quat.to_euler();
         let (sin_r, cos_r) = (roll.sin(), roll.cos());
         let (sin_p, cos_p) = (pitch.sin(), pitch.cos());
-
-        // Level-frame horizontal field via R_tilt = Ry(pitch) * Rx(roll).
+        // COV:EXCL(phantom DA: grcov debug-info attribution onto blank line)
+        // Level-frame horizontal field via R_tilt = Ry(pitch) * Rx(roll).  // COV:EXCL(phantom DA: grcov debug-info attribution onto this line)
         let mag_n_level = cos_p * mag_x + sin_p * sin_r * mag_y + sin_p * cos_r * mag_z;
         let mag_e_level = cos_r * mag_y - sin_r * mag_z;
-
-        // Positive yaw is clockwise from magnetic north (NED, z down),
+        // COV:EXCL(phantom DA: grcov debug-info attribution onto blank line)
+        // Positive yaw is clockwise from magnetic north (NED, z down),  // COV:EXCL(phantom DA: grcov debug-info attribution onto this line)
         // so the heading that reproduces the true yaw from a
         // north-pointing field is atan2(-east, north).
         let heading_mag = (-mag_e_level).atan2(mag_n_level);
