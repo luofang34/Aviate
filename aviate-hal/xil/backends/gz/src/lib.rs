@@ -23,13 +23,11 @@
 
 mod backend;
 mod bridge;
-pub mod gazebo_bridge;
 mod plugin;
 mod sim_backend;
 
 pub use backend::GazeboBackend;
 pub use bridge::{GzBridge, GzBridgeConfig, GzBridgeError};
-pub use gazebo_bridge::{GzMotorCmd, GzSensorData};
 pub use plugin::{enu_to_ned, enu_to_ned_f32, enu_vel_to_ned, enu_vel_to_ned_f32};
 pub use plugin::{AviateModelState, AviateMotorCommand, GzPluginBridge, GzPluginError};
 pub use sim_backend::GazeboSimBackend;
