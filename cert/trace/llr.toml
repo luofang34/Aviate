@@ -48,16 +48,21 @@ id = "LLR-EST-103"
 title = "Estimator::update_gnss is health-gated and innovation-gated"
 owner = "aviate-core@aviate"
 description = """
-update_gnss SHALL be a no-op when SensorReading.health is not Good,
-when GnssData.health is Suspect or Lost, or when GnssFix is None.
-On a healthy reading, it SHALL fuse position-NED and velocity-NED
+update_gnss SHALL be a no-op when is_initialized() == false, when
+SensorReading.health is not Good, when GnssData.health is Suspect
+or Lost, or when GnssFix is None. On a healthy reading of an
+initialized filter, it SHALL fuse position-NED and velocity-NED
 into the EKF state via per-axis scalar updates with the configured
-measurement noise.
+measurement noise. The is_initialized() gate matters because the
+estimator observes from boot (LLR-FLT-210): a GNSS sample can
+arrive before the attitude seed, and fusing it would correct states
+that carry no meaning yet — the same guard predict (LLR-EST-102)
+and mag fusion (LLR-EST-105) already carry.
 """
 verification_methods = ["test"]
 modules = ["aviate-core/src/ekf/update.rs"]
 derived = false
-traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9"]
+traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9", "9262663e-c149-424f-b159-2ae3cb176ee7"]
 
 [[requirements]]
 uid = "34ef483f-d807-41fd-9c73-4090ba15f2c0"
@@ -65,9 +70,13 @@ id = "LLR-EST-104"
 title = "Estimator::update_baro fuses pressure-derived altitude"
 owner = "aviate-core@aviate"
 description = """
-update_baro SHALL be a no-op when SensorReading.health is not Good,
-when static_pressure is None, or when the ISA-derived altitude is
-non-finite. Otherwise it SHALL convert the pressure to altitude via
+update_baro SHALL be a no-op when is_initialized() == false, when
+SensorReading.health is not Good, when static_pressure is None, or
+when the ISA-derived altitude is non-finite. The is_initialized()
+gate matters because the estimator observes from boot (LLR-FLT-210):
+a baro sample can arrive before the attitude seed, and latching the
+QFE datum against a meaningless height would corrupt every later
+fusion. Otherwise it SHALL convert the pressure to altitude via
 the standard ISA formula and fuse the NED-Z scalar measurement
 referenced to a QFE origin datum: on the first accepted sample it
 SHALL latch a reference so the measurement is expressed relative to
@@ -79,7 +88,7 @@ fresh arm re-latches the current field elevation.
 verification_methods = ["test"]
 modules = ["aviate-core/src/ekf/update.rs"]
 derived = false
-traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9"]
+traces_to = ["c42a507f-d988-4694-b5c3-ed34763fb0f9", "9262663e-c149-424f-b159-2ae3cb176ee7"]
 
 [[requirements]]
 uid = "c2195fda-4744-404f-9a3e-d5e30ed7c3cf"
@@ -1793,6 +1802,30 @@ arbitrary unhealthy estimator state; a zero `Command` vs a
 saturating non-finite `Command`; healthy actuator state vs all-
 unhealthy actuator state. The disarmed safe pattern is a pure
 function of `cfg` and `mode`, never of the inputs.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel_update.rs"]
+derived = false
+traces_to = ["cde83b23-7574-4b9f-af99-624918000900"]
+
+[[requirements]]
+uid = "504884f4-b87c-4994-9e23-1a45288cc45d"
+id = "LLR-FLT-210"
+title = "Disarmed update path observes the estimator unless a critical fault is latched"
+owner = "aviate-core@aviate"
+description = """
+When `AviateKernelImpl::update()` is invoked while
+`init_state != InitState::Armed`, it SHALL call
+`Estimator::observe()` (IMU predict plus GNSS/baro/mag aiding)
+before returning, UNLESS a `CRITICAL_FAULTS` flag is latched, in
+which case observation SHALL be skipped — matching the armed path,
+which likewise does not observe under a critical fault. The emitted
+`UpdateResult.actuator_cmd` SHALL remain the LLR-FLT-201 safe pattern
+regardless of what observation produces: this requirement adds
+estimation to the disarmed cycle, never actuation. This is what lets
+POSITION/VELOCITY authorize before arming (DRQ-EST-002); the
+estimator's own per-update gates — including the is_initialized()
+no-op in LLR-EST-102/103/104/105 — decide what actually fuses.
 """
 verification_methods = ["test"]
 modules = ["aviate-core/src/kernel_update.rs"]

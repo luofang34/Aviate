@@ -28,13 +28,13 @@
 [floors]
 trace_sys = 13
 trace_hlr = 38
-trace_llr = 78
+trace_llr = 79
 # In-process rows only: the shell-boundary row (TST-RTM-101) and the
 # Gazebo SITL mission rows (TST-XIL-*) live in dedicated CI gates (the
 # `runtime-boundary` job and the `sitl-missions` lane), not here —
 # `cargo evidence check --mode=source` can execute neither Gazebo
 # missions nor shell scripts, so those rows would only ever GAP it.
-trace_test = 72
+trace_test = 76
 
 # Coverage ratchet for the kernel core (aviate-core). These are LLVM
 # source-based measurements produced by scripts/check_coverage.sh after

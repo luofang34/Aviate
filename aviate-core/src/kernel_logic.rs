@@ -32,15 +32,15 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // estimators that don't have an `is_initialized` notion but do
         // produce a `StateEstimate.quality`.
         //
-        // Pre-arm never calls `observe()` — this loop only reads the
-        // estimate `init_step` cycle after cycle, so GNSS/baro aiding
-        // never gets a chance to fuse before arming. `Good` quality
-        // requires fresh GNSS/baro aiding (see `ekf/validity.rs`) and
-        // can therefore never be reached here; `Degraded` is the
-        // correct pre-arm ceiling (attitude converged, nav aiding not
-        // yet established). Gating on `!= Unusable` accepts that
-        // ceiling while still rejecting a filter that never
-        // initialized or has a latched numeric fault.
+        // This loop only READS the estimate — observation runs in
+        // `update()`, which observes disarmed too (see the safety
+        // gate there): GNSS/baro aiding fuses on the pad, so `Good`
+        // quality is reachable before arming. The gate here stays at
+        // `!= Unusable` deliberately: it rejects a filter that never
+        // initialized or latched a numeric fault, while still
+        // permitting attitude-only (GNSS-denied) arming at
+        // `Degraded`. Requiring `Good` pre-arm would be a stricter
+        // arming policy — a separate decision, not an init gate.
         let est_initialized = !matches!(
             self.pipeline
                 .estimator

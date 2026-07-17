@@ -404,3 +404,37 @@ next constant fail CI until its author decides — and documents —
 which of the two assurance paths it takes.
 """
 safety_impact = "medium"
+
+[[requirements]]
+uid = "afb525a2-c580-495d-bd90-e99881a0934d"
+id = "DRQ-EST-002"
+status = "closed"
+title = "Estimator observes while disarmed; actuator authority stays arm-gated"
+owner = "aviate-core@aviate"
+description = """
+The kernel runs `Estimator::observe()` on every `update()` cycle,
+including while `init_state != Armed`. Actuator authority remains
+gated on arming — the disarmed path still emits the LLR-FLT-201 safe
+pattern unconditionally — so ONLY state estimation runs from boot;
+no control or actuation is derived from a disarmed cycle. Observation
+is skipped while a CRITICAL_FAULTS flag is latched, matching the
+armed path, which also never observes under a critical fault.
+"""
+rationale = """
+The estimator previously observed only while armed, so a stationary
+vehicle on the pad never fused GNSS/baro: POSITION/VELOCITY stayed
+unauthorized and quality capped at Degraded no matter how long it
+sat. That is wrong for a real vehicle (its EKF must converge on the
+pad, as pre-arm nav checks assume — HLR-EST-002) and it deadlocks a
+pose-gated ground station: such a station withholds every command,
+including the FIRST arm, until it sees an authorized pose, while the
+kernel withholds authorization until armed (#277). Observing from
+boot resolves the deadlock without weakening ground safety, because
+the actuator invariant (LLR-FLT-201) is unchanged: a future
+implementer must not "restore" the arm-gate around observation
+believing it a safety property — the safety property is the safe
+ACTUATOR output, which this decision preserves, not the suppression
+of estimation.
+"""
+safety_impact = "medium"
+traces_to = ["cde83b23-7574-4b9f-af99-624918000900"]

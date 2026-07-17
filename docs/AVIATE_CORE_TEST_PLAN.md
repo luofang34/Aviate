@@ -45,7 +45,7 @@ abbreviate the HLR rows. `scripts/check_test_plan_sync.py`
 | `HLR-MIX-201` | Actuator outputs inside [0.0, 1.0] | LLR-MIX-201 | TST-MIX-201 |
 | `HLR-MIX-202` | QuadX zero-command symmetry | LLR-MIX-202 | TST-MIX-202 |
 | `HLR-MIX-203` | Sanitizer safe-pattern fallback | LLR-MIX-203, LLR-MIX-204 | TST-MIX-203, TST-MIX-204 |
-| `HLR-FLT-201` | Disarmed kernel emits safe pattern | LLR-FLT-201, LLR-FLT-202 | TST-FLT-201, TST-FLT-202 |
+| `HLR-FLT-201` | Disarmed kernel emits safe pattern | LLR-FLT-201, LLR-FLT-202, LLR-FLT-210 | TST-FLT-201, TST-FLT-202, TST-FLT-210, TST-FLT-211 |
 | `HLR-FLT-202` | Pre-arm checks reject with typed ArmError | LLR-FLT-203, LLR-FLT-204 | TST-FLT-203, TST-FLT-204 |
 | `HLR-FLT-203` | NUMERIC_ERROR inhibits output until ground reset | LLR-FLT-205, LLR-FLT-206 | TST-FLT-205, TST-FLT-206; `numeric_fault_inject` mission exercises the injected-NaN path |
 | `HLR-FLT-204` | Command timeout → safe mode within one cycle | LLR-FLT-207, LLR-FLT-208, LLR-FLT-209 | TST-FLT-207, TST-FLT-208 (slew), TST-FLT-209, TST-FLT-209B; `command_timeout` mission exercises the over-the-wire path |
@@ -127,6 +127,7 @@ status per DRQ, mirroring the `status` field there
 | DRQ | Status | Anchor |
 |---|---|---|
 | `DRQ-EST-001` | Standing design record (not a gap) | `Estimator::reset()` preserves construction-time tuning |
+| `DRQ-EST-002` | Closed | Estimator observes while disarmed so POSITION/VELOCITY authorize before arming (resolves the #277 cold-start deadlock); actuator authority stays arm-gated, witnessed by TST-FLT-210/211 (`aviate-core/tests/prearm_estimator_tests.rs`) |
 | `DRQ-CFG-001` | Open | `load_config()` returns typed `InvalidFormat` until the validation parser lands (`aviate-core/src/kernel_trait.rs`) |
 | `DRQ-MIX-001` | Open | Global `safe_output` fallback retained until every airframe declares per-mode `safe_pattern` |
 | `DRQ-CTL-001` | Closed | Tuning lives in `ResolvedKernelConfig.cascade_gains` + `hover_thrust_norm`; `verify_config_binding` rejects controller/config mismatch at build (`aviate-core/tests/config_binding_tests.rs`) |

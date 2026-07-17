@@ -117,8 +117,35 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         //    This allows continuous monitoring of sensor health.
         self.update_sensor_faults(sensors);
 
-        // 1. Safety Gate: If not armed, force safe output immediately
+        // 1. Safety Gate: If not armed, force safe output immediately.
+        //
+        //    The ESTIMATOR still observes: a vehicle on the pad must
+        //    converge — gyro predict, GNSS/baro aiding, POSITION/
+        //    VELOCITY authorization — BEFORE arming, both because
+        //    pre-arm nav checks are meaningless against a filter that
+        //    has never fused, and because a pose-gated GCS cannot even
+        //    send the first ARM while position is unauthorized (the
+        //    #277 cold-start deadlock). Only actuator authority is
+        //    gated on arming; state estimation runs from boot. The
+        //    critical-fault guard is read-only here — the Fault-state
+        //    transition in `check_critical_faults` is armed-flow
+        //    semantics — and matches the armed path, which never
+        //    observes under a critical fault either. The estimator's
+        //    own health gates (per-sensor, plus the unseeded-filter
+        //    gate in each update) decide what actually fuses.
         if !self.state.init_state.allows_active_control() {
+            if !self
+                .state
+                .faults
+                .intersects(crate::kernel_types::CRITICAL_FAULTS)
+            {
+                self.pipeline.estimator.observe(
+                    &mut self.state.estimator,
+                    sensors,
+                    command.sensor_overrides.as_ref(),
+                    time.dt_sec.0,
+                );
+            }
             return UpdateResult {
                 actuator: ActuatorCmd {
                     outputs: self.cfg.safe_output,
