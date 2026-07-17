@@ -26,7 +26,14 @@ const BARO_DATUM_PROCESS_VAR: Scalar = 1e-4;
 
 impl Ekf {
     pub fn update_gnss_state(&self, state: &mut EkfState, gnss_reading: &SensorReading<GnssData>) {
-        // 0. Health gate
+        // 0. Health gate. `initialized` mirrors the mag update: the
+        // estimator observes from boot (it runs disarmed too), so a
+        // reading can arrive before the attitude seed — fusing into
+        // an unseeded filter would correct states that carry no
+        // meaning yet.
+        if !state.initialized {
+            return;
+        }
         match gnss_reading.health {
             SensorHealth::Good => { /* continue */ }
             _ => {
@@ -95,6 +102,12 @@ impl Ekf {
     }
 
     pub fn update_baro_state(&self, state: &mut EkfState, baro_reading: &SensorReading<BaroData>) {
+        // Same boot-time gate as GNSS/mag: no aiding into an
+        // unseeded filter (and no baro datum latched against a
+        // meaningless height).
+        if !state.initialized {
+            return;
+        }
         match baro_reading.health {
             SensorHealth::Good => { /* continue */ }
             _ => {

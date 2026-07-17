@@ -229,65 +229,13 @@ fn fixed_consumer_keeps_the_stream_while_a_commander_is_live() {
     }
 }
 
-/// One MAVLink ARM command from the commander socket. Arming matters
-/// here because the kernel's estimator only OBSERVES while armed —
-/// pre-arm, `Degraded` (attitude-only) is the designed ceiling and
-/// GNSS/baro aiding cannot fuse (see `kernel_logic::init_step` docs).
-fn arm_from(commander: &UdpSocket, fc_port: u16) {
-    let cmd = aviate_link::mavlink::protocol::CommandLong {
-        param1: 1.0,
-        param2: 0.0,
-        param3: 0.0,
-        param4: 0.0,
-        param5: 0.0,
-        param6: 0.0,
-        param7: 0.0,
-        command: aviate_link::mavlink::mav_cmd::COMPONENT_ARM_DISARM,
-        target_system: 1,
-        target_component: 1,
-        confirmation: 0,
-    };
-    let mut buf = [0u8; 64];
-    let len = serialize_mavlink(&MavMessage::CommandLong(cmd), 0, 255, 190, &mut buf)
-        .expect("serialize arm");
-    commander
-        .send_to(&buf[..len], ("127.0.0.1", fc_port))
-        .expect("commander send arm");
-}
-
-/// A low-thrust level attitude setpoint — keeps the armed vehicle's
-/// command age fresh, exactly like a GCS streaming sticks.
-fn setpoint_from(commander: &UdpSocket, fc_port: u16, t_ms: u32) {
-    let tgt = aviate_link::mavlink::protocol::SetAttitudeTarget {
-        time_boot_ms: t_ms,
-        target_system: 1,
-        target_component: 1,
-        type_mask: 0,
-        q: [1.0, 0.0, 0.0, 0.0],
-        body_roll_rate: 0.0,
-        body_pitch_rate: 0.0,
-        body_yaw_rate: 0.0,
-        thrust: 0.0,
-        thrust_body: [0.0; 3],
-    };
-    let mut buf = [0u8; 96];
-    let len = serialize_mavlink(&MavMessage::SetAttitudeTarget(tgt), 0, 255, 190, &mut buf)
-        .expect("serialize setpoint");
-    commander
-        .send_to(&buf[..len], ("127.0.0.1", fc_port))
-        .expect("commander send setpoint");
-}
-
 #[test]
-fn estimator_status_flips_to_authorized_when_the_ekf_converges() {
+fn estimator_status_authorizes_without_arming() {
     let mut board = make_board(1);
     let (consumer, endpoint) = bind_consumer();
     let cfg = app_config_with_endpoint(&endpoint);
     board.init_telemetry(&cfg, 1_000);
     assert!(board.telemetry_enabled());
-
-    let commander = UdpSocket::bind("127.0.0.1:0").expect("bind commander");
-    let fc_port = SitlConfig::for_instance_with_net(1, test_net()).sensor_port();
 
     let authorized = |s: &AviateEstimatorStatus| {
         s.quality == aviate_estimate_quality::GOOD
@@ -296,26 +244,27 @@ fn estimator_status_flips_to_authorized_when_the_ekf_converges() {
             && s.valid_flags & aviate_state_valid_flags::VELOCITY != 0
     };
 
-    // Feed real still-vehicle sensor packets, arm through the wire,
-    // stream setpoints like a GCS, and step until the WIRE (not an
-    // internal probe) reports an authorized estimate. Bounded: 30
-    // simulated seconds of 1 kHz cycles is far beyond the init state
-    // machine plus the EKF's aiding-freshness windows.
+    // Feed real still-vehicle sensor packets and step until the WIRE
+    // (not an internal probe) reports an authorized estimate — with
+    // NO arm and NO commander: the estimator observes from boot
+    // (#277), so a bench vehicle authorizes POSITION/VELOCITY before
+    // the first ARM, which is exactly what a pose-gated GCS needs to
+    // send that ARM. Bounded: 30 simulated seconds of 1 kHz cycles
+    // is far beyond the init state machine plus the EKF's
+    // aiding-freshness windows.
     let mut seen = Drained::default();
     let mut converged = false;
     for i in 1..=30_000u64 {
         board
             .transport_mut()
             .feed_sensor_packet(&still_packet(i * 1_000));
-        // Re-request ARM until the init state machine accepts it;
-        // keep the command channel fresh at a GCS-like 10 Hz.
-        if i % 200 == 0 {
-            arm_from(&commander, fc_port);
-        }
-        if i % 100 == 0 {
-            setpoint_from(&commander, fc_port, i as u32);
-        }
-        board.step();
+        let cmd = board.step();
+        // Disarmed the whole time: the forced-safe actuator pattern
+        // must hold on every cycle while the estimator converges.
+        assert!(
+            cmd.outputs.iter().all(|o| o.0 == 0.0),
+            "disarmed board must command zero outputs while converging"
+        );
         if i % 250 == 0 {
             drain(&consumer, &mut seen);
             if seen.aviate_status.iter().any(authorized) {
@@ -326,16 +275,9 @@ fn estimator_status_flips_to_authorized_when_the_ekf_converges() {
     }
     assert!(
         converged,
-        "estimator never published an authorized status; last frame: {:?}",
+        "estimator never published an authorized status without arming; \
+         last frame: {:?}",
         seen.aviate_status.last()
-    );
-
-    // The pre-convergence prefix must have been honest too: the very
-    // first status frame cannot already claim authorization.
-    let first = seen.aviate_status.first().expect("at least one status");
-    assert!(
-        !authorized(first),
-        "first status frame already authorized — validity looks hardcoded"
     );
 }
 

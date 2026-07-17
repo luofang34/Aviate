@@ -1440,3 +1440,73 @@ torque — pinning the named invariant, boundary semantics included,
 as the gate. Witnesses LLR-CTL-208.
 """
 traces_to = ["68fd3971-1759-4788-80bc-f36fd6e30a53"]
+
+# --- new TST rows: disarmed-observation (#279) ---
+
+[[tests]]
+uid = "de14360d-15f9-48fa-aada-b4ea246cd8a4"
+id = "TST-FLT-210"
+title = "disarmed_kernel_authorizes_position_and_velocity"
+test_selector = "disarmed_kernel_authorizes_position_and_velocity"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/prearm_estimator_tests.rs::disarmed_kernel_authorizes_position_and_velocity`
+seeds and walks a kernel to Ready WITHOUT arming, then feeds healthy
+stationary-bench sensors for 300 `update()` cycles. Asserts every
+actuator slot is zero on every cycle (LLR-FLT-201 safe output holds
+throughout the new observation), that the kernel never leaves Ready
+(authorization did not require arming), and that the final estimate
+reaches `Good` with `ATTITUDE|POSITION|VELOCITY` — the pre-arm
+authorization DRQ-EST-002 exists to produce. Witnesses LLR-FLT-210
+and LLR-FLT-201.
+"""
+traces_to = ["504884f4-b87c-4994-9e23-1a45288cc45d", "afc40ab1-44eb-412b-b6e3-519018bd93dd"]
+
+[[tests]]
+uid = "c7ff0efe-de42-4c54-853c-64a761dc1735"
+id = "TST-FLT-211"
+title = "disarmed_kernel_skips_observation_under_critical_faults"
+test_selector = "disarmed_kernel_skips_observation_under_critical_faults"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/prearm_estimator_tests.rs::disarmed_kernel_skips_observation_under_critical_faults`
+latches `ESTIMATOR_DIVERGED` on a Ready disarmed kernel, then feeds
+healthy sensors for 300 cycles. Asserts actuator output stays zero
+and the estimate never advances past the seed's `Degraded` /
+no-POSITION ceiling — proving the CRITICAL_FAULTS guard in the
+disarmed observation path keeps a compromised estimator unfed.
+Witnesses LLR-FLT-210.
+"""
+traces_to = ["504884f4-b87c-4994-9e23-1a45288cc45d"]
+
+[[tests]]
+uid = "697a52cf-17ac-4a9b-8606-ce6715948a96"
+id = "TST-EST-208"
+title = "gnss_update_on_unseeded_filter_is_dropped"
+test_selector = "gnss_update_on_unseeded_filter_is_dropped"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/prearm_estimator_tests.rs::gnss_update_on_unseeded_filter_is_dropped`
+calls `update_gnss_state` on an EKF that was never `init()`-ed and
+asserts the estimate stays `Unusable` with position untouched —
+pinning the is_initialized() no-op LLR-EST-103 gained so that a GNSS
+sample arriving before the attitude seed (now possible because the
+estimator observes from boot) cannot corrupt a meaningless filter.
+Witnesses LLR-EST-103.
+"""
+traces_to = ["b8339d64-9b99-4109-a9da-8e1a547fbf49"]
+
+[[tests]]
+uid = "df471df7-7a10-4acc-b33e-89a604b5872e"
+id = "TST-EST-209"
+title = "baro_update_on_unseeded_filter_is_dropped"
+test_selector = "baro_update_on_unseeded_filter_is_dropped"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/prearm_estimator_tests.rs::baro_update_on_unseeded_filter_is_dropped`
+calls `update_baro_state` with a ~1000 m pressure on an uninitialized
+EKF and asserts the estimate stays `Unusable` with no datum latched —
+pinning the is_initialized() no-op LLR-EST-104 gained for the same
+boot-time-observation reason. Witnesses LLR-EST-104.
+"""
+traces_to = ["34ef483f-d807-41fd-9c73-4090ba15f2c0"]
