@@ -26,7 +26,7 @@
 
 mod step;
 
-use log::{error, info};
+use log::{error, info, warn};
 
 use crate::sensor_cache::SensorCache;
 use crate::telemetry::{FrameTx, TelemetryTask};
@@ -97,7 +97,12 @@ pub type SitlBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, SitlTime,
 
 use std::net::{SocketAddr, UdpSocket};
 
-/// UDP frame transmitter for telemetry (SITL-only)
+/// UDP frame transmitter for telemetry (SITL-only).
+///
+/// The target address is fixed at construction — deliberately no
+/// mutator. The telemetry stream belongs to the CONFIGURED consumer;
+/// a settable address is exactly the hook that once let whichever
+/// peer commanded last steal the stream from a fixed consumer.
 pub struct UdpFrameTx {
     socket: UdpSocket,
     addr: SocketAddr,
@@ -107,11 +112,6 @@ impl UdpFrameTx {
     /// Create a new UDP transmitter
     pub fn new(socket: UdpSocket, addr: SocketAddr) -> Self {
         Self { socket, addr }
-    }
-
-    /// Update target address (e.g. after receiving from GCS)
-    pub fn set_addr(&mut self, addr: SocketAddr) {
-        self.addr = addr;
     }
 }
 
@@ -214,41 +214,80 @@ where
     /// Looks for a transport with "telemetry" role and UDP endpoint.
     /// If found, creates a TelemetryTask for GCS communication.
     pub fn init_telemetry(&mut self, cfg: &AppConfig, loop_hz: u32) {
-        if let Some(telem_cfg) = &cfg.telemetry {
-            // Refuse an invalid config loudly; running with silently
-            // reinterpreted rates would ship a telemetry contract the
-            // config never requested.
-            if let Err(e) = crate::validation::validate_telemetry_config(telem_cfg) {
+        let Some(telem_cfg) = &cfg.telemetry else {
+            warn!("Telemetry disabled: no [telemetry] section in the app config");
+            return;
+        };
+        // Refuse an invalid config loudly; running with silently
+        // reinterpreted rates would ship a telemetry contract the
+        // config never requested. Every refusal below disables
+        // telemetry and changes nothing else — the control loop
+        // must not care whether the stream exists.
+        if let Err(e) = crate::validation::validate_telemetry_config(telem_cfg) {
+            error!("Telemetry disabled: {}", e);
+            return;
+        }
+        // The stream's home is the transport with the "telemetry"
+        // role; "gcs" is accepted as a fallback for configs that
+        // predate the dedicated role. Whichever matches, the
+        // endpoint is PERMANENT for the process: telemetry goes to
+        // the configured consumer, never to whichever peer
+        // commanded last (see `UdpFrameTx`).
+        let transport = cfg
+            .transports
+            .iter()
+            .find(|t| t.roles.iter().any(|r| r == "telemetry") && t.endpoint.is_some())
+            .or_else(|| {
+                cfg.transports
+                    .iter()
+                    .find(|t| t.roles.iter().any(|r| r == "gcs") && t.endpoint.is_some())
+            });
+        let Some(t) = transport else {
+            warn!("Telemetry disabled: no transport with a \"telemetry\"/\"gcs\" role and an endpoint");
+            return;
+        };
+        let Some(endpoint) = &t.endpoint else {
+            return; // unreachable: the find above requires an endpoint
+        };
+        let addr = match endpoint.parse::<SocketAddr>() {
+            Ok(addr) => addr,
+            Err(e) => {
+                error!("Telemetry disabled: endpoint {endpoint:?} is not host:port ({e})");
+                return;
+            }
+        };
+        // Bind an ephemeral local port for sending.
+        let sock = match UdpSocket::bind("0.0.0.0:0") {
+            Ok(sock) => sock,
+            Err(e) => {
+                error!("Telemetry disabled: cannot bind a UDP socket ({e})");
+                return;
+            }
+        };
+        if let Err(e) = sock.set_nonblocking(true) {
+            error!("Telemetry disabled: cannot set the socket non-blocking ({e})");
+            return;
+        }
+        let tx = UdpFrameTx::new(sock, addr);
+
+        // Create protocol-specific formatter (from aviate-link)
+        let formatter = match MavlinkCycleFormatter::new(telem_cfg, loop_hz) {
+            Ok(formatter) => formatter,
+            Err(e) => {
                 error!("Telemetry disabled: {}", e);
                 return;
             }
-            // Find transport with "telemetry" role and endpoint
-            if let Some(t) = cfg.transports.iter().find(|t| {
-                t.roles.iter().any(|r| r == "telemetry" || r == "gcs") && t.endpoint.is_some()
-            }) {
-                if let Some(ref endpoint) = t.endpoint {
-                    // Bind to ephemeral port for sending (target address is updated dynamically)
-                    let sock = UdpSocket::bind("0.0.0.0:0").expect("bind telemetry socket");
-                    sock.set_nonblocking(true).expect("set nonblocking");
+        };
+        // Create protocol-agnostic task (from aviate-runtime)
+        self.telemetry = Some(TelemetryTask::new(tx, formatter));
+        info!("Telemetry enabled: {} via {}", endpoint, t.protocol);
+    }
 
-                    // Create frame transmitter with initial endpoint from config
-                    let addr = endpoint.parse::<SocketAddr>().expect("parse endpoint");
-                    let tx = UdpFrameTx::new(sock, addr);
-
-                    // Create protocol-specific formatter (from aviate-link)
-                    let formatter = match MavlinkCycleFormatter::new(telem_cfg, loop_hz) {
-                        Ok(formatter) => formatter,
-                        Err(e) => {
-                            error!("Telemetry disabled: {}", e);
-                            return;
-                        }
-                    };
-                    // Create protocol-agnostic task (from aviate-runtime)
-                    self.telemetry = Some(TelemetryTask::new(tx, formatter));
-                    info!("Telemetry enabled: {} via {}", endpoint, t.protocol);
-                }
-            }
-        }
+    /// Whether `init_telemetry` accepted a config and the stream is
+    /// live. `false` after any loud refusal — callers that require
+    /// telemetry can turn that into their own failure.
+    pub fn telemetry_enabled(&self) -> bool {
+        self.telemetry.is_some()
     }
 
     /// Check if system is armed
