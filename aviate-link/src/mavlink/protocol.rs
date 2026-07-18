@@ -172,13 +172,20 @@ pub mod mav_result {
 /// - 48-bit timestamp wraps every ~89 years at 10μs resolution
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MavSignature {
+    /// Sender system id (frame header), part of the replay identity tuple.
+    pub system_id: u8,
+
+    /// Sender component id (frame header), part of the replay identity tuple.
+    pub component_id: u8,
+
     /// Link identifier (maps to key in KeyStore)
     pub link_id: u8,
 
     /// 48-bit timestamp (10 microsecond resolution)
     ///
-    /// This is a remote monotonic counter, NOT a wall clock time.
-    /// Receiver must track per-link_id and reject if counter <= last_seen.
+    /// This is a remote monotonic counter, NOT a wall clock time. The
+    /// receiver tracks it per `(system_id, component_id, link_id)` and
+    /// rejects any frame whose counter is `<= last_seen` for that identity.
     pub timestamp: u64,
 
     /// Truncated HMAC-SHA256 signature (first 6 bytes)
@@ -631,6 +638,8 @@ pub fn parse_mavlink(buf: &[u8]) -> Result<(MavMessage, Option<MavSignature>, us
     let signature = if is_signed {
         let sig_offset = crc_offset + 2; // After CRC
         Some(parse_signature(
+            header.sysid,
+            header.compid,
             &buf[sig_offset..sig_offset + MAVLINK_SIGNATURE_LEN],
         ))
     } else {
@@ -666,7 +675,10 @@ pub fn parse_mavlink(buf: &[u8]) -> Result<(MavMessage, Option<MavSignature>, us
 ///
 /// - timestamp: 48-bit little-endian (10 microsecond resolution)
 /// - signature: First 6 bytes of HMAC-SHA256
-fn parse_signature(buf: &[u8]) -> MavSignature {
+///
+/// `system_id` / `component_id` come from the frame header, not the
+/// signature block; they complete the replay-identity tuple.
+fn parse_signature(system_id: u8, component_id: u8, buf: &[u8]) -> MavSignature {
     debug_assert!(buf.len() >= MAVLINK_SIGNATURE_LEN);
 
     let link_id = buf[0];
@@ -684,6 +696,8 @@ fn parse_signature(buf: &[u8]) -> MavSignature {
     signature.copy_from_slice(&buf[7..13]);
 
     MavSignature {
+        system_id,
+        component_id,
         link_id,
         timestamp,
         signature,

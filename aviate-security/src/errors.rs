@@ -52,11 +52,20 @@ pub enum AuthError {
     /// Anti-replay check failed
     ///
     /// The command's timestamp is not strictly greater than the last
-    /// accepted timestamp for this link_id. This indicates either:
+    /// accepted timestamp for its `(system_id, component_id, link_id)`
+    /// identity. This indicates either:
     /// - Replay attack (old message retransmitted)
     /// - Out-of-order delivery (not expected in MAVLink over USB/UART)
     /// - Sender timestamp rollover (should not happen in practice)
     ReplayAttack,
+
+    /// Anti-replay table is full of already-authenticated identities
+    ///
+    /// A frame from a new, authenticated signing identity arrived but every
+    /// tracking slot is occupied. Because identities are only committed
+    /// after signature verification, this reflects genuinely more
+    /// concurrent peers than the bounded table supports, not an attack.
+    ReplayCapacityExhausted,
 }
 
 /// Result of an authentication or anti-replay operation.

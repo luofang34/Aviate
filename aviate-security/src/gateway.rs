@@ -267,6 +267,8 @@ mod tests {
             params: [0.0; 7],
             timestamp_ms: 1000,
             signature: Some(SignatureMeta {
+                system_id: 1,
+                component_id: 1,
                 link_id: 5,
                 timestamp: 1000,
                 sig: [0xAA; 6],
