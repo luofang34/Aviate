@@ -42,8 +42,10 @@
 //! // Link layer (protocol parsing)
 //! let link = MavlinkCommandLink::new(usb_rx);
 //!
-//! // Security layer (verification)
-//! let auth = SignedAuth::new(keystore, crypto);
+//! // Security layer (verification). `persisted_ts` is the signing-
+//! // timestamp high-water mark restored from storage (reboot-replay
+//! // defense).
+//! let auth = SignedAuth::new(keystore, crypto, persisted_ts);
 //! let mut gateway = CommandGateway::new(link, auth);
 //!
 //! // Application layer
@@ -59,8 +61,10 @@
 //!
 //! - **PlainAuth**: No verification (development/testing only)
 //! - **SignedAuth**: Requires MAVLink message signing
-//!   - HMAC-SHA256 verification per MAVLink spec
-//!   - Per-link_id anti-replay (strict monotonic counter)
+//!   - `sha256_48` verification per the MAVLink spec (SHA-256 over
+//!     `secret_key ‖ signed bytes`, truncated to 48 bits; NOT HMAC)
+//!   - Anti-replay identity: `(system_id, component_id, link_id)`, with
+//!     first-frame freshness against a trusted local timestamp
 //!   - Key lookup: `KeySelector { link_id, purpose: Command }`
 //!
 //! ## DO-178C Criticality
@@ -77,8 +81,11 @@ pub mod auth;
 pub mod errors;
 pub mod gateway;
 
+#[cfg(test)]
+mod test_support;
+
 // Re-export key types
-pub use anti_replay::AntiReplayWindow;
+pub use anti_replay::{AntiReplayWindow, NEW_STREAM_MAX_AGE_10US};
 pub use auth::{CommandAuth, PlainAuth, SignedAuth};
 pub use errors::{AuthError, GatewayError};
 pub use gateway::CommandGateway;

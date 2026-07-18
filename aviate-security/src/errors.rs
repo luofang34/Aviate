@@ -36,11 +36,12 @@ pub enum AuthError {
 
     /// Signature verification failed
     ///
-    /// The HMAC-SHA256 signature does not match the expected value.
-    /// This indicates either:
+    /// The MAVLink 2 `sha256_48` signature (SHA-256 over
+    /// `secret_key ‖ signed bytes`, truncated to 48 bits) does not match
+    /// the expected value. This indicates either:
     /// - Wrong key used by sender
     /// - Message tampered in transit
-    /// - Implementation bug (different HMAC computation)
+    /// - Implementation bug (different signature computation)
     InvalidSignature,
 
     /// Command requires signature but none provided
@@ -52,11 +53,36 @@ pub enum AuthError {
     /// Anti-replay check failed
     ///
     /// The command's timestamp is not strictly greater than the last
-    /// accepted timestamp for this link_id. This indicates either:
+    /// accepted timestamp for its `(system_id, component_id, link_id)`
+    /// identity. This indicates either:
     /// - Replay attack (old message retransmitted)
     /// - Out-of-order delivery (not expected in MAVLink over USB/UART)
     /// - Sender timestamp rollover (should not happen in practice)
     ReplayAttack,
+
+    /// First frame of a new signing stream is too old
+    ///
+    /// The `(system_id, component_id, link_id)` identity has never been
+    /// seen, and its timestamp is more than one minute behind the trusted
+    /// local signing timestamp
+    /// ([`NEW_STREAM_MAX_AGE_10US`](crate::anti_replay::NEW_STREAM_MAX_AGE_10US)).
+    /// This is the reboot-replay defense: without it, an attacker could
+    /// replay any captured command after the receiver restarts with an
+    /// empty replay window.
+    StaleNewStream {
+        /// The rejected frame's signing timestamp (10 µs ticks).
+        timestamp: u64,
+        /// The trusted local signing timestamp it was measured against.
+        local_timestamp: u64,
+    },
+
+    /// Anti-replay table is full of already-authenticated identities
+    ///
+    /// A frame from a new, authenticated signing identity arrived but every
+    /// tracking slot is occupied. Because identities are only committed
+    /// after signature verification, this reflects genuinely more
+    /// concurrent peers than the bounded table supports, not an attack.
+    ReplayCapacityExhausted,
 }
 
 /// Result of an authentication or anti-replay operation.

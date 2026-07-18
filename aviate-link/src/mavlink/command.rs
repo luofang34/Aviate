@@ -166,6 +166,8 @@ impl<T: FrameRx> CommandLink for MavlinkCommandLink<T> {
             let copy_len = consumed.min(MAX_SIGNED_FRAME_SIZE);
             raw_frame[..copy_len].copy_from_slice(&buf[..copy_len]);
             SignatureMeta {
+                system_id: sig.system_id,
+                component_id: sig.component_id,
                 link_id: sig.link_id,
                 timestamp: sig.timestamp,
                 sig: sig.signature,

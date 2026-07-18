@@ -203,6 +203,8 @@ impl CryptoEngine for Stm32h7CryptoEngine {
         tag: &[u8],
     ) -> Result<(), CryptoError> {
         match algo {
+            CryptoAlgo::Sha256KeyedPrefix => self.verify_sha256_keyed_prefix(key, msg, tag),
+
             CryptoAlgo::HmacSha256 => {
                 #[cfg(feature = "hw-crypto")]
                 {
@@ -260,6 +262,14 @@ impl CryptoEngine for Stm32h7CryptoEngine {
         out: &mut [u8],
     ) -> Result<usize, CryptoError> {
         match algo {
+            CryptoAlgo::Sha256KeyedPrefix => {
+                if out.len() < 32 {
+                    return Err(CryptoError::InvalidKey);
+                }
+                out[..32].copy_from_slice(&Self::sha256_keyed_prefix(key, msg));
+                Ok(32)
+            }
+
             CryptoAlgo::HmacSha256 => {
                 if out.len() < 32 {
                     return Err(CryptoError::InvalidKey);
@@ -291,6 +301,37 @@ impl CryptoEngine for Stm32h7CryptoEngine {
 }
 
 impl Stm32h7CryptoEngine {
+    /// SHA-256 over `key ‖ msg` — the MAVLink 2 `sha256_48` signing
+    /// primitive (callers truncate the digest, typically to 48 bits).
+    fn sha256_keyed_prefix(key: &[u8], msg: &[u8]) -> [u8; 32] {
+        use sha2::Digest;
+        let mut hasher = Sha256::new();
+        hasher.update(key);
+        hasher.update(msg);
+        hasher.finalize().into()
+    }
+
+    /// Verify a (possibly truncated) `Sha256KeyedPrefix` tag in constant
+    /// time with respect to the tag comparison.
+    fn verify_sha256_keyed_prefix(
+        &self,
+        key: &[u8],
+        msg: &[u8],
+        tag: &[u8],
+    ) -> Result<(), CryptoError> {
+        let digest = Self::sha256_keyed_prefix(key, msg);
+        let prefix = digest.get(..tag.len()).ok_or(CryptoError::InvalidKey)?;
+        let diff = prefix
+            .iter()
+            .zip(tag.iter())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b));
+        if diff == 0 {
+            Ok(())
+        } else {
+            Err(CryptoError::VerificationFailed)
+        }
+    }
+
     /// Software HMAC-SHA256 verification (fallback)
     ///
     /// Uses RustCrypto `hmac` and `sha2` crates for constant-time verification.

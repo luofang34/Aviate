@@ -70,6 +70,14 @@ use core::fmt;
 /// Cryptographic algorithm supported by hardware or software
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CryptoAlgo {
+    /// SHA-256 over `key ‖ msg` (keyed-prefix construction).
+    ///
+    /// This is the MAVLink 2 message-signing primitive (`sha256_48`): the
+    /// digest of the 32-byte secret key concatenated with the signed
+    /// bytes, which the caller truncates to 48 bits. It is NOT HMAC —
+    /// an HMAC tag over the same bytes is a different value and will not
+    /// interoperate with MAVLink peers.
+    Sha256KeyedPrefix,
     /// HMAC-SHA256 (symmetric authentication)
     HmacSha256,
     /// AES-128-GCM (symmetric encryption + authentication)
