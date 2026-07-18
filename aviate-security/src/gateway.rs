@@ -1,291 +1,173 @@
-//! Command gateway - unified entry point for all external commands
+//! Command gateway — the scheme-neutral place an authenticated command
+//! becomes trusted.
 //!
-//! This module implements the `CommandGateway`, which is the ONLY way external
-//! commands should enter the flight control system.
-//!
-//! ## DO-178C Security Architecture
+//! ## The type boundary
 //!
 //! ```text
-//! ┌─────────────────────────────────────────────────────────────┐
-//! │  ⚠️  CRITICAL: ALL external commands MUST use this gateway  │
-//! │                                                              │
-//! │  CORRECT usage:                                              │
-//! │  let link = MavlinkCommandLink::new(usb_rx);                │
-//! │  let auth = SignedAuth::new(keystore, crypto);              │
-//! │  let mut gateway = CommandGateway::new(link, auth);   // ✅  │
-//! │  if let Ok(Some(cmd)) = gateway.poll_command(now_ms) {      │
-//! │      kernel.execute(cmd);  // Safe: verified                │
-//! │  }                                                           │
-//! │                                                              │
-//! │  WRONG usage (PROHIBITED):                                  │
-//! │  let mut link = MavlinkCommandLink::new(usb_rx);            │
-//! │  if let Ok(Some(cmd)) = link.poll_command(now_ms) {         │
-//! │      kernel.execute(cmd);  // ❌ BYPASSES SECURITY!          │
-//! │  }                                                           │
-//! └─────────────────────────────────────────────────────────────┘
+//! transport bytes
+//!   → admission adapter        (scheme-specific: decode + verify crypto)
+//!   → AuthenticatedCommand      (sealed: principal + counter + command)
+//!   → CommandGateway::admit      (authorize principal + anti-replay + stamp)
+//!   → VerifiedSystemCommand      (sealed: only admit() can mint one)
+//!   → CommandIngress<Verified…>  (freshness; proof kept)
+//!   → narrow runtime dispatch    (proof erased here, once)
+//!   → SystemCommand → kernel     (security-agnostic)
 //! ```
 //!
-//! ## Audit Checklist
+//! The gateway is **scheme-neutral**: it consumes a sealed
+//! [`AuthenticatedCommand`] and knows nothing about MAVLink, signatures, or
+//! any wire format. Cryptographic verification and transport decoding live
+//! in an admission adapter ([`crate::admission`]); everything downstream of
+//! the claim — authorization, freshness, receipts, the runtime — is
+//! identical for every security scheme. Adding an AEAD or CCSDS profile
+//! (see issue SEC-CMD) means adding an adapter, not changing this file.
 //!
-//! When auditing applications using this crate, verify:
-//! - ✅ CommandGateway is the ONLY command source for kernel.execute()
-//! - ✅ No direct calls to CommandLink::poll_command() in application code
-//! - ✅ No bypass paths exist (grep for "execute.*Command" and trace back)
+//! [`VerifiedSystemCommand`] has no public constructor: it is minted only
+//! by [`CommandGateway::admit`]. There is no way for application or
+//! transport code to fabricate a verified command.
 //!
-//! ## Criticality
+//! ## Admission order: verify → authorize → commit
 //!
-//! - **DAL A/B**: Flight-critical security enforcement
-//! - Commands that bypass this gateway are UNTRUSTED and UNSAFE
+//! 1. **Verify** (in the adapter, before the claim exists): the command's
+//!    cryptography is checked and its principal derived from the
+//!    authenticated material. No gateway state changes.
+//! 2. **Authorize** the principal against the [`SourcePolicy`]. A validly
+//!    authenticated command from an unbound principal is rejected here —
+//!    and, because anti-replay has not run yet, it cannot consume a
+//!    replay-table slot.
+//! 3. **Commit** the per-principal anti-replay counter. Only a command that
+//!    is both authentic and authorized may advance replay state.
+//!
+//! Failsafe commands the FC generates itself use the separate
+//! [`TrustedInternalCommand`] — trusted, but never mistakable for an
+//! externally verified one.
 
-use aviate_link::command::{Command, CommandLink};
+mod authenticated;
+mod internal;
+mod receipt;
+mod source_policy;
+mod verified;
 
-use crate::auth::CommandAuth;
-use crate::errors::GatewayResult;
+pub use authenticated::AuthenticatedCommand;
+pub use internal::{FailsafeAuthority, TrustedInternalCommand};
+pub use receipt::{CommandSource, VerificationReceipt};
+pub use source_policy::{CredentialError, SourcePolicy, MAX_SOURCE_BINDINGS};
+pub use verified::VerifiedSystemCommand;
 
-/// Command gateway - unified entry point for external commands
-///
-/// This struct combines:
-/// 1. Protocol parsing (CommandLink)
-/// 2. Security verification (CommandAuth)
-///
-/// It ensures that ALL external commands are properly verified before
-/// reaching the application layer.
-///
-/// ## Type Parameters
-///
-/// - `L`: CommandLink implementation (e.g., `MavlinkCommandLink<UsbRx>`)
-/// - `A`: CommandAuth implementation (e.g., `SignedAuth<KeyStore, CryptoEngine>`)
-///
-/// ## DO-178C Contract
-///
-/// - **poll_command()**: Non-blocking, deterministic, time-bounded
-/// - **Security guarantee**: If poll_command() returns Ok(Some(cmd)),
-///   then cmd has been verified by the CommandAuth implementation
-///
-/// ## Usage Example
-///
-/// ```ignore
-/// use aviate_link::mavlink::MavlinkCommandLink;
-/// use aviate_security::{CommandGateway, SignedAuth};
-/// use aviate_hal_stm32h7::{Stm32h7KeyStore, Stm32h7CryptoEngine};
-///
-/// // Hardware layer
-/// let keystore = Stm32h7KeyStore::new();
-/// let crypto = Stm32h7CryptoEngine::new();
-///
-/// // Link layer (protocol parsing)
-/// let link = MavlinkCommandLink::new(usb_rx);
-///
-/// // Security layer (verification)
-/// let auth = SignedAuth::new(keystore, crypto);
-/// let mut gateway = CommandGateway::new(link, auth);
-///
-/// // Application layer
-/// loop {
-///     if let Ok(Some(cmd)) = gateway.poll_command(now_ms) {
-///         // cmd is verified! Safe to execute
-///         kernel.execute(cmd);
-///     }
-/// }
-/// ```
-pub struct CommandGateway<L, A> {
-    /// Protocol-level command link (parsing)
-    link: L,
+use crate::anti_replay::AntiReplayWindow;
+use crate::errors::{AuthError, GatewayResult};
 
-    /// Authentication and verification
-    auth: A,
+/// Freshness configuration for a gateway's anti-replay window.
+///
+/// Both fields are scheme-specific and supplied by the profile that builds
+/// the gateway. For the MAVLink signing profile, the units are 10 µs
+/// signing-timestamp ticks and `new_stream_max_age` is
+/// [`NEW_STREAM_MAX_AGE_10US`](crate::anti_replay::NEW_STREAM_MAX_AGE_10US).
+#[derive(Debug, Clone, Copy)]
+pub struct FreshnessConfig {
+    /// Trusted local counter seeded from a persisted high-water mark or an
+    /// RTC — a value an attacker cannot rewind. `0` disables first-frame
+    /// freshness (bench only).
+    pub initial_trusted_counter: u64,
+    /// How far behind the trusted local counter the first frame of a new
+    /// principal's stream may be.
+    pub new_stream_max_age: u64,
 }
 
-impl<L: CommandLink, A: CommandAuth> CommandGateway<L, A> {
-    /// Create new command gateway
-    ///
-    /// ## Parameters
-    ///
-    /// - `link`: Protocol parsing layer (e.g., MavlinkCommandLink)
-    /// - `auth`: Authentication layer (e.g., SignedAuth or PlainAuth)
-    ///
-    /// ## Returns
-    ///
-    /// CommandGateway instance ready to poll for verified commands
-    pub fn new(link: L, auth: A) -> Self {
-        Self { link, auth }
-    }
+/// Turns authenticated commands into verified ones, or rejects them.
+///
+/// Owns the principal→source authorization policy, the per-principal
+/// anti-replay window, and the current authority epoch. It does NOT own a
+/// transport or a cryptographic verifier: an admission adapter produces an
+/// [`AuthenticatedCommand`] and the runner hands it to [`Self::admit`].
+pub struct CommandGateway {
+    source_policy: SourcePolicy,
+    anti_replay: AntiReplayWindow,
+    authority_epoch: u32,
+}
 
-    /// Poll for a verified command
-    ///
-    /// This is the ONLY way applications should receive external commands.
-    ///
-    /// ## Parameters
-    ///
-    /// - `now_ms`: Current system time (milliseconds since boot)
-    ///
-    /// ## Returns
-    ///
-    /// - `Ok(None)`: No command available (not an error, just no data)
-    /// - `Ok(Some(cmd))`: Verified command ready to execute
-    /// - `Err(GatewayError)`: Error in transport, parsing, or verification
-    ///
-    /// ## Processing Pipeline
-    ///
-    /// 1. **Link layer**: Parse protocol bytes → Command struct
-    ///    - Transport receive (FrameRx::try_recv)
-    ///    - Protocol parsing (MAVLink CRC, message decode)
-    ///    - Domain mapping (MAVLink → Command)
-    ///
-    /// 2. **Security layer**: Verify command authenticity
-    ///    - Anti-replay check (per-link_id monotonic counter)
-    ///    - Signature verification (HMAC-SHA256)
-    ///    - Key lookup (KeyStore)
-    ///
-    /// 3. **Return**: Only verified commands reach application
-    ///
-    /// ## DO-178C Contract
-    ///
-    /// - **Non-blocking**: Returns immediately, never waits
-    /// - **Time complexity**: O(1) for each layer, bounded by frame size
-    /// - **WCET target**: ~20 μs for max frame (parse + verify)
-    /// - **Security guarantee**: If Ok(Some(cmd)) returned, cmd is verified
-    ///
-    /// ## Error Handling
-    ///
-    /// Applications should log errors but continue operation:
-    ///
-    /// ```ignore
-    /// match gateway.poll_command(now_ms) {
-    ///     Ok(Some(cmd)) => kernel.execute(cmd),
-    ///     Ok(None) => { /* No command, continue */ },
-    ///     Err(GatewayError::Link(e)) => {
-    ///         log_error("Link error: {:?}", e);
-    ///         // Continue - may be transient transport issue
-    ///     },
-    ///     Err(GatewayError::Auth(e)) => {
-    ///         log_security_alert("Auth failed: {:?}", e);
-    ///         // Alert operator - possible attack
-    ///     },
-    ///     Err(GatewayError::NoCommand) => { /* Shouldn't happen */ },
-    /// }
-    /// ```
-    pub fn poll_command(&mut self, now_ms: u32) -> GatewayResult<Option<Command>> {
-        // Step 1: Parse protocol bytes → Command
-        match self.link.poll_command(now_ms)? {
-            None => {
-                // No command available (not an error)
-                Ok(None)
-            }
-            Some(cmd) => {
-                // Step 2: Verify command authenticity
-                self.auth.verify(&cmd)?;
-
-                // Step 3: Return verified command
-                Ok(Some(cmd))
-            }
+impl CommandGateway {
+    /// Create a gateway with the given authorization policy and freshness
+    /// configuration, at authority epoch 0.
+    pub fn new(source_policy: SourcePolicy, freshness: FreshnessConfig) -> Self {
+        Self {
+            source_policy,
+            anti_replay: AntiReplayWindow::new(
+                freshness.initial_trusted_counter,
+                freshness.new_stream_max_age,
+            ),
+            authority_epoch: 0,
         }
     }
 
-    /// Get mutable reference to link layer (for configuration)
+    /// Admit an authenticated command: authorize its principal, commit
+    /// anti-replay, and mint a [`VerifiedSystemCommand`].
     ///
-    /// This allows applications to configure the underlying transport
-    /// (e.g., enable/disable protocol features) without breaking the
-    /// security abstraction.
-    pub fn link_mut(&mut self) -> &mut L {
-        &mut self.link
+    /// `now_us` is the trusted monotonic FC time at ingress; it becomes the
+    /// receipt's `received_at_us`. Nothing from the payload is used as a
+    /// timestamp, a source, or a sequence — the source comes from the
+    /// authorization policy and the freshness counter from the
+    /// authenticated claim. A rejected command returns an error and mints
+    /// nothing.
+    pub fn admit(
+        &mut self,
+        command: AuthenticatedCommand,
+        now_us: u64,
+    ) -> GatewayResult<VerifiedSystemCommand> {
+        let principal = command.principal();
+
+        // 1. Authorize the authenticated principal. Rejecting here, before
+        //    anti-replay, is what stops an authenticated-but-unauthorized
+        //    principal from consuming a bounded replay slot.
+        let source = self
+            .source_policy
+            .resolve(principal)
+            .ok_or(AuthError::UnauthorizedSource)?;
+
+        // 2. Commit anti-replay on the (principal, counter). Only an
+        //    authentic AND authorized command may advance a counter.
+        self.anti_replay
+            .check_and_update(principal, command.counter())?;
+
+        // 3. Stamp trusted provenance and mint.
+        let receipt = VerificationReceipt::new(
+            source,
+            self.authority_epoch,
+            command.counter(),
+            now_us,
+            None,
+        );
+        Ok(VerifiedSystemCommand::mint(command.into_command(), receipt))
     }
 
-    /// Get mutable reference to auth layer (for diagnostics)
+    /// Advance the authority epoch — called on recovery from a link loss.
     ///
-    /// This allows applications to query security state (e.g., anti-replay
-    /// counters for telemetry) without breaking the security abstraction.
-    pub fn auth_mut(&mut self) -> &mut A {
-        &mut self.auth
+    /// After a source's authority lapses, commands admitted at the new
+    /// epoch are distinguishable from any that predate the recovery
+    /// boundary, so a stale command cannot silently revive a dead
+    /// authority. Configuration surface only; it grants no way to forge a
+    /// command.
+    pub fn begin_authority_epoch(&mut self) {
+        self.authority_epoch = self.authority_epoch.wrapping_add(1);
+    }
+
+    /// Read-only diagnostic: the current authority epoch.
+    pub fn authority_epoch(&self) -> u32 {
+        self.authority_epoch
+    }
+
+    /// Read-only access to the authorization policy, for telemetry.
+    pub fn source_policy(&self) -> &SourcePolicy {
+        &self.source_policy
+    }
+
+    /// The anti-replay window's trusted local counter, exposed so the
+    /// assembly can persist it across reboots (reboot-replay defense).
+    pub fn local_freshness_counter(&self) -> u64 {
+        self.anti_replay.local_counter()
     }
 }
 
 #[cfg(test)]
-mod tests {
-    extern crate alloc;
-    use super::*;
-    use crate::auth::PlainAuth;
-    use alloc::vec;
-    use alloc::vec::Vec;
-    use aviate_link::command::{CommandKind, SignatureMeta};
-    use aviate_link::errors::LinkResult;
-
-    /// Mock command link for testing
-    struct MockLink {
-        commands: Vec<Command>,
-    }
-
-    impl MockLink {
-        fn new(commands: Vec<Command>) -> Self {
-            Self { commands }
-        }
-    }
-
-    impl CommandLink for MockLink {
-        fn poll_command(&mut self, _now_ms: u32) -> LinkResult<Option<Command>> {
-            if self.commands.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(self.commands.remove(0)))
-            }
-        }
-    }
-
-    #[test]
-    fn test_gateway_no_command() {
-        let link = MockLink::new(vec![]);
-        let auth = PlainAuth::new();
-        let mut gateway = CommandGateway::new(link, auth);
-
-        let result = gateway.poll_command(1000);
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-    }
-
-    #[test]
-    fn test_gateway_unsigned_command_with_plain_auth() {
-        let cmd = Command {
-            kind: CommandKind::Arm,
-            params: [0.0; 7],
-            timestamp_ms: 1000,
-            signature: None,
-        };
-        let link = MockLink::new(vec![cmd]);
-        let auth = PlainAuth::new();
-        let mut gateway = CommandGateway::new(link, auth);
-
-        let result = gateway.poll_command(1000);
-        assert!(result.is_ok());
-        let verified_cmd = result.unwrap();
-        assert!(verified_cmd.is_some());
-    }
-
-    #[test]
-    fn test_gateway_signed_command_with_plain_auth() {
-        let cmd = Command {
-            kind: CommandKind::Arm,
-            params: [0.0; 7],
-            timestamp_ms: 1000,
-            signature: Some(SignatureMeta {
-                system_id: 1,
-                component_id: 1,
-                link_id: 5,
-                timestamp: 1000,
-                sig: [0xAA; 6],
-                raw_frame: [0u8; aviate_link::command::MAX_SIGNED_FRAME_SIZE],
-                raw_frame_len: 32,
-            }),
-        };
-        let link = MockLink::new(vec![cmd]);
-        let auth = PlainAuth::new();
-        let mut gateway = CommandGateway::new(link, auth);
-
-        let result = gateway.poll_command(1000);
-        assert!(result.is_ok());
-        let verified_cmd = result.unwrap();
-        assert!(verified_cmd.is_some());
-    }
-
-    // Note: Tests with SignedAuth require mock or real KeyStore/CryptoEngine
-    // implementations. These will be added in integration tests.
-}
+#[path = "gateway/tests.rs"]
+mod tests;

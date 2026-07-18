@@ -1,71 +1,73 @@
 #![deny(missing_docs)]
 //! Security policy layer for Aviate flight control system
 //!
-//! This crate provides command authentication, signature verification,
-//! and anti-replay protection for external commands.
+//! This crate provides command authentication, authorization, and
+//! anti-replay protection for external commands, behind a **scheme-neutral
+//! admission boundary**: MAVLink 2 signing is one interoperable adapter,
+//! not the permanent architecture (see issue SEC-CMD).
 //!
-//! ## Architecture (DO-178C 6-Layer Model)
+//! ## The command pipeline
 //!
 //! ```text
-//! Layer 1: HAL (aviate-hal-io)
-//!   ├─ KeyStore trait (OTP/flash key access)
-//!   └─ CryptoEngine trait (HMAC/AES/Ed25519)
-//!
-//! Layer 2: Chip HAL (aviate-hal-stm32h7)
-//!   ├─ Stm32h7KeyStore (OTP reads, flash const keys)
-//!   └─ Stm32h7CryptoEngine (HMAC-SHA256 software/hardware)
-//!
-//! Layer 3: Link (aviate-link)
-//!   ├─ Command struct (with optional SignatureMeta)
-//!   └─ MavlinkCommandLink (parses MAVLink → Command)
-//!
-//! Layer 4: Security (THIS CRATE)
-//!   ├─ CommandAuth trait (PlainAuth, SignedAuth)
-//!   ├─ AntiReplayWindow (per-link_id monotonic counter)
-//!   └─ CommandGateway (unified entry point)
-//!
-//! Layer 5: App
-//!   └─ Uses CommandGateway to get verified commands
+//! transport bytes
+//!   → admission adapter        (scheme-specific: decode + verify crypto)
+//!   → AuthenticatedCommand      (sealed: principal + counter + command)
+//!   → CommandGateway::admit      (authorize principal + anti-replay + stamp)
+//!   → VerifiedSystemCommand      (sealed proof)
+//!   → runtime / kernel           (security-agnostic)
 //! ```
+//!
+//! Cryptographic verification and transport decoding live in an
+//! [`admission`] adapter. Everything downstream of
+//! [`AuthenticatedCommand`] — authorization ([`SourcePolicy`]), freshness
+//! ([`AntiReplayWindow`]), receipts, the runtime — is identical for every
+//! scheme. Adding an AEAD or CCSDS profile means adding an adapter, not
+//! changing the gateway.
 //!
 //! ## Usage Example
 //!
 //! ```ignore
-//! use aviate_security::{CommandGateway, SignedAuth};
+//! use aviate_security::{CommandGateway, FreshnessConfig, Principal, CommandSource, SourcePolicy};
+//! use aviate_security::admission::MavlinkAdmission;
+//! use aviate_security::NEW_STREAM_MAX_AGE_10US;
 //! use aviate_hal_stm32h7::{Stm32h7KeyStore, Stm32h7CryptoEngine};
-//! use aviate_link::mavlink::MavlinkCommandLink;
 //!
-//! // Hardware layer
-//! let keystore = Stm32h7KeyStore::new();
-//! let crypto = Stm32h7CryptoEngine::new();
+//! // MAVLink signing adapter (scheme-specific edge).
+//! let mut admission = MavlinkAdmission::new(Stm32h7KeyStore::new(), Stm32h7CryptoEngine::new());
 //!
-//! // Link layer (protocol parsing)
-//! let link = MavlinkCommandLink::new(usb_rx);
+//! // Scheme-neutral gateway. `persisted_ts` is the signing-timestamp
+//! // high-water mark restored from storage (reboot-replay defense).
+//! let mut policy = SourcePolicy::new();
+//! policy.bind(Principal::mavlink(1, 1, 5), CommandSource::GcsDatalink)?;
+//! let freshness = FreshnessConfig {
+//!     initial_trusted_counter: persisted_ts,
+//!     new_stream_max_age: NEW_STREAM_MAX_AGE_10US,
+//! };
+//! let mut gateway = CommandGateway::new(policy, freshness);
 //!
-//! // Security layer (verification). `persisted_ts` is the signing-
-//! // timestamp high-water mark restored from storage (reboot-replay
-//! // defense).
-//! let auth = SignedAuth::new(keystore, crypto, persisted_ts);
-//! let mut gateway = CommandGateway::new(link, auth);
-//!
-//! // Application layer
+//! // Runner: frame bytes → adapter → gateway → verified.
 //! loop {
-//!     if let Ok(Some(cmd)) = gateway.poll_command(now_ms) {
-//!         // cmd is verified! Safe to execute
-//!         kernel.execute(cmd);
+//!     if let Some(frame) = transport.try_recv_frame() {
+//!         if let Ok(claim) = admission.authenticate(frame) {
+//!             match gateway.admit(claim, now_us) {
+//!                 Ok(verified) => ingress.receive(verified, now_us),
+//!                 Err(_) => { /* rejected: logged, never executed */ }
+//!             }
+//!         }
 //!     }
 //! }
 //! ```
 //!
 //! ## Security Model
 //!
-//! - **PlainAuth**: No verification (development/testing only)
-//! - **SignedAuth**: Requires MAVLink message signing
-//!   - `sha256_48` verification per the MAVLink spec (SHA-256 over
-//!     `secret_key ‖ signed bytes`, truncated to 48 bits; NOT HMAC)
-//!   - Anti-replay identity: `(system_id, component_id, link_id)`, with
-//!     first-frame freshness against a trusted local timestamp
-//!   - Key lookup: `KeySelector { link_id, purpose: Command }`
+//! - **MAVLink signing profile** ([`admission::MavlinkAdmission`]):
+//!   `sha256_48` (SHA-256 over `secret_key ‖ signed bytes`, truncated to
+//!   48 bits; NOT HMAC), per-principal anti-replay with first-frame
+//!   freshness, one credential (one authority) per `link_id`. Authenticity
+//!   and replay resistance only — its threat model is deliberately narrow.
+//! - **Insecure dev profile** (`admission::InsecureDevAdmission`): no
+//!   cryptography; compiled only under the non-default `insecure-dev-auth`
+//!   feature (SITL/bench).
 //!
 //! ## DO-178C Criticality
 //!
@@ -76,16 +78,23 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub mod admission;
 pub mod anti_replay;
 pub mod auth;
 pub mod errors;
 pub mod gateway;
+pub mod principal;
 
 #[cfg(test)]
 mod test_support;
 
 // Re-export key types
 pub use anti_replay::{AntiReplayWindow, NEW_STREAM_MAX_AGE_10US};
-pub use auth::{CommandAuth, PlainAuth, SignedAuth};
+pub use auth::SignedAuth;
 pub use errors::{AuthError, GatewayError};
-pub use gateway::CommandGateway;
+pub use gateway::{
+    AuthenticatedCommand, CommandGateway, CommandSource, CredentialError, FailsafeAuthority,
+    FreshnessConfig, SourcePolicy, TrustedInternalCommand, VerificationReceipt,
+    VerifiedSystemCommand, MAX_SOURCE_BINDINGS,
+};
+pub use principal::{Principal, SecurityScheme};

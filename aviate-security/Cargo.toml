@@ -11,6 +11,17 @@ categories = ["embedded", "no-std"]
 
 [features]
 default = []
+# Compiles `FailsafeAuthority::take`, required to mint
+# `TrustedInternalCommand`s. Enabled ONLY by the runtime failsafe
+# subsystem. NOTE: because Cargo unifies features across the graph, this
+# gate only prunes API surface — the authority itself is bounded by
+# `take()` handing out the capability at most once per process.
+internal-failsafe = []
+# Compiles the insecure development surface: `PlainAuth`,
+# `SourcePolicy::insecure_dev`, and `UnverifiedSystemCommand::unsigned_dev`.
+# For SITL/bench assemblies only; a flight build that never enables this
+# cannot name an authentication bypass.
+insecure-dev-auth = []
 
 [dependencies]
 aviate-hal-io = { path = "../aviate-hal/io" }

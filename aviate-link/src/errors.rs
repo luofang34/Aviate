@@ -46,10 +46,20 @@ pub type TelemetryResult<T> = Result<T, TelemetryError>;
 pub enum LinkError {
     /// Transport layer error (from HAL FrameRx)
     Transport(TransportError),
-    /// Message parsing failed (CRC mismatch, invalid format, etc.)
-    ParseError,
+    /// Message parsing failed; carries the protocol-level cause
+    /// (CRC mismatch, invalid format, unsupported incompat flags, ...)
+    Parse(crate::mavlink::protocol::ParseError),
     /// Message parsed successfully but not mapped to Command
     UnsupportedMsg,
+    /// Frame bytes and parse result are inconsistent (trailing bytes
+    /// beyond the parsed frame, or a frame too large for the fixed
+    /// signature buffer); carries the frame and consumed lengths
+    FrameLengthMismatch {
+        /// Total bytes handed to the parser.
+        frame_len: usize,
+        /// Bytes the parser actually consumed.
+        consumed: usize,
+    },
 }
 
 /// Result type for command link operations
