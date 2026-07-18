@@ -77,6 +77,9 @@ pub mod auth;
 pub mod errors;
 pub mod gateway;
 
+#[cfg(test)]
+mod test_support;
+
 // Re-export key types
 pub use anti_replay::AntiReplayWindow;
 pub use auth::{CommandAuth, PlainAuth, SignedAuth};

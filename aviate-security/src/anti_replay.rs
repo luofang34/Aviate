@@ -1,146 +1,225 @@
-//! Anti-replay protection using per-link_id monotonic counters
+//! Anti-replay protection using per-identity monotonic counters
 //!
 //! This module implements replay attack prevention for signed commands.
-//! Each link_id maintains an independent monotonic counter.
+//! Each signing identity maintains an independent monotonic counter.
 //!
 //! ## Security Model
 //!
-//! - **Per-link_id tracking**: Each ground station (identified by link_id) has
-//!   an independent counter. This allows multiple independent operators.
+//! - **Per-identity tracking**: the replay identity is the full MAVLink
+//!   signing tuple `(system_id, component_id, link_id)`, not `link_id`
+//!   alone. Two senders that share a `link_id` but differ in system or
+//!   component id are distinct peers with independent counters.
 //!
-//! - **Strict monotonic**: New timestamp MUST be strictly greater than last
-//!   accepted timestamp (`new > last`). No equality, no backwards movement.
+//! - **Strict monotonic**: a new timestamp MUST be strictly greater than
+//!   the last accepted timestamp for its identity (`new > last`). No
+//!   equality, no backwards movement. An identity never seen before has an
+//!   implicit `last = 0`, so its first timestamp must be `> 0`.
 //!
-//! - **No skew window**: Unlike some protocols (e.g., IPsec), we do NOT allow
-//!   a "replay window" for out-of-order packets. MAVLink over USB/UART is
+//! - **No skew window**: unlike some protocols (e.g. IPsec) we do NOT allow
+//!   a replay window for out-of-order packets. MAVLink over USB/UART is
 //!   strictly ordered, so any non-monotonic timestamp is suspicious.
+//!
+//! - **Bounded, authenticated-only**: the table holds a fixed number of
+//!   identities. Callers MUST verify a frame's signature *before*
+//!   committing its identity here, so only cryptographically authenticated
+//!   peers ever occupy a slot — an attacker cannot flood the table with
+//!   forged identities. A new identity is rejected only when every slot is
+//!   held by an already-authenticated peer.
 //!
 //! ## DO-178C Properties
 //!
-//! - **Time complexity**: O(1) lookup and update (fixed-size array)
-//! - **Memory**: 256 * 8 bytes = 2 KB (one u64 per link_id)
-//! - **WCET**: ~10 CPU cycles (array index + comparison + update)
-//! - **No allocation**: Stack-allocated, deterministic
+//! - **Time complexity**: O(MAX_SIGNING_PEERS) scan — a small fixed bound
+//! - **Memory**: `MAX_SIGNING_PEERS` fixed-size entries, no allocation
+//! - **WCET**: bounded linear scan of a small array
+//! - **Determinism**: no allocation, no unbounded loops
 
 use crate::errors::{AuthError, AuthResult};
 
-/// Number of possible link IDs (0-255)
-const MAX_LINK_IDS: usize = 256;
+/// Maximum number of distinct signing identities tracked concurrently.
+///
+/// Sized for an inner-loop flight controller: a handful of authenticated
+/// peers (e.g. an RC bridge, a GCS/datalink, an offboard companion). A slot
+/// is only ever occupied by a peer whose signature already verified.
+pub const MAX_SIGNING_PEERS: usize = 16;
 
-/// Anti-replay window tracking per-link_id timestamps
+/// The MAVLink signing identity a replay counter is tracked against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SigningIdentity {
+    system_id: u8,
+    component_id: u8,
+    link_id: u8,
+}
+
+/// One tracked identity and its last accepted timestamp.
+#[derive(Debug, Clone, Copy)]
+struct Slot {
+    identity: SigningIdentity,
+    last_timestamp: u64,
+}
+
+/// Anti-replay window tracking per-identity timestamps.
 ///
 /// ## Usage Example
 ///
 /// ```ignore
 /// let mut window = AntiReplayWindow::new();
 ///
-/// // First command from link_id=5
-/// window.check_and_update(5, 1000)?;  // OK
+/// // First command from (sys=1, comp=1, link=5)
+/// window.check_and_update(1, 1, 5, 1000)?;  // OK
 ///
-/// // Second command from same link
-/// window.check_and_update(5, 1001)?;  // OK (1001 > 1000)
+/// // Second command from same identity
+/// window.check_and_update(1, 1, 5, 1001)?;  // OK (1001 > 1000)
 ///
 /// // Replay attack (same or older timestamp)
-/// window.check_and_update(5, 1000)?;  // Error: ReplayAttack
-/// window.check_and_update(5, 999)?;   // Error: ReplayAttack
+/// window.check_and_update(1, 1, 5, 1000)?;  // Error: ReplayAttack
 ///
-/// // Independent link_id
-/// window.check_and_update(7, 500)?;   // OK (different link_id)
+/// // Same link_id but different component → independent identity
+/// window.check_and_update(1, 2, 5, 500)?;   // OK
 /// ```
 pub struct AntiReplayWindow {
-    /// Last accepted timestamp for each link_id
-    ///
-    /// - Index: link_id (0-255)
-    /// - Value: Last accepted timestamp (0 = never seen)
-    ///
-    /// **Initialization**: All zeros means no commands accepted yet.
-    /// The first command from any link_id will be accepted (timestamp > 0).
-    last_timestamp: [u64; MAX_LINK_IDS],
+    /// Occupied identity slots. `None` slots are free.
+    slots: [Option<Slot>; MAX_SIGNING_PEERS],
 }
 
 impl AntiReplayWindow {
-    /// Create new anti-replay window with all timestamps at zero
+    /// Create a new anti-replay window with no tracked identities.
     ///
     /// ## Post-condition
     ///
-    /// All link_ids start with `last_timestamp[i] = 0`, meaning no commands
-    /// have been accepted yet. The first command from each link_id must have
-    /// timestamp > 0 to be accepted.
+    /// Every slot is free. The first command from each identity is accepted
+    /// as long as its timestamp is `> 0` (an unseen identity has an implicit
+    /// `last = 0`).
     pub const fn new() -> Self {
         Self {
-            last_timestamp: [0; MAX_LINK_IDS],
+            slots: [None; MAX_SIGNING_PEERS],
         }
     }
 
-    /// Check if timestamp is valid and update window
+    /// Locate the occupied slot for `identity`, if tracked.
+    fn find(&self, identity: SigningIdentity) -> Option<usize> {
+        self.slots.iter().position(|slot| match slot {
+            Some(s) => s.identity == identity,
+            None => false,
+        })
+    }
+
+    /// Check whether `timestamp` is valid for its identity and update the
+    /// window.
     ///
     /// ## Parameters
     ///
-    /// - `link_id`: Command sender identifier (0-255)
-    /// - `timestamp`: Remote monotonic counter from command signature
+    /// - `system_id` / `component_id` / `link_id`: the signing identity
+    /// - `timestamp`: remote monotonic counter from the command signature
     ///
     /// ## Returns
     ///
-    /// - `Ok(())`: Timestamp is valid (strictly greater than last), window updated
-    /// - `Err(AuthError::ReplayAttack)`: Timestamp is not strictly greater
+    /// - `Ok(())`: timestamp is strictly greater than the last for this
+    ///   identity (or the identity is new with `timestamp > 0`); the window
+    ///   is updated
+    /// - `Err(AuthError::ReplayAttack)`: timestamp is not strictly greater
+    /// - `Err(AuthError::ReplayCapacityExhausted)`: the identity is new and
+    ///   every slot is already held by an authenticated peer
     ///
     /// ## Security Invariant
     ///
-    /// After successful check, `last_timestamp[link_id]` is updated to `timestamp`.
-    /// Subsequent calls with same or older timestamp will fail.
+    /// Callers MUST have verified the frame's signature before calling this;
+    /// on success the identity's high-water mark advances to `timestamp`.
     ///
     /// ## DO-178C Contract
     ///
-    /// - **Time complexity**: O(1)
-    /// - **WCET**: ~10 CPU cycles @ 480 MHz (array index + compare + store)
-    /// - **Side effects**: Updates internal state on success, no change on failure
-    /// - **Thread safety**: NOT thread-safe (requires external synchronization)
-    pub fn check_and_update(&mut self, link_id: u8, timestamp: u64) -> AuthResult<()> {
-        let link_id_idx = link_id as usize;
-        let last = self.last_timestamp[link_id_idx];
+    /// - **Time complexity**: O(MAX_SIGNING_PEERS)
+    /// - **Side effects**: updates internal state on success, no change on
+    ///   failure
+    /// - **Thread safety**: NOT thread-safe (requires external
+    ///   synchronization)
+    pub fn check_and_update(
+        &mut self,
+        system_id: u8,
+        component_id: u8,
+        link_id: u8,
+        timestamp: u64,
+    ) -> AuthResult<()> {
+        let identity = SigningIdentity {
+            system_id,
+            component_id,
+            link_id,
+        };
 
-        // Strict monotonic check: new timestamp MUST be strictly greater
-        if timestamp <= last {
+        if let Some(idx) = self.find(identity) {
+            let slot = match self.slots.get_mut(idx).and_then(Option::as_mut) {
+                Some(slot) => slot,
+                None => return Err(AuthError::ReplayAttack),
+            };
+            if timestamp <= slot.last_timestamp {
+                return Err(AuthError::ReplayAttack);
+            }
+            slot.last_timestamp = timestamp;
+            return Ok(());
+        }
+
+        // New identity: implicit last = 0, so the first timestamp must be
+        // strictly positive.
+        if timestamp == 0 {
             return Err(AuthError::ReplayAttack);
         }
 
-        // Accept: update window
-        self.last_timestamp[link_id_idx] = timestamp;
-        Ok(())
+        match self.slots.iter_mut().find(|slot| slot.is_none()) {
+            Some(free) => {
+                *free = Some(Slot {
+                    identity,
+                    last_timestamp: timestamp,
+                });
+                Ok(())
+            }
+            None => Err(AuthError::ReplayCapacityExhausted),
+        }
     }
 
-    /// Get last accepted timestamp for a link_id (for debugging/telemetry)
+    /// Last accepted timestamp for an identity (debugging/telemetry).
     ///
-    /// ## Returns
-    ///
-    /// - Last accepted timestamp for this link_id
-    /// - 0 if no commands from this link_id have been accepted yet
-    pub fn last_timestamp(&self, link_id: u8) -> u64 {
-        self.last_timestamp[link_id as usize]
+    /// Returns `0` when the identity has never been accepted.
+    pub fn last_timestamp(&self, system_id: u8, component_id: u8, link_id: u8) -> u64 {
+        let identity = SigningIdentity {
+            system_id,
+            component_id,
+            link_id,
+        };
+        match self.find(identity) {
+            Some(idx) => match self.slots.get(idx).and_then(Option::as_ref) {
+                Some(slot) => slot.last_timestamp,
+                None => 0,
+            },
+            None => 0,
+        }
     }
 
-    /// Reset window for a specific link_id (for testing/recovery)
-    ///
-    /// ## Use Cases
-    ///
-    /// - Testing: Reset state between test cases
-    /// - Recovery: Clear stuck link_id after ground station restart
+    /// Forget a specific identity (testing/recovery).
     ///
     /// ## Security Warning
     ///
-    /// Resetting allows previously-seen timestamps to be replayed!
-    /// Only use this in controlled scenarios (testing, operator command).
-    pub fn reset_link(&mut self, link_id: u8) {
-        self.last_timestamp[link_id as usize] = 0;
+    /// Resetting allows previously-seen timestamps for that identity to be
+    /// replayed. Only use in controlled scenarios (testing, operator
+    /// command).
+    pub fn reset_identity(&mut self, system_id: u8, component_id: u8, link_id: u8) {
+        let identity = SigningIdentity {
+            system_id,
+            component_id,
+            link_id,
+        };
+        if let Some(idx) = self.find(identity) {
+            if let Some(slot) = self.slots.get_mut(idx) {
+                *slot = None;
+            }
+        }
     }
 
-    /// Reset all link_ids to zero (for testing only)
+    /// Forget all identities (testing only).
     ///
     /// ## Security Warning
     ///
     /// This clears all anti-replay state! Only use in test code.
     pub fn reset_all(&mut self) {
-        self.last_timestamp = [0; MAX_LINK_IDS];
+        self.slots = [None; MAX_SIGNING_PEERS];
     }
 }
 
@@ -157,26 +236,24 @@ mod tests {
     #[test]
     fn test_first_command_accepted() {
         let mut window = AntiReplayWindow::new();
-        // First command from link_id=5 with timestamp=1000
-        assert!(window.check_and_update(5, 1000).is_ok());
-        assert_eq!(window.last_timestamp(5), 1000);
+        assert!(window.check_and_update(1, 1, 5, 1000).is_ok());
+        assert_eq!(window.last_timestamp(1, 1, 5), 1000);
     }
 
     #[test]
     fn test_monotonic_increase_accepted() {
         let mut window = AntiReplayWindow::new();
-        assert!(window.check_and_update(5, 1000).is_ok());
-        assert!(window.check_and_update(5, 1001).is_ok());
-        assert!(window.check_and_update(5, 1002).is_ok());
-        assert_eq!(window.last_timestamp(5), 1002);
+        assert!(window.check_and_update(1, 1, 5, 1000).is_ok());
+        assert!(window.check_and_update(1, 1, 5, 1001).is_ok());
+        assert!(window.check_and_update(1, 1, 5, 1002).is_ok());
+        assert_eq!(window.last_timestamp(1, 1, 5), 1002);
     }
 
     #[test]
     fn test_replay_same_timestamp_rejected() {
         let mut window = AntiReplayWindow::new();
-        assert!(window.check_and_update(5, 1000).is_ok());
-        // Replay with same timestamp
-        match window.check_and_update(5, 1000) {
+        assert!(window.check_and_update(1, 1, 5, 1000).is_ok());
+        match window.check_and_update(1, 1, 5, 1000) {
             Err(AuthError::ReplayAttack) => {}
             _ => panic!("Expected ReplayAttack error"),
         }
@@ -185,44 +262,57 @@ mod tests {
     #[test]
     fn test_replay_older_timestamp_rejected() {
         let mut window = AntiReplayWindow::new();
-        assert!(window.check_and_update(5, 1000).is_ok());
-        // Replay with older timestamp
-        match window.check_and_update(5, 999) {
+        assert!(window.check_and_update(1, 1, 5, 1000).is_ok());
+        match window.check_and_update(1, 1, 5, 999) {
             Err(AuthError::ReplayAttack) => {}
             _ => panic!("Expected ReplayAttack error"),
         }
     }
 
     #[test]
-    fn test_independent_link_ids() {
+    fn test_link_id_alone_is_not_identity() {
         let mut window = AntiReplayWindow::new();
-        // link_id=5
-        assert!(window.check_and_update(5, 1000).is_ok());
-        // link_id=7 (independent)
-        assert!(window.check_and_update(7, 500).is_ok());
-        // Each maintains own state
-        assert_eq!(window.last_timestamp(5), 1000);
-        assert_eq!(window.last_timestamp(7), 500);
+        // Same link_id, different component_id → independent counters.
+        assert!(window.check_and_update(1, 1, 5, 1000).is_ok());
+        assert!(window.check_and_update(1, 2, 5, 500).is_ok());
+        // And different system_id is independent too.
+        assert!(window.check_and_update(2, 1, 5, 300).is_ok());
+        assert_eq!(window.last_timestamp(1, 1, 5), 1000);
+        assert_eq!(window.last_timestamp(1, 2, 5), 500);
+        assert_eq!(window.last_timestamp(2, 1, 5), 300);
     }
 
     #[test]
-    fn test_reset_link() {
+    fn test_reset_identity() {
         let mut window = AntiReplayWindow::new();
-        assert!(window.check_and_update(5, 1000).is_ok());
-        // Reset link_id=5
-        window.reset_link(5);
-        assert_eq!(window.last_timestamp(5), 0);
-        // Can now accept timestamp=500 (previously would be rejected)
-        assert!(window.check_and_update(5, 500).is_ok());
+        assert!(window.check_and_update(1, 1, 5, 1000).is_ok());
+        window.reset_identity(1, 1, 5);
+        assert_eq!(window.last_timestamp(1, 1, 5), 0);
+        assert!(window.check_and_update(1, 1, 5, 500).is_ok());
     }
 
     #[test]
-    fn test_zero_timestamp_rejected_after_init() {
+    fn test_zero_timestamp_rejected_for_new_identity() {
         let mut window = AntiReplayWindow::new();
-        // Timestamp=0 rejected if it's not the first (all start at 0)
-        match window.check_and_update(5, 0) {
+        match window.check_and_update(1, 1, 5, 0) {
             Err(AuthError::ReplayAttack) => {}
             _ => panic!("Expected ReplayAttack for timestamp=0"),
         }
+    }
+
+    #[test]
+    fn test_capacity_exhausted_rejects_new_identity() {
+        let mut window = AntiReplayWindow::new();
+        // Fill every slot with a distinct authenticated identity.
+        for i in 0..MAX_SIGNING_PEERS as u8 {
+            assert!(window.check_and_update(1, 1, i, 1000).is_ok());
+        }
+        // A further NEW identity has nowhere to go.
+        match window.check_and_update(9, 9, 200, 1000) {
+            Err(AuthError::ReplayCapacityExhausted) => {}
+            _ => panic!("Expected ReplayCapacityExhausted"),
+        }
+        // But an already-tracked identity still advances fine.
+        assert!(window.check_and_update(1, 1, 0, 1001).is_ok());
     }
 }
