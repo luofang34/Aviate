@@ -42,15 +42,18 @@
 //! // Link layer (protocol parsing)
 //! let link = MavlinkCommandLink::new(usb_rx);
 //!
-//! // Security layer (verification)
+//! // Security layer (verification): the gateway owns the auth policy,
+//! // not the transport.
 //! let auth = SignedAuth::new(keystore, crypto);
-//! let mut gateway = CommandGateway::new(link, auth);
+//! let mut gateway = CommandGateway::new(auth);
 //!
-//! // Application layer
+//! // Runner: parse bytes → UnverifiedSystemCommand → admit → verified.
 //! loop {
-//!     if let Ok(Some(cmd)) = gateway.poll_command(now_ms) {
-//!         // cmd is verified! Safe to execute
-//!         kernel.execute(cmd);
+//!     if let Some(unverified) = transport.try_recv_command() {
+//!         match gateway.admit(unverified, now_us) {
+//!             Ok(verified) => ingress.receive(verified, now_us),
+//!             Err(_) => { /* rejected: logged, never executed */ }
+//!         }
 //!     }
 //! }
 //! ```
@@ -84,4 +87,7 @@ mod test_support;
 pub use anti_replay::AntiReplayWindow;
 pub use auth::{CommandAuth, PlainAuth, SignedAuth};
 pub use errors::{AuthError, GatewayError};
-pub use gateway::CommandGateway;
+pub use gateway::{
+    CommandGateway, CommandSource, FailsafeAuthority, SourcePolicy, TrustedInternalCommand,
+    UnverifiedSystemCommand, VerificationReceipt, VerifiedSystemCommand, MAX_SOURCE_BINDINGS,
+};

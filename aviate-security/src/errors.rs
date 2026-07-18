@@ -66,6 +66,15 @@ pub enum AuthError {
     /// after signature verification, this reflects genuinely more
     /// concurrent peers than the bounded table supports, not an attack.
     ReplayCapacityExhausted,
+
+    /// Authenticated identity maps to no authorized command source
+    ///
+    /// The frame verified, but its `(system_id, component_id, link_id)`
+    /// identity is not bound to any [`CommandSource`](crate::CommandSource)
+    /// by the gateway's credential policy. The command's authority comes
+    /// from this binding, never from a payload claim, so an unbound
+    /// identity is rejected.
+    UnauthorizedSource,
 }
 
 /// Result of an authentication or anti-replay operation.

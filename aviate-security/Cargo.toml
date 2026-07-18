@@ -11,6 +11,11 @@ categories = ["embedded", "no-std"]
 
 [features]
 default = []
+# Grants access to `FailsafeAuthority::acquire`, the capability required to
+# mint `TrustedInternalCommand`s. Enabled ONLY by the runtime failsafe
+# subsystem; a flight assembly leaves it off everywhere else so ambient
+# minting of self-generated commands does not compile.
+internal-failsafe = []
 
 [dependencies]
 aviate-hal-io = { path = "../aviate-hal/io" }
