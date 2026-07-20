@@ -24,7 +24,7 @@ jobs:
     # The whole job is advisory; a failure here must never fail CI.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           submodules: recursive
 
