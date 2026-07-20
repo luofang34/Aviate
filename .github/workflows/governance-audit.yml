@@ -36,7 +36,7 @@ jobs:
     # secret.
     environment: governance-audit
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
 
       - name: Drift-detection self-test (fixtures only, no credentials)
         run: ./scripts/check_branch_protection.sh --self-test

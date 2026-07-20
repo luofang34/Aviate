@@ -15,7 +15,7 @@ jobs:
     name: File Sizes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
 
       - name: Enforce 500-line (and 100-line lib.rs) caps
         run: ./scripts/check_file_sizes.sh
@@ -28,7 +28,7 @@ jobs:
     name: Test Plan Sync
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
 
       - name: Verify test plan matches cert/trace
         run: python3 scripts/check_test_plan_sync.py
@@ -40,7 +40,7 @@ jobs:
     name: Governance Self-Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
 
       - name: Replay ruleset drift fixtures through the audit assertions
         run: ./scripts/check_branch_protection.sh --self-test
@@ -49,7 +49,7 @@ jobs:
     name: Dialect (mavgen)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-python@v6
         with:
@@ -65,7 +65,7 @@ jobs:
     name: Identity Adjudication
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           fetch-depth: 0
 
@@ -106,7 +106,7 @@ jobs:
     name: Control Limits Registry
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
 
       # Adversarial fixtures first, so the classification check below
       # is only trusted when it demonstrably still catches unregistered
@@ -126,7 +126,7 @@ jobs:
     name: XIL Contract Header (C++ ABI)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -150,7 +150,7 @@ jobs:
     name: App Template (generate + check)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -172,7 +172,7 @@ jobs:
     name: jMAVSim Smoke (no-sim)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           submodules: recursive
 
@@ -216,7 +216,7 @@ jobs:
     name: Runtime Boundary
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -242,7 +242,7 @@ jobs:
           - "--no-default-features --features test-hooks"
           - "--all-features"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -256,7 +256,7 @@ jobs:
     name: Release Scripts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           fetch-depth: 0
           # Match the release workflow's checkout so this job exercises the
@@ -293,7 +293,7 @@ jobs:
     name: Floors Lower Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           # Full history so the lint can diff cert/floors.toml against
           # the base ref regardless of merge style.
@@ -361,7 +361,7 @@ jobs:
     name: Check & Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           submodules: recursive
 
@@ -449,7 +449,7 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           submodules: recursive
 
@@ -486,7 +486,7 @@ jobs:
     name: Coverage (region+branch)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           submodules: recursive
 
@@ -533,7 +533,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -549,7 +549,7 @@ jobs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           submodules: recursive
 
@@ -572,7 +572,7 @@ jobs:
     name: Build (release)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           submodules: recursive
 
@@ -598,7 +598,7 @@ jobs:
     name: Evidence (doctor + floors)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           submodules: recursive
           # Full history so the tool's merge-style policy check can
@@ -678,7 +678,7 @@ jobs:
     outputs:
       shard_matrix: ${{ steps.shards.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           submodules: recursive
 
@@ -760,7 +760,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.sitl_build.outputs.shard_matrix) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           submodules: recursive
 
@@ -810,7 +810,7 @@ jobs:
     # mission envelope.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           submodules: recursive
 
