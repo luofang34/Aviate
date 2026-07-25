@@ -181,13 +181,20 @@ pub mod mav_result {
 /// - 48-bit timestamp wraps every ~89 years at 10μs resolution
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MavSignature {
+    /// Sender system id (frame header), part of the replay identity tuple.
+    pub system_id: u8,
+
+    /// Sender component id (frame header), part of the replay identity tuple.
+    pub component_id: u8,
+
     /// Link identifier (maps to key in KeyStore)
     pub link_id: u8,
 
     /// 48-bit timestamp (10 microsecond resolution)
     ///
-    /// This is a remote monotonic counter, NOT a wall clock time.
-    /// Receiver must track per-link_id and reject if counter <= last_seen.
+    /// This is a remote monotonic counter, NOT a wall clock time. The
+    /// receiver tracks it per `(system_id, component_id, link_id)` and
+    /// rejects any frame whose counter is `<= last_seen` for that identity.
     pub timestamp: u64,
 
     /// Truncated HMAC-SHA256 signature (first 6 bytes)
@@ -549,6 +556,13 @@ pub enum ParseError {
     UnsupportedMessage(u32),
     /// Invalid payload for message type
     InvalidPayload,
+    /// Incompatibility flags contain a bit this parser does not implement.
+    ///
+    /// MAVLink 2 `incompat_flags` advertise features a receiver MUST
+    /// support to handle the frame; a frame carrying any unknown bit
+    /// cannot be safely interpreted and is discarded. Carries the
+    /// offending flags byte.
+    UnsupportedIncompatFlags(u8),
 }
 
 /// MAVLink 2.0 frame header
@@ -611,6 +625,13 @@ pub fn parse_mavlink(buf: &[u8]) -> Result<(MavMessage, Option<MavSignature>, us
         msgid: (buf[7] as u32) | ((buf[8] as u32) << 8) | ((buf[9] as u32) << 16),
     };
 
+    // Any incompat bit beyond MAVLINK_IFLAG_SIGNED names a mandatory
+    // feature this parser does not implement; the frame MUST be discarded,
+    // not parsed as if the flag were absent.
+    if header.incompat_flags & !MAVLINK_IFLAG_SIGNED != 0 {
+        return Err(ParseError::UnsupportedIncompatFlags(header.incompat_flags));
+    }
+
     // Check if frame is signed
     let is_signed = (header.incompat_flags & MAVLINK_IFLAG_SIGNED) != 0;
 
@@ -640,6 +661,8 @@ pub fn parse_mavlink(buf: &[u8]) -> Result<(MavMessage, Option<MavSignature>, us
     let signature = if is_signed {
         let sig_offset = crc_offset + 2; // After CRC
         Some(parse_signature(
+            header.sysid,
+            header.compid,
             &buf[sig_offset..sig_offset + MAVLINK_SIGNATURE_LEN],
         ))
     } else {
@@ -675,7 +698,10 @@ pub fn parse_mavlink(buf: &[u8]) -> Result<(MavMessage, Option<MavSignature>, us
 ///
 /// - timestamp: 48-bit little-endian (10 microsecond resolution)
 /// - signature: First 6 bytes of HMAC-SHA256
-fn parse_signature(buf: &[u8]) -> MavSignature {
+///
+/// `system_id` / `component_id` come from the frame header, not the
+/// signature block; they complete the replay-identity tuple.
+fn parse_signature(system_id: u8, component_id: u8, buf: &[u8]) -> MavSignature {
     debug_assert!(buf.len() >= MAVLINK_SIGNATURE_LEN);
 
     let link_id = buf[0];
@@ -693,6 +719,8 @@ fn parse_signature(buf: &[u8]) -> MavSignature {
     signature.copy_from_slice(&buf[7..13]);
 
     MavSignature {
+        system_id,
+        component_id,
         link_id,
         timestamp,
         signature,
@@ -1749,6 +1777,36 @@ mod truncation_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A frame advertising an incompat feature this parser does not
+    /// implement must be discarded even when its CRC is valid — parsing
+    /// it as if the flag were absent would misinterpret the frame.
+    #[test]
+    fn unknown_incompat_flags_rejected_even_with_valid_crc() {
+        let msg = MavMessage::Heartbeat(Heartbeat {
+            mav_type: 2,
+            autopilot: 0,
+            base_mode: 0,
+            custom_mode: 0,
+            system_status: 4,
+            mavlink_version: 3,
+        });
+        let mut buf = [0u8; 64];
+        let len = serialize_mavlink(&msg, 1, 1, 1, &mut buf).unwrap_or(0);
+        assert!(len > 0, "serialize produced a frame");
+        assert!(parse_mavlink(&buf[..len]).is_ok(), "baseline frame parses");
+
+        // Set an unknown incompat bit and re-seal the CRC over it.
+        buf[2] = 0x02;
+        let crc = compute_crc(&buf[1..len - 2], get_crc_extra(Heartbeat::MSG_ID));
+        buf[len - 2] = (crc & 0xFF) as u8;
+        buf[len - 1] = ((crc >> 8) & 0xFF) as u8;
+
+        assert!(matches!(
+            parse_mavlink(&buf[..len]),
+            Err(ParseError::UnsupportedIncompatFlags(0x02))
+        ));
+    }
 
     fn roundtrip<F, G>(create_msg: F, verify_msg: G)
     where

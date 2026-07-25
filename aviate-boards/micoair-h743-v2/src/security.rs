@@ -160,6 +160,11 @@ impl CryptoEngine for H743CryptoEngine {
         tag: &[u8],
     ) -> Result<(), AuthError> {
         match algo {
+            CryptoAlgo::Sha256KeyedPrefix => {
+                // TODO: SHA-256 over key||msg (MAVLink 2 sha256_48); needs sha2
+                Err(AuthError::EngineError)
+            }
+
             CryptoAlgo::HmacSha256 => {
                 #[cfg(feature = "hw-crypto")]
                 {
@@ -194,6 +199,11 @@ impl CryptoEngine for H743CryptoEngine {
         out: &mut [u8],
     ) -> Result<usize, AuthError> {
         match algo {
+            CryptoAlgo::Sha256KeyedPrefix => {
+                // TODO: SHA-256 over key||msg (MAVLink 2 sha256_48); needs sha2
+                Err(AuthError::EngineError)
+            }
+
             CryptoAlgo::HmacSha256 => {
                 if out.len() < 32 {
                     return Err(AuthError::EngineError);
