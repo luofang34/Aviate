@@ -53,13 +53,19 @@
 //! let keystore = H743KeyStore::new();
 //! let crypto = H743CryptoEngine::new();
 //!
-//! // Security policy layer uses these traits to build command authentication
-//! let auth = SecureAuth::new(keystore, crypto, SecurityProfile::AuthOnly);
-//! let gateway = CommandGateway::new(auth);
+//! // Security policy layer uses these traits to build command authentication.
+//! // The gateway also owns the credential->source binding, so authority is
+//! // bound to the verified signing identity, never to a payload claim.
+//! // `persisted_ts` seeds anti-replay freshness across reboots.
+//! let auth = SignedAuth::new(keystore, crypto, persisted_ts);
+//! let mut policy = SourcePolicy::flight();
+//! policy.bind(Credential::new(5, 1, 1, CommandSource::GcsDatalink))?;
+//! let mut gateway = CommandGateway::new(auth, policy);
 //!
-//! // App just calls gateway - all verification happens inside
-//! if let Ok(Some(cmd)) = gateway.poll_command(now_ms) {
-//!     kernel.execute(cmd);  // Safe: command verified by gateway
+//! // The runner decodes an UnverifiedSystemCommand from one frame's bytes
+//! // and admits it; only a VerifiedSystemCommand can reach the flight cycle.
+//! if let Ok(verified) = gateway.admit(unverified, now_us) {
+//!     ingress.receive(verified, now_us); // proof kept through ingress
 //! }
 //! ```
 

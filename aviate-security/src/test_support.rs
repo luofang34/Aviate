@@ -71,10 +71,9 @@ impl KeyStore for MockKeyStore {
     }
 }
 
-/// A `SignedAuth` wired to the deterministic test doubles, with no
-/// trusted boot timestamp (bench mode: first-frame freshness disabled).
+/// A `SignedAuth` wired to the deterministic test doubles.
 pub fn signed_auth() -> SignedAuth<MockKeyStore, MockCrypto> {
-    SignedAuth::new(MockKeyStore, MockCrypto, 0)
+    SignedAuth::new(MockKeyStore, MockCrypto)
 }
 
 /// The correct 6-byte signature for `message` under `TEST_KEY`.

@@ -52,37 +52,60 @@ pub enum AuthError {
 
     /// Anti-replay check failed
     ///
-    /// The command's timestamp is not strictly greater than the last
-    /// accepted timestamp for its `(system_id, component_id, link_id)`
-    /// identity. This indicates either:
+    /// The command's freshness counter is not strictly greater than the
+    /// last accepted counter for its [`Principal`](crate::Principal). This
+    /// indicates either:
     /// - Replay attack (old message retransmitted)
-    /// - Out-of-order delivery (not expected in MAVLink over USB/UART)
-    /// - Sender timestamp rollover (should not happen in practice)
+    /// - Out-of-order delivery (not expected on a strictly ordered link)
+    /// - Sender counter rollover (should not happen in practice)
     ReplayAttack,
 
-    /// First frame of a new signing stream is too old
+    /// First frame of a new principal's stream is too old
     ///
-    /// The `(system_id, component_id, link_id)` identity has never been
-    /// seen, and its timestamp is more than one minute behind the trusted
-    /// local signing timestamp
-    /// ([`NEW_STREAM_MAX_AGE_10US`](crate::anti_replay::NEW_STREAM_MAX_AGE_10US)).
+    /// The [`Principal`](crate::Principal) has never been seen, and its
+    /// freshness counter is more than the profile's age bound behind the
+    /// trusted local counter (MAVLink:
+    /// [`NEW_STREAM_MAX_AGE_10US`](crate::anti_replay::NEW_STREAM_MAX_AGE_10US)).
     /// This is the reboot-replay defense: without it, an attacker could
     /// replay any captured command after the receiver restarts with an
     /// empty replay window.
     StaleNewStream {
-        /// The rejected frame's signing timestamp (10 µs ticks).
-        timestamp: u64,
-        /// The trusted local signing timestamp it was measured against.
-        local_timestamp: u64,
+        /// The rejected command's freshness counter.
+        counter: u64,
+        /// The trusted local counter it was measured against.
+        local_counter: u64,
     },
 
-    /// Anti-replay table is full of already-authenticated identities
+    /// Freshness counter is further ahead than local elapsed time allows.
     ///
-    /// A frame from a new, authenticated signing identity arrived but every
-    /// tracking slot is occupied. Because identities are only committed
-    /// after signature verification, this reflects genuinely more
+    /// The trusted counter advances to the highest accepted value and is
+    /// persisted across reboots, so an unbounded counter would let a single
+    /// sender with a wrong clock raise the first-frame floor for every
+    /// other principal — permanently, and through a restart. The ceiling is
+    /// computed from the receiver's own elapsed time, which no peer can
+    /// influence.
+    CounterImplausiblyAhead {
+        /// The rejected command's freshness counter.
+        counter: u64,
+        /// The highest counter local elapsed time can justify.
+        ceiling: u64,
+    },
+
+    /// Anti-replay table is full of already-authorized principals
+    ///
+    /// A command from a new, authorized principal arrived but every
+    /// tracking slot is occupied. Because principals are only committed
+    /// after verification and authorization, this reflects genuinely more
     /// concurrent peers than the bounded table supports, not an attack.
     ReplayCapacityExhausted,
+
+    /// Authenticated principal maps to no authorized command source
+    ///
+    /// The command verified, but its [`Principal`](crate::Principal) is not
+    /// bound to any [`CommandSource`](crate::CommandSource) by the gateway's
+    /// authorization policy. Authority comes from this binding, never from a
+    /// payload claim, so an unbound principal is rejected.
+    UnauthorizedSource,
 }
 
 /// Result of an authentication or anti-replay operation.

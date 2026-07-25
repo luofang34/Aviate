@@ -24,6 +24,7 @@ name = "aviate-hal-stm32h7"
 version = "0.1.0"
 dependencies = [
  "aviate-hal-io",
+ "aviate-signing",
  "cortex-m",
  "cortex-m-rt",
  "embedded-hal 1.0.0",
@@ -32,6 +33,13 @@ dependencies = [
  "stm32h7xx-hal",
  "usb-device",
  "usbd-serial",
+]
+
+[[package]]
+name = "aviate-signing"
+version = "0.1.0"
+dependencies = [
+ "sha2",
 ]
 
 [[package]]
