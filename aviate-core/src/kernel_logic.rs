@@ -16,6 +16,8 @@ use crate::mixer::{ActuatorSanitizer, Mixer};
 use crate::sensor::SensorSet;
 use crate::time::Timestamp;
 
+mod lifecycle;
+
 impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
     AviateKernelImpl<E, V, M, S>
 {
@@ -176,36 +178,6 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         } else {
             self.state.faults.remove(FaultFlags::ALL_GNSS_LOST);
         }
-    }
-
-    pub fn is_ready(&self) -> bool {
-        self.state.init_state == InitState::Ready
-    }
-
-    pub fn arm(&mut self) -> Result<(), ArmError> {
-        if self.state.init_state == InitState::Armed {
-            return Err(ArmError::AlreadyArmed);
-        }
-        if self.state.init_state != InitState::Ready {
-            return Err(ArmError::NotReady);
-        }
-        if !self.state.faults.is_empty() {
-            return Err(ArmError::Faulted);
-        }
-
-        self.state.init_state = InitState::Armed;
-        Ok(())
-    }
-
-    pub fn disarm(&mut self) {
-        self.state.init_state = InitState::Disarmed;
-        self.state.control_law = ControlLawV1::Backup; // Was Frozen, now Backup
-        self.state.terminal_cause = TerminalCause::None;
-        self.state.checks.in_flight.reset();
-        // Reset controller persistent runtime state — disarm
-        // invalidates accumulated integrators / anti-windup / mode
-        // latches the same way ground_reset does (LLR-CTL-101).
-        self.pipeline.controller.reset(&mut self.state.controller);
     }
 
     /// Check if the system can be reset from fault state
@@ -423,6 +395,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         self.state.checks.pre_arm.reset();
         self.state.checks.in_flight.reset();
         self.state.checks.transition.reset();
+        self.state.flight_phase.reset();
         self.state.init_state = InitState::ConfigLoading; // Restart init sequence
                                                           // Reset estimator runtime state via the trait — works for
                                                           // any `E: Estimator`, not just EKF.

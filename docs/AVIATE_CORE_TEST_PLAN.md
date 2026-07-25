@@ -49,6 +49,8 @@ abbreviate the HLR rows. `scripts/check_test_plan_sync.py`
 | `HLR-FLT-202` | Pre-arm checks reject with typed ArmError | LLR-FLT-203, LLR-FLT-204 | TST-FLT-203, TST-FLT-204 |
 | `HLR-FLT-203` | NUMERIC_ERROR inhibits output until ground reset | LLR-FLT-205, LLR-FLT-206 | TST-FLT-205, TST-FLT-206; `numeric_fault_inject` mission exercises the injected-NaN path |
 | `HLR-FLT-204` | Command timeout → safe mode within one cycle | LLR-FLT-207, LLR-FLT-208, LLR-FLT-209 | TST-FLT-207, TST-FLT-208 (slew), TST-FLT-209, TST-FLT-209B; `command_timeout` mission exercises the over-the-wire path |
+| `HLR-FLT-205` | Ordinary disarm refused in flight; distinct terminate | LLR-FLT-211, LLR-FLT-212 | TST-FLT-212, TST-FLT-213, TST-FLT-214 |
+| `HLR-FLT-206` | Discrete command outcomes observable at the link | LLR-FLT-213 | TST-FLT-215 |
 | `HLR-MORPH-201` | Atomic ConfigMode swap | LLR-MORPH-201 | TST-MORPH-201 |
 | `HLR-MORPH-202` | GeometryState change without actuator spikes | LLR-MORPH-202 | TST-FLT-208 (shared slew-limiter witness) |
 | `HLR-INIT-201` | Bit-deterministic cold start | LLR-INIT-201 | TST-INIT-201 |

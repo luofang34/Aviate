@@ -143,7 +143,7 @@ pub mod watchdog_hal;
 
 // Main exports
 pub use board_hal::BoardHal;
-pub use comm::{CommError, CommHal, CommandHal, SystemCommand};
+pub use comm::{CommError, CommHal, CommandHal, CommandOutcome, SystemCommand};
 pub use error::{ActuatorError, ActuatorResult, SensorError, SensorResult};
 #[cfg(feature = "xil-fault")]
 pub use fake::SensorFault;

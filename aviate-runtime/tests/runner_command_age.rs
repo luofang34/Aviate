@@ -64,6 +64,7 @@ impl BoardStep for ProbeBoard {
         let event = cmd.event.map(|e| match e {
             SystemCommand::Arm => "arm",
             SystemCommand::Disarm => "disarm",
+            SystemCommand::EmergencyTerminate => "terminate",
             SystemCommand::FlightControl(_) => "flight",
         });
         let setpoint_thrust = match cmd.setpoint {

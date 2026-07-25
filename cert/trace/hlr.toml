@@ -940,3 +940,53 @@ conclude the implementation matches the contract.
 """
 verification_methods = ["test"]
 traces_to = ["78a41dd0-c754-439f-a2a1-325111713954", "c925725e-29bf-40e1-b0d5-2e257ed02819"]
+
+[[requirements]]
+uid = "d97e8899-f321-5dfb-af14-a1954c9057a7"
+id = "HLR-FLT-205"
+title = "Ordinary disarm is refused in flight; a distinct command cuts outputs"
+owner = "aviate-core@aviate"
+description = """
+`AviateKernelImpl::disarm()` SHALL return `Err(DisarmError::Airborne)`
+and leave every element of kernel state unchanged when the vehicle is
+determined to be airborne. Arming is already a guarded, typed
+transition (HLR-FLT-202); leaving its inverse an infallible setter
+makes "cut the motors, wherever the vehicle is" the behaviour of a
+routine control.
+
+`AviateKernelImpl::terminate()` SHALL cut outputs in any flight phase
+and SHALL NOT be refusable, because the situations it exists for —
+fly-away, imminent injury — are exactly those in which a refusal would
+be useless. The two SHALL be distinct at the command level, so an
+ordinary control cannot become a kill through timing, mis-parse, or a
+differently-valued parameter.
+
+Both SHALL end the flight period identically once they act: Disarmed,
+backup control law, cleared terminal cause, in-flight checks and
+airborne determination reset, controller runtime state invalidated.
+"""
+verification_methods = ["test"]
+traces_to = ["c925725e-29bf-40e1-b0d5-2e257ed02819"]
+
+[[requirements]]
+uid = "ee205f38-21b1-593d-b570-d965d63696d1"
+id = "HLR-FLT-206"
+title = "Discrete command outcomes are observable at the commanding link"
+owner = "aviate-core@aviate"
+description = """
+Every discrete lifecycle command the runtime enacts SHALL produce a
+typed outcome naming what the kernel decided, and that outcome SHALL be
+offered to the link the command arrived on. A refused safety-critical
+command SHALL NOT be reported only to a host log.
+
+A refusal SHALL carry the discriminating detail an operator needs to
+act: for a refused arm, the ArmError gate that failed and the set of
+pre-arm conditions still outstanding.
+
+A link SHALL NOT report acceptance before the kernel has decided.
+Acknowledging at decode time answers "the frame parsed", which an
+operator reads as "the vehicle did it" — an arm subsequently refused
+for an unsatisfied pre-arm gate would have been reported accepted.
+"""
+verification_methods = ["test"]
+traces_to = ["c925725e-29bf-40e1-b0d5-2e257ed02819"]

@@ -312,6 +312,7 @@ fn kernel_state_encoded_len_is_sum_of_field_lens() {
     use aviate_core::control::{ConfigMode, ControlLawV1};
     use aviate_core::ekf::EkfState;
     use aviate_core::fault::FaultFlags;
+    use aviate_core::flight_phase::FlightPhaseState;
     use aviate_core::kernel::state::KernelState;
     use aviate_core::kernel_types::{InitState, TerminalCause, TimingStats};
     use aviate_core::mixer::{ActuatorFallbackState, ActuatorState};
@@ -326,7 +327,8 @@ fn kernel_state_encoded_len_is_sum_of_field_lens() {
         + <TimingStats as Replicable>::ENCODED_LEN
         + <EkfState as Replicable>::ENCODED_LEN
         + <ActuatorFallbackState as Replicable>::ENCODED_LEN
-        + <NoControllerState as Replicable>::ENCODED_LEN;
+        + <NoControllerState as Replicable>::ENCODED_LEN
+        + <FlightPhaseState as Replicable>::ENCODED_LEN;
 
     assert_eq!(<KernelState as Replicable>::ENCODED_LEN, expected);
 }

@@ -10,7 +10,7 @@ use crate::control::{
 };
 use crate::ekf::Estimator;
 use crate::fault::FaultFlags;
-use crate::kernel::AviateKernelImpl;
+use crate::kernel::{AviateKernelImpl, InitState};
 use crate::kernel_types::{
     ChannelHealthV1, ChannelId, ChannelStatus, ConfigTransitionState, CrossChannelData,
     CycleTiming, EnvelopeMargin, TerminalCause, UpdateResult, TIMING_VIOLATION_THRESHOLD,
@@ -247,6 +247,19 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         let altitude_ok =
             (self.cfg.limits.min_altitude.0..=self.cfg.limits.max_altitude.0).contains(&altitude_m);
         self.state.checks.in_flight.update_altitude(altitude_ok);
+
+        // Airborne determination. Folded here, after the estimate is
+        // refreshed, so `disarm()` decides against this cycle's view
+        // rather than a stale one. Thresholds are fixed rather than
+        // per-vehicle: making them a profile input means routing them
+        // through canonical config identity, which is CTRL-05's scope
+        // (#150), not this gate's.
+        self.state.flight_phase.update(
+            &state,
+            self.state.init_state == InitState::Armed,
+            time.dt_sec,
+            &crate::flight_phase::FlightPhaseLimits::default(),
+        );
         // Spec §12: Command staleness gate. The caller supplies
         // `command_age_ms` measured against its own timebase
         // (typically the time elapsed since the last RC/GCS frame
