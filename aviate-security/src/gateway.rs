@@ -79,6 +79,12 @@ pub enum TrustedCounter {
     /// outage is indistinguishable from a peer's clock running fast — so
     /// only the backward freshness bound applies. Fitting an RTC is what
     /// buys the forward bound.
+    ///
+    /// With no forward bound, nothing limits how far an authorized peer
+    /// may advance the persisted high-water mark, so a wrong clock poisons
+    /// the value the NEXT boot seeds its floor from. A deployment that
+    /// authorizes more than one principal should fit an RTC rather than
+    /// rely on this variant.
     PersistedHighWater(u64),
     /// No trusted time source. First-frame freshness is DISABLED: any
     /// previously captured frame from an unseen principal is replayable
@@ -254,6 +260,11 @@ impl CommandGateway {
 
     /// The anti-replay window's trusted local counter, exposed so the
     /// assembly can persist it across reboots (reboot-replay defense).
+    ///
+    /// Under [`TrustedCounter::PersistedHighWater`] this value is itself
+    /// unbounded above — see that variant. Persisting it is still the
+    /// right thing to do; a deployment authorizing more than one
+    /// principal should fit an RTC so the value cannot be inflated.
     pub fn local_freshness_counter(&self) -> u64 {
         self.anti_replay.local_counter()
     }

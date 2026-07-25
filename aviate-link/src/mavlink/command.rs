@@ -220,6 +220,10 @@ impl<T: FrameRx> MavlinkCommandLink<T> {
     }
 
     /// Map COMMAND_LONG message to Command
+    // Reads no addressing. Nothing calls it today; anything that wires it
+    // into execution must apply `LocalAddress::accepts` first, exactly as
+    // `parse_system_command` does — without it a disarm aimed at another
+    // vehicle on the same datalink is honoured here.
     fn map_command_long(
         cmd: &CommandLong,
         now_ms: u32,

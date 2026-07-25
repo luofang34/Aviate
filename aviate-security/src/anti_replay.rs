@@ -85,6 +85,14 @@ pub struct AntiReplayWindow {
     freshness_floor: u64,
     /// Highest counter ever accepted, for persisting across a reboot.
     /// Read by the assembly, never consulted as a threshold here.
+    ///
+    /// Its growth is NOT bounded when no forward ceiling applies, which
+    /// is the case for a `PersistedHighWater` seed. An authorized peer
+    /// with a wrong clock therefore raises this, and since it is what the
+    /// next boot seeds the floor from, the cross-principal lockout
+    /// returns one reboot later. Only fitting a real-time clock — which
+    /// restores the forward bound — closes that; a lower bound with
+    /// unknown lag structurally cannot also produce a safe upper one.
     high_water: u64,
     /// How far behind `local_counter` the first frame of a new stream may
     /// be. Scheme-specific; supplied by the profile.
