@@ -110,11 +110,16 @@ impl crate::replicable::Replicable for MultirotorRuntimeState {
             if self.rate_loop.primed { 1.0 } else { 0.0 },
             self.dt_sec,
         ];
-        for (i, &v) in fields.iter().enumerate() {
-            let bytes = v.to_le_bytes();
-            buf[i * 4..i * 4 + 4].copy_from_slice(&bytes);
+        // Clamp rather than slice: `Replicable` promises
+        // `min(buf.len(), ENCODED_LEN)` bytes written, and a caller
+        // walking a composite state hands over whatever is left of its
+        // buffer. An unclamped `buf[i * 4..i * 4 + 4]` turns a short
+        // buffer into a panic in a crate that denies them.
+        let mut written = 0usize;
+        for &v in fields.iter() {
+            written += crate::replicable::copy_into(buf, written, &v.to_le_bytes());
         }
-        fields.len() * 4
+        written
     }
 }
 
