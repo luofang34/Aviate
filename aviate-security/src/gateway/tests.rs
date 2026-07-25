@@ -127,7 +127,7 @@ fn stale_new_stream_rejected_after_reboot() {
     let mut gw = CommandGateway::new(
         policy,
         FreshnessConfig {
-            initial_trusted_counter: TrustedCounter::Trusted(100_000_000),
+            initial_trusted_counter: TrustedCounter::Rtc(100_000_000),
             new_stream_max_age: crate::NEW_STREAM_MAX_AGE_10US,
             counter_tick_us: 10,
             max_skew: NEW_STREAM_MAX_AGE_10US,
@@ -186,7 +186,7 @@ fn two_peer_gateway(seed: u64) -> CommandGateway {
     CommandGateway::new(
         policy,
         FreshnessConfig {
-            initial_trusted_counter: TrustedCounter::Trusted(seed),
+            initial_trusted_counter: TrustedCounter::Rtc(seed),
             new_stream_max_age: NEW_STREAM_MAX_AGE_10US,
             counter_tick_us: 10,
             max_skew: NEW_STREAM_MAX_AGE_10US,
@@ -267,5 +267,42 @@ fn the_ceiling_grows_with_local_elapsed_time() {
     assert!(
         ok.is_ok(),
         "an hour of uptime must justify an hour of counter: {ok:?}"
+    );
+}
+
+#[test]
+fn a_reboot_longer_than_the_skew_window_does_not_lock_out_the_operator() {
+    // The hazard: `initial_trusted_counter` may be a persisted high-water
+    // mark rather than an RTC reading, and then it is a lower bound on
+    // "now" with unknown lag — however long power was off. A ceiling
+    // measured from it treats that lag as clock error.
+    //
+    // Battery swap: the FC is off for two minutes, boots with the counter
+    // it persisted, and the operator reconnects. Their counter is two
+    // minutes ahead of the seed because two minutes really did pass.
+    let seed = 1_000_000_000u64;
+    let outage_counts = 120 * 100_000; // 120 s in 10 us ticks
+    let mut policy = SourcePolicy::new();
+    policy
+        .bind(Principal::mavlink(1, 1, 5), CommandSource::GcsDatalink)
+        .expect("bind gcs");
+    let mut gw = CommandGateway::new(
+        policy,
+        FreshnessConfig {
+            initial_trusted_counter: TrustedCounter::PersistedHighWater(seed),
+            new_stream_max_age: NEW_STREAM_MAX_AGE_10US,
+            counter_tick_us: 10,
+            max_skew: NEW_STREAM_MAX_AGE_10US,
+        },
+    );
+
+    let first = gw.admit(
+        claim(mav(1, 1, 5), seed + outage_counts, SystemCommand::Arm),
+        0,
+    );
+    assert!(
+        first.is_ok(),
+        "the operator's first command after a 2-minute outage must be \
+         accepted, not read as a wrong clock: {first:?}"
     );
 }

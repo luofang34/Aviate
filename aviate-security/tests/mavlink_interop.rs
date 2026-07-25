@@ -101,7 +101,7 @@ fn gateway(trusted_ts: u64) -> CommandGateway {
     CommandGateway::new(
         policy,
         FreshnessConfig {
-            initial_trusted_counter: TrustedCounter::Trusted(trusted_ts),
+            initial_trusted_counter: TrustedCounter::Rtc(trusted_ts),
             new_stream_max_age: NEW_STREAM_MAX_AGE_10US,
             counter_tick_us: 10,
             max_skew: NEW_STREAM_MAX_AGE_10US,
@@ -249,7 +249,7 @@ fn shared_key_cannot_impersonate_unbound_identity() {
     let mut gw = CommandGateway::new(
         policy,
         FreshnessConfig {
-            initial_trusted_counter: TrustedCounter::Trusted(T0),
+            initial_trusted_counter: TrustedCounter::Rtc(T0),
             new_stream_max_age: NEW_STREAM_MAX_AGE_10US,
             counter_tick_us: 10,
             max_skew: NEW_STREAM_MAX_AGE_10US,

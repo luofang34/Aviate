@@ -66,9 +66,20 @@ use crate::errors::{AuthError, GatewayResult};
 /// nothing to grep for. Naming the insecure case makes it visible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrustedCounter {
-    /// A high-water mark persisted by the previous boot, or an RTC reading
-    /// converted to the scheme's counter units.
-    Trusted(u64),
+    /// A real-time clock reading converted to the scheme's counter units.
+    ///
+    /// Reflects true current time, so the receiver can also bound how far
+    /// AHEAD a peer may legitimately be — a wrong-clock sender is
+    /// refused before it can influence anything shared.
+    Rtc(u64),
+    /// A high-water mark persisted by the previous boot.
+    ///
+    /// A lower bound on "now" with unknown lag: however long the aircraft
+    /// was powered off. No forward bound can be derived from it — an
+    /// outage is indistinguishable from a peer's clock running fast — so
+    /// only the backward freshness bound applies. Fitting an RTC is what
+    /// buys the forward bound.
+    PersistedHighWater(u64),
     /// No trusted time source. First-frame freshness is DISABLED: any
     /// previously captured frame from an unseen principal is replayable
     /// after a restart. Isolated benches only.
@@ -79,9 +90,17 @@ impl TrustedCounter {
     /// The counter value to seed the window with.
     pub fn value(self) -> u64 {
         match self {
-            Self::Trusted(v) => v,
+            Self::Rtc(v) | Self::PersistedHighWater(v) => v,
             Self::NoTrustedTimeSource => 0,
         }
+    }
+
+    /// Whether this seed can justify a forward bound on peer counters.
+    ///
+    /// Only a clock that tracks real time can: anything else is a lower
+    /// bound whose lag is unknown.
+    pub fn bounds_the_future(self) -> bool {
+        matches!(self, Self::Rtc(_))
     }
 }
 
@@ -149,20 +168,26 @@ impl CommandGateway {
 
     /// The highest freshness counter local elapsed time can justify.
     ///
-    /// Anchored at the first admission rather than at construction, so a
-    /// gateway built long before the first command does not hand out a
-    /// ceiling inflated by idle time. Saturating throughout: a monotonic
-    /// clock cannot go backwards, but a wrapped or bogus `now_us` must
-    /// tighten the bound, never widen it.
-    fn plausible_ceiling(&mut self, now_us: u64) -> u64 {
+    /// `None` unless the seed came from a real-time clock — see
+    /// [`TrustedCounter`]. Anchored at the first admission rather than at
+    /// construction, so a gateway built long before the first command does
+    /// not hand out a ceiling inflated by idle time. Saturating
+    /// throughout: a monotonic clock cannot go backwards, but a wrapped or
+    /// bogus `now_us` must tighten the bound, never widen it.
+    fn plausible_ceiling(&mut self, now_us: u64) -> Option<u64> {
+        if !self.freshness.initial_trusted_counter.bounds_the_future() {
+            return None;
+        }
         let anchor = *self.epoch_now_us.get_or_insert(now_us);
         let elapsed_us = now_us.saturating_sub(anchor);
         let elapsed_counts = elapsed_us / self.freshness.counter_tick_us.max(1);
-        self.freshness
-            .initial_trusted_counter
-            .value()
-            .saturating_add(elapsed_counts)
-            .saturating_add(self.freshness.max_skew)
+        Some(
+            self.freshness
+                .initial_trusted_counter
+                .value()
+                .saturating_add(elapsed_counts)
+                .saturating_add(self.freshness.max_skew),
+        )
     }
 
     /// Admit an authenticated command: authorize its principal, commit

@@ -40,7 +40,7 @@
 //! let mut policy = SourcePolicy::new();
 //! policy.bind(Principal::mavlink(1, 1, 5), CommandSource::GcsDatalink)?;
 //! let freshness = FreshnessConfig {
-//!     initial_trusted_counter: TrustedCounter::Trusted(persisted_ts),
+//!     initial_trusted_counter: TrustedCounter::PersistedHighWater(persisted_ts),
 //!     new_stream_max_age: NEW_STREAM_MAX_AGE_10US,
 //! };
 //! let mut gateway = CommandGateway::new(policy, freshness);

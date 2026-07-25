@@ -77,9 +77,15 @@ struct Slot {
 pub struct AntiReplayWindow {
     /// Occupied principal slots. `None` slots are free.
     slots: [Option<Slot>; MAX_SIGNING_PEERS],
-    /// Trusted local counter. Seeded from a persisted/trusted source at
-    /// construction; advances to the highest accepted counter.
-    local_counter: u64,
+    /// Floor for first-frame freshness. Seeded from a trusted source at
+    /// construction and NEVER moved by a peer-supplied counter: letting
+    /// one sender raise it made that sender's clock the threshold every
+    /// other principal had to clear, and the value is persisted, so the
+    /// lockout outlived the reboot.
+    freshness_floor: u64,
+    /// Highest counter ever accepted, for persisting across a reboot.
+    /// Read by the assembly, never consulted as a threshold here.
+    high_water: u64,
     /// How far behind `local_counter` the first frame of a new stream may
     /// be. Scheme-specific; supplied by the profile.
     new_stream_max_age: u64,
@@ -96,7 +102,8 @@ impl AntiReplayWindow {
     pub const fn new(initial_trusted_counter: u64, new_stream_max_age: u64) -> Self {
         Self {
             slots: [None; MAX_SIGNING_PEERS],
-            local_counter: initial_trusted_counter,
+            freshness_floor: initial_trusted_counter,
+            high_water: initial_trusted_counter,
             new_stream_max_age,
         }
     }
@@ -105,7 +112,7 @@ impl AntiReplayWindow {
     /// accepted counter. Persist this periodically and feed it back into
     /// [`Self::new`] on the next boot.
     pub fn local_counter(&self) -> u64 {
-        self.local_counter
+        self.high_water
     }
 
     /// Locate the occupied slot for `principal`, if tracked.
@@ -139,21 +146,19 @@ impl AntiReplayWindow {
         &mut self,
         principal: Principal,
         counter: u64,
-        plausible_ceiling: u64,
+        plausible_ceiling: Option<u64>,
     ) -> AuthResult<()> {
-        // A counter no peer could legitimately hold yet is refused before
-        // it can touch any state. Without this the trusted counter is a
-        // high-water mark over *peer-supplied* values, so one sender whose
-        // clock reads years ahead raises the first-frame floor for every
-        // other principal — and because the floor is persisted and reloaded
-        // into an empty slot table, that lockout survives the next reboot.
-        // The ceiling is derived from local elapsed time, which no peer can
-        // influence, so the floor can never outrun the receiver's own clock.
-        if counter > plausible_ceiling {
-            return Err(AuthError::CounterImplausiblyAhead {
-                counter,
-                ceiling: plausible_ceiling,
-            });
+        // A forward bound, when the caller can derive one. It is `None`
+        // unless the seed came from a real-time clock: a persisted
+        // high-water mark is a lower bound on "now" with unknown lag —
+        // however long power was off — so measuring "too far ahead"
+        // against it reads an ordinary battery swap as a wrong clock and
+        // refuses the operator forever. Cross-principal poisoning is
+        // prevented by `freshness_floor` never moving, not by this.
+        if let Some(ceiling) = plausible_ceiling {
+            if counter > ceiling {
+                return Err(AuthError::CounterImplausiblyAhead { counter, ceiling });
+            }
         }
 
         if let Some(idx) = self.find(principal) {
@@ -165,7 +170,7 @@ impl AntiReplayWindow {
                 return Err(AuthError::ReplayAttack);
             }
             slot.last_counter = counter;
-            self.local_counter = self.local_counter.max(counter);
+            self.high_water = self.high_water.max(counter);
             return Ok(());
         }
 
@@ -177,10 +182,10 @@ impl AntiReplayWindow {
         // ...and no more than `new_stream_max_age` behind the trusted local
         // counter — otherwise a reboot (which empties the slots) would
         // accept any previously captured frame as a "new" stream.
-        if counter < self.local_counter.saturating_sub(self.new_stream_max_age) {
+        if counter < self.freshness_floor.saturating_sub(self.new_stream_max_age) {
             return Err(AuthError::StaleNewStream {
                 counter,
-                local_counter: self.local_counter,
+                local_counter: self.freshness_floor,
             });
         }
 
@@ -190,7 +195,7 @@ impl AntiReplayWindow {
                     principal,
                     last_counter: counter,
                 });
-                self.local_counter = self.local_counter.max(counter);
+                self.high_water = self.high_water.max(counter);
                 Ok(())
             }
             None => Err(AuthError::ReplayCapacityExhausted),
@@ -234,10 +239,10 @@ impl AntiReplayWindow {
 
 #[cfg(test)]
 mod tests {
-    /// A ceiling high enough never to bind, so a case that is about
-    /// monotonicity or freshness is not silently also testing the
-    /// plausibility bound. Cases that ARE about the bound state it.
-    const NO_CEILING: u64 = u64::MAX;
+    /// No forward bound, so a case about monotonicity or freshness is not
+    /// silently also testing the plausibility bound. Cases that ARE about
+    /// that bound pass one explicitly.
+    const NO_CEILING: Option<u64> = None;
 
     use super::*;
 
@@ -358,7 +363,9 @@ mod tests {
     }
 
     #[test]
-    fn local_counter_advances_with_accepted_frames() {
+    fn the_high_water_mark_advances_with_accepted_frames() {
+        // What gets persisted is the highest counter ever accepted, so a
+        // reboot resumes from the newest thing the receiver has seen.
         let mut window = AntiReplayWindow::new(1000, NEW_STREAM_MAX_AGE_10US);
         assert_eq!(window.local_counter(), 1000);
 
@@ -367,14 +374,29 @@ mod tests {
             .check_and_update(p(1, 1, 5), far_ahead, NO_CEILING)
             .is_ok());
         assert_eq!(window.local_counter(), far_ahead);
+    }
 
-        match window.check_and_update(p(1, 2, 5), 2000, NO_CEILING) {
-            Err(AuthError::StaleNewStream { .. }) => {}
-            other => panic!("Expected StaleNewStream, got {other:?}"),
-        }
+    #[test]
+    fn one_principals_counter_does_not_raise_the_floor_for_another() {
+        // The freshness floor stays where it was seeded. Advancing it with
+        // peer-supplied counters made whichever sender had the fastest
+        // clock the threshold every other principal had to clear — and the
+        // value is persisted, so the lockout outlived the reboot.
+        let mut window = AntiReplayWindow::new(1000, NEW_STREAM_MAX_AGE_10US);
+
+        let far_ahead = 1000 + NEW_STREAM_MAX_AGE_10US * 10;
         assert!(window
-            .check_and_update(p(1, 2, 5), far_ahead - NEW_STREAM_MAX_AGE_10US, NO_CEILING)
+            .check_and_update(p(1, 1, 5), far_ahead, NO_CEILING)
             .is_ok());
+
+        // A second principal presenting a counter near the seed is still a
+        // fresh first frame, and must be admitted.
+        assert!(
+            window
+                .check_and_update(p(1, 2, 5), 2000, NO_CEILING)
+                .is_ok(),
+            "a peer's counter must not become another peer's floor"
+        );
     }
 
     #[test]
