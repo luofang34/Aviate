@@ -44,7 +44,7 @@ fi
 # Adding an entry weakens the gate, so each one has to earn its place by
 # naming a property that a SHA pin would actually break.
 ALLOWLIST=(
-    "dtolnay/rust-toolchain|The ref names the Rust toolchain to install (stable, 1.95.0) — the action reads it from the ref itself, so a SHA pin silently changes which compiler CI uses. Instances that do pin a SHA must pass the channel through the 'toolchain:' input instead."
+    "dtolnay/rust-toolchain|The ref names the Rust toolchain to install (a channel such as stable, or an exact version) — the action reads it from the ref itself, so a SHA pin silently changes which compiler CI uses. Instances that do pin a SHA must pass the channel through the 'toolchain:' input instead."
 )
 
 is_allowlisted() {
@@ -78,6 +78,8 @@ scan_workflows() {
                 token="${token%%#*}"
             fi
             token="${token%"${token##*[![:space:]]}"}"
+            token="${token#[\"\']}"
+            token="${token%[\"\']}"
 
             [[ -z "$token" || "$token" == ./* ]] && continue
 
@@ -97,7 +99,7 @@ scan_workflows() {
                 echo "$file:$lineno: '$action' is pinned but unlabelled; append '# <version>' so the pin is reviewable"
             fi
         done <"$file"
-    done < <(find "$dir" -maxdepth 1 -name '*.yml' -type f | sort)
+    done < <(find "$dir" -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) -type f | sort)
 }
 
 # --- Self-test -----------------------------------------------------------
@@ -119,7 +121,11 @@ self_test() {
     local sha="9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
     local failures=0
 
-    emit() { printf 'jobs:\n  j:\n    steps:\n      - uses: %s\n' "$1" >"$tmp/fixture.yml"; }
+    # `emit <uses-value> [extension]` — the extension defaults to yml, and
+    # is a parameter so a fixture can prove `.yaml` is scanned too.
+    emit() {
+        printf 'jobs:\n  j:\n    steps:\n      - uses: %s\n' "$1" >"$tmp/fixture.${2:-yml}"
+    }
 
     # `expect_caught <expected-reason> <description>`
     expect_caught() {
@@ -134,7 +140,7 @@ self_test() {
             echo "  got:                 $out" >&2
             failures=$((failures + 1))
         fi
-        rm -f "$tmp"/*.yml
+        rm -f "$tmp"/*.yml "$tmp"/*.yaml
     }
 
     # `expect_clean <description>`
@@ -146,7 +152,7 @@ self_test() {
             echo "$out" >&2
             failures=$((failures + 1))
         fi
-        rm -f "$tmp"/*.yml
+        rm -f "$tmp"/*.yml "$tmp"/*.yaml
     }
 
     emit "actions/checkout@v7"
@@ -164,8 +170,23 @@ self_test() {
     emit "actions/checkout"
     expect_caught "names no ref" "a reference with no ref at all"
 
+    emit "actions/checkout@${sha:0:7} # v7.0.0"
+    expect_caught "is a mutable ref" "an abbreviated SHA"
+
+    # `.yaml` is as valid a workflow extension as `.yml`. A scan that
+    # covered only one would leave any workflow named the other way
+    # entirely unenforced, while still reporting a clean tree.
+    emit "actions/checkout@v7" yaml
+    expect_caught "is a mutable ref" "a floating tag in a .yaml workflow"
+
     emit "actions/checkout@$sha # v7.0.0"
     expect_clean "a labelled SHA pin"
+
+    emit "actions/checkout@$sha # v7.0.0" yaml
+    expect_clean "a labelled SHA pin in a .yaml workflow"
+
+    emit "\"actions/checkout@$sha\" # v7.0.0"
+    expect_clean "a quoted but correctly pinned ref"
 
     emit "dtolnay/rust-toolchain@stable"
     expect_clean "an allowlisted toolchain-channel ref"
