@@ -472,7 +472,10 @@ fn kernel_disarm_transitions_to_disarmed() {
     }
 
     assert_arm_ok(&mut kernel);
-    kernel.disarm();
+    assert!(
+        kernel.disarm().is_ok(),
+        "a grounded disarm must be accepted"
+    );
 
     assert_eq!(kernel.state.init_state, InitState::Disarmed);
 }
@@ -1050,7 +1053,10 @@ fn kernel_disarm_resets_sample_counts() {
     assert!(samples_before >= 150, "Should have accumulated samples");
 
     // Disarm
-    kernel.disarm();
+    assert!(
+        kernel.disarm().is_ok(),
+        "a grounded disarm must be accepted"
+    );
 
     // Run one more init step to trigger Disarmed → PreArm transition
     // The reset happens in the Disarmed state handler, so after this step
@@ -2162,7 +2168,10 @@ fn init_state_disarmed_to_prearm() {
         kernel.init_step(&sensors, dummy_timestamp());
     }
     assert_arm_ok(&mut kernel);
-    kernel.disarm();
+    assert!(
+        kernel.disarm().is_ok(),
+        "a grounded disarm must be accepted"
+    );
     assert_eq!(kernel.state.init_state, InitState::Disarmed);
 
     // Next step should transition to PreArm and reset samples
@@ -3463,6 +3472,9 @@ fn aviate_kernel_trait_surface_covered() {
     }
     assert!(AviateKernelTrait::arm(&mut kernel).is_ok());
     AviateKernelTrait::kick_watchdog(&mut kernel);
-    AviateKernelTrait::disarm(&mut kernel);
+    assert!(
+        AviateKernelTrait::disarm(&mut kernel).is_ok(),
+        "a grounded disarm must be accepted through the trait surface"
+    );
     AviateKernelTrait::ground_reset(&mut kernel);
 }

@@ -28,6 +28,7 @@ use aviate_hal_stm32h7::{Stm32h7UsbCdc, UsbMetrics};
 
 use aviate_link::mavlink::protocol::{
     mav_cmd, parse_mavlink, serialize_mavlink, Heartbeat, MavAutopilot, MavMessage, MavModeFlag,
+    FORCE_ARM_DISARM_MAGIC,
     MavState, MavType, MAVLINK_STX_V2,
 };
 
@@ -296,9 +297,15 @@ impl SerialTransport {
             MavMessage::CommandLong(cmd) => {
                 match cmd.command {
                     mav_cmd::COMPONENT_ARM_DISARM => {
-                        // param1 > 0.5 = arm, otherwise disarm
+                        // param1 > 0.5 = arm, otherwise disarm. The
+                        // param2 force magic routes a deliberate
+                        // operator override to the terminate path, so
+                        // the firmware and SITL links agree on what a
+                        // forced disarm means.
                         if cmd.param1 > 0.5 {
                             Some(SystemCommand::Arm)
+                        } else if cmd.param2 == FORCE_ARM_DISARM_MAGIC {
+                            Some(SystemCommand::EmergencyTerminate)
                         } else {
                             Some(SystemCommand::Disarm)
                         }

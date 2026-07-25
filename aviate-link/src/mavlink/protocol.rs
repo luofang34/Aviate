@@ -138,6 +138,15 @@ pub mod mav_cmd {
     pub const COMPONENT_ARM_DISARM: u16 = 400;
 }
 
+/// `param2` magic that turns MAV_CMD_COMPONENT_ARM_DISARM into a forced
+/// action, as defined by the MAVLink command specification and honoured
+/// by PX4, ArduPilot, and QGroundControl.
+///
+/// An operator who deliberately sends the force value is asking for the
+/// motor cut regardless of flight phase; anything else is an ordinary
+/// disarm request that the kernel may refuse.
+pub const FORCE_ARM_DISARM_MAGIC: f32 = 21196.0;
+
 /// MAV_RESULT constants
 pub mod mav_result {
     pub const ACCEPTED: u8 = 0;

@@ -241,7 +241,13 @@ fn main() -> std::process::ExitCode {
 
     println!();
     println!("[INFO] Shutting down...");
-    board.disarm();
+    // Teardown: the simulated aircraft is going away with the process,
+    // so a refused ordinary disarm escalates to the terminate path
+    // rather than leaving the kernel armed as the app exits.
+    if board.disarm().is_err() {
+        println!("[WARN] Disarm refused (airborne); terminating outputs");
+        board.terminate();
+    }
     cleanup_jmavsim(&mut jmavsim_process);
     println!("[INFO] Goodbye!");
     std::process::ExitCode::SUCCESS

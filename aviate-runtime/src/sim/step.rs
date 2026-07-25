@@ -16,7 +16,7 @@ use aviate_core::mixer::ActuatorCmd;
 use aviate_core::time::TimeDelta;
 use aviate_core::types::{Meters, MetersPerSecond, Seconds};
 use aviate_core::ChannelId;
-use aviate_hal_io::{CommandHal, SystemCommand};
+use aviate_hal_io::{CommandHal, CommandOutcome, SystemCommand};
 use aviate_hal_xil::SimActuatorCmd;
 
 impl<C, M> SitlRunner<C, M>
@@ -135,30 +135,11 @@ where
                             < aviate_core::kernel_types::THROTTLE_LOW_MAX_COLLECTIVE,
                     );
             }
-            match &sys_cmd {
-                SystemCommand::Arm => {
-                    info!("Arm command (state={:?})", self.kernel.state.init_state);
-                    info!("Faults: {:?}", self.kernel.state.faults);
-                    if let Err(e) = self.kernel.arm() {
-                        let pre_arm = &self.kernel.state.checks.pre_arm;
-                        warn!("Arming failed: {:?}", e);
-                        warn!("Missing pre-arm: {:?}", pre_arm.missing());
-                        warn!("Faults: {:?}", self.kernel.state.faults);
-                    } else {
-                        info!("Armed successfully");
-                        // Only arm HAL and transport if kernel arm succeeded
-                        self.board_hal.arm();
-                        self.transport.set_armed(true);
-                    }
-                }
-                SystemCommand::Disarm => {
-                    info!("Disarm command");
-                    self.kernel.disarm();
-                    // Disarm through BoardHal and notify transport
-                    self.board_hal.disarm();
-                    self.transport.set_armed(false);
-                }
-                SystemCommand::FlightControl(_) => {}
+            let outcome = self.enact_discrete(&sys_cmd);
+            if let Some(outcome) = outcome {
+                // The link answers the operator; the log is for the
+                // maintainer. Both, not either.
+                self.transport.report_outcome(&sys_cmd, outcome);
             }
             self.ingress.receive(sys_cmd, now_ticks);
         }
@@ -306,6 +287,67 @@ where
         self.transport.kick_watchdog();
 
         actuator_cmd
+    }
+
+    /// Enact a discrete lifecycle command and report what happened.
+    ///
+    /// Returns `None` for commands that carry no discrete outcome (a
+    /// flight setpoint is not accepted or refused, it is simply the
+    /// latest one). Every other arm returns a `Some`, so the link always
+    /// has something to answer with — the silence this replaces was the
+    /// operator-visible defect, not the refusal itself.
+    fn enact_discrete(&mut self, sys_cmd: &SystemCommand) -> Option<CommandOutcome> {
+        match sys_cmd {
+            SystemCommand::Arm => Some(self.enact_arm()),
+            SystemCommand::Disarm => Some(self.enact_disarm()),
+            SystemCommand::EmergencyTerminate => {
+                warn!("Emergency terminate: cutting outputs");
+                self.kernel.terminate();
+                self.board_hal.disarm();
+                self.transport.set_armed(false);
+                Some(CommandOutcome::Accepted)
+            }
+            SystemCommand::FlightControl(_) => None,
+        }
+    }
+
+    fn enact_arm(&mut self) -> CommandOutcome {
+        info!("Arm command (state={:?})", self.kernel.state.init_state);
+        match self.kernel.arm() {
+            Ok(()) => {
+                info!("Armed successfully");
+                // Only arm HAL and transport if kernel arm succeeded
+                self.board_hal.arm();
+                self.transport.set_armed(true);
+                CommandOutcome::Accepted
+            }
+            Err(error) => {
+                let missing = self.kernel.state.checks.pre_arm.missing();
+                warn!(
+                    "Arming refused: {:?}; missing pre-arm: {:?}; faults: {:?}",
+                    error, missing, self.kernel.state.faults
+                );
+                CommandOutcome::ArmRejected { error, missing }
+            }
+        }
+    }
+
+    fn enact_disarm(&mut self) -> CommandOutcome {
+        match self.kernel.disarm() {
+            Ok(()) => {
+                info!("Disarm command");
+                // Disarm through BoardHal and notify transport
+                self.board_hal.disarm();
+                self.transport.set_armed(false);
+                CommandOutcome::Accepted
+            }
+            Err(error) => {
+                // Nothing is touched on refusal: the aircraft keeps
+                // flying on the control law it already had.
+                warn!("Disarm refused: {:?}", error);
+                CommandOutcome::DisarmRejected(error)
+            }
+        }
     }
 }
 
