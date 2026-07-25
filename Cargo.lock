@@ -291,6 +291,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aviate-signing"
+version = "0.1.0"
+dependencies = [
+ "sha2",
+]
+
+[[package]]
 name = "aviate-xil-contract"
 version = "0.1.0"
 dependencies = [

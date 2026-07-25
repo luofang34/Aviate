@@ -8,6 +8,7 @@ members = [
     "aviate-airframes/multirotor",
     "aviate-airframes/fixed-wing",
     "aviate-hal/io",
+    "aviate-signing",
     "aviate-hal/xil",
     "aviate-hal/xil/contract",
     "aviate-hal/xil/shm",

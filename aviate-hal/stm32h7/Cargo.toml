@@ -42,6 +42,9 @@ cortex-m-rt = "0.7"
 
 # Cryptography (software fallback)
 sha2 = { version = "0.10", default-features = false }
+# The MAVLink signing primitive lives in a workspace crate so the
+# code this board runs is the code the pymavlink vectors test.
+aviate-signing = { path = "../../aviate-signing" }
 hmac = { version = "0.12", default-features = false }
 
 [dev-dependencies]
