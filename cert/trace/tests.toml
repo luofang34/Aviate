@@ -1527,7 +1527,12 @@ module cover the takeoff latch, the landed debounce restarting rather
 than resuming, a fast descent through the landed height staying
 airborne, the hysteresis band moving nothing, an Unusable estimate
 freezing the phase in both directions, and height being relative to the
-arm point rather than absolute. Witnesses LLR-FLT-211.
+arm point rather than absolute.
+`the_debounce_is_the_same_duration_at_any_loop_rate` runs the landing at
+both 1 kHz and 400 Hz and requires the elapsed time to agree within
+10 ms; `a_non_finite_timestep_cannot_complete_a_landing` and
+`one_enormous_timestep_cannot_skip_the_debounce` pin the clock guards.
+Witnesses LLR-FLT-211.
 """
 traces_to = ["579833d2-8626-54b4-b4db-d01e36be31bc"]
 

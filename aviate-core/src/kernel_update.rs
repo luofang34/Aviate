@@ -257,6 +257,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         self.state.flight_phase.update(
             &state,
             self.state.init_state == InitState::Armed,
+            time.dt_sec,
             &crate::flight_phase::FlightPhaseLimits::default(),
         );
         // Spec §12: Command staleness gate. The caller supplies

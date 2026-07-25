@@ -47,7 +47,7 @@
 
 use crate::replicable::{copy_into, Replicable};
 use crate::state::{EstimateQuality, StateEstimate, StateValidFlags};
-use crate::types::{Meters, MetersPerSecond};
+use crate::types::{Meters, MetersPerSecond, Seconds};
 
 /// Whether the vehicle is holding itself up.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -73,9 +73,16 @@ pub struct FlightPhaseLimits {
     pub landed_height: Meters,
     /// Vertical speed below which the vehicle may be considered landed.
     pub landed_speed: MetersPerSecond,
-    /// Consecutive cycles the landed condition must hold before the
+    /// How long the landed condition must hold continuously before the
     /// latch clears.
-    pub landed_debounce_cycles: u16,
+    ///
+    /// Expressed as a duration rather than a cycle count because the
+    /// kernel does not run at one fixed rate — the Gazebo and hardware
+    /// runners step at 1 kHz, the jMAVSim runner at 400 Hz. A cycle
+    /// count would silently mean different amounts of real time on
+    /// different vehicles, and the question this answers ("has it been
+    /// still long enough to call it down?") is about seconds.
+    pub landed_debounce: Seconds,
 }
 
 impl Default for FlightPhaseLimits {
@@ -88,9 +95,7 @@ impl Default for FlightPhaseLimits {
             takeoff_height: Meters(0.5),
             landed_height: Meters(0.3),
             landed_speed: MetersPerSecond(0.3),
-            // At the 400 Hz kernel rate this is half a second of
-            // continuously satisfied landed conditions.
-            landed_debounce_cycles: 200,
+            landed_debounce: Seconds(0.5),
         }
     }
 }
@@ -115,7 +120,8 @@ pub struct FlightPhaseState {
     /// flight period. Meaningless unless `datum_valid`.
     ground_datum: Meters,
     datum_valid: bool,
-    landed_cycles: u16,
+    /// Seconds the landed condition has held continuously.
+    landed_elapsed: Seconds,
 }
 
 impl FlightPhaseState {
@@ -137,7 +143,7 @@ impl FlightPhaseState {
     /// residual case.
     pub fn begin_flight_period(&mut self, estimate: &StateEstimate) {
         self.phase = FlightPhase::OnGround;
-        self.landed_cycles = 0;
+        self.landed_elapsed = Seconds(0.0);
         self.datum_valid = height_is_usable(estimate);
         self.ground_datum = Meters(altitude_of(estimate).0);
     }
@@ -155,7 +161,13 @@ impl FlightPhaseState {
     /// `armed` is the kernel's own lifecycle view: a disarmed vehicle
     /// cannot be climbing under its own power, so the latch only
     /// advances while armed.
-    pub fn update(&mut self, estimate: &StateEstimate, armed: bool, limits: &FlightPhaseLimits) {
+    pub fn update(
+        &mut self,
+        estimate: &StateEstimate,
+        armed: bool,
+        dt: Seconds,
+        limits: &FlightPhaseLimits,
+    ) {
         if !armed || !self.datum_valid {
             return;
         }
@@ -163,7 +175,7 @@ impl FlightPhaseState {
             // Freeze: an unusable estimate is not evidence of anything.
             // The debounce restarts so a landing must be re-demonstrated
             // from a usable estimate rather than completed across a gap.
-            self.landed_cycles = 0;
+            self.landed_elapsed = Seconds(0.0);
             return;
         }
 
@@ -172,10 +184,10 @@ impl FlightPhaseState {
             FlightPhase::OnGround => {
                 if height > limits.takeoff_height.0 {
                     self.phase = FlightPhase::Airborne;
-                    self.landed_cycles = 0;
+                    self.landed_elapsed = Seconds(0.0);
                 }
             }
-            FlightPhase::Airborne => self.update_landed_debounce(height, estimate, limits),
+            FlightPhase::Airborne => self.update_landed_debounce(height, estimate, dt, limits),
         }
     }
 
@@ -190,20 +202,34 @@ impl FlightPhaseState {
         &mut self,
         height: f32,
         estimate: &StateEstimate,
+        dt: Seconds,
         limits: &FlightPhaseLimits,
     ) {
         let velocity_usable = estimate.valid_flags.contains(StateValidFlags::VELOCITY);
         let descending_slowly =
             velocity_usable && vertical_speed_of(estimate).0.abs() < limits.landed_speed.0;
 
-        if height < limits.landed_height.0 && descending_slowly {
-            self.landed_cycles = self.landed_cycles.saturating_add(1);
-            if self.landed_cycles >= limits.landed_debounce_cycles {
-                self.phase = FlightPhase::OnGround;
-                self.landed_cycles = 0;
-            }
+        if !(height < limits.landed_height.0 && descending_slowly) {
+            self.landed_elapsed = Seconds(0.0);
+            return;
+        }
+
+        // A landing is a thing observed over time, so no single sample
+        // may complete it. A step is capped at half the window, which
+        // means at least two observations however the clock behaves;
+        // a non-finite or non-positive step contributes nothing at all.
+        // Without the cap, one cycle after a stall — where there was no
+        // continuous observation to accumulate — would land the
+        // vehicle on a single post-stall sample.
+        let step = if dt.0.is_finite() && dt.0 > 0.0 {
+            dt.0.min(limits.landed_debounce.0 * 0.5)
         } else {
-            self.landed_cycles = 0;
+            0.0
+        };
+        self.landed_elapsed = Seconds(self.landed_elapsed.0 + step);
+        if self.landed_elapsed.0 >= limits.landed_debounce.0 {
+            self.phase = FlightPhase::OnGround;
+            self.landed_elapsed = Seconds(0.0);
         }
     }
 }
@@ -237,12 +263,12 @@ impl Replicable for FlightPhase {
 }
 
 impl Replicable for FlightPhaseState {
-    const ENCODED_LEN: usize = FlightPhase::ENCODED_LEN + 4 + 1 + 2;
+    const ENCODED_LEN: usize = FlightPhase::ENCODED_LEN + 4 + 1 + 4;
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
         let mut written = self.phase.encode_canonical(buf);
         written += copy_into(buf, written, &self.ground_datum.0.to_le_bytes());
         written += copy_into(buf, written, &[self.datum_valid as u8]);
-        written += copy_into(buf, written, &self.landed_cycles.to_le_bytes());
+        written += copy_into(buf, written, &self.landed_elapsed.0.to_le_bytes());
         written
     }
 }

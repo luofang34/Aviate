@@ -2113,9 +2113,17 @@ description = """
 estimated height above the datum captured at arm exceeds
 `FlightPhaseLimits::takeoff_height`, and SHALL return to OnGround only
 after height below `landed_height` and vertical speed below
-`landed_speed` hold for `landed_debounce_cycles` consecutive cycles.
-The two heights SHALL differ, giving the latch hysteresis so a vehicle
-hovering near the threshold cannot chatter.
+`landed_speed` hold continuously for `landed_debounce`. The two heights
+SHALL differ, giving the latch hysteresis so a vehicle hovering near
+the threshold cannot chatter.
+
+The debounce SHALL be expressed and accumulated as a duration, not as a
+cycle count: the runners do not share a rate (Gazebo and hardware step
+at 1 kHz, jMAVSim at 400 Hz), so a cycle count would mean different
+amounts of real time on different vehicles. A non-finite or
+non-positive timestep SHALL contribute nothing, and a single timestep
+SHALL contribute at most one debounce width, so neither a stopped nor a
+jumped clock can decide a landing.
 
 Height SHALL be gated on `EstimateQuality` being other than Unusable
 rather than on `StateValidFlags::POSITION`. POSITION denotes a full 3-D
