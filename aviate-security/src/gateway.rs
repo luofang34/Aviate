@@ -57,6 +57,34 @@ pub use verified::VerifiedSystemCommand;
 use crate::anti_replay::AntiReplayWindow;
 use crate::errors::{AuthError, GatewayResult};
 
+/// Where a gateway's trusted starting counter came from.
+///
+/// A bare integer let `0` — which disables first-frame freshness, because
+/// `0.saturating_sub(max_age)` is `0` and nothing can be below it — be
+/// passed by an assembly that simply had not wired persistence yet. Every
+/// test would still pass and the reboot-replay defense would be gone with
+/// nothing to grep for. Naming the insecure case makes it visible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustedCounter {
+    /// A high-water mark persisted by the previous boot, or an RTC reading
+    /// converted to the scheme's counter units.
+    Trusted(u64),
+    /// No trusted time source. First-frame freshness is DISABLED: any
+    /// previously captured frame from an unseen principal is replayable
+    /// after a restart. Isolated benches only.
+    NoTrustedTimeSource,
+}
+
+impl TrustedCounter {
+    /// The counter value to seed the window with.
+    pub fn value(self) -> u64 {
+        match self {
+            Self::Trusted(v) => v,
+            Self::NoTrustedTimeSource => 0,
+        }
+    }
+}
+
 /// Freshness configuration for a gateway's anti-replay window.
 ///
 /// Both fields are scheme-specific and supplied by the profile that builds
@@ -66,12 +94,25 @@ use crate::errors::{AuthError, GatewayResult};
 #[derive(Debug, Clone, Copy)]
 pub struct FreshnessConfig {
     /// Trusted local counter seeded from a persisted high-water mark or an
-    /// RTC — a value an attacker cannot rewind. `0` disables first-frame
-    /// freshness (bench only).
-    pub initial_trusted_counter: u64,
+    /// RTC — a value an attacker cannot rewind.
+    ///
+    /// Constructed through [`TrustedCounter`], so a build that has no
+    /// trusted time source has to say so in a form that greps, rather than
+    /// silently passing a bare `0` and losing first-frame freshness.
+    pub initial_trusted_counter: TrustedCounter,
     /// How far behind the trusted local counter the first frame of a new
     /// principal's stream may be.
     pub new_stream_max_age: u64,
+    /// Counter units per microsecond of local FC time, as a divisor: a
+    /// counter tick is `counter_tick_us` microseconds. MAVLink signing
+    /// timestamps tick every 10 µs.
+    ///
+    /// This converts the receiver's own elapsed time into counter units so
+    /// the trusted counter can be bounded by something no peer controls.
+    pub counter_tick_us: u64,
+    /// Clock disagreement tolerated between the receiver and a legitimate
+    /// sender, in counter units.
+    pub max_skew: u64,
 }
 
 /// Turns authenticated commands into verified ones, or rejects them.
@@ -84,6 +125,10 @@ pub struct CommandGateway {
     source_policy: SourcePolicy,
     anti_replay: AntiReplayWindow,
     authority_epoch: u32,
+    freshness: FreshnessConfig,
+    /// Local time at the first admission, against which elapsed time — and
+    /// therefore the plausible counter ceiling — is measured.
+    epoch_now_us: Option<u64>,
 }
 
 impl CommandGateway {
@@ -93,11 +138,31 @@ impl CommandGateway {
         Self {
             source_policy,
             anti_replay: AntiReplayWindow::new(
-                freshness.initial_trusted_counter,
+                freshness.initial_trusted_counter.value(),
                 freshness.new_stream_max_age,
             ),
             authority_epoch: 0,
+            freshness,
+            epoch_now_us: None,
         }
+    }
+
+    /// The highest freshness counter local elapsed time can justify.
+    ///
+    /// Anchored at the first admission rather than at construction, so a
+    /// gateway built long before the first command does not hand out a
+    /// ceiling inflated by idle time. Saturating throughout: a monotonic
+    /// clock cannot go backwards, but a wrapped or bogus `now_us` must
+    /// tighten the bound, never widen it.
+    fn plausible_ceiling(&mut self, now_us: u64) -> u64 {
+        let anchor = *self.epoch_now_us.get_or_insert(now_us);
+        let elapsed_us = now_us.saturating_sub(anchor);
+        let elapsed_counts = elapsed_us / self.freshness.counter_tick_us.max(1);
+        self.freshness
+            .initial_trusted_counter
+            .value()
+            .saturating_add(elapsed_counts)
+            .saturating_add(self.freshness.max_skew)
     }
 
     /// Admit an authenticated command: authorize its principal, commit
@@ -126,8 +191,9 @@ impl CommandGateway {
 
         // 2. Commit anti-replay on the (principal, counter). Only an
         //    authentic AND authorized command may advance a counter.
+        let ceiling = self.plausible_ceiling(now_us);
         self.anti_replay
-            .check_and_update(principal, command.counter())?;
+            .check_and_update(principal, command.counter(), ceiling)?;
 
         // 3. Stamp trusted provenance and mint.
         let receipt = VerificationReceipt::new(

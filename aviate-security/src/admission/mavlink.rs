@@ -12,7 +12,7 @@
 //! command it did not sign.
 
 use aviate_hal_io::security::{CryptoEngine, KeyStore};
-use aviate_link::mavlink::parse_system_command;
+use aviate_link::mavlink::{parse_system_command, LocalAddress};
 
 use crate::auth::SignedAuth;
 use crate::errors::{AuthError, GatewayError, GatewayResult};
@@ -31,13 +31,18 @@ use crate::principal::Principal;
 /// `InsecureDevAdmission`).
 pub struct MavlinkAdmission<K: KeyStore, C: CryptoEngine> {
     auth: SignedAuth<K, C>,
+    /// This vehicle's MAVLink address, used to drop frames addressed to a
+    /// different aircraft on a shared datalink.
+    local: LocalAddress,
 }
 
 impl<K: KeyStore, C: CryptoEngine> MavlinkAdmission<K, C> {
-    /// Build the adapter over a key store and crypto engine.
-    pub fn new(keystore: K, crypto: C) -> Self {
+    /// Build the adapter over a key store, crypto engine, and this
+    /// vehicle's own MAVLink address.
+    pub fn new(keystore: K, crypto: C, local: LocalAddress) -> Self {
         Self {
             auth: SignedAuth::new(keystore, crypto),
+            local,
         }
     }
 
@@ -50,14 +55,15 @@ impl<K: KeyStore, C: CryptoEngine> MavlinkAdmission<K, C> {
     ///
     /// Returns:
     /// - [`GatewayError::Link`] if the frame does not decode to a system
-    ///   command (parse error, unmapped message, trailing bytes);
+    ///   command (parse error, unmapped message, trailing bytes) or is
+    ///   addressed to a different vehicle;
     /// - [`GatewayError::Auth`] with [`AuthError::MissingSignature`] for an
     ///   unsigned frame, or [`AuthError::InvalidSignature`] for a bad
     ///   signature;
     /// - a sealed [`AuthenticatedCommand`] on success. It is not yet
     ///   authorized or replay-checked — the gateway does that.
     pub fn authenticate(&mut self, frame: &[u8]) -> GatewayResult<AuthenticatedCommand> {
-        let parsed = parse_system_command(frame).map_err(GatewayError::Link)?;
+        let parsed = parse_system_command(frame, self.local).map_err(GatewayError::Link)?;
         let sig = parsed
             .signature
             .as_ref()

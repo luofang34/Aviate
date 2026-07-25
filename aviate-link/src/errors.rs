@@ -51,6 +51,18 @@ pub enum LinkError {
     Parse(crate::mavlink::protocol::ParseError),
     /// Message parsed successfully but not mapped to Command
     UnsupportedMsg,
+    /// Command is addressed to a different vehicle or component.
+    ///
+    /// An addressing filter, not an authorization decision: a verified
+    /// credential still says who may command us, and this says only that
+    /// this particular frame was not aimed here.
+    WrongAddressee {
+        /// The frame's target system id.
+        target_system: u8,
+        /// The frame's target component id.
+        target_component: u8,
+    },
+
     /// Frame bytes and parse result are inconsistent (trailing bytes
     /// beyond the parsed frame, or a frame too large for the fixed
     /// signature buffer); carries the frame and consumed lengths

@@ -40,7 +40,7 @@
 //! let mut policy = SourcePolicy::new();
 //! policy.bind(Principal::mavlink(1, 1, 5), CommandSource::GcsDatalink)?;
 //! let freshness = FreshnessConfig {
-//!     initial_trusted_counter: persisted_ts,
+//!     initial_trusted_counter: TrustedCounter::Trusted(persisted_ts),
 //!     new_stream_max_age: NEW_STREAM_MAX_AGE_10US,
 //! };
 //! let mut gateway = CommandGateway::new(policy, freshness);
@@ -94,7 +94,7 @@ pub use auth::SignedAuth;
 pub use errors::{AuthError, GatewayError};
 pub use gateway::{
     AuthenticatedCommand, CommandGateway, CommandSource, CredentialError, FailsafeAuthority,
-    FreshnessConfig, SourcePolicy, TrustedInternalCommand, VerificationReceipt,
+    FreshnessConfig, SourcePolicy, TrustedCounter, TrustedInternalCommand, VerificationReceipt,
     VerifiedSystemCommand, MAX_SOURCE_BINDINGS,
 };
 pub use principal::{Principal, SecurityScheme};

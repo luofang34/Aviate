@@ -13,7 +13,7 @@
 //! it in a flight build.
 
 use aviate_hal_io::SystemCommand;
-use aviate_link::mavlink::parse_system_command;
+use aviate_link::mavlink::{parse_system_command, LocalAddress};
 
 use crate::errors::{GatewayError, GatewayResult};
 use crate::gateway::AuthenticatedCommand;
@@ -28,23 +28,30 @@ use crate::principal::Principal;
 pub struct InsecureDevAdmission {
     principal: Principal,
     next_counter: u64,
+    local: LocalAddress,
 }
 
 impl InsecureDevAdmission {
     /// Build a dev adapter that seals every command under `principal`.
     ///
-    /// The first command it produces carries counter `1`.
-    pub fn new(principal: Principal) -> Self {
+    /// The first command it produces carries counter `1`. `local` is this
+    /// vehicle's address, applied to the same addressing filter the signed
+    /// adapter uses so the bench path cannot diverge on addressing.
+    pub fn new(principal: Principal, local: LocalAddress) -> Self {
         Self {
             principal,
             next_counter: 1,
+            local,
         }
     }
 
     /// Decode a frame's command (ignoring any signature) and seal it under
     /// the fixed dev principal with the next monotonic counter.
     pub fn authenticate(&mut self, frame: &[u8]) -> GatewayResult<AuthenticatedCommand> {
-        let parsed = parse_system_command(frame).map_err(GatewayError::Link)?;
+        // Bench adapter: accept whatever this build is addressed as, so
+        // the insecure path does not silently differ from the signed one
+        // on addressing.
+        let parsed = parse_system_command(frame, self.local).map_err(GatewayError::Link)?;
         Ok(self.seal(parsed.command))
     }
 
@@ -67,6 +74,8 @@ impl InsecureDevAdmission {
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
+    use crate::anti_replay::NEW_STREAM_MAX_AGE_10US;
+    use crate::gateway::TrustedCounter;
     use crate::{CommandGateway, CommandSource, FreshnessConfig, GatewayError, SourcePolicy};
 
     fn dev_gateway(principal: Principal) -> CommandGateway {
@@ -75,8 +84,10 @@ mod tests {
         CommandGateway::new(
             policy,
             FreshnessConfig {
-                initial_trusted_counter: 0,
+                initial_trusted_counter: TrustedCounter::NoTrustedTimeSource,
                 new_stream_max_age: 0,
+                counter_tick_us: 10,
+                max_skew: NEW_STREAM_MAX_AGE_10US,
             },
         )
     }
@@ -84,7 +95,13 @@ mod tests {
     #[test]
     fn dev_claims_admit_and_advance_monotonically() {
         let principal = Principal::mavlink(0, 0, 0);
-        let mut adm = InsecureDevAdmission::new(principal);
+        let mut adm = InsecureDevAdmission::new(
+            principal,
+            LocalAddress {
+                system_id: 1,
+                component_id: 1,
+            },
+        );
         let mut gw = dev_gateway(principal);
 
         let first = adm.seal_command(SystemCommand::Arm);
@@ -99,7 +116,13 @@ mod tests {
 
     #[test]
     fn dev_principal_must_still_be_authorized() {
-        let mut adm = InsecureDevAdmission::new(Principal::mavlink(7, 7, 7));
+        let mut adm = InsecureDevAdmission::new(
+            Principal::mavlink(7, 7, 7),
+            LocalAddress {
+                system_id: 1,
+                component_id: 1,
+            },
+        );
         // Gateway authorizes a DIFFERENT principal.
         let mut gw = dev_gateway(Principal::mavlink(0, 0, 0));
         let claim = adm.seal_command(SystemCommand::Arm);

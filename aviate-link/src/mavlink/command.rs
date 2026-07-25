@@ -76,6 +76,28 @@ pub struct ParsedSystemCommand {
     pub signature: Option<SignatureMeta>,
 }
 
+/// This vehicle's MAVLink address, for filtering commands aimed elsewhere.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct LocalAddress {
+    /// This vehicle's system id.
+    pub system_id: u8,
+    /// This vehicle's component id.
+    pub component_id: u8,
+}
+
+impl LocalAddress {
+    /// Whether a command carrying these target ids is for us.
+    ///
+    /// Zero is MAVLink's broadcast address and is accepted for both
+    /// fields, which is what a ground station sends when it has not yet
+    /// learned the vehicle's ids.
+    pub fn accepts(&self, target_system: u8, target_component: u8) -> bool {
+        let system_ok = target_system == 0 || target_system == self.system_id;
+        let component_ok = target_component == 0 || target_component == self.component_id;
+        system_ok && component_ok
+    }
+}
+
 /// Decode a kernel-facing [`SystemCommand`] and its signature metadata
 /// from one MAVLink frame.
 ///
@@ -90,7 +112,14 @@ pub struct ParsedSystemCommand {
 /// - messages with no system-command mapping are
 ///   [`LinkError::UnsupportedMsg`]. Only the discrete arm/disarm command
 ///   maps; setpoint streams use the separate flight-control path.
-pub fn parse_system_command(frame: &[u8]) -> LinkResult<ParsedSystemCommand> {
+///
+/// `local` names this vehicle so a command addressed elsewhere can be
+/// dropped. That is an addressing filter, NOT an authorization input:
+/// authority comes from the verified credential and nothing here may
+/// widen it. Discarding addressing entirely is what lets a fleet ground
+/// station holding one key disarm a second, airborne vehicle when the
+/// operator disarms a first one on the ground.
+pub fn parse_system_command(frame: &[u8], local: LocalAddress) -> LinkResult<ParsedSystemCommand> {
     let (msg, mav_sig, consumed) = parse_mavlink(frame).map_err(LinkError::Parse)?;
     if consumed != frame.len() || frame.len() > MAX_SIGNED_FRAME_SIZE {
         return Err(LinkError::FrameLengthMismatch {
@@ -115,10 +144,21 @@ pub fn parse_system_command(frame: &[u8]) -> LinkResult<ParsedSystemCommand> {
 
     let command = match &msg {
         MavMessage::CommandLong(cmd) if cmd.command == mav_cmd::COMPONENT_ARM_DISARM => {
-            if cmd.param1 > 0.5 {
+            if !local.accepts(cmd.target_system, cmd.target_component) {
+                return Err(LinkError::WrongAddressee {
+                    target_system: cmd.target_system,
+                    target_component: cmd.target_component,
+                });
+            }
+            // Exact values only. `param1 > 0.5` maps NaN and every other
+            // malformed value to Disarm, and Disarm is the direction that
+            // ends a flight.
+            if cmd.param1 == 1.0 {
                 SystemCommand::Arm
-            } else {
+            } else if cmd.param1 == 0.0 {
                 SystemCommand::Disarm
+            } else {
+                return Err(LinkError::UnsupportedMsg);
             }
         }
         _ => return Err(LinkError::UnsupportedMsg),
@@ -273,7 +313,13 @@ mod tests {
 
     #[test]
     fn arm_frame_decodes_to_arm_command() {
-        let parsed = match parse_system_command(PYMAVLINK_ARM) {
+        let parsed = match parse_system_command(
+            PYMAVLINK_ARM,
+            LocalAddress {
+                system_id: 1,
+                component_id: 1,
+            },
+        ) {
             Ok(p) => p,
             Err(e) => unreachable!("golden ARM frame must parse: {e:?}"),
         };
@@ -300,7 +346,14 @@ mod tests {
         let len = serialize_mavlink(&msg, 3, 1, 1, &mut buf).unwrap_or(0);
         assert!(len > 0);
         assert!(matches!(
-            parse_system_command(&buf[..len]).map(|p| p.command),
+            parse_system_command(
+                &buf[..len],
+                LocalAddress {
+                    system_id: 1,
+                    component_id: 1
+                }
+            )
+            .map(|p| p.command),
             Ok(SystemCommand::Disarm)
         ));
     }
@@ -314,7 +367,7 @@ mod tests {
         buf[..n].copy_from_slice(PYMAVLINK_ARM);
         buf[n] = 0xAA;
         assert!(matches!(
-            parse_system_command(&buf[..n + 1]),
+            parse_system_command(&buf[..n + 1], LocalAddress { system_id: 1, component_id: 1 }),
             Err(LinkError::FrameLengthMismatch {
                 frame_len,
                 consumed,
@@ -325,8 +378,118 @@ mod tests {
     #[test]
     fn unmapped_message_is_rejected() {
         assert!(matches!(
-            parse_system_command(PYMAVLINK_HEARTBEAT),
+            parse_system_command(
+                PYMAVLINK_HEARTBEAT,
+                LocalAddress {
+                    system_id: 1,
+                    component_id: 1
+                }
+            ),
             Err(LinkError::UnsupportedMsg)
         ));
+    }
+}
+
+#[cfg(test)]
+mod addressing_tests {
+    use super::*;
+    use crate::mavlink::protocol::{serialize_mavlink, CommandLong, MavMessage};
+
+    const US: LocalAddress = LocalAddress {
+        system_id: 1,
+        component_id: 1,
+    };
+
+    /// An arm/disarm COMMAND_LONG aimed at `(target_system, target_component)`.
+    fn addressed(target_system: u8, target_component: u8, param1: f32) -> ([u8; 280], usize) {
+        let msg = MavMessage::CommandLong(CommandLong {
+            target_system,
+            target_component,
+            command: mav_cmd::COMPONENT_ARM_DISARM,
+            confirmation: 0,
+            param1,
+            param2: 0.0,
+            param3: 0.0,
+            param4: 0.0,
+            param5: 0.0,
+            param6: 0.0,
+            param7: 0.0,
+        });
+        let mut buf = [0u8; 280];
+        // The crate forbids expect/panic, so surface a failed serialize as
+        // a zero length and let each caller's assertion report it.
+        let n = serialize_mavlink(&msg, 0, 255, 190, &mut buf).unwrap_or(0);
+        assert!(n > 0, "serialize failed");
+        (buf, n)
+    }
+
+    #[test]
+    fn a_command_for_this_vehicle_is_accepted() {
+        let (buf, n) = addressed(1, 1, 1.0);
+        let parsed = parse_system_command(&buf[..n], US);
+        assert!(
+            matches!(
+                parsed,
+                Ok(ParsedSystemCommand {
+                    command: SystemCommand::Arm,
+                    ..
+                })
+            ),
+            "a command addressed to us must be accepted: {parsed:?}"
+        );
+    }
+
+    #[test]
+    fn a_broadcast_command_is_accepted() {
+        // Zero is MAVLink's broadcast address, which is what a station
+        // sends before it has learned the vehicle's ids.
+        let (buf, n) = addressed(0, 0, 1.0);
+        assert!(parse_system_command(&buf[..n], US).is_ok());
+    }
+
+    #[test]
+    fn a_command_for_another_vehicle_is_refused() {
+        // The hazard: a fleet station holding one key disarms vehicle 2 on
+        // the ground, and vehicle 1 — airborne, same datalink, same key —
+        // honours the same frame.
+        let (buf, n) = addressed(2, 1, 0.0);
+        assert!(
+            matches!(
+                parse_system_command(&buf[..n], US),
+                Err(LinkError::WrongAddressee {
+                    target_system: 2,
+                    ..
+                })
+            ),
+            "a disarm aimed at another vehicle must not be honoured here"
+        );
+    }
+
+    #[test]
+    fn a_command_for_another_component_is_refused() {
+        let (buf, n) = addressed(1, 42, 0.0);
+        assert!(matches!(
+            parse_system_command(&buf[..n], US),
+            Err(LinkError::WrongAddressee {
+                target_component: 42,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_malformed_arm_parameter_is_refused_rather_than_read_as_disarm() {
+        // `param1 > 0.5` mapped NaN to Disarm, and Disarm is the direction
+        // that ends a flight.
+        for bogus in [f32::NAN, 0.5, -1.0, 7.0] {
+            let (buf, n) = addressed(1, 1, bogus);
+            assert!(
+                matches!(
+                    parse_system_command(&buf[..n], US),
+                    Err(LinkError::UnsupportedMsg)
+                ),
+                "param1={bogus} must be refused, not decoded"
+            );
+        }
     }
 }

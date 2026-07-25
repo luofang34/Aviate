@@ -11,10 +11,11 @@ use aviate_hal_io::security::{CryptoAlgo, CryptoEngine, CryptoError, KeySelector
 use aviate_hal_io::SystemCommand;
 use aviate_link::errors::LinkError;
 use aviate_link::mavlink::protocol::ParseError;
+use aviate_link::mavlink::LocalAddress;
 use aviate_security::admission::MavlinkAdmission;
 use aviate_security::{
     AuthError, CommandGateway, CommandSource, FreshnessConfig, GatewayError, Principal,
-    SourcePolicy, NEW_STREAM_MAX_AGE_10US,
+    SourcePolicy, TrustedCounter, NEW_STREAM_MAX_AGE_10US,
 };
 use sha2::{Digest, Sha256};
 
@@ -80,7 +81,14 @@ impl CryptoEngine for Sha256PrefixEngine {
 }
 
 fn admission() -> MavlinkAdmission<FixedKeyStore, Sha256PrefixEngine> {
-    MavlinkAdmission::new(FixedKeyStore, Sha256PrefixEngine)
+    MavlinkAdmission::new(
+        FixedKeyStore,
+        Sha256PrefixEngine,
+        LocalAddress {
+            system_id: 1,
+            component_id: 1,
+        },
+    )
 }
 
 /// A gateway authorizing the golden credential (slot 5, identity (1,1) →
@@ -93,8 +101,10 @@ fn gateway(trusted_ts: u64) -> CommandGateway {
     CommandGateway::new(
         policy,
         FreshnessConfig {
-            initial_trusted_counter: trusted_ts,
+            initial_trusted_counter: TrustedCounter::Trusted(trusted_ts),
             new_stream_max_age: NEW_STREAM_MAX_AGE_10US,
+            counter_tick_us: 10,
+            max_skew: NEW_STREAM_MAX_AGE_10US,
         },
     )
 }
@@ -239,8 +249,10 @@ fn shared_key_cannot_impersonate_unbound_identity() {
     let mut gw = CommandGateway::new(
         policy,
         FreshnessConfig {
-            initial_trusted_counter: T0,
+            initial_trusted_counter: TrustedCounter::Trusted(T0),
             new_stream_max_age: NEW_STREAM_MAX_AGE_10US,
+            counter_tick_us: 10,
+            max_skew: NEW_STREAM_MAX_AGE_10US,
         },
     );
     let verified = gw

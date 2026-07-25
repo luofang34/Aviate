@@ -76,6 +76,21 @@ pub enum AuthError {
         local_counter: u64,
     },
 
+    /// Freshness counter is further ahead than local elapsed time allows.
+    ///
+    /// The trusted counter advances to the highest accepted value and is
+    /// persisted across reboots, so an unbounded counter would let a single
+    /// sender with a wrong clock raise the first-frame floor for every
+    /// other principal — permanently, and through a restart. The ceiling is
+    /// computed from the receiver's own elapsed time, which no peer can
+    /// influence.
+    CounterImplausiblyAhead {
+        /// The rejected command's freshness counter.
+        counter: u64,
+        /// The highest counter local elapsed time can justify.
+        ceiling: u64,
+    },
+
     /// Anti-replay table is full of already-authorized principals
     ///
     /// A command from a new, authorized principal arrived but every

@@ -135,7 +135,27 @@ impl AntiReplayWindow {
     ///
     /// Callers MUST have verified the command's cryptography AND authorized
     /// its principal before calling this.
-    pub fn check_and_update(&mut self, principal: Principal, counter: u64) -> AuthResult<()> {
+    pub fn check_and_update(
+        &mut self,
+        principal: Principal,
+        counter: u64,
+        plausible_ceiling: u64,
+    ) -> AuthResult<()> {
+        // A counter no peer could legitimately hold yet is refused before
+        // it can touch any state. Without this the trusted counter is a
+        // high-water mark over *peer-supplied* values, so one sender whose
+        // clock reads years ahead raises the first-frame floor for every
+        // other principal — and because the floor is persisted and reloaded
+        // into an empty slot table, that lockout survives the next reboot.
+        // The ceiling is derived from local elapsed time, which no peer can
+        // influence, so the floor can never outrun the receiver's own clock.
+        if counter > plausible_ceiling {
+            return Err(AuthError::CounterImplausiblyAhead {
+                counter,
+                ceiling: plausible_ceiling,
+            });
+        }
+
         if let Some(idx) = self.find(principal) {
             let slot = match self.slots.get_mut(idx).and_then(Option::as_mut) {
                 Some(slot) => slot,
@@ -214,6 +234,11 @@ impl AntiReplayWindow {
 
 #[cfg(test)]
 mod tests {
+    /// A ceiling high enough never to bind, so a case that is about
+    /// monotonicity or freshness is not silently also testing the
+    /// plausibility bound. Cases that ARE about the bound state it.
+    const NO_CEILING: u64 = u64::MAX;
+
     use super::*;
 
     fn p(system_id: u8, component_id: u8, link_id: u8) -> Principal {
@@ -223,24 +248,34 @@ mod tests {
     #[test]
     fn test_first_command_accepted() {
         let mut window = AntiReplayWindow::new(0, NEW_STREAM_MAX_AGE_10US);
-        assert!(window.check_and_update(p(1, 1, 5), 1000).is_ok());
+        assert!(window
+            .check_and_update(p(1, 1, 5), 1000, NO_CEILING)
+            .is_ok());
         assert_eq!(window.last_counter(p(1, 1, 5)), 1000);
     }
 
     #[test]
     fn test_monotonic_increase_accepted() {
         let mut window = AntiReplayWindow::new(0, NEW_STREAM_MAX_AGE_10US);
-        assert!(window.check_and_update(p(1, 1, 5), 1000).is_ok());
-        assert!(window.check_and_update(p(1, 1, 5), 1001).is_ok());
-        assert!(window.check_and_update(p(1, 1, 5), 1002).is_ok());
+        assert!(window
+            .check_and_update(p(1, 1, 5), 1000, NO_CEILING)
+            .is_ok());
+        assert!(window
+            .check_and_update(p(1, 1, 5), 1001, NO_CEILING)
+            .is_ok());
+        assert!(window
+            .check_and_update(p(1, 1, 5), 1002, NO_CEILING)
+            .is_ok());
         assert_eq!(window.last_counter(p(1, 1, 5)), 1002);
     }
 
     #[test]
     fn test_replay_same_counter_rejected() {
         let mut window = AntiReplayWindow::new(0, NEW_STREAM_MAX_AGE_10US);
-        assert!(window.check_and_update(p(1, 1, 5), 1000).is_ok());
-        match window.check_and_update(p(1, 1, 5), 1000) {
+        assert!(window
+            .check_and_update(p(1, 1, 5), 1000, NO_CEILING)
+            .is_ok());
+        match window.check_and_update(p(1, 1, 5), 1000, NO_CEILING) {
             Err(AuthError::ReplayAttack) => {}
             _ => panic!("Expected ReplayAttack error"),
         }
@@ -249,8 +284,10 @@ mod tests {
     #[test]
     fn test_replay_older_counter_rejected() {
         let mut window = AntiReplayWindow::new(0, NEW_STREAM_MAX_AGE_10US);
-        assert!(window.check_and_update(p(1, 1, 5), 1000).is_ok());
-        match window.check_and_update(p(1, 1, 5), 999) {
+        assert!(window
+            .check_and_update(p(1, 1, 5), 1000, NO_CEILING)
+            .is_ok());
+        match window.check_and_update(p(1, 1, 5), 999, NO_CEILING) {
             Err(AuthError::ReplayAttack) => {}
             _ => panic!("Expected ReplayAttack error"),
         }
@@ -260,9 +297,15 @@ mod tests {
     fn test_distinct_principals_are_independent() {
         let now = 10_000_000;
         let mut window = AntiReplayWindow::new(now, NEW_STREAM_MAX_AGE_10US);
-        assert!(window.check_and_update(p(1, 1, 5), now + 1000).is_ok());
-        assert!(window.check_and_update(p(1, 2, 5), now + 500).is_ok());
-        assert!(window.check_and_update(p(2, 1, 5), now + 300).is_ok());
+        assert!(window
+            .check_and_update(p(1, 1, 5), now + 1000, NO_CEILING)
+            .is_ok());
+        assert!(window
+            .check_and_update(p(1, 2, 5), now + 500, NO_CEILING)
+            .is_ok());
+        assert!(window
+            .check_and_update(p(2, 1, 5), now + 300, NO_CEILING)
+            .is_ok());
         assert_eq!(window.last_counter(p(1, 1, 5)), now + 1000);
         assert_eq!(window.last_counter(p(1, 2, 5)), now + 500);
         assert_eq!(window.last_counter(p(2, 1, 5)), now + 300);
@@ -271,16 +314,18 @@ mod tests {
     #[test]
     fn test_reset_principal() {
         let mut window = AntiReplayWindow::new(0, NEW_STREAM_MAX_AGE_10US);
-        assert!(window.check_and_update(p(1, 1, 5), 1000).is_ok());
+        assert!(window
+            .check_and_update(p(1, 1, 5), 1000, NO_CEILING)
+            .is_ok());
         window.reset_principal(p(1, 1, 5));
         assert_eq!(window.last_counter(p(1, 1, 5)), 0);
-        assert!(window.check_and_update(p(1, 1, 5), 500).is_ok());
+        assert!(window.check_and_update(p(1, 1, 5), 500, NO_CEILING).is_ok());
     }
 
     #[test]
     fn test_zero_counter_rejected_for_new_principal() {
         let mut window = AntiReplayWindow::new(0, NEW_STREAM_MAX_AGE_10US);
-        match window.check_and_update(p(1, 1, 5), 0) {
+        match window.check_and_update(p(1, 1, 5), 0, NO_CEILING) {
             Err(AuthError::ReplayAttack) => {}
             _ => panic!("Expected ReplayAttack for counter=0"),
         }
@@ -295,7 +340,7 @@ mod tests {
         let mut window = AntiReplayWindow::new(boot, NEW_STREAM_MAX_AGE_10US);
 
         let old = boot - NEW_STREAM_MAX_AGE_10US - 1;
-        match window.check_and_update(p(1, 1, 5), old) {
+        match window.check_and_update(p(1, 1, 5), old, NO_CEILING) {
             Err(AuthError::StaleNewStream {
                 counter,
                 local_counter,
@@ -307,7 +352,9 @@ mod tests {
         }
 
         let edge = boot - NEW_STREAM_MAX_AGE_10US;
-        assert!(window.check_and_update(p(1, 1, 5), edge).is_ok());
+        assert!(window
+            .check_and_update(p(1, 1, 5), edge, NO_CEILING)
+            .is_ok());
     }
 
     #[test]
@@ -316,23 +363,29 @@ mod tests {
         assert_eq!(window.local_counter(), 1000);
 
         let far_ahead = 1000 + NEW_STREAM_MAX_AGE_10US * 10;
-        assert!(window.check_and_update(p(1, 1, 5), far_ahead).is_ok());
+        assert!(window
+            .check_and_update(p(1, 1, 5), far_ahead, NO_CEILING)
+            .is_ok());
         assert_eq!(window.local_counter(), far_ahead);
 
-        match window.check_and_update(p(1, 2, 5), 2000) {
+        match window.check_and_update(p(1, 2, 5), 2000, NO_CEILING) {
             Err(AuthError::StaleNewStream { .. }) => {}
             other => panic!("Expected StaleNewStream, got {other:?}"),
         }
         assert!(window
-            .check_and_update(p(1, 2, 5), far_ahead - NEW_STREAM_MAX_AGE_10US)
+            .check_and_update(p(1, 2, 5), far_ahead - NEW_STREAM_MAX_AGE_10US, NO_CEILING)
             .is_ok());
     }
 
     #[test]
     fn rejected_frames_do_not_advance_local_counter() {
         let mut window = AntiReplayWindow::new(1000, NEW_STREAM_MAX_AGE_10US);
-        assert!(window.check_and_update(p(1, 1, 5), 5000).is_ok());
-        assert!(window.check_and_update(p(1, 1, 5), 5000).is_err());
+        assert!(window
+            .check_and_update(p(1, 1, 5), 5000, NO_CEILING)
+            .is_ok());
+        assert!(window
+            .check_and_update(p(1, 1, 5), 5000, NO_CEILING)
+            .is_err());
         assert_eq!(window.local_counter(), 5000);
     }
 
@@ -340,12 +393,16 @@ mod tests {
     fn test_capacity_exhausted_rejects_new_principal() {
         let mut window = AntiReplayWindow::new(0, NEW_STREAM_MAX_AGE_10US);
         for i in 0..MAX_SIGNING_PEERS as u8 {
-            assert!(window.check_and_update(p(1, 1, i), 1000).is_ok());
+            assert!(window
+                .check_and_update(p(1, 1, i), 1000, NO_CEILING)
+                .is_ok());
         }
-        match window.check_and_update(p(9, 9, 200), 1000) {
+        match window.check_and_update(p(9, 9, 200), 1000, NO_CEILING) {
             Err(AuthError::ReplayCapacityExhausted) => {}
             _ => panic!("Expected ReplayCapacityExhausted"),
         }
-        assert!(window.check_and_update(p(1, 1, 0), 1001).is_ok());
+        assert!(window
+            .check_and_update(p(1, 1, 0), 1001, NO_CEILING)
+            .is_ok());
     }
 }

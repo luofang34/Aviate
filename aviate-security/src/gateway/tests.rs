@@ -9,13 +9,16 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
+use crate::anti_replay::NEW_STREAM_MAX_AGE_10US;
 use crate::errors::{AuthError, GatewayError};
 use crate::principal::Principal;
 use aviate_hal_io::SystemCommand;
 
 const FRESHNESS: FreshnessConfig = FreshnessConfig {
-    initial_trusted_counter: 0,
+    initial_trusted_counter: TrustedCounter::NoTrustedTimeSource,
     new_stream_max_age: crate::NEW_STREAM_MAX_AGE_10US,
+    counter_tick_us: 10,
+    max_skew: NEW_STREAM_MAX_AGE_10US,
 };
 
 /// A gateway that authorizes one GCS principal: MAVLink key slot 5,
@@ -124,8 +127,10 @@ fn stale_new_stream_rejected_after_reboot() {
     let mut gw = CommandGateway::new(
         policy,
         FreshnessConfig {
-            initial_trusted_counter: 100_000_000,
+            initial_trusted_counter: TrustedCounter::Trusted(100_000_000),
             new_stream_max_age: crate::NEW_STREAM_MAX_AGE_10US,
+            counter_tick_us: 10,
+            max_skew: NEW_STREAM_MAX_AGE_10US,
         },
     );
     assert!(matches!(
@@ -166,4 +171,101 @@ fn failsafe_authority_is_taken_exactly_once() {
     let internal = TrustedInternalCommand::mint(SystemCommand::Disarm, &authority);
     assert!(matches!(internal.command(), SystemCommand::Disarm));
     assert!(FailsafeAuthority::take().is_none());
+}
+
+/// A gateway seeded from a realistic persisted high-water mark, with two
+/// authorized principals.
+fn two_peer_gateway(seed: u64) -> CommandGateway {
+    let mut policy = SourcePolicy::new();
+    policy
+        .bind(Principal::mavlink(1, 1, 5), CommandSource::GcsDatalink)
+        .expect("bind gcs");
+    policy
+        .bind(Principal::mavlink(1, 2, 6), CommandSource::Rc)
+        .expect("bind rc");
+    CommandGateway::new(
+        policy,
+        FreshnessConfig {
+            initial_trusted_counter: TrustedCounter::Trusted(seed),
+            new_stream_max_age: NEW_STREAM_MAX_AGE_10US,
+            counter_tick_us: 10,
+            max_skew: NEW_STREAM_MAX_AGE_10US,
+        },
+    )
+}
+
+#[test]
+fn a_peer_whose_clock_reads_years_ahead_is_refused() {
+    // MAVLink signing counters are 10 us ticks, so a decade is ~3e13.
+    let seed = 1_000_000_000u64;
+    let mut gw = two_peer_gateway(seed);
+    let a_decade_ahead = seed + 31_536_000_000_000;
+
+    let refused = gw.admit(claim(mav(1, 1, 5), a_decade_ahead, SystemCommand::Arm), 0);
+    assert!(
+        matches!(
+            refused,
+            Err(GatewayError::Auth(
+                AuthError::CounterImplausiblyAhead { .. }
+            ))
+        ),
+        "a counter local time cannot justify must be refused, got {refused:?}"
+    );
+}
+
+#[test]
+fn one_peers_bad_clock_cannot_lock_out_another_peer() {
+    // The failure this guards: the trusted counter is a high-water mark
+    // over peer-supplied values and is persisted, so one sender with a
+    // wrong clock used to raise the first-frame floor for everyone else --
+    // and the lockout survived the next reboot.
+    let seed = 1_000_000_000u64;
+    let mut gw = two_peer_gateway(seed);
+
+    let _ = gw.admit(
+        claim(mav(1, 1, 5), seed + 31_536_000_000_000, SystemCommand::Arm),
+        0,
+    );
+
+    // A second principal presenting a perfectly current counter must still
+    // be admitted.
+    let ok = gw.admit(
+        claim(mav(1, 2, 6), seed + 1000, SystemCommand::Disarm),
+        1000,
+    );
+    assert!(ok.is_ok(), "second peer locked out: {ok:?}");
+
+    // And the persisted floor must not have absorbed the bad value, or the
+    // lockout would reappear on the next boot.
+    assert!(
+        gw.local_freshness_counter() < seed + 31_536_000_000_000,
+        "the poisoned counter reached the persisted floor"
+    );
+}
+
+#[test]
+fn the_ceiling_grows_with_local_elapsed_time() {
+    // A long-running session must keep accepting current counters: the
+    // ceiling tracks the receiver's own clock rather than staying pinned
+    // at the seed.
+    let seed = 1_000_000_000u64;
+    let mut gw = two_peer_gateway(seed);
+
+    // Establish the local anchor with a current command at boot.
+    gw.admit(claim(mav(1, 1, 5), seed + 1, SystemCommand::Arm), 0)
+        .expect("first command at boot");
+
+    // An hour later the peer's counter has advanced by an hour too. The
+    // ceiling must have moved with local time, or a long-running session
+    // would start refusing perfectly current commands.
+    let an_hour_us = 3_600_000_000u64;
+    let an_hour_counts = an_hour_us / 10;
+    let ok = gw.admit(
+        claim(mav(1, 1, 5), seed + an_hour_counts, SystemCommand::Disarm),
+        an_hour_us,
+    );
+    assert!(
+        ok.is_ok(),
+        "an hour of uptime must justify an hour of counter: {ok:?}"
+    );
 }
