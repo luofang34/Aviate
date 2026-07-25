@@ -113,6 +113,21 @@ pub enum ArmError {
     InFaultState,
 }
 
+/// Reason an ordinary disarm request was refused.
+///
+/// Ordinary disarm is a ground action. Arming is already a guarded,
+/// typed transition (`ArmError`); making its inverse an infallible
+/// setter left "cut the motors, wherever the vehicle is" as the
+/// behaviour of a routine control. The emergency terminate path
+/// (`AviateKernelImpl::terminate`) is deliberately unguarded and is the
+/// only way to cut outputs in flight.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DisarmError {
+    /// The vehicle is holding itself up. Cutting the motors here drops
+    /// it; the operator gets this refusal instead.
+    Airborne,
+}
+
 /// Error returned when attempting a configuration mode transition
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TransitionError {

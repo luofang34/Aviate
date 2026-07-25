@@ -50,8 +50,8 @@ use aviate_core::hal::SystemHal;
 use aviate_core::time::{TimeSource, Timestamp};
 
 use aviate_hal_io::{
-    CommandHal, GnssFix, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading,
-    SystemCommand,
+    CommandHal, CommandOutcome, GnssFix, RawBaroReading, RawGnssReading, RawImuReading,
+    RawMagReading, SystemCommand,
 };
 
 use aviate_link::mavlink::protocol::{
@@ -59,7 +59,7 @@ use aviate_link::mavlink::protocol::{
 };
 use aviate_link::mavlink::{
     mav_cmd, mav_result, parse_mavlink, serialize_mavlink, MavAutopilot, MavMessage, MavModeFlag,
-    MavState, MavType,
+    MavState, MavType, FORCE_ARM_DISARM_MAGIC,
 };
 
 use crate::sim_types::{SimActuatorCmd, SimGnssFix, SimSensorPacket};
@@ -351,49 +351,74 @@ impl SitlIO {
         self.flight_cmd = Some(SystemCommand::FlightControl(cmd));
     }
 
+    /// Decode a COMMAND_LONG and queue the command it names.
+    ///
+    /// A command the kernel will act on is deliberately NOT acked here.
+    /// Acking at decode time answers "the frame parsed", which the
+    /// operator reads as "the vehicle did it" — an arm the kernel then
+    /// refuses for an unsatisfied pre-arm gate would still have been
+    /// reported ACCEPTED. The ack for those commands is sent from
+    /// `report_outcome`, once the kernel has actually decided.
+    ///
+    /// Commands that never reach the kernel — unsupported, or malformed
+    /// parameters — are answered here, because no later decision is
+    /// coming for them.
     fn handle_command_long(&mut self, cmd: CommandLong) {
         info!(
             "Received COMMAND_LONG: cmd={}, param1={}, target=({},{})",
             cmd.command, cmd.param1, cmd.target_system, cmd.target_component
         );
 
-        let result = if cmd.command == mav_cmd::COMPONENT_ARM_DISARM {
-            if cmd.param1 == 1.0 {
-                info!("Processing ARM command");
-                self.command = Some(SystemCommand::Arm);
-                mav_result::ACCEPTED
-            } else if cmd.param1 == 0.0 {
+        if cmd.command != mav_cmd::COMPONENT_ARM_DISARM {
+            warn!("Unsupported command: {}", cmd.command);
+            self.send_command_ack(cmd.command, mav_result::UNSUPPORTED, 0);
+            return;
+        }
+
+        // param2 carries the MAV_CMD_COMPONENT_ARM_DISARM force magic
+        // (21196) that QGroundControl and PX4 already use for a
+        // force-disarm. Honouring it routes an explicit operator
+        // override to the terminate path instead of leaving the
+        // ordinary disarm as the only way to cut power.
+        let forced = cmd.param2 == FORCE_ARM_DISARM_MAGIC;
+
+        if cmd.param1 == 1.0 {
+            info!("Processing ARM command");
+            self.command = Some(SystemCommand::Arm);
+        } else if cmd.param1 == 0.0 {
+            if forced {
+                warn!("Processing FORCED DISARM (emergency terminate)");
+                self.command = Some(SystemCommand::EmergencyTerminate);
+            } else {
                 info!("Processing DISARM command");
                 self.command = Some(SystemCommand::Disarm);
-                mav_result::ACCEPTED
-            } else {
-                warn!("Invalid ARM param1: {}", cmd.param1);
-                mav_result::DENIED
             }
         } else {
-            warn!("Unsupported command: {}", cmd.command);
-            mav_result::UNSUPPORTED
-        };
-
-        // Send COMMAND_ACK to GCS
-        self.send_command_ack(cmd.command, result);
+            warn!("Invalid ARM param1: {}", cmd.param1);
+            self.send_command_ack(cmd.command, mav_result::DENIED, 0);
+        }
     }
 
-    /// Send COMMAND_ACK response to GCS
-    fn send_command_ack(&mut self, command: u16, result: u8) {
+    /// Send COMMAND_ACK response to GCS.
+    ///
+    /// `result_param2` carries machine-readable detail for a refusal —
+    /// for an arm, the bits of `PreArmFlags` still outstanding — so the
+    /// station can name what is missing rather than showing a bare
+    /// rejection.
+    fn send_command_ack(&mut self, command: u16, result: u8, result_param2: i32) {
         let ack = CommandAck {
             command,
             result,
             progress: 0,
-            result_param2: 0,
+            result_param2,
             target_system: 255, // Broadcast
             target_component: 0,
         };
 
         if let Some(gcs_addr) = self.gcs_addr {
             info!(
-                "Sending COMMAND_ACK to {}: cmd={}, result={}",
-                gcs_addr, command, result
+                "Sending COMMAND_ACK to {}: cmd={}, result={}, detail=0x{:08x}",
+                gcs_addr, command, result, result_param2
             );
             self.send_message_to(&MavMessage::CommandAck(ack), gcs_addr);
         } else {
@@ -537,6 +562,37 @@ impl CommandHal for SitlIO {
         // Discrete commands (arm/disarm) first: they must never be
         // starved or dropped by the setpoint stream.
         self.command.take().or_else(|| self.flight_cmd.take())
+    }
+
+    /// Answer the station with what the kernel actually did.
+    ///
+    /// A refusal maps to TEMPORARILY_REJECTED when asking again could
+    /// succeed and DENIED when it could not, so the station can tell
+    /// "wait" from "use a different control". The outstanding pre-arm
+    /// bits ride in `result_param2`; MAV_RESULT alone cannot say *which*
+    /// gate is unsatisfied, and that is precisely the diagnosis the
+    /// operator needs.
+    fn report_outcome(&mut self, command: &SystemCommand, outcome: CommandOutcome) {
+        let mav_command = match command {
+            SystemCommand::Arm | SystemCommand::Disarm | SystemCommand::EmergencyTerminate => {
+                mav_cmd::COMPONENT_ARM_DISARM
+            }
+            // Setpoints are not COMMAND_LONG and are never acked.
+            SystemCommand::FlightControl(_) => return,
+        };
+
+        let (result, detail) = match outcome {
+            CommandOutcome::Accepted => (mav_result::ACCEPTED, 0),
+            CommandOutcome::ArmRejected { missing, .. } if outcome.is_retryable() => {
+                (mav_result::TEMPORARILY_REJECTED, missing.bits() as i32)
+            }
+            CommandOutcome::ArmRejected { missing, .. } => {
+                (mav_result::DENIED, missing.bits() as i32)
+            }
+            CommandOutcome::DisarmRejected(_) => (mav_result::DENIED, 0),
+        };
+
+        self.send_command_ack(mav_command, result, detail);
     }
 }
 

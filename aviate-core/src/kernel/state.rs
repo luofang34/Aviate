@@ -144,6 +144,13 @@ pub struct KernelState<
     /// Field name is `controller` (not `control`) to disambiguate
     /// from the sibling `control_law` field.
     pub controller: R,
+
+    /// Latching airborne determination (`flight_phase`). Datum captured
+    /// by `kernel_logic.rs::arm`, folded each cycle by
+    /// `kernel_update.rs`, and read by `disarm` to refuse cutting the
+    /// motors out from under a flying aircraft. Cleared wherever the
+    /// flight period ends (`disarm`, `terminate`, `ground_reset`).
+    pub flight_phase: crate::flight_phase::FlightPhaseState,
 }
 // COV:EXCL_STOP
 
@@ -165,6 +172,7 @@ impl<E: EstimatorRuntimeState, R: ControllerRuntimeState> KernelState<E, R> {
             estimator: E::default(),
             fallback: ActuatorFallbackState::default(),
             controller: R::default(),
+            flight_phase: crate::flight_phase::FlightPhaseState::default(),
         }
     }
 }
@@ -195,7 +203,8 @@ impl<E: EstimatorRuntimeState, R: ControllerRuntimeState> crate::replicable::Rep
             + <crate::kernel_types::TimingStats as crate::replicable::Replicable>::ENCODED_LEN
             + <E as crate::replicable::Replicable>::ENCODED_LEN
             + <ActuatorFallbackState as crate::replicable::Replicable>::ENCODED_LEN
-            + <R as crate::replicable::Replicable>::ENCODED_LEN;
+            + <R as crate::replicable::Replicable>::ENCODED_LEN
+            + <crate::flight_phase::FlightPhaseState as crate::replicable::Replicable>::ENCODED_LEN;
 
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
         // Walk the fields in declaration order. Each step advances
@@ -222,6 +231,7 @@ impl<E: EstimatorRuntimeState, R: ControllerRuntimeState> crate::replicable::Rep
         step!(self.estimator);
         step!(self.fallback);
         step!(self.controller);
+        step!(self.flight_phase);
         written
     }
 }

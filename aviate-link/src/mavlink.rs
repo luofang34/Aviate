@@ -78,7 +78,7 @@ pub mod telemetry;
 pub use protocol::{
     aviate_estimate_quality, aviate_state_valid_flags, estimator_status_flags, mav_cmd, mav_result,
     parse_mavlink, serialize_mavlink, AviateEstimatorStatus, EstimatorStatus, MavAutopilot,
-    MavComponent, MavMessage, MavModeFlag, MavState, MavType,
+    MavComponent, MavMessage, MavModeFlag, MavState, MavType, FORCE_ARM_DISARM_MAGIC,
 };
 
 // Re-export link implementations

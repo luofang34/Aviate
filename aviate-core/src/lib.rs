@@ -19,6 +19,7 @@ pub mod checks;
 pub mod control;
 pub mod ekf;
 pub mod fault;
+pub mod flight_phase;
 pub mod hal;
 pub mod kernel;
 pub mod kernel_logic;
@@ -55,12 +56,14 @@ pub use crate::kernel::{
 // entries and phantom FN entries that can't be silenced by COV:EXCL on
 // the defining file. Consumers import via `aviate_core::kernel_trait::
 // AviateKernelTrait` — no external callers use the short path today.
+pub use crate::flight_phase::{FlightPhase, FlightPhaseLimits, FlightPhaseState};
+
 pub use crate::kernel_types::{
     ArmError, ChannelHealthV1, ChannelId, ChannelStatus, ConfigBlock, ConfigError,
-    ConfigTransitionState, CrossChannelData, CycleTiming, DegradationEvent, EnumValidationError,
-    EnvelopeMargin, HealthReport, InitResult, TimingStats, TransitionError, UpdateResult,
-    CONTROL_LOOP_DEADLINE_US, CONTROL_LOOP_PERIOD_US, CRITICAL_FAULTS, DEFAULT_COMMAND_TIMEOUT_MS,
-    TIMING_VIOLATION_THRESHOLD,
+    ConfigTransitionState, CrossChannelData, CycleTiming, DegradationEvent, DisarmError,
+    EnumValidationError, EnvelopeMargin, HealthReport, InitResult, TimingStats, TransitionError,
+    UpdateResult, CONTROL_LOOP_DEADLINE_US, CONTROL_LOOP_PERIOD_US, CRITICAL_FAULTS,
+    DEFAULT_COMMAND_TIMEOUT_MS, TIMING_VIOLATION_THRESHOLD,
 };
 // `Config` was deleted in the Phase 1 ResolvedKernelConfig consolidation.
 // Consumers needing the resolved config import from `aviate_core::kernel::config`.

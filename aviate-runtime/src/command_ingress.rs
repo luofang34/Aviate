@@ -37,7 +37,9 @@ impl ClassifyCommand for SystemCommand {
     fn class(&self) -> CommandClass {
         match self {
             SystemCommand::FlightControl(_) => CommandClass::Setpoint,
-            SystemCommand::Arm | SystemCommand::Disarm => CommandClass::Discrete,
+            SystemCommand::Arm | SystemCommand::Disarm | SystemCommand::EmergencyTerminate => {
+                CommandClass::Discrete
+            }
         }
     }
 }

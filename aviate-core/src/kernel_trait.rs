@@ -9,7 +9,7 @@ use crate::kernel::config::ResolvedKernelConfig;
 use crate::kernel::{AviateKernelImpl, InitState};
 use crate::kernel_types::{
     ArmError, ChannelId, ConfigBlock, ConfigError, ConfigTransitionState, CrossChannelData,
-    HealthReport, InitResult, TransitionError, UpdateResult,
+    DisarmError, HealthReport, InitResult, TransitionError, UpdateResult,
 };
 use crate::mixer::{ActuatorSanitizer, ActuatorState, Mixer};
 use crate::sensor::SensorSet;
@@ -36,8 +36,17 @@ pub trait AviateKernelTrait {
     /// Attempt to arm the system
     fn arm(&mut self) -> Result<(), ArmError>;
 
-    /// Disarm the system
-    fn disarm(&mut self);
+    /// Disarm the system.
+    ///
+    /// Refused while airborne — see [`DisarmError`]. Use
+    /// [`Self::terminate`] for the emergency motor cut.
+    fn disarm(&mut self) -> Result<(), DisarmError>;
+
+    /// Cut outputs immediately, in any flight phase.
+    ///
+    /// Distinct from [`Self::disarm`] at the command level so that an
+    /// ordinary control can never become a kill.
+    fn terminate(&mut self);
 
     /// Get current configuration mode
     fn config_mode(&self) -> ConfigMode;
@@ -125,8 +134,12 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> AviateK
         AviateKernelImpl::arm(self)
     }
 
-    fn disarm(&mut self) {
+    fn disarm(&mut self) -> Result<(), DisarmError> {
         AviateKernelImpl::disarm(self)
+    }
+
+    fn terminate(&mut self) {
+        AviateKernelImpl::terminate(self)
     }
 
     fn config_mode(&self) -> ConfigMode {

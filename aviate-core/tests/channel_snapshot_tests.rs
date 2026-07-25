@@ -31,8 +31,15 @@ fn fake_ts() -> Timestamp {
 }
 
 type ProdKernel = AviateKernelImpl<Ekf, MultirotorController, QuadXMixer, Sanitizer>;
-type ProdState =
-    KernelState<aviate_core::ekf::EkfState, aviate_core::control::runtime::NoControllerState>;
+// The runtime state must name the controller `make_kernel` actually
+// builds. Naming `NoControllerState` here sizes the buffer 64 bytes
+// short, and the composite encoder silently stops at the boundary — so
+// every snapshot below would omit the controller's integrators and two
+// channels whose controllers had diverged would compare as identical.
+type ProdState = KernelState<
+    aviate_core::ekf::EkfState,
+    aviate_core::control::multirotor::MultirotorRuntimeState,
+>;
 
 fn make_kernel() -> ProdKernel {
     aviate_core::kernel::builder::AviateKernelBuilder::new()

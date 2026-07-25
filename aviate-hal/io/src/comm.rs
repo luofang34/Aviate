@@ -5,7 +5,9 @@
 //! that belong to the platform / runtime crate. Spec §2.2: the kernel's
 //! external surface is sensor input, actuator output, and system services.
 
+use aviate_core::checks::PreArmFlags;
 use aviate_core::control::Command;
+use aviate_core::kernel_types::{ArmError, DisarmError};
 
 /// System command from GCS/RC.
 #[derive(Clone, Debug)]
@@ -14,14 +16,77 @@ pub enum SystemCommand {
     FlightControl(Command),
     /// Request to arm actuators.
     Arm,
-    /// Request to disarm actuators.
+    /// Request to disarm actuators. Refused while airborne.
     Disarm,
+    /// Cut actuator outputs immediately, in any flight phase.
+    ///
+    /// A separate variant rather than a flag on `Disarm` so that the
+    /// motor cut cannot be reached by mis-parsing an ordinary disarm:
+    /// the two travel different paths from the wire to the kernel.
+    EmergencyTerminate,
+}
+
+/// What the kernel did with a discrete command.
+///
+/// A refused safety-critical command has to be observable where it was
+/// issued. Carrying the outcome back out of the runtime is what lets the
+/// link answer the operator instead of writing the reason to a log they
+/// are not reading.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CommandOutcome {
+    /// The kernel accepted and enacted the command.
+    Accepted,
+    /// Arm refused. Carries the gate that failed and, for a pre-arm
+    /// failure, exactly which conditions are still outstanding.
+    ArmRejected {
+        /// Which arm precondition refused.
+        error: ArmError,
+        /// Pre-arm conditions still unsatisfied. Empty when `error` is
+        /// not about pre-arm gates.
+        missing: PreArmFlags,
+    },
+    /// Ordinary disarm refused.
+    DisarmRejected(DisarmError),
+}
+
+impl CommandOutcome {
+    /// Whether the command was enacted.
+    pub fn is_accepted(&self) -> bool {
+        matches!(self, Self::Accepted)
+    }
+
+    /// Whether retrying unchanged could succeed later.
+    ///
+    /// Pre-arm gates are transient — samples accumulate, the estimator
+    /// converges — so a refusal for `NotReady` invites a retry. An
+    /// airborne disarm refusal does not: the answer will not change by
+    /// asking again, and the operator needs to reach for a different
+    /// control, not a repeat of the same one.
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::ArmRejected {
+                error: ArmError::NotReady | ArmError::Faulted,
+                ..
+            }
+        )
+    }
 }
 
 /// Command input interface (GCS/RC).
 pub trait CommandHal {
     /// Receive the latest command from GCS/RC, or `None` if no new command.
     fn recv_command(&mut self) -> Option<SystemCommand>;
+
+    /// Report what the kernel did with the most recently received
+    /// discrete command.
+    ///
+    /// The default drops the outcome, for links that have no back
+    /// channel. A link that can answer the operator overrides it; the
+    /// runtime calls this for every discrete command it enacts or
+    /// refuses, so an implementation never has to infer the result from
+    /// a subsequent state change.
+    fn report_outcome(&mut self, _command: &SystemCommand, _outcome: CommandOutcome) {}
 }
 
 /// Bidirectional byte-stream interface for telemetry and command framing.

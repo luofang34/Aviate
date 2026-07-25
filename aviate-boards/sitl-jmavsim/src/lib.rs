@@ -46,7 +46,7 @@ use log::info;
 use aviate_backend_mavlink_hil::{HilBackend, HilBackendConfig};
 use aviate_core::control::Command;
 use aviate_core::mixer::ActuatorCmd;
-use aviate_core::{ArmError, DefaultAviateKernel, InitState};
+use aviate_core::{ArmError, DefaultAviateKernel, DisarmError, InitState};
 
 use aviate_core::hal::{ActuatorHal, SystemHal};
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
@@ -301,10 +301,24 @@ where
         Ok(())
     }
 
-    /// Disarm the flight controller
-    pub fn disarm(&mut self) {
+    /// Disarm the flight controller.
+    ///
+    /// Mirrors `arm`: the refusal reaches the caller instead of being
+    /// swallowed, so a harness driving this board sees an in-flight
+    /// disarm refused rather than silently ignored.
+    pub fn disarm(&mut self) -> Result<(), DisarmError> {
         info!("Disarm command");
-        self.runner.kernel.disarm();
+        self.runner.kernel.disarm()?;
+        self.runner.board_hal.disarm();
+        self.runner.transport.set_armed(false);
+        self.armed = false;
+        Ok(())
+    }
+
+    /// Cut outputs immediately, in any flight phase.
+    pub fn terminate(&mut self) {
+        info!("Emergency terminate");
+        self.runner.kernel.terminate();
         self.runner.board_hal.disarm();
         self.runner.transport.set_armed(false);
         self.armed = false;

@@ -188,7 +188,10 @@ fn ground_reset_clears_runtime_counter() {
 fn disarm_clears_runtime_counter() {
     let mut kernel = make_kernel();
     kernel.state.controller.counter = 7;
-    kernel.disarm();
+    assert!(
+        kernel.disarm().is_ok(),
+        "a grounded disarm must be accepted"
+    );
     assert_eq!(
         kernel.state.controller.counter, 0,
         "disarm must clear controller runtime state (LLR-CTL-101)"

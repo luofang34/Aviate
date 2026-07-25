@@ -2102,3 +2102,87 @@ modules = [
 ]
 derived = false
 traces_to = ["3c1fba89-90d3-4b4d-9f86-357cc2c3d955"]
+
+[[requirements]]
+uid = "579833d2-8626-54b4-b4db-d01e36be31bc"
+id = "LLR-FLT-211"
+title = "Airborne determination latches on observed climb and clears on a debounced landing"
+owner = "aviate-core@aviate"
+description = """
+`FlightPhaseState` SHALL latch Airborne when, while armed, the
+estimated height above the datum captured at arm exceeds
+`FlightPhaseLimits::takeoff_height`, and SHALL return to OnGround only
+after height below `landed_height` and vertical speed below
+`landed_speed` hold continuously for `landed_debounce`. The two heights
+SHALL differ, giving the latch hysteresis so a vehicle hovering near
+the threshold cannot chatter.
+
+The debounce SHALL be expressed and accumulated as a duration, not as a
+cycle count: the runners do not share a rate (Gazebo and hardware step
+at 1 kHz, jMAVSim at 400 Hz), so a cycle count would mean different
+amounts of real time on different vehicles. A non-finite or
+non-positive timestep SHALL contribute nothing, and a single timestep
+SHALL contribute at most one debounce width, so neither a stopped nor a
+jumped clock can decide a landing.
+
+Height SHALL be gated on `EstimateQuality` being other than Unusable
+rather than on `StateValidFlags::POSITION`. POSITION denotes a full 3-D
+fix, which a multirotor flying on baro and inertial aiding never
+raises, so gating on it would hold the latch at OnGround for an entire
+GNSS-denied flight — the flight in which an unguarded disarm is most
+likely to be reached for.
+
+An Unusable estimate SHALL freeze the phase rather than move it in
+either direction, and a datum captured from an Unusable estimate SHALL
+leave the latch unable to set.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/flight_phase.rs"]
+derived = false
+traces_to = ["d97e8899-f321-5dfb-af14-a1954c9057a7"]
+
+[[requirements]]
+uid = "8030e81c-d590-569e-b832-b2dd762a07ca"
+id = "LLR-FLT-212"
+title = "Disarm consults the airborne latch; terminate does not"
+owner = "aviate-core@aviate"
+description = """
+`disarm()` SHALL evaluate `FlightPhaseState::is_airborne()` before
+mutating anything and SHALL return `Err(DisarmError::Airborne)` without
+side effects when it holds. `terminate()` SHALL NOT consult it. Both
+SHALL delegate to one shared flight-period teardown, so the two paths
+cannot drift in what they leave behind.
+
+`arm()` SHALL capture the ground datum from the estimate read through
+the same `Estimator` trait surface the control loop uses, and SHALL
+re-capture it on every arm, so a vehicle that lands somewhere other
+than where it took off measures height from where it actually is.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel_logic/lifecycle.rs", "aviate-core/src/kernel_update.rs"]
+derived = false
+traces_to = ["d97e8899-f321-5dfb-af14-a1954c9057a7"]
+
+[[requirements]]
+uid = "b57b1557-1e66-596f-b766-cfd63cf857ec"
+id = "LLR-FLT-213"
+title = "Runtime returns a typed CommandOutcome for every discrete command"
+owner = "aviate-core@aviate"
+description = """
+The runner SHALL produce a `CommandOutcome` for every discrete command
+it enacts — Accepted, ArmRejected carrying the gate and the outstanding
+pre-arm flags, or DisarmRejected — and SHALL pass it to
+`CommandHal::report_outcome` on the link the command arrived on. Flight
+setpoints SHALL produce no outcome, being a stream rather than a
+decision.
+
+A link that can answer SHALL map a retryable refusal to
+MAV_RESULT_TEMPORARILY_REJECTED and a non-retryable one to
+MAV_RESULT_DENIED, and SHALL carry the outstanding pre-arm bits in
+`result_param2`. It SHALL NOT acknowledge an arm or disarm at decode
+time.
+"""
+verification_methods = ["test"]
+modules = ["aviate-hal/io/src/comm.rs", "aviate-runtime/src/sim/step.rs", "aviate-hal/xil/src/sitl_io.rs"]
+derived = false
+traces_to = ["ee205f38-21b1-593d-b570-d965d63696d1"]

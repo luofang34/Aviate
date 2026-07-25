@@ -607,7 +607,14 @@ impl BoardStep for MicoAirBoard {
                     }
                 }
                 SystemCommand::Disarm => {
-                    self.kernel.disarm();
+                    // Refused in flight; the outputs stay live and the
+                    // aircraft keeps flying the law it already had.
+                    if self.kernel.disarm().is_ok() {
+                        self.board_hal.disarm();
+                    }
+                }
+                SystemCommand::EmergencyTerminate => {
+                    self.kernel.terminate();
                     self.board_hal.disarm();
                 }
                 SystemCommand::FlightControl(flight_cmd) => {
@@ -763,7 +770,12 @@ impl MicoAirBoard {
                 }
             }
             SystemCommand::Disarm => {
-                self.kernel.disarm();
+                if self.kernel.disarm().is_ok() {
+                    self.board_hal.disarm();
+                }
+            }
+            SystemCommand::EmergencyTerminate => {
+                self.kernel.terminate();
                 self.board_hal.disarm();
             }
         }
