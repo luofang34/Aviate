@@ -118,6 +118,9 @@ impl HilTransport {
                     self.crc_errors += 1;
                     offset += 1; // Skip bad byte
                 }
+                // A well-formed frame this subset does not decode is
+                // skipped WHOLE; only an unsyncable byte resyncs.
+                Err(ParseError::UnknownMessage { consumed, .. }) => offset += consumed,
                 Err(_) => {
                     offset += 1; // Skip unknown/invalid
                 }

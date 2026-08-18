@@ -435,13 +435,19 @@ impl HilActuatorControls {
 
     /// Serialize to bytes (little-endian)
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        // MAVLink orders payload fields by DESCENDING type width, not by
+        // declaration order: both 64-bit fields lead, then the 32-bit
+        // array, then the byte. Writing `flags` after `controls` puts it
+        // where a real peer reads control lanes 16 and 17, and makes the
+        // peer read lanes 0 and 1 as the flags — which reads as a
+        // flight controller that never sets the lockstep bit.
         let mut buf = [0u8; Self::SIZE];
         buf[0..8].copy_from_slice(&self.time_usec.to_le_bytes());
+        buf[8..16].copy_from_slice(&self.flags.to_le_bytes());
         for (i, &ctrl) in self.controls.iter().enumerate() {
-            let offset = 8 + i * 4;
+            let offset = 16 + i * 4;
             buf[offset..offset + 4].copy_from_slice(&ctrl.to_le_bytes());
         }
-        buf[72..80].copy_from_slice(&self.flags.to_le_bytes());
         buf[80] = self.mode;
         buf
     }
@@ -453,13 +459,13 @@ impl HilActuatorControls {
         }
         let mut controls = [0.0f32; 16];
         for (i, ctrl) in controls.iter_mut().enumerate() {
-            let offset = 8 + i * 4;
+            let offset = 16 + i * 4;
             *ctrl = f32::from_le_bytes(data[offset..offset + 4].try_into().ok()?);
         }
         Some(Self {
             time_usec: u64::from_le_bytes(data[0..8].try_into().ok()?),
             controls,
-            flags: u64::from_le_bytes(data[72..80].try_into().ok()?),
+            flags: u64::from_le_bytes(data[8..16].try_into().ok()?),
             mode: data[80],
         })
     }
@@ -677,5 +683,78 @@ mod tests {
             0
         );
         assert_eq!(disarmed.system_status, Heartbeat::MAV_STATE_STANDBY);
+    }
+}
+
+#[cfg(test)]
+mod wire_order_tests {
+    use super::{HilActuatorControls, HilSensor};
+
+    #[test]
+    fn actuator_controls_place_flags_where_mavlink_reads_them() {
+        // MAVLink orders payload fields by descending type width, so both
+        // 64-bit fields lead. A peer reads `flags` at offset 8; writing it
+        // anywhere else makes the peer read control lanes as the flags.
+        let mut command = HilActuatorControls {
+            time_usec: 0x0102_0304_0506_0708,
+            flags: 1,
+            mode: HilActuatorControls::MODE_FLAG_ARMED,
+            ..HilActuatorControls::default()
+        };
+        command.controls[0] = 1.0;
+        let bytes = command.to_bytes();
+        assert_eq!(
+            u64::from_le_bytes([
+                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14],
+                bytes[15]
+            ]),
+            1,
+            "the lockstep flag must sit at offset 8"
+        );
+        assert_eq!(
+            f32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
+            1.0,
+            "control lane 0 follows the two 64-bit fields"
+        );
+        assert_eq!(bytes[80], HilActuatorControls::MODE_FLAG_ARMED);
+    }
+
+    #[test]
+    fn actuator_controls_round_trip() {
+        let mut command = HilActuatorControls {
+            time_usec: 42,
+            flags: 1,
+            mode: HilActuatorControls::MODE_FLAG_ARMED,
+            ..HilActuatorControls::default()
+        };
+        command.controls[..4].copy_from_slice(&[0.1, 0.2, 0.3, 0.4]);
+        let decoded = HilActuatorControls::from_bytes(&command.to_bytes());
+        assert!(decoded.is_some());
+        let Some(decoded) = decoded else {
+            return;
+        };
+        assert_eq!(decoded.time_usec, 42);
+        assert_eq!(decoded.flags, 1);
+        assert!((decoded.controls[3] - 0.4).abs() < 1e-6);
+        assert!(decoded.is_armed());
+    }
+
+    #[test]
+    fn sensor_places_its_update_mask_where_mavlink_reads_it() {
+        // The sensor message has one 64-bit field, then thirteen floats,
+        // then the 32-bit mask, then the id — pin that the mask is not
+        // read as a sensor value.
+        let sensor = HilSensor {
+            time_usec: 7,
+            fields_updated: 0x0000_003F,
+            id: 3,
+            ..HilSensor::default()
+        };
+        let bytes = sensor.to_bytes();
+        assert_eq!(
+            u32::from_le_bytes([bytes[60], bytes[61], bytes[62], bytes[63]]),
+            0x0000_003F
+        );
+        assert_eq!(bytes[64], 3);
     }
 }

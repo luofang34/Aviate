@@ -25,6 +25,10 @@ use aviate_hal_xil::{SitlConfig, SitlIO};
 use aviate_runtime::{SitlBoardInfo, SitlRunner, SitlTime};
 use log::info;
 
+/// Samples answered in one control iteration before yielding, so a
+/// flooded link cannot monopolize the loop.
+const MAX_SAMPLES_PER_ITERATION: usize = 32;
+
 /// Board configuration.
 #[derive(Debug, Clone)]
 pub struct XPlaneConfig {
@@ -107,37 +111,57 @@ where
         })
     }
 
-    /// Runs one control iteration.
+    /// Runs one control iteration, answering EVERY sensor sample the
+    /// bridge delivered.
     ///
-    /// The actuator command is sent only when a sensor sample arrived:
-    /// the bridge holds its next sample until the previous one is
-    /// answered, so answering on any other schedule stalls it.
+    /// The bridge paces its stream on actuator feedback: it holds its
+    /// next sample until the previous one is answered. Answering only
+    /// the newest sample of a batch would leave the earlier ones
+    /// unanswered and let the bridge's own queue grow until it gives up
+    /// on the flight controller, so each sample gets its own kernel step
+    /// and its own command.
     pub fn step(&mut self) -> ActuatorCmd {
-        let received = self.hil_backend.poll();
-        if let Some(packet) = received.as_ref() {
-            self.runner.transport.feed_sensor_packet(packet);
-        }
-        let actuator_cmd = self.runner.step();
-        if received.is_some() {
-            if let Some(mut sim_cmd) = self.runner.transport.take_actuator_cmd() {
-                // Mixer outputs are force-domain per-motor thrust; the
-                // resolved actuator curve converts them to the boundary
-                // command here, exactly once, before it reaches the wire.
-                apply_actuator_curve(self.runner.kernel.cfg().actuator_curve, &mut sim_cmd);
-                // Lane order is applied AFTER the curve and only here:
-                // the mixer, the controller and the curve all reason in
-                // the mixer's own numbering.
-                if let Some(reorder) = self.lane_order {
-                    reorder(&mut sim_cmd.outputs, sim_cmd.count);
-                }
-                if let Err(error) = self.hil_backend.send_actuators(&sim_cmd) {
-                    // A dropped command is the bridge's cue to stall; it
-                    // must be visible, not swallowed.
-                    log::debug!("actuator command not sent: {error}");
-                }
+        let mut last = ActuatorCmd::default();
+        let mut answered = 0_usize;
+        while let Some(packet) = self.hil_backend.poll() {
+            self.runner.transport.feed_sensor_packet(&packet);
+            last = self.runner.step();
+            self.answer_sample();
+            answered += 1;
+            // A bounded drain keeps one iteration from monopolizing the
+            // loop when the link floods.
+            if answered >= MAX_SAMPLES_PER_ITERATION {
+                break;
             }
         }
-        actuator_cmd
+        if answered == 0 {
+            // No sample this iteration: still advance the kernel so
+            // command ingress and timers run.
+            last = self.runner.step();
+        }
+        last
+    }
+
+    /// Sends the command the kernel produced for the sample just fed.
+    fn answer_sample(&mut self) {
+        let Some(mut sim_cmd) = self.runner.transport.take_actuator_cmd() else {
+            return;
+        };
+        // Mixer outputs are force-domain per-motor thrust; the resolved
+        // actuator curve converts them to the boundary command here,
+        // exactly once, before it reaches the wire.
+        apply_actuator_curve(self.runner.kernel.cfg().actuator_curve, &mut sim_cmd);
+        // Lane order is applied AFTER the curve and only here: the
+        // mixer, the controller and the curve all reason in the mixer's
+        // own numbering.
+        if let Some(reorder) = self.lane_order {
+            reorder(&mut sim_cmd.outputs, sim_cmd.count);
+        }
+        if let Err(error) = self.hil_backend.send_actuators(&sim_cmd) {
+            // A dropped command is the bridge's cue to stall; it must be
+            // visible, not swallowed.
+            log::debug!("actuator command not sent: {error}");
+        }
     }
 
     /// Whether the HIL link to the bridge is up.

@@ -16,6 +16,7 @@
 //! Frame parsing and serialization are shared with the UDP transport;
 //! only the socket differs.
 
+use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
@@ -27,6 +28,15 @@ use crate::wire::{parse_frame, serialize_frame, MavFrame, ParseError, MAX_FRAME_
 
 /// Seconds between connection attempts while the simulator is absent.
 const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Sensor samples held for the flight controller to answer.
+///
+/// A bridge that paces its stream on actuator feedback needs ONE answer
+/// per sample; a latest-wins cache would coalesce several samples into
+/// one answer and let the bridge's own queue grow until it gives up. The
+/// queue is small on purpose: it absorbs a burst between control
+/// iterations without ever becoming a place stale samples accumulate.
+const SENSOR_QUEUE_DEPTH: usize = 16;
 
 /// TCP HIL transport configuration.
 #[derive(Clone, Debug)]
@@ -64,7 +74,8 @@ pub struct HilTcpTransport {
     tx_failures: u64,
     crc_errors: u64,
     connects: u64,
-    last_sensor: Option<HilSensor>,
+    sensors: VecDeque<HilSensor>,
+    dropped_sensors: u64,
     last_gps: Option<HilGps>,
     last_state_quaternion: Option<HilStateQuaternion>,
 }
@@ -88,7 +99,8 @@ impl HilTcpTransport {
             tx_failures: 0,
             crc_errors: 0,
             connects: 0,
-            last_sensor: None,
+            sensors: VecDeque::with_capacity(SENSOR_QUEUE_DEPTH),
+            dropped_sensors: 0,
             last_gps: None,
             last_state_quaternion: None,
         };
@@ -117,7 +129,7 @@ impl HilTcpTransport {
         // A reconnect must not inherit the previous stream's partial
         // frame, nor replay its last sample as if it were fresh.
         self.rx_len = 0;
-        self.last_sensor = None;
+        self.sensors.clear();
         self.last_gps = None;
         self.last_state_quaternion = None;
         self.stream = Some(stream);
@@ -198,6 +210,9 @@ impl HilTcpTransport {
                     self.crc_errors = self.crc_errors.wrapping_add(1);
                     offset += 1;
                 }
+                // A well-formed frame this subset does not decode is
+                // skipped WHOLE; only an unsyncable byte resyncs.
+                Err(ParseError::UnknownMessage { consumed, .. }) => offset += consumed,
                 Err(_) => offset += 1,
             }
         }
@@ -209,7 +224,17 @@ impl HilTcpTransport {
 
     fn handle_frame(&mut self, frame: MavFrame) {
         match frame.message {
-            HilMessage::Sensor(sensor) => self.last_sensor = Some(sensor),
+            HilMessage::Sensor(sensor) => {
+                // A full queue means the control loop is not keeping up.
+                // Drop the OLDEST sample and count it: the newest state
+                // is the one worth answering, and a silent drop would
+                // read as a healthy link.
+                if self.sensors.len() == SENSOR_QUEUE_DEPTH {
+                    self.sensors.pop_front();
+                    self.dropped_sensors = self.dropped_sensors.wrapping_add(1);
+                }
+                self.sensors.push_back(sensor);
+            }
             HilMessage::Gps(gps) => self.last_gps = Some(gps),
             HilMessage::StateQuaternion(state) => self.last_state_quaternion = Some(state),
             // Heartbeats and actuator controls travel the other way.
@@ -217,9 +242,16 @@ impl HilTcpTransport {
         }
     }
 
-    /// Takes the last received sensor sample.
+    /// Takes the OLDEST unanswered sensor sample. Each sample the
+    /// bridge sent gets its own answer, so callers drain in a loop.
     pub fn take_sensor(&mut self) -> Option<HilSensor> {
-        self.last_sensor.take()
+        self.sensors.pop_front()
+    }
+
+    /// Sensor samples dropped because the control loop fell behind.
+    #[must_use]
+    pub fn dropped_sensors(&self) -> u64 {
+        self.dropped_sensors
     }
 
     /// Takes the last received GNSS sample.

@@ -116,15 +116,12 @@ fn frames_split_across_segments_reassemble() {
     // stream link has no message boundaries.
     let split = frame.len() / 2;
     assert!(peer.write_all(&frame[..split]).is_ok()); // COV:EXCL(TEST)
-    poll_until(&mut transport, |t| t.last_sensor.is_some());
-    assert!(
-        transport.last_sensor.is_none(),
-        "a half frame must not decode"
-    );
+    poll_until(&mut transport, |t| !t.sensors.is_empty());
+    assert!(transport.sensors.is_empty(), "a half frame must not decode");
 
     assert!(peer.write_all(&frame[split..]).is_ok()); // COV:EXCL(TEST)
     assert!(
-        poll_until(&mut transport, |t| t.last_sensor.is_some()),
+        poll_until(&mut transport, |t| !t.sensors.is_empty()),
         "the completed frame must decode"
     );
     let Some(sensor) = transport.take_sensor() else {
@@ -204,7 +201,7 @@ fn a_reconnect_drops_the_previous_partial_frame() {
         return;
     };
     assert!(next.write_all(&whole).is_ok()); // COV:EXCL(TEST)
-    assert!(poll_until(&mut transport, |t| t.last_sensor.is_some()));
+    assert!(poll_until(&mut transport, |t| !t.sensors.is_empty()));
     if let Some(sensor) = transport.take_sensor() {
         assert_eq!(sensor.time_usec, 3_000_000);
     }
