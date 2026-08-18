@@ -103,7 +103,7 @@ where
 
     loop {
         let cycle_start = Instant::now();
-        board.step();
+        let command = board.step();
 
         let connected = board.connected();
         if connected != was_connected {
@@ -139,9 +139,29 @@ where
 
         if last_report.elapsed() >= Duration::from_secs(5) {
             let (rx, tx, crc, unsent, connects) = board.stats();
+            // The simulated receiver's own fix, so a flight is read from
+            // a measurement rather than inferred from the link counters.
+            let fix = board.last_fix().map_or_else(
+                || "fix=none".to_owned(),
+                |fix| {
+                    format!(
+                        "fix={:?} sats={} n={:.1}m e={:.1}m d={:.1}m alt={:.1}m",
+                        fix.fix, fix.satellites, fix.position_ned[0], fix.position_ned[1],
+                        fix.position_ned[2], fix.alt_m
+                    )
+                },
+            );
+            // The commanded motor lanes, so a vehicle that will not fly
+            // separates a command that never arrived from thrust that
+            // was never enough.
+            let outputs = command.outputs[..4]
+                .iter()
+                .map(|lane| format!("{:.2}", lane.0))
+                .collect::<Vec<_>>()
+                .join(",");
             log::info!(
                 "link rx={rx} tx={tx} crc_errors={crc} unsent={unsent} connects={connects} \
-                 ready={} armed={}",
+                 ready={} armed={} {fix} motors=[{outputs}]",
                 board.is_ready(),
                 board.is_armed()
             );

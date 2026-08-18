@@ -69,6 +69,7 @@ where
     runner: SitlRunner<C, M>,
     lane_order: Option<fn(&mut [f32; 16], u8)>,
     armed: bool,
+    last_fix: Option<aviate_hal_xil::sim_types::SimGnssData>,
 }
 
 impl<C, M> XPlaneBoard<C, M>
@@ -108,6 +109,7 @@ where
             runner: SitlRunner::new(transport, board_hal, kernel),
             lane_order: config.lane_order,
             armed: false,
+            last_fix: None,
         })
     }
 
@@ -124,6 +126,9 @@ where
         let mut last = ActuatorCmd::default();
         let mut answered = 0_usize;
         while let Some(packet) = self.hil_backend.poll() {
+            if let Some(gnss) = packet.gnss {
+                self.last_fix = Some(gnss);
+            }
             self.runner.transport.feed_sensor_packet(&packet);
             last = self.runner.step();
             self.answer_sample();
@@ -167,6 +172,15 @@ where
     /// Whether the HIL link to the bridge is up.
     pub fn connected(&self) -> bool {
         self.hil_backend.connected()
+    }
+
+    /// The most recent GNSS fix the bridge delivered.
+    ///
+    /// The simulated receiver is the one measurement of where the
+    /// vehicle actually is that does not pass through the estimator, so
+    /// a flight can be read from it rather than inferred.
+    pub fn last_fix(&self) -> Option<&aviate_hal_xil::sim_types::SimGnssData> {
+        self.last_fix.as_ref()
     }
 
     /// Waits for the bridge's next sample, up to `timeout`.
