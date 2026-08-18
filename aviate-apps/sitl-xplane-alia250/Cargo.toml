@@ -1,0 +1,26 @@
+[package]
+publish = false  # internal crate — not released to crates.io
+name = "aviate-app-sitl-xplane-alia250"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Alia-250 lift rotors on X-Plane SITL over the MAVLink HIL bridge"
+
+[[bin]]
+name = "sitl-xplane-alia250"
+path = "src/main.rs"
+
+[dependencies]
+# Kernel construction is app-owned: the kernel subcrate names the
+# airframe, builds the resolved config through the checked builder,
+# and this binary injects the result into the board.
+aviate-app-sitl-xplane-alia250-kernel = { path = "kernel" }
+aviate-board-sitl-xplane = { path = "../../aviate-boards/sitl-xplane" }
+aviate-config = { path = "../../aviate-config" }
+aviate-core = { path = "../../aviate-core" }
+aviate-hal-xil = { path = "../../aviate-hal/xil" }
+env_logger = "0.11"
+log = "0.4"
+
+[lints]
+workspace = true
