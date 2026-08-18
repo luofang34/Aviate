@@ -332,6 +332,38 @@ impl HilTcpTransport {
         }
     }
 
+    /// Blocks until the link has a byte to read or `timeout` elapses,
+    /// returning whether data is waiting.
+    ///
+    /// A lockstep bridge holds its next sample until the command
+    /// answering the previous one arrives, and it budgets only a
+    /// millisecond or two per simulator frame to drain the samples that
+    /// frame produced. A control loop paced by a sleep therefore answers
+    /// a fraction of them and the bridge's queue overflows — the loop
+    /// must be paced by the ARRIVAL of a sample instead. Peeking leaves
+    /// the byte for `poll` to read normally.
+    pub fn wait_readable(&mut self, timeout: Duration) -> bool {
+        let Some(stream) = self.stream.as_ref() else {
+            return false;
+        };
+        if stream.set_read_timeout(Some(timeout)).is_err()
+            || stream.set_nonblocking(false).is_err()
+        {
+            self.disconnect("the link could not be put in blocking mode");
+            return false;
+        }
+        let mut probe = [0u8; 1];
+        let readable = matches!(stream.peek(&mut probe), Ok(1));
+        // Every other path in this transport assumes nonblocking reads,
+        // so a link that cannot be restored is dropped rather than left
+        // able to stall the control loop.
+        if stream.set_nonblocking(true).is_err() {
+            self.disconnect("the link could not be restored to nonblocking mode");
+            return false;
+        }
+        readable
+    }
+
     /// Microseconds since the transport was created.
     #[must_use]
     pub fn now_us(&self) -> u64 {

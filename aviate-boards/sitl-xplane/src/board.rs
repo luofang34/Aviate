@@ -169,6 +169,17 @@ where
         self.hil_backend.connected()
     }
 
+    /// Waits for the bridge's next sample, up to `timeout`.
+    ///
+    /// This is how the control loop paces itself. The bridge holds its
+    /// next sample until the previous one is answered, and it allows
+    /// itself only a millisecond or two per simulator frame to drain
+    /// the samples that frame produced — so a loop paced by a sleep
+    /// answers a fraction of them and the bridge's queue overflows.
+    pub fn wait_for_sample(&mut self, timeout: std::time::Duration) -> bool {
+        self.hil_backend.wait_readable(timeout)
+    }
+
     /// Arms the flight controller.
     ///
     /// # Errors

@@ -17,10 +17,20 @@ use std::time::{Duration, Instant};
 
 use aviate_board_sitl_xplane::{XPlaneBoard, XPlaneConfig};
 
-/// The control-loop period. The bridge paces sensor samples on actuator
-/// feedback, so this is an upper bound on how often the loop looks for
-/// work, not a rate the simulation is held to.
-const CYCLE_PERIOD: Duration = Duration::from_micros(2_500);
+/// How long one iteration waits for the bridge's next sample before
+/// looking around anyway.
+///
+/// The loop is paced by SAMPLE ARRIVAL, not by this period: the bridge
+/// holds its next sample until the previous one is answered, so waiting
+/// out a fixed period after each answer would leave the simulation
+/// waiting on the flight controller. The wait exists only so a loop with
+/// no link still runs its timers and retries.
+const IDLE_WAIT: Duration = Duration::from_micros(2_500);
+
+/// The rate the bridge delivers sensor samples at, and therefore the
+/// rate the kernel steps at. Telemetry divisors are derived from it, so
+/// it must match the bridge's configured sensor period.
+const SENSOR_RATE_HZ: u32 = 100;
 
 /// The app configuration, embedded so a deployment cannot drift from
 /// the binary it runs.
@@ -69,8 +79,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let loop_hz = u32::try_from(1_000_000 / CYCLE_PERIOD.as_micros()).unwrap_or(400);
-    board.init_telemetry(&config, loop_hz);
+    board.init_telemetry(&config, SENSOR_RATE_HZ);
     if !board.telemetry_enabled() {
         log::warn!("running without an estimate stream (see errors above)");
     }
@@ -139,8 +148,14 @@ where
             last_report = Instant::now();
         }
 
-        if let Some(remaining) = CYCLE_PERIOD.checked_sub(cycle_start.elapsed()) {
-            std::thread::sleep(remaining);
+        // Block on the link rather than on the clock, so the answer to
+        // each sample leaves within microseconds of its arrival. With
+        // no link there is nothing to block on, so the loop falls back
+        // to the idle wait rather than spinning a core.
+        if !board.wait_for_sample(IDLE_WAIT) && !board.connected() {
+            if let Some(remaining) = IDLE_WAIT.checked_sub(cycle_start.elapsed()) {
+                std::thread::sleep(remaining);
+            }
         }
     }
 }

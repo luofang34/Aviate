@@ -274,6 +274,66 @@ fn an_unwritable_link_reports_the_refusal() {
 }
 
 #[test]
+fn a_waiting_sample_wakes_the_loop_immediately() {
+    let Some((listener, addr)) = listener() else {
+        return;
+    };
+    let mut transport = transport_for(addr);
+    let Some(mut peer) = accept(&listener) else {
+        return;
+    };
+    let Some(frame) = sensor_frame(4_000_000) else {
+        return;
+    };
+    assert!(peer.write_all(&frame).is_ok()); // COV:EXCL(TEST)
+
+    // A sample already in flight must not cost the caller the timeout:
+    // the bridge is waiting on the answer to it.
+    let started = Instant::now();
+    assert!(transport.wait_readable(Duration::from_secs(2)));
+    assert!(started.elapsed() < Duration::from_millis(500));
+
+    // Peeking must leave the frame for the normal read path.
+    transport.poll();
+    let Some(sensor) = transport.take_sensor() else {
+        return;
+    };
+    assert_eq!(sensor.time_usec, 4_000_000);
+}
+
+#[test]
+fn an_idle_link_waits_out_the_timeout_and_stays_up() {
+    let Some((listener, addr)) = listener() else {
+        return;
+    };
+    let mut transport = transport_for(addr);
+    let Some(peer) = accept(&listener) else {
+        return;
+    };
+    let started = Instant::now();
+    assert!(!transport.wait_readable(Duration::from_millis(50)));
+    assert!(started.elapsed() >= Duration::from_millis(40));
+    // The wait borrows the socket; it must hand it back able to read.
+    assert!(transport.connected());
+    drop(peer);
+}
+
+#[test]
+fn a_wait_with_no_link_returns_at_once() {
+    let Some((listener, addr)) = listener() else {
+        return;
+    };
+    drop(listener);
+    let mut transport = transport_for(addr);
+    let started = Instant::now();
+    assert!(!transport.wait_readable(Duration::from_secs(5)));
+    assert!(
+        started.elapsed() < Duration::from_millis(100),
+        "a down link has nothing to wait on"
+    );
+}
+
+#[test]
 fn the_transport_reports_the_address_it_dials() {
     let Some((listener, addr)) = listener() else {
         return;

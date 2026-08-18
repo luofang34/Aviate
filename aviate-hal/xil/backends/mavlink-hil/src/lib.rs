@@ -403,6 +403,16 @@ impl HilBackend {
         }
     }
 
+    /// Blocks until a stream link has a sample waiting or `timeout`
+    /// elapses. A datagram link has nothing to wait on and returns
+    /// immediately, leaving its caller to pace itself.
+    pub fn wait_readable(&mut self, timeout: std::time::Duration) -> bool {
+        match &mut self.link {
+            Link::Tcp(transport) => transport.wait_readable(timeout),
+            Link::Udp(_) => false,
+        }
+    }
+
     /// Stream-link statistics: received frames, sent frames, CRC
     /// failures, unsent commands, and successful connections.
     #[must_use]
