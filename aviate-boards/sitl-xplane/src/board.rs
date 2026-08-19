@@ -70,6 +70,12 @@ where
     lane_order: Option<fn(&mut [f32; 16], u8)>,
     armed: bool,
     last_fix: Option<aviate_hal_xil::sim_types::SimGnssData>,
+    last_imu: Option<aviate_hal_xil::sim_types::SimImuData>,
+    /// Force-domain per-lane offsets added to every outgoing command,
+    /// in mixer lane order. Zero in flight; the identification
+    /// experiment injects its excitation here so the probe reaches the
+    /// plant regardless of what the closed loop is doing.
+    lane_injection: [f32; 4],
 }
 
 impl<C, M> XPlaneBoard<C, M>
@@ -110,6 +116,8 @@ where
             lane_order: config.lane_order,
             armed: false,
             last_fix: None,
+            last_imu: None,
+            lane_injection: [0.0; 4],
         })
     }
 
@@ -129,6 +137,9 @@ where
             if let Some(gnss) = packet.gnss {
                 self.last_fix = Some(gnss);
             }
+            if let Some(imu) = packet.imu {
+                self.last_imu = Some(imu);
+            }
             self.runner.transport.feed_sensor_packet(&packet);
             last = self.runner.step();
             self.answer_sample();
@@ -147,11 +158,19 @@ where
         last
     }
 
+    /// Sets the per-lane force-domain injection (identification only).
+    pub fn set_lane_injection(&mut self, lanes: [f32; 4]) {
+        self.lane_injection = lanes;
+    }
+
     /// Sends the command the kernel produced for the sample just fed.
     fn answer_sample(&mut self) {
         let Some(mut sim_cmd) = self.runner.transport.take_actuator_cmd() else {
             return;
         };
+        for (lane, inj) in sim_cmd.outputs.iter_mut().zip(self.lane_injection) {
+            *lane = (*lane + inj).clamp(0.0, 1.0);
+        }
         // Mixer outputs are force-domain per-motor thrust; the resolved
         // actuator curve converts them to the boundary command here,
         // exactly once, before it reaches the wire.
@@ -181,6 +200,12 @@ where
     /// a flight can be read from it rather than inferred.
     pub fn last_fix(&self) -> Option<&aviate_hal_xil::sim_types::SimGnssData> {
         self.last_fix.as_ref()
+    }
+
+    /// The most recent IMU sample the bridge delivered — the body
+    /// rates an identification experiment fits its model against.
+    pub fn last_imu(&self) -> Option<&aviate_hal_xil::sim_types::SimImuData> {
+        self.last_imu.as_ref()
     }
 
     /// Waits for the bridge's next sample, up to `timeout`.

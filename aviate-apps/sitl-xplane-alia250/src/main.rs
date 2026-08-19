@@ -8,8 +8,15 @@
 //! until the bridge is listening.
 //!
 //! Usage:
-//!   sitl-xplane-alia250 [--bridge HOST:PORT] [--auto-arm SECONDS]
+//!   sitl-xplane-alia250 [--bridge HOST:PORT] [--auto-arm SECONDS] [--identify]
+//!
+//! `--identify` flies the plant-identification experiment instead of
+//! serving a session: a short hop, per-axis attitude square waves, and
+//! a printed measurement of each axis's angular authority K. It runs
+//! under the same kernel the app flies, so the numbers it prints are
+//! the numbers that kernel's derivation should be fed.
 
+mod identify;
 mod motors;
 
 use std::process::ExitCode;
@@ -57,7 +64,14 @@ fn main() -> ExitCode {
         }
     };
 
-    let kernel = match aviate_app_sitl_xplane_alia250_kernel::build_alia250_kernel() {
+    let identifying = args.iter().any(|arg| arg == "--identify");
+    // The identification flight must not fly the gains it exists to
+    // derive; it uses the known-flyable default cascade instead.
+    let kernel = match if identifying {
+        aviate_app_sitl_xplane_alia250_kernel::build_alia250_identification_kernel()
+    } else {
+        aviate_app_sitl_xplane_alia250_kernel::build_alia250_kernel()
+    } {
         Ok(kernel) => kernel,
         Err(error) => {
             log::error!("kernel construction refused: {error:?}");
@@ -78,6 +92,17 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    if identifying {
+        log::info!("dialing the X-Plane bridge at {bridge} (identification flight)");
+        identify::run(&mut board);
+        return ExitCode::SUCCESS;
+    }
+    if args.iter().any(|arg| arg == "--sweep") {
+        log::info!("dialing the X-Plane bridge at {bridge} (collective sweep)");
+        identify::run_sweep(&mut board);
+        return ExitCode::SUCCESS;
+    }
 
     board.init_telemetry(&config, SENSOR_RATE_HZ);
     if !board.telemetry_enabled() {
@@ -159,11 +184,19 @@ where
                 .map(|lane| format!("{:.2}", lane.0))
                 .collect::<Vec<_>>()
                 .join(",");
+            // One lifecycle phase, not two booleans: `ready` means
+            // ready TO ARM, so an armed kernel is legitimately not
+            // "ready" and printing both reads as a fault.
+            let phase = if board.is_armed() {
+                "armed"
+            } else if board.is_ready() {
+                "ready"
+            } else {
+                "init"
+            };
             log::info!(
                 "link rx={rx} tx={tx} crc_errors={crc} unsent={unsent} connects={connects} \
-                 ready={} armed={} {fix} motors=[{outputs}]",
-                board.is_ready(),
-                board.is_armed()
+                 phase={phase} {fix} motors=[{outputs}]"
             );
             last_report = Instant::now();
         }
