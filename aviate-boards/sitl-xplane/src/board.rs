@@ -23,7 +23,7 @@ use aviate_core::{ArmError, DefaultAviateKernel, DisarmError, InitState};
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{SitlConfig, SitlIO};
 use aviate_runtime::{SitlBoardInfo, SitlRunner, SitlTime};
-use log::info;
+use log::{info, warn};
 
 /// Samples answered in one control iteration before yielding, so a
 /// flooded link cannot monopolize the loop.
@@ -79,6 +79,8 @@ where
     /// The last collective mean this board let onto the wire, for the
     /// spool-rate constraint. See `answer_sample`.
     last_collective: f32,
+    /// Wall-clock arrival of the newest bridge packet, for gap probes.
+    last_packet_at: Option<std::time::Instant>,
     last_answer_at: Option<std::time::Instant>,
     /// GPS altitude captured at arming, and whether the vehicle has
     /// climbed clear of it since. See `limit_collective_spool`.
@@ -127,6 +129,7 @@ where
             last_imu: None,
             lane_injection: [0.0; 4],
             last_collective: 0.0,
+            last_packet_at: None,
             last_answer_at: None,
             ground_alt: None,
             airborne: false,
@@ -146,6 +149,20 @@ where
         let mut last = ActuatorCmd::default();
         let mut answered = 0_usize;
         while let Some(packet) = self.hil_backend.poll() {
+            // A gap in the bridge's sample stream is the first half of
+            // every lockstep wedge post-mortem; record it at the
+            // moment it closes, with its width.
+            let now = std::time::Instant::now();
+            if let Some(at) = self.last_packet_at {
+                let gap = now.duration_since(at);
+                if gap > std::time::Duration::from_millis(300) {
+                    warn!(
+                        "sensor stream resumed after a {:.2}s gap",
+                        gap.as_secs_f32()
+                    );
+                }
+            }
+            self.last_packet_at = Some(now);
             if let Some(gnss) = packet.gnss {
                 self.last_fix = Some(gnss);
             }
@@ -178,6 +195,10 @@ where
     /// Sends the command the kernel produced for the sample just fed.
     fn answer_sample(&mut self) {
         let Some(mut sim_cmd) = self.runner.transport.take_actuator_cmd() else {
+            // The bridge holds its next sample until this one is
+            // answered: a sample consumed without an answer wedges the
+            // lockstep until the bridge's timeout tears the link down.
+            warn!("sample consumed without an actuator answer; lockstep will wedge");
             return;
         };
         for (lane, inj) in sim_cmd.outputs.iter_mut().zip(self.lane_injection) {
@@ -197,7 +218,7 @@ where
         if let Err(error) = self.hil_backend.send_actuators(&sim_cmd) {
             // A dropped command is the bridge's cue to stall; it must be
             // visible, not swallowed.
-            log::debug!("actuator command not sent: {error}");
+            log::warn!("actuator command not sent: {error}");
         }
     }
 
@@ -224,6 +245,12 @@ where
         /// to hover is a turbine-class spool-up, which a rotor this
         /// size honestly is.
         const RISE_PER_S: f32 = 0.035;
+        /// Below the idle band the blades are lightly loaded and the
+        /// stall latch has never been observed there; spooling that
+        /// segment slowly only adds seconds between "armed" and
+        /// "responds to the stick", which an operator reads as a dead
+        /// vehicle.
+        const LOW_BAND_RISE_PER_S: f32 = 0.15;
         /// Collective mean ceiling, and the more important half of the
         /// spool constraint: the prop model's thrust curve COLLAPSES
         /// under a sustained high command (measured: force 1.0 held on
@@ -244,14 +271,18 @@ where
         /// dropping to zero between demands would pay the full spool
         /// time again on every climb — and this idle sits safely below
         /// liftoff thrust while keeping the blades unstalled.
-        const ARMED_IDLE: f32 = 0.35;
-        let lanes = usize::from(sim_cmd.count).min(4).max(1);
-        let mean: f32 =
-            sim_cmd.outputs[..lanes].iter().sum::<f32>() / lanes as f32;
+        const ARMED_IDLE: f32 = 0.40;
+        let lanes = usize::from(sim_cmd.count).clamp(1, 4);
+        let mean: f32 = sim_cmd.outputs[..lanes].iter().sum::<f32>() / lanes as f32;
         let floor = if sim_cmd.armed { ARMED_IDLE } else { 0.0 };
         let target = mean.max(floor);
+        let rise = if self.last_collective < ARMED_IDLE {
+            LOW_BAND_RISE_PER_S
+        } else {
+            RISE_PER_S
+        };
         let allowed = if target > self.last_collective {
-            (self.last_collective + RISE_PER_S * dt).min(target)
+            (self.last_collective + rise * dt).min(target)
         } else {
             target
         }
@@ -264,6 +295,33 @@ where
         }
         self.last_collective = allowed;
 
+        /// Per-lane ceiling, below the latch threshold with margin.
+        /// The mean ceiling alone cannot keep a lane out of the stall
+        /// latch: differentials stack on top of the mean, and a yaw
+        /// fight can rail one lane to 1.0 for seconds — long enough to
+        /// latch that prop, and a single latched prop is an
+        /// asymmetric-thrust departure, not a soft limit. The squeeze
+        /// scales every lane's deviation by one factor, so the
+        /// commanded moment keeps its direction and the mix keeps its
+        /// shape; only the magnitude yields.
+        const LANE_CEILING: f32 = 0.85;
+        let mean_now: f32 = sim_cmd.outputs[..lanes].iter().sum::<f32>() / lanes as f32;
+        let mut squeeze = 1.0f32;
+        for lane in &sim_cmd.outputs[..lanes] {
+            let dev = *lane - mean_now;
+            if dev > 0.0 && mean_now + dev > LANE_CEILING {
+                squeeze = squeeze.min((LANE_CEILING - mean_now) / dev);
+            }
+            if dev < 0.0 && mean_now + dev < 0.0 {
+                squeeze = squeeze.min(mean_now / -dev);
+            }
+        }
+        if squeeze < 1.0 {
+            for lane in &mut sim_cmd.outputs[..lanes] {
+                *lane = mean_now + (*lane - mean_now) * squeeze;
+            }
+        }
+
         // Until the vehicle has climbed clear of its arming altitude,
         // squeeze the differential toward the mean: on its gear the
         // attitude is held by the ground, and the cascade's per-lane
@@ -272,16 +330,22 @@ where
         // One-way: full authority from the moment it is airborne.
         if !self.airborne {
             let clear = match (self.ground_alt, self.last_fix.as_ref()) {
-                (Some(ground), Some(fix)) => fix.alt_m > ground + 1.0,
+                (Some(ground), Some(fix)) => fix.alt_m > ground + 0.5,
                 _ => false,
             };
             if clear {
                 self.airborne = true;
             } else {
-                let new_mean: f32 =
-                    sim_cmd.outputs[..lanes].iter().sum::<f32>() / lanes as f32;
+                let new_mean: f32 = sim_cmd.outputs[..lanes].iter().sum::<f32>() / lanes as f32;
                 for lane in &mut sim_cmd.outputs[..lanes] {
-                    *lane = (new_mean + (*lane - new_mean) * 0.15).clamp(0.0, 1.0);
+                    // Half authority, not near-zero: wind grabs the
+                    // vehicle the moment it unloads its gear, and a
+                    // liftoff with no attitude authority is swept
+                    // downwind faster than any later correction can
+                    // recover. Half keeps the anti-stall dither
+                    // suppression while leaving the wind something to
+                    // fight it with.
+                    *lane = (new_mean + (*lane - new_mean) * 0.5).clamp(0.0, 1.0);
                 }
             }
         }
