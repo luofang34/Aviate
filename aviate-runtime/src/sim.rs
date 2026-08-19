@@ -175,6 +175,12 @@ where
 
     /// Iteration counter for rate dividers
     pub(crate) iteration: u32,
+
+    /// When this flight-controller process started: the anchor for
+    /// telemetry's time_boot_ms, which must mean BOOT time — a HIL
+    /// bridge's simulation clock runs across restarts and would hide
+    /// every reboot from consumers keyed on the boot clock.
+    pub(crate) process_start: std::time::Instant,
 }
 
 impl<C, M> SitlRunner<C, M>
@@ -206,6 +212,7 @@ where
             ekf_initialized: false,
             telemetry: None,
             iteration: 0,
+            process_start: std::time::Instant::now(),
         }
     }
 

@@ -267,7 +267,14 @@ where
 
         // 10. Update telemetry snapshot (HIGH-DAL: trivial field copies only)
         self.iteration = self.iteration.wrapping_add(1);
-        let time_ms = (self.transport.now_us() / 1000) as u32;
+        // Telemetry's time_boot_ms means what MAVLink says it means:
+        // milliseconds since THIS flight controller booted. The
+        // simulation clock is the wrong stamp here — a HIL bridge's
+        // clock runs continuously across FC restarts, so a restarted
+        // process would resume mid-clock and no consumer could ever
+        // see the reboot (a reset latch keyed on a fresh source epoch
+        // then never clears).
+        let time_ms = u32::try_from(self.process_start.elapsed().as_millis()).unwrap_or(u32::MAX);
         if let Some(ref mut telem) = self.telemetry {
             let baro = self.sensor_cache.baro.as_ref().map(|sample| sample.value);
             let snapshot = TelemetrySnapshot {
