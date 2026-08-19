@@ -76,6 +76,14 @@ where
     /// experiment injects its excitation here so the probe reaches the
     /// plant regardless of what the closed loop is doing.
     lane_injection: [f32; 4],
+    /// The last collective mean this board let onto the wire, for the
+    /// spool-rate constraint. See `answer_sample`.
+    last_collective: f32,
+    last_answer_at: Option<std::time::Instant>,
+    /// GPS altitude captured at arming, and whether the vehicle has
+    /// climbed clear of it since. See `limit_collective_spool`.
+    ground_alt: Option<f32>,
+    airborne: bool,
 }
 
 impl<C, M> XPlaneBoard<C, M>
@@ -118,6 +126,10 @@ where
             last_fix: None,
             last_imu: None,
             lane_injection: [0.0; 4],
+            last_collective: 0.0,
+            last_answer_at: None,
+            ground_alt: None,
+            airborne: false,
         })
     }
 
@@ -171,6 +183,7 @@ where
         for (lane, inj) in sim_cmd.outputs.iter_mut().zip(self.lane_injection) {
             *lane = (*lane + inj).clamp(0.0, 1.0);
         }
+        self.limit_collective_spool(&mut sim_cmd);
         // Mixer outputs are force-domain per-motor thrust; the resolved
         // actuator curve converts them to the boundary command here,
         // exactly once, before it reaches the wire.
@@ -185,6 +198,92 @@ where
             // A dropped command is the bridge's cue to stall; it must be
             // visible, not swallowed.
             log::debug!("actuator command not sent: {error}");
+        }
+    }
+
+    /// Rate-limits the RISE of the collective mean, preserving the
+    /// differential content untouched.
+    ///
+    /// A rotor commanded from idle to high thrust faster than its RPM
+    /// can follow stalls its blades, and the simulator models the
+    /// stall as a latched state: thrust stays collapsed (measured
+    /// NEGATIVE prop force at full command) for as long as the demand
+    /// is held. The constraint is therefore a property of the PLANT,
+    /// enforced at the last exit before the wire so no commander —
+    /// cascade, harness, or failsafe — can slam the collective. The
+    /// downward direction is deliberately unlimited: cutting thrust is
+    /// always safe and a disarm must not ramp.
+    fn limit_collective_spool(&mut self, sim_cmd: &mut aviate_hal_xil::sim_types::SimActuatorCmd) {
+        /// Maximum collective rise, force-domain units per second —
+        /// paced to the rotors' RPM inertia so blade angle of attack
+        /// never outruns rotor speed. The bracketing is empirical and
+        /// consistent across every flight of the night: staircase
+        /// ramps at 0.036/s always spool cleanly, ramps at 0.08/s and
+        /// above always leave the props partially stalled and the
+        /// vehicle perched at "full" thrust. Fifteen seconds from idle
+        /// to hover is a turbine-class spool-up, which a rotor this
+        /// size honestly is.
+        const RISE_PER_S: f32 = 0.035;
+        /// Collective mean ceiling, and the more important half of the
+        /// spool constraint: the prop model's thrust curve COLLAPSES
+        /// under a sustained high command (measured: force 1.0 held on
+        /// the ground reads near-zero prop force — blade stall latched
+        /// by RPM that can no longer catch up). The healthy regime
+        /// tops out well below that, hover sits near 0.43, and the
+        /// ceiling keeps every commander out of the latch while
+        /// reserving differential headroom for attitude authority.
+        const MEAN_CEILING: f32 = 0.55;
+        let now = std::time::Instant::now();
+        let dt = self
+            .last_answer_at
+            .map_or(0.01, |at| now.duration_since(at).as_secs_f32())
+            .clamp(0.0, 0.05);
+        self.last_answer_at = Some(now);
+        /// Collective the rotors idle at while armed. An eVTOL spools
+        /// its rotors ONCE and modulates around the operating point;
+        /// dropping to zero between demands would pay the full spool
+        /// time again on every climb — and this idle sits safely below
+        /// liftoff thrust while keeping the blades unstalled.
+        const ARMED_IDLE: f32 = 0.35;
+        let lanes = usize::from(sim_cmd.count).min(4).max(1);
+        let mean: f32 =
+            sim_cmd.outputs[..lanes].iter().sum::<f32>() / lanes as f32;
+        let floor = if sim_cmd.armed { ARMED_IDLE } else { 0.0 };
+        let target = mean.max(floor);
+        let allowed = if target > self.last_collective {
+            (self.last_collective + RISE_PER_S * dt).min(target)
+        } else {
+            target
+        }
+        .min(MEAN_CEILING);
+        let shift = allowed - mean;
+        if shift < 0.0 {
+            for lane in &mut sim_cmd.outputs[..lanes] {
+                *lane = (*lane + shift).clamp(0.0, 1.0);
+            }
+        }
+        self.last_collective = allowed;
+
+        // Until the vehicle has climbed clear of its arming altitude,
+        // squeeze the differential toward the mean: on its gear the
+        // attitude is held by the ground, and the cascade's per-lane
+        // dither keeps re-tripping blades into stall exactly the way a
+        // symmetric ramp — which spools cleanly every time — does not.
+        // One-way: full authority from the moment it is airborne.
+        if !self.airborne {
+            let clear = match (self.ground_alt, self.last_fix.as_ref()) {
+                (Some(ground), Some(fix)) => fix.alt_m > ground + 1.0,
+                _ => false,
+            };
+            if clear {
+                self.airborne = true;
+            } else {
+                let new_mean: f32 =
+                    sim_cmd.outputs[..lanes].iter().sum::<f32>() / lanes as f32;
+                for lane in &mut sim_cmd.outputs[..lanes] {
+                    *lane = (new_mean + (*lane - new_mean) * 0.15).clamp(0.0, 1.0);
+                }
+            }
         }
     }
 
@@ -234,6 +333,8 @@ where
         self.runner.board_hal.arm();
         self.runner.transport.set_armed(true);
         self.armed = true;
+        self.ground_alt = self.last_fix.map(|fix| fix.alt_m);
+        self.airborne = false;
         Ok(())
     }
 

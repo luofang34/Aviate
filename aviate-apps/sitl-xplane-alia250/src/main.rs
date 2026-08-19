@@ -19,6 +19,8 @@
 mod identify;
 mod motors;
 
+use aviate_core::ekf::Estimator as _;
+
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -64,10 +66,12 @@ fn main() -> ExitCode {
         }
     };
 
-    let identifying = args.iter().any(|arg| arg == "--identify");
+    let experiment_flight = args
+        .iter()
+        .any(|arg| arg == "--identify" || arg == "--sweep");
     // The identification flight must not fly the gains it exists to
     // derive; it uses the known-flyable default cascade instead.
-    let kernel = match if identifying {
+    let kernel = match if experiment_flight {
         aviate_app_sitl_xplane_alia250_kernel::build_alia250_identification_kernel()
     } else {
         aviate_app_sitl_xplane_alia250_kernel::build_alia250_kernel()
@@ -78,11 +82,21 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // The wire lane order is airframe knowledge: the Alia's channel
+    // map wants the [0,2,1,3] permutation; the qtailsitter's channels
+    // are the PX4 quad-x order the mixer already emits, and applying
+    // the Alia permutation there cross-feeds roll into pitch and flips
+    // the vehicle on the ground at 9 % thrust.
+    let lane_order = if std::env::var("AVIATE_CASCADE").as_deref() == Ok("x500") {
+        None
+    } else {
+        Some(motors::to_airframe_order as fn(&mut [f32; 16], u8))
+    };
     let mut board = match XPlaneBoard::with_config(
         kernel,
         XPlaneConfig {
             simulator_addr: bridge,
-            lane_order: Some(motors::to_airframe_order),
+            lane_order,
             ..XPlaneConfig::default()
         },
     ) {
@@ -93,11 +107,13 @@ fn main() -> ExitCode {
         }
     };
 
-    if identifying {
+    if args.iter().any(|arg| arg == "--identify") {
         log::info!("dialing the X-Plane bridge at {bridge} (identification flight)");
         identify::run(&mut board);
         return ExitCode::SUCCESS;
     }
+    // The sweep flies the identification kernel for the same reason
+    // --identify does: it must not depend on the gains it informs.
     if args.iter().any(|arg| arg == "--sweep") {
         log::info!("dialing the X-Plane bridge at {bridge} (collective sweep)");
         identify::run_sweep(&mut board);
@@ -184,6 +200,16 @@ where
                 .map(|lane| format!("{:.2}", lane.0))
                 .collect::<Vec<_>>()
                 .join(",");
+            // The estimator's vertical state beside the receiver's:
+            // when they disagree, the vertical loop is flying the
+            // estimate, and THAT is the number to read.
+            let est = board
+                .kernel()
+                .pipeline()
+                .estimator
+                .estimate(&board.kernel().state.estimator);
+            let vz_est = est.velocity_ned[2].0;
+            let dz_est = est.position_ned[2].0;
             // One lifecycle phase, not two booleans: `ready` means
             // ready TO ARM, so an armed kernel is legitimately not
             // "ready" and printing both reads as a fault.
@@ -196,7 +222,7 @@ where
             };
             log::info!(
                 "link rx={rx} tx={tx} crc_errors={crc} unsent={unsent} connects={connects} \
-                 phase={phase} {fix} motors=[{outputs}]"
+                 phase={phase} {fix} est_d={dz_est:.1}m est_vz={vz_est:.2} motors=[{outputs}]"
             );
             last_report = Instant::now();
         }

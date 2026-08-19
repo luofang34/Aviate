@@ -30,24 +30,49 @@ use aviate_core::DefaultAviateKernel;
 use aviate_runtime::sitl_timestamp;
 
 /// Force-domain hover trim, MEASURED by the grounded collective sweep
-/// (`--sweep`): the simulator's own prop-force dataref crosses the
-/// vehicle's ~30.6 kN weight at force ~0.78, and the vehicle lifts off
-/// between the 0.73 and 0.82 steps. The 0.35 guess this replaces made
-/// the vertical loop operate saturated at all times — every takeoff
-/// slammed the collective from idle to maximum, which excites the prop
-/// model's spool-up transient instead of flying through it.
-const HOVER_TRIM: f32 = 0.78;
+/// (`--sweep`) against the simulator's own prop-force dataref in the
+/// HEALTHY spool regime: thrust crosses the vehicle's weight near
+/// force 0.43 and the vehicle lifts by 0.5. An earlier 0.78 reading
+/// was taken with the rotors in the latched-stall state the ceiling in
+/// the board now guards against — a trim measured there drives every
+/// takeoff back INTO the stall. The trim drifts with battery state
+/// (the airframe lightens as it discharges); the vertical loop's
+/// integrator absorbs the drift.
+const HOVER_TRIM: f32 = 0.43;
+
+/// Reads one plant number from the environment, so a tuning session on
+/// a different simulator aircraft can override the baked identity
+/// without a rebuild. Flight builds carry no environment plumbing —
+/// this app is SITL by definition.
+fn env_f32(name: &str, fallback: f32) -> f32 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(fallback)
+}
+
+fn hover_trim() -> f32 {
+    env_f32("AVIATE_HOVER_TRIM", HOVER_TRIM)
+}
+
+fn plant_k() -> [f32; 3] {
+    [
+        env_f32("AVIATE_PLANT_K_ROLL", PLANT_K[0]),
+        env_f32("AVIATE_PLANT_K_PITCH", PLANT_K[1]),
+        env_f32("AVIATE_PLANT_K_YAW", PLANT_K[2]),
+    ]
+}
 
 /// Measured plant authority per axis, rad/s^2 per unit normalized
 /// force-domain torque: the `--identify` flight's output (correlation
 /// at the 2.5 rad/s probe, virtual-test-stand run). Roll and yaw are
-/// as measured; the pitch channel's measurement was contaminated by
-/// cross-axis coupling, so pitch carries roll scaled by the arm ratio
-/// (2.5 m lateral / 3.0 m longitudinal). These are the ONLY
+/// read in the HEALTHY spool regime (hover collective 0.43), where the
+/// two probe frequencies agree on each axis's magnitude. These
+/// are the ONLY
 /// airframe-specific inputs to the attitude cascade; re-run the
 /// experiment and update them when the airframe (or the simulator's
 /// model of it) changes.
-const PLANT_K: [f32; 3] = [4.5, 3.5, 2.7];
+const PLANT_K: [f32; 3] = [5.3, 3.1, 1.0];
 
 /// Attitude-cascade gains derived from the measured plant.
 ///
@@ -70,12 +95,19 @@ const PLANT_K: [f32; 3] = [4.5, 3.5, 2.7];
 fn alia250_gains() -> CascadeGains {
     const ZETA: f32 = 1.25;
     const SEPARATION: f32 = 4.0 * ZETA * ZETA;
-    const WN: [f32; 3] = [2.0, 2.0, 1.2];
+    // Yaw runs far slower than roll/pitch on purpose: its actuator is
+    // rotor drag, whose measured lag is already -63 degrees beyond the
+    // integrator at 2.5 rad/s — a yaw crossover anywhere near that
+    // frequency has no phase margin left. A slow yaw loop also cannot
+    // chase the mag heading's tilt-compensation wobble fast enough to
+    // destabilize the frame.
+    const WN: [f32; 3] = [2.0, 2.0, 0.6];
+    let k = plant_k();
     let mut att_p = [0.0_f32; 3];
     let mut rate_p = [0.0_f32; 3];
     for axis in 0..3 {
         att_p[axis] = WN[axis] / SEPARATION.sqrt();
-        rate_p[axis] = SEPARATION * att_p[axis] / PLANT_K[axis];
+        rate_p[axis] = SEPARATION * att_p[axis] / k[axis];
     }
     CascadeGains {
         att_p,
@@ -113,13 +145,20 @@ pub fn build_alia250_identification_kernel(
 /// kernel whose tuning does not match its declared config.
 pub fn build_alia250_kernel(
 ) -> Result<DefaultAviateKernel<MultirotorController, QuadXMixerX500>, KernelBuildError> {
+    // `AVIATE_CASCADE=x500` flies the stock X500 cascade instead of
+    // the Alia derivation — the right tuning when the simulator is
+    // pointed at an X500-class airframe for a demo or a tuning
+    // session. SITL-only affordance, like the plant overrides above.
+    if std::env::var("AVIATE_CASCADE").as_deref() == Ok("x500") {
+        return build_with(CascadeGains::x500_defaults());
+    }
     build_with(alia250_gains())
 }
 
 fn build_with(
     gains: CascadeGains,
 ) -> Result<DefaultAviateKernel<MultirotorController, QuadXMixerX500>, KernelBuildError> {
-    let hover = NormalizedThrust(HOVER_TRIM);
+    let hover = NormalizedThrust(hover_trim());
     let cfg = ResolvedKernelConfig {
         cascade_gains: gains,
         hover_thrust_norm: hover,
