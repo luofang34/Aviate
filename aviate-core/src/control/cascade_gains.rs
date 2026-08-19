@@ -92,6 +92,12 @@ pub struct CascadeGains {
 
     /// Rate loop P gains (normalized-torque per rad/s), per axis.
     pub rate_p: [Scalar; 3],
+    /// Rate loop I gains (normalized torque per rad of integrated
+    /// rate error), per axis. Zero disables the axis's integrator.
+    /// Exists to null STANDING torque disturbances — without it a
+    /// constant disturbance becomes a constant rate or attitude
+    /// error, which on yaw presents as an uncommanded heading walk.
+    pub rate_i: [Scalar; 3],
     /// Rate loop D gains (normalized-torque per rad/s² of
     /// derivative-of-measurement). Computed against gyro, not
     /// against setpoint, so a setpoint step doesn't kick the D
@@ -212,6 +218,9 @@ impl CascadeGains {
             // command inside plant authority.
             att_max_rate_cmd: 3.0,
             rate_p: [0.30, 0.30, 0.60],
+            // Off by default: the X500's disturbances are within its
+            // P authority, and existing tunes keep their behavior.
+            rate_i: [0.0, 0.0, 0.0],
             rate_d: [0.0, 0.0, 0.05],
             rate_d_lpf_alpha: 0.5,
         }
@@ -231,6 +240,7 @@ impl CascadeGains {
                 ("vel_d", self.vel_d[i]),
                 ("att_p", self.att_p[i]),
                 ("rate_p", self.rate_p[i]),
+                ("rate_i", self.rate_i[i]),
                 ("rate_d", self.rate_d[i]),
             ] {
                 if !g.is_finite() || g < 0.0 {
