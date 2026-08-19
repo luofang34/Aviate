@@ -144,6 +144,15 @@ impl Default for HilBackendConfig {
 pub struct HilBackend {
     link: Link,
     origin: geodetic::NedOrigin,
+    /// Timestamp of the newest sensor sample received, echoed into the
+    /// actuator answer. Lockstep bridges pair an answer with the sample
+    /// it answers BY THIS ECHO: the bridge compares the answer's clock
+    /// against its own sensor clock, so an answer stamped from the
+    /// flight controller's clock is a cross-clock comparison that
+    /// rejects the answer whenever the controller's clock happens to
+    /// lag the bridge's — a wedge that ends in the bridge's response
+    /// timeout and a mid-flight actuator zeroing.
+    last_sensor_time_us: u64,
 }
 
 /// Which socket carries this backend's HIL stream. A datagram bridge is
@@ -222,6 +231,7 @@ impl HilBackend {
         Ok(Self {
             link: Link::Udp(transport),
             origin: geodetic::NedOrigin::default(),
+            last_sensor_time_us: 0,
         })
     }
 
@@ -252,6 +262,7 @@ impl HilBackend {
         // IMU rate. Only the lanes the sample declares are published.
         if let Some(sensor) = sensor {
             packet.timestamp_us = sensor.time_usec;
+            self.last_sensor_time_us = sensor.time_usec;
             let updated = SensorFields::from_bits(sensor.fields_updated);
 
             if updated.imu() {
@@ -347,7 +358,13 @@ impl HilBackend {
         }
 
         let hil_cmd = HilActuatorControls {
-            time_usec: self.link.now_us(),
+            // Echo the answered sample's clock; the transport clock is
+            // only a fallback for an answer sent before any sample.
+            time_usec: if self.last_sensor_time_us > 0 {
+                self.last_sensor_time_us
+            } else {
+                self.link.now_us()
+            },
             controls,
             // Bit 0 marks this command as the lockstep response to the
             // sensor sample that produced it. A bridge that paces its
@@ -390,6 +407,7 @@ impl HilBackend {
                 comp_id: config.comp_id,
             })),
             origin: geodetic::NedOrigin::default(),
+            last_sensor_time_us: 0,
         }
     }
 

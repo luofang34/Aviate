@@ -346,8 +346,7 @@ impl HilTcpTransport {
         let Some(stream) = self.stream.as_ref() else {
             return false;
         };
-        if stream.set_read_timeout(Some(timeout)).is_err()
-            || stream.set_nonblocking(false).is_err()
+        if stream.set_read_timeout(Some(timeout)).is_err() || stream.set_nonblocking(false).is_err()
         {
             self.disconnect("the link could not be put in blocking mode");
             return false;
