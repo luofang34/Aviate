@@ -78,7 +78,7 @@ use aviate_hal_io::transport::FrameTx;
 
 use super::protocol::{
     serialize_mavlink, AttitudeQuaternion, Heartbeat, LocalPositionNed, MavAutopilot, MavMessage,
-    MavModeFlag, MavState, MavType,
+    MavModeFlag, MavState, MavType, ScaledPressure,
 };
 
 use crate::errors::{TelemetryError, TelemetryResult};
@@ -223,6 +223,34 @@ pub fn format_local_position(
     let len =
         serialize_mavlink(&msg, *seq, sys_id, comp_id, buf).ok_or(TelemetryError::Protocol)?;
 
+    *seq = seq.wrapping_add(1);
+    Ok(len)
+}
+
+/// Formats the static source's pressure as SCALED_PRESSURE.
+///
+/// # Errors
+///
+/// Returns [`TelemetryError::BufferTooSmall`] when `buf` cannot hold the
+/// frame.
+pub fn format_scaled_pressure(
+    pressure_pa: f32,
+    temperature_c: f32,
+    time_ms: u32,
+    sys_id: u8,
+    comp_id: u8,
+    seq: &mut u8,
+    buf: &mut [u8],
+) -> TelemetryResult<usize> {
+    let msg = MavMessage::ScaledPressure(ScaledPressure {
+        time_boot_ms: time_ms,
+        // MAVLink carries hectopascals.
+        press_abs: pressure_pa / 100.0,
+        press_diff: 0.0,
+        temperature: (temperature_c * 100.0) as i16,
+    });
+    let len = serialize_mavlink(&msg, *seq, sys_id, comp_id, buf)
+        .ok_or(TelemetryError::BufferTooSmall)?;
     *seq = seq.wrapping_add(1);
     Ok(len)
 }

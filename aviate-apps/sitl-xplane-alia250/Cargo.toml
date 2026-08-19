@@ -15,6 +15,7 @@ path = "src/main.rs"
 # airframe, builds the resolved config through the checked builder,
 # and this binary injects the result into the board.
 aviate-app-sitl-xplane-alia250-kernel = { path = "kernel" }
+aviate-backend-mavlink-hil = { path = "../../aviate-hal/xil/backends/mavlink-hil" }
 aviate-board-sitl-xplane = { path = "../../aviate-boards/sitl-xplane" }
 aviate-config = { path = "../../aviate-config" }
 aviate-core = { path = "../../aviate-core" }

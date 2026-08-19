@@ -101,7 +101,7 @@ fn alia250_gains() -> CascadeGains {
     // frequency has no phase margin left. A slow yaw loop also cannot
     // chase the mag heading's tilt-compensation wobble fast enough to
     // destabilize the frame.
-    const WN: [f32; 3] = [2.0, 2.0, 0.6];
+    const WN: [f32; 3] = [2.0, 2.0, 0.9];
     let k = plant_k();
     let mut att_p = [0.0_f32; 3];
     let mut rate_p = [0.0_f32; 3];
@@ -113,6 +113,15 @@ fn alia250_gains() -> CascadeGains {
         att_p,
         att_max_rate_cmd: 1.0,
         rate_p,
+        // This airframe hovers TILTED: its center of mass sits well off
+        // the rotor centroid (measured as a sustained ~0.2-normalized
+        // pitch torque in level hover), and the velocity loop's
+        // integrator is what finds that trim attitude. At the X500's
+        // 0.05 it takes tens of seconds, during which the vehicle
+        // drifts at whatever velocity error the un-trimmed attitude
+        // sustains; the conditional anti-windup makes the faster
+        // integrator safe.
+        vel_i: [0.3, 0.3, 0.1],
         // Damping the long arms would ring with; kept small relative
         // to P so derivative noise cannot dominate the torque demand.
         rate_d: [0.05, 0.05, 0.05],

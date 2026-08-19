@@ -120,18 +120,43 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // Simulation truth rides the SAME estimate stream, sent by this
+    // app from beside the runner's own telemetry: the bridge's
+    // HIL_STATE_QUATERNION is the simulator's oracle, and recording an
+    // estimate without the truth it should be judged against wastes
+    // the whole point of simulating. Flight builds have no simulator
+    // and no such stream to carry.
+    let truth_tx = config
+        .transports
+        .iter()
+        .find(|t| t.roles.iter().any(|role| role == "telemetry"))
+        .and_then(|t| t.endpoint.clone())
+        .and_then(|endpoint| {
+            let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+            socket.connect(&endpoint).ok()?;
+            log::info!("sim-truth forwarding to {endpoint}");
+            Some(socket)
+        });
+    if truth_tx.is_none() {
+        log::warn!("no telemetry endpoint; sim truth will not be forwarded");
+    }
+
     board.init_telemetry(&config, SENSOR_RATE_HZ);
     if !board.telemetry_enabled() {
         log::warn!("running without an estimate stream (see errors above)");
     }
     log::info!("dialing the X-Plane bridge at {bridge}");
 
-    run(&mut board, auto_arm)
+    run(&mut board, auto_arm, truth_tx)
 }
 
 /// The control loop. Never returns: a link that is down is not a fatal
 /// condition — the simulator is allowed to restart underneath.
-fn run<C, M>(board: &mut XPlaneBoard<C, M>, auto_arm: Option<Duration>) -> !
+fn run<C, M>(
+    board: &mut XPlaneBoard<C, M>,
+    auto_arm: Option<Duration>,
+    truth_tx: Option<std::net::UdpSocket>,
+) -> !
 where
     C: aviate_core::control::VehicleController,
     M: aviate_core::mixer::Mixer,
@@ -139,12 +164,41 @@ where
     let started = Instant::now();
     let mut last_heartbeat = Instant::now();
     let mut last_report = Instant::now();
+    let mut last_truth = Instant::now();
+    let mut truth_seq: u8 = 0;
     let mut was_connected = false;
     let mut armed = false;
 
     loop {
         let cycle_start = Instant::now();
         let command = board.step();
+
+        // Forward the simulator's ground truth onto the estimate
+        // stream at 10 Hz, so every estimate arrives beside the truth
+        // it can be judged against.
+        if let Some(truth) = board.take_truth() {
+            if last_truth.elapsed() >= Duration::from_millis(100) {
+                if let Some(socket) = truth_tx.as_ref() {
+                    let mut buf = [0u8; 256];
+                    if let Some(len) = aviate_backend_mavlink_hil::serialize_frame(
+                        &aviate_backend_mavlink_hil::messages::HilMessage::StateQuaternion(truth),
+                        truth_seq,
+                        1,
+                        1,
+                        &mut buf,
+                    ) {
+                        truth_seq = truth_seq.wrapping_add(1);
+                        if truth_seq == 1 {
+                            log::info!("first sim-truth frame forwarded");
+                        }
+                        if let Err(error) = socket.send(&buf[..len]) {
+                            log::debug!("sim-truth send failed: {error}");
+                        }
+                    }
+                }
+                last_truth = Instant::now();
+            }
+        }
 
         let connected = board.connected();
         if connected != was_connected {

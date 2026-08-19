@@ -307,6 +307,16 @@ where
         self.last_imu.as_ref()
     }
 
+    /// Takes the bridge's latest ground-truth state, when it sent one.
+    /// Simulation truth exists so an estimate can be judged against
+    /// it; the SITL app forwards it on the estimate stream under its
+    /// own message id, and flight builds have no such stream to carry.
+    pub fn take_truth(
+        &mut self,
+    ) -> Option<aviate_backend_mavlink_hil::messages::HilStateQuaternion> {
+        self.hil_backend.take_state_quaternion()
+    }
+
     /// Waits for the bridge's next sample, up to `timeout`.
     ///
     /// This is how the control loop paces itself. The bridge holds its

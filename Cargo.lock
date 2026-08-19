@@ -161,6 +161,7 @@ name = "aviate-app-sitl-xplane-alia250"
 version = "0.1.3"
 dependencies = [
  "aviate-app-sitl-xplane-alia250-kernel",
+ "aviate-backend-mavlink-hil",
  "aviate-board-sitl-xplane",
  "aviate-config",
  "aviate-core",

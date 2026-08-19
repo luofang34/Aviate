@@ -62,6 +62,13 @@ pub struct TelemetrySnapshot {
     pub status: ChannelStatus,
     /// State estimate (for ATTITUDE, POSITION)
     pub state: StateEstimate,
+    /// Static pressure in Pascals (for SCALED_PRESSURE), `None` when
+    /// the vehicle carries no barometer or none has reported yet — an
+    /// absent measurement is never serialized as a zero reading.
+    pub baro_pressure_pa: Option<f32>,
+    /// Static-source temperature in Celsius, meaningful with the
+    /// pressure above.
+    pub baro_temperature_c: f32,
 }
 
 // ============================================================================

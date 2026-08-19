@@ -171,6 +171,8 @@ mod tests {
 
         // Update state (high-DAL)
         let snapshot = TelemetrySnapshot {
+            baro_pressure_pa: None,
+            baro_temperature_c: 0.0,
             time_ms: 1000,
             iteration: 1,
             status: ChannelStatus::default(),
@@ -195,6 +197,8 @@ mod tests {
         // Multiple cycles
         for i in 0..3 {
             let snapshot = TelemetrySnapshot {
+                baro_pressure_pa: None,
+                baro_temperature_c: 0.0,
                 time_ms: i * 100,
                 iteration: i,
                 status: ChannelStatus::default(),
