@@ -68,7 +68,7 @@ fn main() -> ExitCode {
 
     let experiment_flight = args
         .iter()
-        .any(|arg| arg == "--identify" || arg == "--sweep");
+        .any(|arg| arg == "--identify" || arg == "--sweep" || arg == "--yaw-sign");
     // The identification flight must not fly the gains it exists to
     // derive; it uses the known-flyable default cascade instead.
     let kernel = match if experiment_flight {
@@ -114,6 +114,11 @@ fn main() -> ExitCode {
     }
     // The sweep flies the identification kernel for the same reason
     // --identify does: it must not depend on the gains it informs.
+    if args.iter().any(|arg| arg == "--yaw-sign") {
+        log::info!("dialing the X-Plane bridge at {bridge} (yaw-sign probe)");
+        identify::run_yaw_sign(&mut board);
+        return ExitCode::SUCCESS;
+    }
     if args.iter().any(|arg| arg == "--sweep") {
         log::info!("dialing the X-Plane bridge at {bridge} (collective sweep)");
         identify::run_sweep(&mut board);
@@ -166,6 +171,7 @@ where
     let mut last_report = Instant::now();
     let mut last_truth = Instant::now();
     let mut truth_seq: u8 = 0;
+    let mut truth_forwarded = false;
     let mut was_connected = false;
     let mut armed = false;
 
@@ -187,10 +193,11 @@ where
                         1,
                         &mut buf,
                     ) {
-                        truth_seq = truth_seq.wrapping_add(1);
-                        if truth_seq == 1 {
+                        if !truth_forwarded {
+                            truth_forwarded = true;
                             log::info!("first sim-truth frame forwarded");
                         }
+                        truth_seq = truth_seq.wrapping_add(1);
                         if let Err(error) = socket.send(&buf[..len]) {
                             log::debug!("sim-truth send failed: {error}");
                         }
@@ -241,8 +248,12 @@ where
                 |fix| {
                     format!(
                         "fix={:?} sats={} n={:.1}m e={:.1}m d={:.1}m alt={:.1}m",
-                        fix.fix, fix.satellites, fix.position_ned[0], fix.position_ned[1],
-                        fix.position_ned[2], fix.alt_m
+                        fix.fix,
+                        fix.satellites,
+                        fix.position_ned[0],
+                        fix.position_ned[1],
+                        fix.position_ned[2],
+                        fix.alt_m
                     )
                 },
             );

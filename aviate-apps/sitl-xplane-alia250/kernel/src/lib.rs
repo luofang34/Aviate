@@ -125,11 +125,14 @@ fn alia250_gains() -> CascadeGains {
         // Damping the long arms would ring with; kept small relative
         // to P so derivative noise cannot dominate the torque demand.
         rate_d: [0.05, 0.05, 0.05],
-        vel_max_roll_pitch: 0.25,
+        // The measured standing yaw torque (rotor reaction imbalance)
+        // walks the heading without an integrator; roll and pitch get
+        // gentler trims for their own steady asymmetries.
+        rate_i: [0.1, 0.1, 0.3],
+        vel_max_roll_pitch: 0.45,
         ..CascadeGains::x500_defaults()
     }
 }
-
 
 /// Builds the kernel the identification experiment flies: the X500
 /// default cascade, which is marginal on this airframe but demonstrably
