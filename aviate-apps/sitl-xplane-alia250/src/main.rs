@@ -69,16 +69,44 @@ fn main() -> ExitCode {
     let experiment_flight = args
         .iter()
         .any(|arg| arg == "--identify" || arg == "--sweep" || arg == "--yaw-sign");
+    let candidate_text = match load_candidate(&args) {
+        Ok(candidate) => candidate,
+        Err(message) => {
+            log::error!("{message}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if experiment_flight && candidate_text.is_some() {
+        log::error!("--candidate cannot be combined with an identification experiment");
+        return ExitCode::FAILURE;
+    }
     // The identification flight must not fly the gains it exists to
     // derive; it uses the known-flyable default cascade instead.
-    let kernel = match if experiment_flight {
+    let kernel_result = if experiment_flight {
         aviate_app_sitl_xplane_alia250_kernel::build_alia250_identification_kernel()
+    } else if let Some(candidate) = candidate_text.as_deref() {
+        match aviate_app_sitl_xplane_alia250_kernel::build_alia250_kernel_with_candidate(candidate)
+        {
+            Ok(built) => {
+                log::info!(
+                    "calibration candidate={} preset={} candidate_digest={} plant={} kernel={:016x}",
+                    built.manifest.candidate_id,
+                    built.manifest.identity.base_preset,
+                    built.manifest.identity.candidate,
+                    built.manifest.identity.plant_artifact,
+                    built.manifest.kernel_config_hash
+                );
+                Ok(built.kernel)
+            }
+            Err(error) => Err(error),
+        }
     } else {
         aviate_app_sitl_xplane_alia250_kernel::build_alia250_kernel()
-    } {
+    };
+    let kernel = match kernel_result {
         Ok(kernel) => kernel,
         Err(error) => {
-            log::error!("kernel construction refused: {error:?}");
+            log::error!("{error}");
             return ExitCode::FAILURE;
         }
     };
@@ -87,11 +115,7 @@ fn main() -> ExitCode {
     // are the PX4 quad-x order the mixer already emits, and applying
     // the Alia permutation there cross-feeds roll into pitch and flips
     // the vehicle on the ground at 9 % thrust.
-    let lane_order = if std::env::var("AVIATE_CASCADE").as_deref() == Ok("x500") {
-        None
-    } else {
-        Some(motors::to_airframe_order as fn(&mut [f32; 16], u8))
-    };
+    let lane_order = Some(motors::to_airframe_order as fn(&mut [f32; 16], u8));
     let mut board = match XPlaneBoard::with_config(
         kernel,
         XPlaneConfig {
@@ -343,4 +367,17 @@ fn auto_arm_delay(args: &[String]) -> Option<Duration> {
     let index = args.iter().position(|arg| arg == "--auto-arm")?;
     let seconds = args.get(index + 1)?.parse().ok()?;
     Some(Duration::from_secs(seconds))
+}
+
+/// Read one calibration candidate at startup.
+fn load_candidate(args: &[String]) -> Result<Option<String>, String> {
+    let Some(index) = args.iter().position(|arg| arg == "--candidate") else {
+        return Ok(None);
+    };
+    let path = args
+        .get(index + 1)
+        .ok_or_else(|| "--candidate requires a TOML file path".to_owned())?;
+    std::fs::read_to_string(path)
+        .map(Some)
+        .map_err(|error| format!("cannot read calibration candidate {path:?}: {error}"))
 }

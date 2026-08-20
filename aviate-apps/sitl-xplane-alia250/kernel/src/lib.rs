@@ -14,13 +14,13 @@
 //! airframe's yaw loop is positive feedback, measured in flight as a
 //! spin that winds up to the attitude loop's rate command limit.
 //!
-//! Tuning status, stated plainly: the attitude cascade is scaled from
-//! the X500 derivation by this airframe's estimated plant authority
-//! (see `alia250_gains`) and validated by flying it, not by a rig. It
-//! holds takeoff, hover and gentle translation; aggressive maneuvering
-//! is untested and the outer position loops still carry X500 numbers.
+//! The embedded `alia250.toml` preset is the only source for the normal
+//! kernel gains, limits, hover seed, mixer, and actuator curve.
 
 mod construct;
 mod tuning;
 
-pub use construct::{build_alia250_identification_kernel, build_alia250_kernel};
+pub use construct::{
+    build_alia250_identification_kernel, build_alia250_kernel, build_alia250_kernel_with_candidate,
+    AliaKernel, AliaKernelBuildError, CalibratedAliaKernel, CalibrationRunManifest,
+};

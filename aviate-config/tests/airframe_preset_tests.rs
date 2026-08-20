@@ -7,6 +7,7 @@
 use aviate_config::airframe_preset::{preset_from_toml_str, ActuatorCurve, MixerKind, PresetError};
 
 const X500: &str = include_str!("../../presets/x500.toml");
+const ALIA250: &str = include_str!("../../presets/alia250.toml");
 
 #[test]
 fn shipped_x500_preset_parses_and_validates() {
@@ -21,6 +22,19 @@ fn shipped_x500_preset_parses_and_validates() {
     assert!((p.hover_thrust_force_seed() - 0.5929).abs() < 1e-6);
     assert_eq!(p.gains.att_p, [3.5, 3.5, 2.5]);
     assert!((p.limits.max_altitude - 100.0).abs() < 1e-6);
+}
+
+#[test]
+fn shipped_alia250_preset_parses_and_validates() {
+    let preset = preset_from_toml_str(ALIA250).expect("Alia 250 preset must be valid");
+    assert_eq!(preset.schema_version, 2);
+    assert_eq!(preset.name, "alia250");
+    assert_eq!(preset.mixer, MixerKind::QuadXX500ReversedSpin);
+    assert_eq!(preset.motor_count, 4);
+    assert_eq!(preset.actuator_curve, ActuatorCurve::Quadratic);
+    assert!((preset.hover_thrust_force_seed() - 0.43).abs() < 1e-6);
+    assert_eq!(preset.gains.att_p, [0.8, 0.8, 0.36]);
+    assert_eq!(preset.gains.att_max_rate_cmd, 1.0);
 }
 
 #[test]

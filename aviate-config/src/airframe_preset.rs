@@ -26,6 +26,13 @@
 use alloc::string::String;
 use serde::Deserialize;
 
+mod candidate;
+
+pub use candidate::{
+    resolve_candidate, CalibrationCandidate, CandidateError, CandidateIdentity, ContentDigest,
+    GainOverrides, ResolvedCandidate,
+};
+
 /// Registered mixer geometries a preset may name. The app resolves
 /// the variant to a compiled mixer type; the variant (not the TOML
 /// string) is what must reach the kernel's canonical hash so lockstep
@@ -38,13 +45,15 @@ pub enum MixerKind {
     /// PX4-gazebo-models X500 pattern (CW on FL+RR diagonal) —
     /// opposite yaw signs from [`MixerKind::QuadX`].
     QuadXX500,
+    /// X500 lane order with the two spin diagonals reversed.
+    QuadXX500ReversedSpin,
 }
 
 impl MixerKind {
     /// Motor count this geometry drives.
     pub fn motor_count(self) -> u8 {
         match self {
-            MixerKind::QuadX | MixerKind::QuadXX500 => 4,
+            MixerKind::QuadX | MixerKind::QuadXX500 | MixerKind::QuadXX500ReversedSpin => 4,
         }
     }
 }
