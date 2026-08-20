@@ -347,3 +347,116 @@ fn d_term_damps_against_measurement_rise() {
     // Yaw has rate_d = 0, so it stays pure-P (here exactly zero error).
     assert!((out[2].0).abs() < 1e-6);
 }
+
+// =============================================================================
+// Integral term
+// =============================================================================
+
+/// An I-enabled controller with P and D disabled, so the output reads
+/// the integral state directly: out = clamp(integral, -1, 1).
+fn i_only(rate_i: [f32; 3]) -> RateController {
+    let mut g = CascadeGains::x500_defaults();
+    g.rate_p = [0.0; 3];
+    g.rate_d = [0.0; 3];
+    g.rate_i = rate_i;
+    RateController::new(g)
+}
+
+#[test]
+fn i_term_accumulates_a_steady_error() {
+    let ctrl = i_only([2.0, 0.0, 0.0]);
+    let mut state = RateLoopState::default();
+    let setpoint = [
+        RadiansPerSecond(0.1),
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(0.0),
+    ];
+    let zero = [RadiansPerSecond(0.0); 3];
+    let mut last = 0.0_f32;
+    for _ in 0..100 {
+        let out = ctrl.step(&mut state, setpoint, zero, 0.001);
+        assert!(
+            out[0].0 >= last,
+            "a steady error must ratchet the integral upward"
+        );
+        last = out[0].0;
+    }
+    // 100 cycles × 0.1 rad/s × 2.0 × 0.001 s = 0.02 accumulated.
+    assert!((last - 0.02).abs() < 1e-4, "integral reached {last}");
+    // The axes with rate_i = 0 must stay untouched.
+    let out = ctrl.step(&mut state, setpoint, zero, 0.001);
+    assert!((out[1].0).abs() < 1e-6);
+    assert!((out[2].0).abs() < 1e-6);
+}
+
+#[test]
+fn a_saturated_command_cannot_wind_the_integral() {
+    // P saturates the axis from the first cycle, so the integral may
+    // not grow: torque the actuators never delivered must not become
+    // a stored correction that overshoots the recovery.
+    let mut g = CascadeGains::x500_defaults();
+    g.rate_p = [10.0, 0.0, 0.0];
+    g.rate_d = [0.0; 3];
+    g.rate_i = [2.0, 0.0, 0.0];
+    let ctrl = RateController::new(g);
+    let mut state = RateLoopState::default();
+    let big = [
+        RadiansPerSecond(1.0),
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(0.0),
+    ];
+    let zero = [RadiansPerSecond(0.0); 3];
+    for _ in 0..50 {
+        let out = ctrl.step(&mut state, big, zero, 0.001);
+        assert!((out[0].0 - 1.0).abs() < 1e-6, "the command holds the clamp");
+    }
+    // Error removed: the output is the integral alone, which the
+    // anti-windup gate kept at zero through the saturated hold.
+    let out = ctrl.step(&mut state, zero, zero, 0.001);
+    assert!(
+        out[0].0.abs() < 1e-6,
+        "a saturated hold must not wind up, got {}",
+        out[0].0
+    );
+}
+
+#[test]
+fn the_integral_may_shrink_even_while_saturated() {
+    // Accumulate a positive integral unsaturated, then jam the error
+    // hard negative: the command saturates at -1, and the gate must
+    // still let the integral SHRINK — freezing it would carry a stale
+    // correction through the transient and bias the recovery.
+    let ctrl = i_only([2.0, 0.0, 0.0]);
+    let mut state = RateLoopState::default();
+    let positive = [
+        RadiansPerSecond(0.1),
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(0.0),
+    ];
+    let zero = [RadiansPerSecond(0.0); 3];
+    for _ in 0..100 {
+        ctrl.step(&mut state, positive, zero, 0.001);
+    }
+    let before = ctrl.step(&mut state, zero, zero, 0.001)[0].0;
+    assert!(before > 0.01, "the integral accumulated, got {before}");
+    // A P-saturating negative error with P gain restored.
+    let mut g = CascadeGains::x500_defaults();
+    g.rate_p = [10.0, 0.0, 0.0];
+    g.rate_d = [0.0; 3];
+    g.rate_i = [2.0, 0.0, 0.0];
+    let saturating = RateController::new(g);
+    let negative = [
+        RadiansPerSecond(-1.0),
+        RadiansPerSecond(0.0),
+        RadiansPerSecond(0.0),
+    ];
+    for _ in 0..10 {
+        ctrl.step(&mut state, negative, zero, 0.001);
+        saturating.step(&mut state, negative, zero, 0.001);
+    }
+    let after = ctrl.step(&mut state, zero, zero, 0.001)[0].0;
+    assert!(
+        after < before,
+        "the integral must shrink under an opposing saturated error: {before} -> {after}"
+    );
+}
