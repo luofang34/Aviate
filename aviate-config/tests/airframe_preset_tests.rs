@@ -84,6 +84,9 @@ fn non_finite_and_out_of_range_values_are_rejected() {
         ("hover_thrust_seed = 0.77", "hover_thrust_seed = 1.2"),
         ("rate_d_lpf_alpha = 0.5", "rate_d_lpf_alpha = inf"),
         ("att_p = [3.5, 3.5, 2.5]", "att_p = [3.5, -1.0, 2.5]"),
+        ("vel_max_yaw_step = 0.6", "vel_max_yaw_step = -0.1"),
+        ("att_max_rate_cmd = 3.0", "att_max_rate_cmd = inf"),
+        ("rate_i = [0.0, 0.0, 0.0]", "rate_i = [0.0, -0.1, 0.0]"),
         ("max_altitude = 100.0", "max_altitude = -5.0"),
     ] {
         let text = X500.replace(from, to);
@@ -124,9 +127,12 @@ fn x500_preset_matches_compiled_defaults() {
     assert_eq!(p.gains.vel_i, d.vel_i);
     assert_eq!(p.gains.vel_d, d.vel_d);
     assert_eq!(p.gains.vel_max_roll_pitch, d.vel_max_roll_pitch);
+    assert_eq!(p.gains.vel_max_yaw_step, d.vel_max_yaw_step);
     assert_eq!(p.gains.vel_accel_ff, d.vel_accel_ff);
     assert_eq!(p.gains.att_p, d.att_p);
+    assert_eq!(p.gains.att_max_rate_cmd, d.att_max_rate_cmd);
     assert_eq!(p.gains.rate_p, d.rate_p);
+    assert_eq!(p.gains.rate_i, d.rate_i);
     assert_eq!(p.gains.rate_d, d.rate_d);
     assert_eq!(p.gains.rate_d_lpf_alpha, d.rate_d_lpf_alpha);
 }
