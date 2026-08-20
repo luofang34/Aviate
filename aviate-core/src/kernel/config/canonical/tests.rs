@@ -79,6 +79,7 @@ fn canonical_hash_distinguishes_each_cascade_gain() {
     probe!(att_p, 1, 0.05);
     probe!(att_max_rate_cmd, 0.5);
     probe!(rate_p, 0, 0.5);
+    probe!(rate_i, 1, 0.5);
     probe!(rate_d, 2, 0.01);
     probe!(rate_d_lpf_alpha, 0.1);
 }
@@ -143,7 +144,13 @@ fn canonical_hash_distinguishes_mixer_geometry() {
         mixer_geometry: MixerGeometry::QuadXX500,
         ..Default::default()
     };
+    let reversed = ResolvedKernelConfig {
+        mixer_geometry: MixerGeometry::QuadXX500ReversedSpin,
+        ..Default::default()
+    };
     assert_ne!(quad_x.canonical_hash(), x500.canonical_hash());
+    assert_ne!(x500.canonical_hash(), reversed.canonical_hash());
+    assert_ne!(quad_x.canonical_hash(), reversed.canonical_hash());
 }
 
 #[test]

@@ -80,6 +80,7 @@ IMPL_MAP=(
     'controller|controller.vtol.v1|VtolController|aviate-core/src/control/vtol.rs'
     'mixer|mixer.quad_x.v2|QuadXMixer|aviate-core/src/mixer.rs'
     'mixer|mixer.quad_x_x500.v2|QuadXMixerX500|aviate-core/src/mixer.rs'
+    'mixer|mixer.quad_x_x500_reversed_spin.v1|QuadXMixerReversedSpin|aviate-core/src/mixer.rs'
     'sanitizer|sanitizer.group_aware.v1|Sanitizer|aviate-core/src/mixer/sanitizer_impl.rs'
 )
 
@@ -102,9 +103,9 @@ OWNERSHIP=(
     'aviate-core/src/control.rs|controller/controller.multirotor.v2,controller/controller.fixed_wing.v1,controller/controller.vtol.v1'
     'aviate-core/src/control/|controller/controller.multirotor.v2,controller/controller.fixed_wing.v1,controller/controller.vtol.v1'
     'aviate-core/src/mixer/sanitizer_impl.rs|sanitizer/sanitizer.group_aware.v1'
-    'aviate-core/src/mixer/desaturate.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2'
-    'aviate-core/src/mixer.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,sanitizer/sanitizer.group_aware.v1'
-    'aviate-core/src/mixer/|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,sanitizer/sanitizer.group_aware.v1'
+    'aviate-core/src/mixer/desaturate.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1'
+    'aviate-core/src/mixer.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,sanitizer/sanitizer.group_aware.v1'
+    'aviate-core/src/mixer/|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,sanitizer/sanitizer.group_aware.v1'
 )
 
 # Pinned production aggregate identity hashes. These are the same
