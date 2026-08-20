@@ -120,15 +120,20 @@ impl RateController {
                 0.0
             };
 
-            // Conditional anti-windup: the integral advances only
-            // while the un-clamped command has authority left in the
-            // error's direction, so a saturated maneuver cannot wind
-            // a correction the actuators never delivered.
+            // Conditional anti-windup: the integral advances while
+            // the un-clamped command has authority left, so a
+            // saturated maneuver cannot wind a correction the
+            // actuators never delivered — AND it may always shrink:
+            // gating shrinking updates too would freeze a stale
+            // integral through the whole saturated transient and bias
+            // the recovery by up to the bound.
             let i_gain = self.gains.rate_i[i];
             let unsat = p_term + d_term + state.integral[i];
-            if i_gain > 0.0 && dt_sec > 0.0 && unsat.abs() < 1.0 {
-                state.integral[i] = (state.integral[i] + p_error * i_gain * dt_sec)
-                    .clamp(-RATE_I_LIMIT, RATE_I_LIMIT);
+            let increment = p_error * i_gain * dt_sec;
+            let shrinks = increment * state.integral[i] < 0.0;
+            if i_gain > 0.0 && dt_sec > 0.0 && (unsat.abs() < 1.0 || shrinks) {
+                state.integral[i] =
+                    (state.integral[i] + increment).clamp(-RATE_I_LIMIT, RATE_I_LIMIT);
             }
             let cmd = (p_term + d_term + state.integral[i]).clamp(-1.0, 1.0);
             out[i] = NormalizedSigned(cmd);
