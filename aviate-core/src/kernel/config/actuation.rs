@@ -24,13 +24,19 @@ pub enum MixerGeometry {
     /// PX4-gazebo-models X500 pattern (CW on the FL+RR diagonal) —
     /// opposite yaw signs from [`MixerGeometry::QuadX`].
     QuadXX500,
+    /// The X500 lane layout with every rotor's spin direction
+    /// reversed (CW on the FR+RL diagonal). Roll and pitch follow
+    /// position and are unchanged; only the yaw column flips.
+    QuadXX500ReversedSpin,
 }
 
 impl MixerGeometry {
     /// Motor count this geometry drives.
     pub fn motor_count(self) -> u8 {
         match self {
-            MixerGeometry::QuadX | MixerGeometry::QuadXX500 => 4,
+            MixerGeometry::QuadX
+            | MixerGeometry::QuadXX500
+            | MixerGeometry::QuadXX500ReversedSpin => 4,
         }
     }
 }
@@ -122,5 +128,6 @@ mod tests {
     fn geometry_motor_counts() {
         assert_eq!(MixerGeometry::QuadX.motor_count(), 4);
         assert_eq!(MixerGeometry::QuadXX500.motor_count(), 4);
+        assert_eq!(MixerGeometry::QuadXX500ReversedSpin.motor_count(), 4);
     }
 }

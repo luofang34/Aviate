@@ -68,6 +68,7 @@ fn feed_mixer_geometry(h: &mut Fnv1a64, g: MixerGeometry) {
     h.feed_u8(match g {
         MixerGeometry::QuadX => 0,
         MixerGeometry::QuadXX500 => 1,
+        MixerGeometry::QuadXX500ReversedSpin => 2,
     });
 }
 

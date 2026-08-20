@@ -8,8 +8,11 @@
 //!
 //! The rotor arrangement comes from the simulated airframe: lift rotors
 //! at ±3.0 m longitudinally and ±2.5 m laterally, with the front-right
-//! and rear-left pair spinning opposite the other two — the diagonal
-//! pattern `MixerGeometry::QuadXX500` closes yaw correctly for.
+//! and rear-left pair spinning CLOCKWISE — the X500's diagonals with
+//! every spin direction reversed, which is why the kernel mixes through
+//! `MixerGeometry::QuadXX500ReversedSpin`. On the X500 mixer this
+//! airframe's yaw loop is positive feedback, measured in flight as a
+//! spin that winds up to the attitude loop's rate command limit.
 //!
 //! Tuning status, stated plainly: the attitude cascade is scaled from
 //! the X500 derivation by this airframe's estimated plant authority
@@ -24,7 +27,7 @@ use aviate_core::ekf::Ekf;
 use aviate_core::kernel::builder::{AviateKernelBuilder, KernelBuildError};
 use aviate_core::kernel::config::ResolvedKernelConfig;
 use aviate_core::kernel::config::{ActuatorCurveKind, MixerGeometry};
-use aviate_core::mixer::{ModeConfig, QuadXMixerX500, Sanitizer};
+use aviate_core::mixer::{ModeConfig, QuadXMixerReversedSpin, Sanitizer};
 use aviate_core::types::NormalizedThrust;
 use aviate_core::DefaultAviateKernel;
 use aviate_runtime::sitl_timestamp;
@@ -144,7 +147,7 @@ fn alia250_gains() -> CascadeGains {
 ///
 /// Returns [`KernelBuildError`] as [`build_alia250_kernel`] does.
 pub fn build_alia250_identification_kernel(
-) -> Result<DefaultAviateKernel<MultirotorController, QuadXMixerX500>, KernelBuildError> {
+) -> Result<DefaultAviateKernel<MultirotorController, QuadXMixerReversedSpin>, KernelBuildError> {
     build_with(CascadeGains::x500_defaults())
 }
 
@@ -156,7 +159,7 @@ pub fn build_alia250_identification_kernel(
 /// configuration disagree — the builder refuses rather than flying a
 /// kernel whose tuning does not match its declared config.
 pub fn build_alia250_kernel(
-) -> Result<DefaultAviateKernel<MultirotorController, QuadXMixerX500>, KernelBuildError> {
+) -> Result<DefaultAviateKernel<MultirotorController, QuadXMixerReversedSpin>, KernelBuildError> {
     // `AVIATE_CASCADE=x500` flies the stock X500 cascade instead of
     // the Alia derivation — the right tuning when the simulator is
     // pointed at an X500-class airframe for a demo or a tuning
@@ -169,12 +172,12 @@ pub fn build_alia250_kernel(
 
 fn build_with(
     gains: CascadeGains,
-) -> Result<DefaultAviateKernel<MultirotorController, QuadXMixerX500>, KernelBuildError> {
+) -> Result<DefaultAviateKernel<MultirotorController, QuadXMixerReversedSpin>, KernelBuildError> {
     let hover = NormalizedThrust(hover_trim());
     let cfg = ResolvedKernelConfig {
         cascade_gains: gains,
         hover_thrust_norm: hover,
-        mixer_geometry: MixerGeometry::QuadXX500,
+        mixer_geometry: MixerGeometry::QuadXX500ReversedSpin,
         // The bridge scales the command straight onto the simulator's
         // throttle lane, whose thrust rises with the square of the
         // command — the same plant shape as a rotor-speed command.
@@ -189,7 +192,7 @@ fn build_with(
     let mut kernel = AviateKernelBuilder::new()
         .estimator(Ekf::default())
         .controller(MultirotorController::from_gains(gains, hover.0))
-        .mixer(QuadXMixerX500 {
+        .mixer(QuadXMixerReversedSpin {
             timestamp_source: sitl_timestamp,
         })
         .sanitizer(Sanitizer)

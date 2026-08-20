@@ -157,6 +157,55 @@ impl Mixer for QuadXMixerX500 {
     }
 }
 
+/// Quadrotor X-configuration mixer for the X500 lane layout with
+/// every rotor's spin direction REVERSED (X-Plane's Alia-250 lift
+/// rotors: CW on the FR+RL diagonal, CCW on FL+RR).
+///
+/// Roll and pitch follow physical position and match
+/// [`QuadXMixerX500`]; only the yaw column flips, because yaw sign
+/// follows spin direction. Flying the reversed-spin airframe on the
+/// X500 mixer closes the yaw loop as positive feedback: the flight
+/// that found this wound up from 0.05 to 1.0 rad/s — the attitude
+/// loop's rate command limit — with the controller pushing INTO the
+/// spin, and strengthening the yaw integrator made it wind up faster.
+pub struct QuadXMixerReversedSpin {
+    pub timestamp_source: fn() -> Timestamp,
+}
+
+/// Per-motor axis signs for [`QuadXMixerReversedSpin`]:
+///
+/// ```text
+///   rotor_0: FR, CW  → −r +p −y      rotor_1: RL, CW  → +r −p −y
+///   rotor_2: FL, CCW → +r +p +y      rotor_3: RR, CCW → −r −p +y
+/// ```
+const QUAD_X500_REVERSED_SIGNS: desaturate::QuadSigns = desaturate::QuadSigns {
+    roll: [-1.0, 1.0, 1.0, -1.0],
+    pitch: [1.0, -1.0, 1.0, -1.0],
+    yaw: [-1.0, -1.0, 1.0, 1.0],
+};
+
+impl Mixer for QuadXMixerReversedSpin {
+    // Registered in cert/algorithm_id_registry.toml as
+    // "mixer.quad_x_x500_reversed_spin.v1".
+    const ALGORITHM_ID: u64 = 0x4D49_5851_5852_5631; // "MIXQXRV1"
+
+    const GEOMETRY: crate::kernel::config::MixerGeometry =
+        crate::kernel::config::MixerGeometry::QuadXX500ReversedSpin;
+
+    fn mix(&self, axis: &AxisCommand) -> ActuatorCmd {
+        quad_actuator_cmd(
+            desaturate::mix_desaturated(
+                axis.collective.0,
+                axis.roll.0,
+                axis.pitch.0,
+                axis.yaw.0,
+                &QUAD_X500_REVERSED_SIGNS,
+            ),
+            (self.timestamp_source)(),
+        )
+    }
+}
+
 pub const MAX_ACTUATORS: usize = 16;
 pub const MAX_GROUPS: usize = 8;
 
