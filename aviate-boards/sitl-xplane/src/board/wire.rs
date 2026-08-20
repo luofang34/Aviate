@@ -16,6 +16,15 @@ const RISE_PER_S: f32 = 0.035;
 const BAND_BOUNDARY: f32 = 0.40;
 /// Rise rate inside the lightly-loaded band.
 const LOW_BAND_RISE_PER_S: f32 = 0.15;
+/// Maximum collective FALL while armed. Cutting thrust is safe for
+/// the PLANT, but an unlimited cut against a rate-limited rise is an
+/// asymmetry inside the vertical loop: a climb arrest slams the
+/// collective low, the recovery crawls back at the rise limit, and
+/// the loop rings — measured as a growing hover oscillation into the
+/// ground on a full-thrust simulator boot. A bounded fall keeps the
+/// dip inside what the rise limit can catch; a DISARM still cuts
+/// instantly, because a disarm must not ramp.
+const FALL_PER_S: f32 = 0.30;
 /// Collective mean ceiling, the more important half of the spool
 /// constraint: the prop model's thrust COLLAPSES under a sustained
 /// high command (measured: force 1.0 held on the ground reads
@@ -77,6 +86,7 @@ impl WireConstraints {
         &mut self,
         outputs: &mut [f32; 16],
         count: u8,
+        armed: bool,
         fix_alt_m: Option<f32>,
         dt_sec: f32,
     ) {
@@ -90,18 +100,24 @@ impl WireConstraints {
         };
         let allowed = if mean > self.last_collective {
             (self.last_collective + rise * dt).min(mean)
+        } else if armed {
+            (self.last_collective - FALL_PER_S * dt).max(mean)
         } else {
             mean
         }
         .min(MEAN_CEILING);
         let shift = allowed - mean;
-        if shift < 0.0 {
+        if shift != 0.0 {
+            // Both directions: the rise limit pulls a too-fast climb
+            // down, and the fall limit props a too-fast cut up.
             for lane in &mut outputs[..lanes] {
                 *lane = (*lane + shift).clamp(0.0, 1.0);
             }
         }
-        // `allowed <= mean` always (the ramp only limits rises), so
-        // after the shift the wire mean IS `allowed`.
+        // After the shift the wire mean is `allowed`, up to per-lane
+        // clamping — whose error is conservative for the rise limit
+        // (the bookkeeping never believes a faster rise than the wire
+        // saw).
         self.last_collective = allowed;
 
         // Per-lane stall ceiling: scale every deviation by one factor,

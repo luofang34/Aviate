@@ -214,6 +214,7 @@ where
         self.wire.constrain(
             &mut sim_cmd.outputs,
             sim_cmd.count,
+            sim_cmd.armed,
             self.last_fix.map(|fix| fix.alt_m),
             self.sample_dt_sec,
         );
