@@ -313,7 +313,7 @@ fn feed_cascade_gains(h: &mut Fnv1a64, g: &CascadeGains) {
         h.feed_f32(*v);
     }
     h.feed_f32(g.att_max_rate_cmd);
-    for v in g.rate_p.iter().chain(&g.rate_d) {
+    for v in g.rate_p.iter().chain(&g.rate_d).chain(&g.rate_i) {
         h.feed_f32(*v);
     }
     h.feed_f32(g.rate_d_lpf_alpha);
