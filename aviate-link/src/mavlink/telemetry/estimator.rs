@@ -163,7 +163,9 @@ pub(super) fn enqueue_estimate_group(
     seq: &mut u8,
     queue: &mut DefaultTelemetryQueue,
 ) {
-    let numeric_count = usize::from(emit_attitude) + usize::from(emit_position);
+    let emit_pressure = emit_position && snapshot.baro_pressure_pa.is_some();
+    let numeric_count =
+        usize::from(emit_attitude) + usize::from(emit_position) + usize::from(emit_pressure);
     if numeric_count == 0 && !emit_periodic_status {
         return;
     }
@@ -182,6 +184,19 @@ pub(super) fn enqueue_estimate_group(
     }
     if emit_position {
         enqueue_position(snapshot, ids, seq, queue, &mut buf);
+    }
+    if let (true, Some(pressure)) = (emit_pressure, snapshot.baro_pressure_pa) {
+        if let Ok(len) = super::format_scaled_pressure(
+            pressure,
+            snapshot.baro_temperature_c,
+            snapshot.time_ms,
+            ids.0,
+            ids.1,
+            seq,
+            buf.as_mut(),
+        ) {
+            queue.push(&buf[..len]).ok();
+        }
     }
 }
 

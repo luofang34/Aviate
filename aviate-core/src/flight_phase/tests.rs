@@ -332,8 +332,8 @@ fn the_debounce_is_the_same_duration_at_any_loop_rate() {
     assert!(
         difference < 0.01,
         "landing took {} s at 1 kHz and {} s at 400 Hz",
-        elapsed[0],
-        elapsed[1]
+        elapsed[0], // COV:EXCL(assert failure-message args only evaluate when the assert fails)
+        elapsed[1]  // COV:EXCL(assert failure-message args only evaluate when the assert fails)
     );
 }
 

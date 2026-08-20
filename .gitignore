@@ -23,6 +23,10 @@ AGENT*.md
 GEMINI.md
 GEMINI*.md
 
+# Keep repository instructions in version control.
+!/AGENTS.md
+!/CLAUDE.md
+
 # Rust tooling
 /.cargo/
 /.rustup/
@@ -59,4 +63,5 @@ aviate-chips/stm32h743/IWDG.md
 aviate-apps/*/
 !aviate-apps/sitl-jmavsim-generic-quad-x/
 !aviate-apps/sitl-gazebo-x500/
+!aviate-apps/sitl-xplane-alia250/
 /aviate-hal/xil/backends/gz/plugin/build/

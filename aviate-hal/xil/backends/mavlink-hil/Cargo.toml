@@ -8,6 +8,7 @@ description = "MAVLink HIL backend for legacy simulator compatibility (jMAVSim, 
 
 [dependencies]
 aviate-hal-xil = { path = "../.." }
+log = "0.4"
 
 [dev-dependencies]
 

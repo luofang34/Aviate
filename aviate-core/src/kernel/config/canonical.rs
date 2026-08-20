@@ -68,6 +68,7 @@ fn feed_mixer_geometry(h: &mut Fnv1a64, g: MixerGeometry) {
     h.feed_u8(match g {
         MixerGeometry::QuadX => 0,
         MixerGeometry::QuadXX500 => 1,
+        MixerGeometry::QuadXX500ReversedSpin => 2,
     });
 }
 
@@ -312,7 +313,7 @@ fn feed_cascade_gains(h: &mut Fnv1a64, g: &CascadeGains) {
         h.feed_f32(*v);
     }
     h.feed_f32(g.att_max_rate_cmd);
-    for v in g.rate_p.iter().chain(&g.rate_d) {
+    for v in g.rate_p.iter().chain(&g.rate_d).chain(&g.rate_i) {
         h.feed_f32(*v);
     }
     h.feed_f32(g.rate_d_lpf_alpha);

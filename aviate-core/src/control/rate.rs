@@ -1,8 +1,15 @@
 //! Rate loop — innermost cascade layer. Converts angular-rate
 //! error into normalized torque commands for the mixer.
 //!
-//! P + D, with derivative-on-measurement (not derivative-on-
-//! error). The setpoint can step instantaneously when the
+//! P + I + D, with derivative-on-measurement (not derivative-on-
+//! error). The I term exists for standing torque disturbances: a
+//! P-only rate loop answers a constant disturbance with a constant
+//! rate error, which the attitude loop above can only convert into a
+//! standing attitude error — on the yaw axis that presents as an
+//! uncommanded heading walk no P gain can remove within actuator
+//! authority. The integrator accumulates conditionally (never while
+//! the output is saturated) and is bounded, so it trims disturbances
+//! without becoming a windup hazard. The setpoint can step instantaneously when the
 //! attitude loop commands a maneuver; differentiating that step
 //! produces a "derivative kick" that bangs the actuators. Taking
 //! the derivative of the gyro measurement instead gives the same
@@ -26,6 +33,9 @@ pub struct RateLoopState {
     /// Previous filtered rate measurement (rad/s body frame), one
     /// per axis. Used to compute Δ(meas)/Δt for the D term.
     pub meas_filtered_prev: Vector3<RadiansPerSecond>,
+    /// Accumulated integral torque per axis (normalized torque
+    /// units), bounded by `RATE_I_LIMIT`.
+    pub integral: [Scalar; 3],
     /// First-cycle marker. Until set, the D term outputs zero
     /// instead of differentiating against the default (zero)
     /// previous value — that would produce a large bogus
@@ -41,6 +51,7 @@ impl Default for RateLoopState {
                 RadiansPerSecond(0.0),
                 RadiansPerSecond(0.0),
             ),
+            integral: [0.0; 3],
             primed: false,
         }
     }
@@ -53,6 +64,7 @@ impl RateLoopState {
             RadiansPerSecond(0.0),
             RadiansPerSecond(0.0),
         );
+        self.integral = [0.0; 3];
         self.primed = false;
     }
 }
@@ -61,6 +73,14 @@ impl RateLoopState {
 pub struct RateController {
     pub gains: CascadeGains,
 }
+
+/// Bound on the accumulated integral torque: enough to trim a standing
+/// disturbance that consumes most of an axis's authority — a tilted
+/// hover puts a sustained torque on the yaw axis that a 0.4 bound
+/// could not out-trim — while still leaving the P/D path headroom,
+/// which the conditional advance (no growth while the axis output
+/// saturates) protects better than a tight bound does.
+const RATE_I_LIMIT: Scalar = 0.8;
 
 impl RateController {
     pub fn new(gains: CascadeGains) -> Self {
@@ -100,7 +120,22 @@ impl RateController {
                 0.0
             };
 
-            let cmd = (p_term + d_term).clamp(-1.0, 1.0);
+            // Conditional anti-windup: the integral advances while
+            // the un-clamped command has authority left, so a
+            // saturated maneuver cannot wind a correction the
+            // actuators never delivered — AND it may always shrink:
+            // gating shrinking updates too would freeze a stale
+            // integral through the whole saturated transient and bias
+            // the recovery by up to the bound.
+            let i_gain = self.gains.rate_i[i];
+            let unsat = p_term + d_term + state.integral[i];
+            let increment = p_error * i_gain * dt_sec;
+            let shrinks = increment * state.integral[i] < 0.0;
+            if i_gain > 0.0 && dt_sec > 0.0 && (unsat.abs() < 1.0 || shrinks) {
+                state.integral[i] =
+                    (state.integral[i] + increment).clamp(-RATE_I_LIMIT, RATE_I_LIMIT);
+            }
+            let cmd = (p_term + d_term + state.integral[i]).clamp(-1.0, 1.0);
             out[i] = NormalizedSigned(cmd);
         }
 

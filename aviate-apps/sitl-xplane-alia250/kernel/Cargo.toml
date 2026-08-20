@@ -1,0 +1,13 @@
+[package]
+license.workspace = true
+publish = false  # internal crate — not released to crates.io
+name = "aviate-app-sitl-xplane-alia250-kernel"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aviate-core = { path = "../../../aviate-core" }
+aviate-runtime = { path = "../../../aviate-runtime", features = ["env-sitl"] }
+
+[lints]
+workspace = true

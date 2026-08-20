@@ -97,3 +97,11 @@ value = "0.02"
 name = "TILT_COMP_COS_FLOOR"
 file = "aviate-core/src/control/law_invariants.rs"
 value = "0.5"
+
+[[tuning]]
+field = "rate_i"
+
+[[invariant]]
+name = "RATE_I_LIMIT"
+file = "aviate-core/src/control/rate.rs"
+value = "0.8"

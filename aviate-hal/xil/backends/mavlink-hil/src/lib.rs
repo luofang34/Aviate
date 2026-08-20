@@ -42,8 +42,10 @@
 #![forbid(clippy::unwrap_used)]
 #![forbid(clippy::expect_used)]
 
+pub mod geodetic;
 pub mod messages;
 pub mod transport;
+pub mod transport_tcp;
 pub mod wire;
 
 use std::io;
@@ -57,7 +59,54 @@ pub use messages::{
     Heartbeat, HilActuatorControls, HilGps, HilMessage, HilSensor, HilStateQuaternion,
 };
 pub use transport::{HilTransport, HilTransportConfig};
+pub use transport_tcp::{HilTcpConfig, HilTcpTransport};
 pub use wire::{parse_frame, serialize_frame, MavFrame, ParseError};
+
+/// Bit 0 of `HIL_ACTUATOR_CONTROLS.flags`: this command answers the
+/// sensor sample that produced it.
+pub const LOCKSTEP_ACTUATOR_FLAG: u64 = 1;
+
+/// The `HIL_SENSOR.fields_updated` bitmap, which declares WHICH lanes a
+/// sample actually carries.
+#[derive(Debug, Clone, Copy)]
+pub struct SensorFields(u32);
+
+impl SensorFields {
+    /// Bits 0..=2 accelerometer, 3..=5 gyro, 6..=8 magnetometer,
+    /// 9 absolute pressure, 10 differential pressure, 11 pressure
+    /// altitude, 12 temperature.
+    const ACCEL: u32 = 0b111;
+    const GYRO: u32 = 0b111 << 3;
+    const MAG: u32 = 0b111 << 6;
+    const BARO: u32 = 1 << 9;
+
+    /// Reads the bitmap. A sample that declares NOTHING is treated as
+    /// declaring everything: some simulators leave the field zero, and
+    /// refusing their every sample would be a worse failure than
+    /// trusting a lane they did populate.
+    #[must_use]
+    pub fn from_bits(bits: u32) -> Self {
+        Self(if bits == 0 { u32::MAX } else { bits })
+    }
+
+    /// Whether the sample carries accelerometer and gyro lanes.
+    #[must_use]
+    pub fn imu(self) -> bool {
+        self.0 & Self::ACCEL != 0 && self.0 & Self::GYRO != 0
+    }
+
+    /// Whether the sample carries magnetometer lanes.
+    #[must_use]
+    pub fn mag(self) -> bool {
+        self.0 & Self::MAG != 0
+    }
+
+    /// Whether the sample carries an absolute-pressure lane.
+    #[must_use]
+    pub fn baro(self) -> bool {
+        self.0 & Self::BARO != 0
+    }
+}
 
 /// HIL backend configuration
 #[derive(Clone, Debug)]
@@ -93,7 +142,78 @@ impl Default for HilBackendConfig {
 /// - Sending HIL_ACTUATOR_CONTROLS to the simulator
 /// - Converting between MAVLink HIL format and SimSensorPacket/SimActuatorCmd
 pub struct HilBackend {
-    transport: HilTransport,
+    link: Link,
+    origin: geodetic::NedOrigin,
+    /// Timestamp of the newest sensor sample received, echoed into the
+    /// actuator answer. Lockstep bridges pair an answer with the sample
+    /// it answers BY THIS ECHO: the bridge compares the answer's clock
+    /// against its own sensor clock, so an answer stamped from the
+    /// flight controller's clock is a cross-clock comparison that
+    /// rejects the answer whenever the controller's clock happens to
+    /// lag the bridge's — a wedge that ends in the bridge's response
+    /// timeout and a mid-flight actuator zeroing.
+    last_sensor_time_us: u64,
+}
+
+/// Which socket carries this backend's HIL stream. A datagram bridge is
+/// peer-symmetric and always "up"; a stream bridge is dialed, can close,
+/// and reports that.
+enum Link {
+    /// Datagram HIL (jMAVSim and the classic simulators).
+    Udp(HilTransport),
+    /// Stream HIL, dialed by the flight controller (the X-Plane bridge).
+    Tcp(HilTcpTransport),
+}
+
+impl Link {
+    fn poll(&mut self) {
+        match self {
+            Self::Udp(transport) => transport.poll(),
+            Self::Tcp(transport) => transport.poll(),
+        }
+    }
+
+    fn take_sensor(&mut self) -> Option<HilSensor> {
+        match self {
+            Self::Udp(transport) => transport.take_sensor(),
+            Self::Tcp(transport) => transport.take_sensor(),
+        }
+    }
+
+    fn take_gps(&mut self) -> Option<HilGps> {
+        match self {
+            Self::Udp(transport) => transport.take_gps(),
+            Self::Tcp(transport) => transport.take_gps(),
+        }
+    }
+
+    fn take_state_quaternion(&mut self) -> Option<HilStateQuaternion> {
+        match self {
+            Self::Udp(transport) => transport.take_state_quaternion(),
+            Self::Tcp(transport) => transport.take_state_quaternion(),
+        }
+    }
+
+    fn now_us(&self) -> u64 {
+        match self {
+            Self::Udp(transport) => transport.now_us(),
+            Self::Tcp(transport) => transport.now_us(),
+        }
+    }
+
+    fn send_actuator_controls(&mut self, controls: &HilActuatorControls) -> io::Result<()> {
+        match self {
+            Self::Udp(transport) => transport.send_actuator_controls(controls),
+            Self::Tcp(transport) => transport.send_actuator_controls(controls),
+        }
+    }
+
+    fn send_heartbeat(&mut self, heartbeat: &Heartbeat) -> io::Result<()> {
+        match self {
+            Self::Udp(transport) => transport.send_heartbeat(heartbeat),
+            Self::Tcp(transport) => transport.send_heartbeat(heartbeat),
+        }
+    }
 }
 
 impl HilBackend {
@@ -108,7 +228,11 @@ impl HilBackend {
 
         let transport = HilTransport::new(transport_config)?;
 
-        Ok(Self { transport })
+        Ok(Self {
+            link: Link::Udp(transport),
+            origin: geodetic::NedOrigin::default(),
+            last_sensor_time_us: 0,
+        })
     }
 
     /// Poll for incoming data
@@ -118,10 +242,10 @@ impl HilBackend {
     ///
     /// The returned packet should be fed to SitlIO via `feed_sensor_packet()`.
     pub fn poll(&mut self) -> Option<SimSensorPacket> {
-        self.transport.poll();
+        self.link.poll();
 
-        let sensor = self.transport.take_sensor();
-        let gps = self.transport.take_gps();
+        let sensor = self.link.take_sensor();
+        let gps = self.link.take_gps();
 
         // If no new data, return None
         if sensor.is_none() && gps.is_none() {
@@ -130,30 +254,43 @@ impl HilBackend {
 
         let mut packet = SimSensorPacket::default();
 
-        // Convert HIL_SENSOR to simulator-neutral types
+        // Convert HIL_SENSOR to simulator-neutral types. A bridge that
+        // interpolates IMU substeps sends most samples with the
+        // secondary sensors ABSENT, marking them in `fields_updated`;
+        // publishing those zeroed lanes as measurements would feed the
+        // estimator a magnetometer and barometer reading of zero at the
+        // IMU rate. Only the lanes the sample declares are published.
         if let Some(sensor) = sensor {
             packet.timestamp_us = sensor.time_usec;
+            self.last_sensor_time_us = sensor.time_usec;
+            let updated = SensorFields::from_bits(sensor.fields_updated);
 
-            packet.imu = Some(SimImuData {
-                accel: [sensor.xacc, sensor.yacc, sensor.zacc],
-                gyro: [sensor.xgyro, sensor.ygyro, sensor.zgyro],
-                temperature: Some(sensor.temperature),
-            });
+            if updated.imu() {
+                packet.imu = Some(SimImuData {
+                    accel: [sensor.xacc, sensor.yacc, sensor.zacc],
+                    gyro: [sensor.xgyro, sensor.ygyro, sensor.zgyro],
+                    temperature: Some(sensor.temperature),
+                });
+            }
 
-            packet.baro = Some(SimBaroData {
-                // Convert hPa to Pa
-                pressure_pa: sensor.abs_pressure * 100.0,
-                temperature_c: sensor.temperature,
-            });
+            if updated.baro() {
+                packet.baro = Some(SimBaroData {
+                    // Convert hPa to Pa
+                    pressure_pa: sensor.abs_pressure * 100.0,
+                    temperature_c: sensor.temperature,
+                });
+            }
 
-            packet.mag = Some(SimMagData {
-                // Convert Gauss to microTesla (1 Gauss = 100 uT)
-                field_ut: [
-                    sensor.xmag * 100.0,
-                    sensor.ymag * 100.0,
-                    sensor.zmag * 100.0,
-                ],
-            });
+            if updated.mag() {
+                packet.mag = Some(SimMagData {
+                    // Convert Gauss to microTesla (1 Gauss = 100 uT)
+                    field_ut: [
+                        sensor.xmag * 100.0,
+                        sensor.ymag * 100.0,
+                        sensor.zmag * 100.0,
+                    ],
+                });
+            }
         }
 
         // Convert HIL_GPS to simulator-neutral types
@@ -172,13 +309,20 @@ impl HilBackend {
                 _ => SimGnssFix::None,
             };
 
+            let lat_deg = (gps.lat as f64) / 1e7;
+            let lon_deg = (gps.lon as f64) / 1e7;
+            let alt_m = (gps.alt as f32) / 1000.0; // mm to m
+                                                   // HIL_GPS carries WGS84 lat/lon/alt only, but the kernel
+                                                   // consumes `position_ned` — an unprojected fix would hold the
+                                                   // estimator at the origin forever. Project against an origin
+                                                   // latched at the first usable fix.
+            let position_ned = self.origin.project(lat_deg, lon_deg, alt_m, fix);
+
             packet.gnss = Some(SimGnssData {
-                lat_deg: (gps.lat as f64) / 1e7,
-                lon_deg: (gps.lon as f64) / 1e7,
-                alt_m: (gps.alt as f32) / 1000.0, // mm to m
-                // HIL_GPS carries WGS84 lat/lon/alt only; consumers
-                // that need local NED do the projection themselves.
-                position_ned: [0.0; 3],
+                lat_deg,
+                lon_deg,
+                alt_m,
+                position_ned,
                 vel_ned: [
                     (gps.vn as f32) / 100.0, // cm/s to m/s
                     (gps.ve as f32) / 100.0,
@@ -200,7 +344,7 @@ impl HilBackend {
     /// position, velocity, acceleration) useful for simulation validation
     /// but not raw sensor data.
     pub fn take_state_quaternion(&mut self) -> Option<HilStateQuaternion> {
-        self.transport.take_state_quaternion()
+        self.link.take_state_quaternion()
     }
 
     /// Send actuator command to simulator
@@ -214,9 +358,19 @@ impl HilBackend {
         }
 
         let hil_cmd = HilActuatorControls {
-            time_usec: self.transport.now_us(),
+            // Echo the answered sample's clock; the transport clock is
+            // only a fallback for an answer sent before any sample.
+            time_usec: if self.last_sensor_time_us > 0 {
+                self.last_sensor_time_us
+            } else {
+                self.link.now_us()
+            },
             controls,
-            flags: 0,
+            // Bit 0 marks this command as the lockstep response to the
+            // sensor sample that produced it. A bridge that paces its
+            // sensor stream on actuator feedback drops the link when the
+            // bit is absent, reading the flight controller as dead.
+            flags: LOCKSTEP_ACTUATOR_FLAG,
             mode: if cmd.armed {
                 HilActuatorControls::MODE_FLAG_ARMED
             } else {
@@ -224,7 +378,7 @@ impl HilBackend {
             },
         };
 
-        self.transport.send_actuator_controls(&hil_cmd)
+        self.link.send_actuator_controls(&hil_cmd)
     }
 
     /// Send a heartbeat to the simulator
@@ -233,22 +387,76 @@ impl HilBackend {
     /// Should be called periodically (typically 1Hz) to maintain the connection.
     pub fn send_heartbeat(&mut self, armed: bool) -> io::Result<()> {
         let heartbeat = Heartbeat::new_quadrotor_hil(armed);
-        self.transport.send_heartbeat(&heartbeat)
+        self.link.send_heartbeat(&heartbeat)
     }
 
     /// Get current timestamp in microseconds
     pub fn now_us(&self) -> u64 {
-        self.transport.now_us()
+        self.link.now_us()
+    }
+
+    /// Dials a STREAM HIL bridge that listens for the flight
+    /// controller. A bridge that is not listening yet is not an error;
+    /// the link retries on every poll.
+    #[must_use]
+    pub fn connect_tcp(config: HilBackendConfig) -> Self {
+        Self {
+            link: Link::Tcp(HilTcpTransport::new(HilTcpConfig {
+                simulator_addr: config.simulator_addr,
+                sys_id: config.sys_id,
+                comp_id: config.comp_id,
+            })),
+            origin: geodetic::NedOrigin::default(),
+            last_sensor_time_us: 0,
+        }
+    }
+
+    /// Whether a stream link is up. A datagram link is always reported
+    /// up: it has no connection to lose.
+    #[must_use]
+    pub fn connected(&self) -> bool {
+        match &self.link {
+            Link::Udp(_) => true,
+            Link::Tcp(transport) => transport.connected(),
+        }
+    }
+
+    /// Blocks until a stream link has a sample waiting or `timeout`
+    /// elapses. A datagram link has nothing to wait on and returns
+    /// immediately, leaving its caller to pace itself.
+    pub fn wait_readable(&mut self, timeout: std::time::Duration) -> bool {
+        match &mut self.link {
+            Link::Tcp(transport) => transport.wait_readable(timeout),
+            Link::Udp(_) => false,
+        }
+    }
+
+    /// Stream-link statistics: received frames, sent frames, CRC
+    /// failures, unsent commands, and successful connections.
+    #[must_use]
+    pub fn tcp_stats(&self) -> (u64, u64, u64, u64, u64) {
+        match &self.link {
+            Link::Tcp(transport) => transport.stats(),
+            Link::Udp(transport) => {
+                let (rx, tx, crc) = transport.stats();
+                (rx, tx, crc, 0, 0)
+            }
+        }
     }
 
     /// Get statistics (rx_count, tx_count, crc_errors)
     pub fn stats(&self) -> (u64, u64, u64) {
-        self.transport.stats()
+        let (rx, tx, crc, _, _) = self.tcp_stats();
+        (rx, tx, crc)
     }
 
-    /// Get the local port
+    /// Get the local port (datagram links only; a dialed stream link
+    /// has no meaningful local port to report).
     pub fn local_port(&self) -> u16 {
-        self.transport.local_port()
+        match &self.link {
+            Link::Udp(transport) => transport.local_port(),
+            Link::Tcp(_) => 0,
+        }
     }
 }
 
@@ -539,5 +747,44 @@ mod tests {
 
         // Poll without sending any data - should return None
         assert!(backend.poll().is_none());
+    }
+}
+
+#[cfg(test)]
+mod hil_contract_tests {
+    use super::{SensorFields, LOCKSTEP_ACTUATOR_FLAG};
+
+    #[test]
+    fn a_sample_declaring_only_the_imu_publishes_only_the_imu() {
+        // Bits 0..=5 are accelerometer and gyro; a bridge that
+        // interpolates IMU substeps sends most samples exactly like
+        // this, and reading the absent lanes would publish zeros as
+        // measurements.
+        let fields = SensorFields::from_bits(0b11_1111);
+        assert!(fields.imu());
+        assert!(!fields.mag(), "an undeclared magnetometer is not a reading");
+        assert!(!fields.baro(), "an undeclared barometer is not a reading");
+    }
+
+    #[test]
+    fn a_sample_declaring_everything_publishes_everything() {
+        let fields = SensorFields::from_bits(0xFFFF_FFFF);
+        assert!(fields.imu() && fields.mag() && fields.baro());
+    }
+
+    #[test]
+    fn a_sample_declaring_nothing_is_trusted_whole() {
+        // Some simulators leave the field zero. Refusing every sample
+        // from them would be a worse failure than trusting the lanes
+        // they populate.
+        let fields = SensorFields::from_bits(0);
+        assert!(fields.imu() && fields.mag() && fields.baro());
+    }
+
+    #[test]
+    fn the_lockstep_flag_is_bit_zero() {
+        // A bridge that paces its sensor stream on actuator feedback
+        // drops the link when this bit is absent.
+        assert_eq!(LOCKSTEP_ACTUATOR_FLAG, 1);
     }
 }

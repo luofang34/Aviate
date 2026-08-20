@@ -1,0 +1,23 @@
+[package]
+publish = false  # internal crate — not released to crates.io
+name = "aviate-board-sitl-xplane"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "X-Plane SITL board over the MAVLink HIL bridge (TCP)"
+
+[dependencies]
+aviate-core = { path = "../../aviate-core" }
+aviate-config = { path = "../../aviate-config" }
+aviate-hal-io = { path = "../../aviate-hal/io" }
+aviate-hal-xil = { path = "../../aviate-hal/xil" }
+aviate-backend-mavlink-hil = { path = "../../aviate-hal/xil/backends/mavlink-hil" }
+aviate-runtime = { path = "../../aviate-runtime", features = ["env-sitl"] }
+log = "0.4"
+
+[package.metadata.aviate-board]
+chip = "xil"           # Special: simulator, no flashing
+programmer = "none"    # Simulator board, no programming
+
+[lints]
+workspace = true

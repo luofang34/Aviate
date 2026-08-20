@@ -75,17 +75,17 @@ impl crate::control::runtime::ControllerRuntimeState for MultirotorRuntimeState 
 }
 
 impl crate::replicable::Replicable for MultirotorRuntimeState {
-    // 16 f32 lanes x 4 bytes = 64 bytes. EVERY persistent field of
+    // 19 f32 lanes x 4 bytes = 76 bytes. EVERY persistent field of
     // the runtime state must appear here: an omitted field lets two
     // lockstep channels diverge in hidden state while comparing
     // byte-equal, surfacing one cycle later as differing actuator
     // outputs with no witness (#141 — last_vel_filt_ned and d_primed
     // were missing). The per-field mutation test below is the
     // guardrail: adding a field without encoding it fails the test.
-    const ENCODED_LEN: usize = 64;
+    const ENCODED_LEN: usize = 76;
 
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
-        let fields: [f32; 16] = [
+        let fields: [f32; 19] = [
             self.velocity_loop.integrator_ned.x.0,
             self.velocity_loop.integrator_ned.y.0,
             self.velocity_loop.integrator_ned.z.0,
@@ -95,6 +95,9 @@ impl crate::replicable::Replicable for MultirotorRuntimeState {
             self.rate_loop.meas_filtered_prev.x.0,
             self.rate_loop.meas_filtered_prev.y.0,
             self.rate_loop.meas_filtered_prev.z.0,
+            self.rate_loop.integral[0],
+            self.rate_loop.integral[1],
+            self.rate_loop.integral[2],
             self.last_vel_sp_ned.x.0,
             self.last_vel_sp_ned.y.0,
             self.last_vel_sp_ned.z.0,
@@ -450,3 +453,6 @@ impl VehicleController for MultirotorController {
         }
     }
 }
+
+#[cfg(test)]
+mod replicable_tests;

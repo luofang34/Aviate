@@ -1,0 +1,41 @@
+# Aviate Application Configuration
+# App: sitl-xplane-alia250
+
+[app]
+id = "sitl-xplane-alia250"
+board = "sitl-xplane"
+airframe = "alia250"
+env = "sitl"
+
+# Estimate-stream rates. ATTITUDE_QUATERNION and LOCAL_POSITION_NED are
+# emitted from the same estimator-cycle snapshot, so both carry the same
+# time_boot_ms — a consumer that budgets inter-group acquisition skew
+# (Pilotage: 300 ms) sees one clock, not two.
+#
+# This is a co-located loopback consumer driving a glass panel: attitude
+# at 50 Hz and position at 30 Hz keep the PFD and HSI smooth, and
+# bandwidth is a non-issue on loopback.
+[telemetry]
+frame_size = 280
+queue_len = 32
+heartbeat_hz = 1
+attitude_hz = 50
+position_hz = 30
+estimator_status_hz = 10
+
+[security]
+profile = "none"
+
+# Telemetry stream: the FIXED consumer endpoint. This address never
+# follows a commander — a harness commanding the vehicle must not steal
+# the stream. Override per process with AVIATE_TELEMETRY_ENDPOINT.
+[[transports]]
+protocol = "mavlink"
+port = "udp"
+roles = ["telemetry"]
+endpoint = "127.0.0.1:14550"
+
+[simulator]
+backend = "xplane"
+headless = false
+lockstep = true
