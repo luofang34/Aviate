@@ -5,8 +5,8 @@
 
 use crate::checks::DegradationReason;
 use crate::control::{
-    AuthorityProfile, Command, ControlLawV1, ControlMode, ModeEntryDecision, VehicleControlMode,
-    VehicleController,
+    AuthorityProfile, Command, CommandSource, ControlLawV1, ControlMode, ModeEntryDecision,
+    VehicleControlMode, VehicleController,
 };
 use crate::ekf::Estimator;
 use crate::fault::FaultFlags;
@@ -80,6 +80,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         if !command.validate_enums() {
             self.state.faults.insert(FaultFlags::ENUM_INVALID);
             return UpdateResult {
+                effective_command: safe_effective_command(command.sequence),
                 actuator: ActuatorCmd {
                     outputs: self.cfg.safe_output,
                     active_mask: 0,
@@ -147,6 +148,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                 );
             }
             return UpdateResult {
+                effective_command: safe_effective_command(command.sequence),
                 actuator: ActuatorCmd {
                     outputs: self.cfg.safe_output,
                     active_mask: 0,
@@ -188,6 +190,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         //    telemetry reports the real fault state instead of defaults.
         if self.check_critical_faults() {
             return UpdateResult {
+                effective_command: safe_effective_command(command.sequence),
                 actuator: ActuatorCmd {
                     outputs: self.cfg.safe_output,
                     active_mask: 0b1111,
@@ -352,6 +355,17 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // the Descend/Land terminal (`Direct`), which rides a
         // kernel-synthesized level-descent setpoint down instead of
         // cutting thrust mid-air.
+        let effective_cmd = if self.state.control_law == ControlLawV1::Backup {
+            safe_effective_command(constrained_cmd.sequence)
+        } else if self.state.control_law == ControlLawV1::Direct {
+            crate::kernel::descend::descend_command(
+                &state,
+                &self.cfg.limits,
+                constrained_cmd.sequence,
+            )
+        } else {
+            crate::control::apply_mode_entry(constrained_cmd, mode_entry)
+        };
         let mut actuator_cmd = if self.state.control_law == ControlLawV1::Backup {
             ActuatorCmd {
                 outputs: self.cfg.safe_output,
@@ -367,15 +381,6 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             // gated to the mode-entry decision above. Loop selection
             // is driven by the control-mode flags derived from the
             // effective command's mode.
-            let effective_cmd = if self.state.control_law == ControlLawV1::Direct {
-                crate::kernel::descend::descend_command(
-                    &state,
-                    &self.cfg.limits,
-                    constrained_cmd.sequence,
-                )
-            } else {
-                crate::control::apply_mode_entry(constrained_cmd, mode_entry)
-            };
             let control_flags = VehicleControlMode::from_control_mode(effective_cmd.mode);
             let axis_cmd = self.pipeline.controller.step(
                 &mut self.state.controller,
@@ -426,6 +431,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
 
         // 11. Construct Result
         UpdateResult {
+            effective_command: effective_cmd,
             actuator: actuator_cmd,
             status: ChannelStatus {
                 mode: mode_entry.effective(),
@@ -450,5 +456,16 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             },
             degradation,
         }
+    }
+}
+
+fn safe_effective_command(sequence: u32) -> Command {
+    Command {
+        mode: ControlMode::Attitude,
+        setpoint: Default::default(),
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence,
+        source: CommandSource::Failsafe,
     }
 }

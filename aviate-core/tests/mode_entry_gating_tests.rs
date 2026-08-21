@@ -332,6 +332,7 @@ fn kernel_reports_fallen_back_mode_honestly_when_position_invalid() {
             missing: StateValidFlags::POSITION,
         }
     );
+    assert_eq!(result.effective_command.mode, ControlMode::AltitudeHold);
     assert!(
         result.actuator.outputs.iter().any(|o| o.0 > 0.05),
         "AltitudeHold fallback must keep motors running, not cut them: {:?}",
@@ -366,6 +367,7 @@ fn kernel_reports_fallen_back_to_attitude_when_position_and_velocity_invalid() {
             missing: StateValidFlags::POSITION | StateValidFlags::VELOCITY,
         }
     );
+    assert_eq!(result.effective_command.mode, ControlMode::Attitude);
 }
 
 #[test]
@@ -391,6 +393,7 @@ fn kernel_grants_position_mode_unmodified_when_estimate_is_fully_valid() {
         result.status.mode_entry,
         ModeEntryDecision::Granted(ControlMode::PositionHold)
     );
+    assert_eq!(result.effective_command.mode, ControlMode::PositionHold);
 }
 
 #[test]

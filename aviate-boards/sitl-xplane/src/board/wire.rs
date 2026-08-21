@@ -4,6 +4,15 @@
 
 use aviate_config::xplane_model::XPlaneWireModel;
 
+/// Constraints that changed one force-domain actuator command.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WireConstraintFlags {
+    pub(crate) collective_rate: bool,
+    pub(crate) mean_ceiling: bool,
+    pub(crate) lane_ceiling: bool,
+    pub(crate) ground_squeeze: bool,
+}
+
 /// The constraint state that survives between samples.
 #[derive(Debug, Clone)]
 pub(crate) struct WireConstraints {
@@ -48,9 +57,10 @@ impl WireConstraints {
         armed: bool,
         fix_alt_m: Option<f32>,
         dt_sec: f32,
-    ) {
-        let lanes = usize::from(count).clamp(1, 4);
-        let dt = dt_sec.clamp(0.0, 0.05);
+    ) -> WireConstraintFlags {
+        let mut flags = WireConstraintFlags::default();
+        let lanes = usize::from(count);
+        let dt = dt_sec.clamp(0.0, self.config.max_sample_dt_s);
         let mean: f32 = outputs[..lanes].iter().sum::<f32>() / lanes as f32;
         let rise = if self.last_collective < self.config.band_boundary {
             self.config.low_band_rise_per_s
@@ -65,6 +75,8 @@ impl WireConstraints {
             mean
         }
         .min(self.config.mean_ceiling);
+        flags.collective_rate = allowed != mean && mean <= self.config.mean_ceiling;
+        flags.mean_ceiling = mean > self.config.mean_ceiling;
         let shift = allowed - mean;
         if shift != 0.0 {
             // Both directions: the rise limit pulls a too-fast climb
@@ -94,6 +106,7 @@ impl WireConstraints {
             }
         }
         if squeeze < 1.0 {
+            flags.lane_ceiling = true;
             for lane in &mut outputs[..lanes] {
                 *lane = mean_now + (*lane - mean_now) * squeeze;
             }
@@ -117,6 +130,7 @@ impl WireConstraints {
             if clear {
                 self.airborne = true;
             } else {
+                flags.ground_squeeze = true;
                 let new_mean: f32 = outputs[..lanes].iter().sum::<f32>() / lanes as f32;
                 for lane in &mut outputs[..lanes] {
                     *lane = (new_mean + (*lane - new_mean) * self.config.ground_squeeze)
@@ -124,6 +138,7 @@ impl WireConstraints {
                 }
             }
         }
+        flags
     }
 }
 

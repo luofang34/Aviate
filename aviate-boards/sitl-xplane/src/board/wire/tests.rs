@@ -17,6 +17,7 @@ fn constraints() -> WireConstraints {
         lane_ceiling: 0.85,
         airborne_clearance_m: 0.5,
         ground_squeeze: 0.5,
+        max_sample_dt_s: 0.05,
     })
 }
 

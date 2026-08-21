@@ -18,9 +18,11 @@
 //! kernel gains, limits, hover seed, mixer, and actuator curve.
 
 mod construct;
+mod manifest;
 mod tuning;
 
 pub use construct::{
     build_alia250_identification_kernel, build_alia250_kernel, build_alia250_kernel_with_candidate,
     AliaKernel, AliaKernelBuildError, CalibratedAliaKernel, CalibrationRunManifest,
 };
+pub use manifest::{AliaRunManifest, BuildIdentity, RunManifestError, RunPurpose};

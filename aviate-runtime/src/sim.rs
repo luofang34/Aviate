@@ -160,6 +160,9 @@ where
     /// one-shot and never refresh setpoint age.
     pub ingress: crate::command_ingress::CommandIngress<aviate_hal_io::SystemCommand>,
 
+    /// Exact command supplied to the kernel in the most recent step.
+    pub(crate) last_effective_command: Command,
+
     /// Last IMU timestamp for dt calculation
     pub last_imu_time: Option<u64>,
 
@@ -207,6 +210,7 @@ where
             board_hal,
             kernel,
             ingress: crate::command_ingress::CommandIngress::default(),
+            last_effective_command: default_command(),
             last_imu_time: None,
             sensor_cache: SensorCache::new(),
             ekf_initialized: false,
@@ -214,6 +218,12 @@ where
             iteration: 0,
             process_start: std::time::Instant::now(),
         }
+    }
+
+    /// Return the exact command supplied to the most recent kernel update.
+    #[must_use]
+    pub fn last_effective_command(&self) -> &Command {
+        &self.last_effective_command
     }
 
     /// Initialize telemetry from config (called in AppRuntime::run)

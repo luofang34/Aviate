@@ -8,7 +8,11 @@
 //! until the bridge is listening.
 //!
 //! Usage:
-//!   sitl-xplane-alia250 [--bridge HOST:PORT] [--auto-arm SECONDS] [--identify]
+//!   sitl-xplane-alia250 [--bridge HOST:PORT] [--auto-arm SECONDS]
+//!       --runtime-handshake FILE
+//!       [--run-manifest FILE] [--candidate FILE --plant-artifact FILE]
+//!       [--identify --plant-output FILE --trace-output FILE]
+//!       [--tuning-trace-endpoint 127.0.0.1:PORT]
 //!
 //! `--identify` flies the plant-identification experiment instead of
 //! serving a session: a short hop, per-axis attitude square waves, and
@@ -16,7 +20,10 @@
 //! under the same kernel the app flies, so the numbers it prints are
 //! the numbers that kernel's derivation should be fed.
 
+mod artifact;
+mod cli;
 mod identify;
+mod tuning_trace;
 
 use aviate_core::ekf::Estimator as _;
 
@@ -35,29 +42,25 @@ use aviate_board_sitl_xplane::{XPlaneBoard, XPlaneConfig};
 /// no link still runs its timers and retries.
 const IDLE_WAIT: Duration = Duration::from_micros(2_500);
 
-/// The rate the bridge delivers sensor samples at, and therefore the
-/// rate the kernel steps at. Telemetry divisors are derived from it, so
-/// it must match the bridge's configured sensor period.
-const SENSOR_RATE_HZ: u32 = 100;
-
 /// The app configuration, embedded so a deployment cannot drift from
 /// the binary it runs.
 const APP_CONFIG_TOML: &str = include_str!("../AviateApp.toml");
+const AIRFRAME_PRESET_TOML: &str = include_str!("../../../presets/alia250.toml");
 /// The simulator boundary, embedded with the app binary.
 const XPLANE_MODEL_TOML: &str = include_str!("../../../presets/alia250-xplane.toml");
 
 fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let bridge = match bridge_address(&args) {
-        Ok(bridge) => bridge,
+    let cli = match cli::Cli::parse(std::env::args().skip(1)) {
+        Ok(cli) => cli,
         Err(message) => {
             log::error!("{message}");
             return ExitCode::FAILURE;
         }
     };
-    let auto_arm = auto_arm_delay(&args);
+    let bridge = cli.bridge;
+    let auto_arm = cli.auto_arm;
 
     let config = match load_app_config() {
         Ok(config) => config,
@@ -80,77 +83,157 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let sensor_rate_hz = u32::from(xplane_model.sample_rate_hz());
     log::info!("X-Plane model identity={model_digest}");
+    let expected_model =
+        match aviate_config::airframe_preset::ContentDigest::from_hex(&model_digest.to_string()) {
+            Ok(digest) => digest,
+            Err(error) => {
+                log::error!("X-Plane model identity is incompatible: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+    let runtime_binding = match cli.claim_runtime_handshake() {
+        Ok(binding) => binding,
+        Err(error) => {
+            log::error!("runtime handshake failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
 
-    let experiment_flight = args
-        .iter()
-        .any(|arg| arg == "--identify" || arg == "--sweep" || arg == "--yaw-sign");
-    let candidate_text = match load_candidate(&args) {
-        Ok(candidate) => candidate,
+    let experiment = cli.experiment;
+    let experiment_flight = experiment.is_some();
+    let calibration_inputs = match cli.calibration_inputs() {
+        Ok(inputs) => inputs,
         Err(message) => {
             log::error!("{message}");
             return ExitCode::FAILURE;
         }
     };
-    if experiment_flight && candidate_text.is_some() {
-        log::error!("--candidate cannot be combined with an identification experiment");
-        return ExitCode::FAILURE;
-    }
     // The identification flight must not fly the gains it exists to
     // derive; it uses the known-flyable default cascade instead.
     let kernel_result = if experiment_flight {
         aviate_app_sitl_xplane_alia250_kernel::build_alia250_identification_kernel()
-    } else if let Some(candidate) = candidate_text.as_deref() {
-        match aviate_app_sitl_xplane_alia250_kernel::build_alia250_kernel_with_candidate(candidate)
-        {
-            Ok(built) => {
-                log::info!(
-                    "calibration candidate={} preset={} candidate_digest={} plant={} kernel={:016x}",
-                    built.manifest.candidate_id,
-                    built.manifest.identity.base_preset,
-                    built.manifest.identity.candidate,
-                    built.manifest.identity.plant_artifact,
-                    built.manifest.kernel_config_hash
-                );
-                Ok(built.kernel)
-            }
+            .map(|kernel| (kernel, None))
+    } else if let Some(inputs) = calibration_inputs.as_ref() {
+        match aviate_app_sitl_xplane_alia250_kernel::build_alia250_kernel_with_candidate(
+            &inputs.candidate,
+            &inputs.plant_artifact,
+            &xplane_model,
+        ) {
+            Ok(built) => Ok((built.kernel, Some(built.manifest))),
             Err(error) => Err(error),
         }
     } else {
-        aviate_app_sitl_xplane_alia250_kernel::build_alia250_kernel()
+        aviate_app_sitl_xplane_alia250_kernel::build_alia250_kernel().map(|kernel| (kernel, None))
     };
-    let kernel = match kernel_result {
-        Ok(kernel) => kernel,
+    let (kernel, calibration_manifest) = match kernel_result {
+        Ok(built) => built,
         Err(error) => {
             log::error!("{error}");
             return ExitCode::FAILURE;
         }
     };
-    let mut board = match XPlaneBoard::with_config(kernel, XPlaneConfig::new(bridge, xplane_model))
+    let purpose = experiment.unwrap_or(if calibration_manifest.is_some() {
+        aviate_app_sitl_xplane_alia250_kernel::RunPurpose::Candidate
+    } else {
+        aviate_app_sitl_xplane_alia250_kernel::RunPurpose::Normal
+    });
+    let build_identity = match aviate_app_sitl_xplane_alia250_kernel::BuildIdentity::current() {
+        Ok(identity) => identity,
+        Err(error) => {
+            log::error!("build identity failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let run_manifest = match aviate_app_sitl_xplane_alia250_kernel::AliaRunManifest::new(
+        &kernel,
+        expected_model,
+        purpose,
+        calibration_manifest.as_ref(),
+        build_identity,
+        runtime_binding.content_digest,
+    ) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            log::error!("run manifest failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let run_manifest_text = run_manifest.to_toml();
+    let run_manifest_digest =
+        aviate_config::airframe_preset::ContentDigest::calculate(run_manifest_text.as_bytes());
+    log::info!("run manifest:\n{run_manifest_text}");
+    if let Err(error) = artifact::publish_optional(cli.run_manifest.as_deref(), &run_manifest_text)
     {
+        log::error!("{error}");
+        return ExitCode::FAILURE;
+    }
+    let trace_config = match tuning_trace::config(
+        cli.tuning_trace_endpoint,
+        &run_manifest,
+        run_manifest_digest,
+    ) {
+        Ok(config) => config,
+        Err(error) => {
+            log::error!("tuning trace configuration failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut board_config = XPlaneConfig::new(bridge, xplane_model);
+    if let Some(trace) = trace_config {
+        board_config = board_config.with_tuning_trace(trace);
+    }
+    let mut board = match XPlaneBoard::with_config(kernel, board_config) {
         Ok(board) => board,
         Err(error) => {
             log::error!("board construction failed: {error}");
             return ExitCode::FAILURE;
         }
     };
+    if let Err(error) = board.accept_runtime_handshake(runtime_binding.handshake) {
+        log::error!("runtime handshake rejected: {error}");
+        return ExitCode::FAILURE;
+    }
 
-    if args.iter().any(|arg| arg == "--identify") {
+    if experiment == Some(aviate_app_sitl_xplane_alia250_kernel::RunPurpose::Identify) {
         log::info!("dialing the X-Plane bridge at {bridge} (identification flight)");
-        identify::run(&mut board);
+        let (artifact, trace_text) =
+            match identify::run(&mut board, run_manifest_digest.to_string()) {
+                Ok(output) => output,
+                Err(error) => {
+                    log::error!("identification failed: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+        let artifact_text = match artifact.to_toml() {
+            Ok(text) => text,
+            Err(error) => {
+                log::error!("plant artifact encoding failed: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        log::info!("plant artifact:\n{artifact_text}");
+        if let Err(error) = artifact::publish_optional(cli.trace_output.as_deref(), &trace_text) {
+            log::error!("{error}");
+            return ExitCode::FAILURE;
+        }
+        if let Err(error) = artifact::publish_optional(cli.plant_output.as_deref(), &artifact_text)
+        {
+            log::error!("{error}");
+            return ExitCode::FAILURE;
+        }
         return ExitCode::SUCCESS;
     }
     // The sweep flies the identification kernel for the same reason
     // --identify does: it must not depend on the gains it informs.
-    if args.iter().any(|arg| arg == "--yaw-sign") {
+    if experiment == Some(aviate_app_sitl_xplane_alia250_kernel::RunPurpose::YawSign) {
         log::info!("dialing the X-Plane bridge at {bridge} (yaw-sign probe)");
-        identify::run_yaw_sign(&mut board);
-        return ExitCode::SUCCESS;
+        return experiment_exit(identify::run_yaw_sign(&mut board));
     }
-    if args.iter().any(|arg| arg == "--sweep") {
+    if experiment == Some(aviate_app_sitl_xplane_alia250_kernel::RunPurpose::Sweep) {
         log::info!("dialing the X-Plane bridge at {bridge} (collective sweep)");
-        identify::run_sweep(&mut board);
-        return ExitCode::SUCCESS;
+        return experiment_exit(identify::run_sweep(&mut board));
     }
 
     // Simulation truth rides the SAME estimate stream, sent by this
@@ -174,7 +257,7 @@ fn main() -> ExitCode {
         log::warn!("no telemetry endpoint; sim truth will not be forwarded");
     }
 
-    board.init_telemetry(&config, SENSOR_RATE_HZ);
+    board.init_telemetry(&config, sensor_rate_hz);
     if !board.telemetry_enabled() {
         log::warn!("running without an estimate stream (see errors above)");
     }
@@ -183,13 +266,12 @@ fn main() -> ExitCode {
     run(&mut board, auto_arm, truth_tx)
 }
 
-/// The control loop. Never returns: a link that is down is not a fatal
-/// condition — the simulator is allowed to restart underneath.
+/// The control loop. A required identity or trace failure ends the run.
 fn run<C, M>(
     board: &mut XPlaneBoard<C, M>,
     auto_arm: Option<Duration>,
     truth_tx: Option<std::net::UdpSocket>,
-) -> !
+) -> ExitCode
 where
     C: aviate_core::control::VehicleController,
     M: aviate_core::mixer::Mixer,
@@ -206,6 +288,16 @@ where
     loop {
         let cycle_start = Instant::now();
         let command = board.step();
+        if let Some(error) = board.runtime_handshake_failure() {
+            log::error!("runtime handshake failed during run: {error}");
+            board.terminate();
+            return ExitCode::FAILURE;
+        }
+        if let Some(error) = board.tuning_trace_failure() {
+            log::error!("tuning trace failed during run: {error}");
+            board.terminate();
+            return ExitCode::FAILURE;
+        }
 
         // Forward the simulator's ground truth onto the estimate
         // stream at 10 Hz, so every estimate arrives beside the truth
@@ -356,46 +448,26 @@ fn load_xplane_model(
 ) -> Result<aviate_config::xplane_model::XPlaneSimulatorModel, String> {
     let model = aviate_config::xplane_model::XPlaneSimulatorModel::from_toml_str(XPLANE_MODEL_TOML)
         .map_err(|error| format!("Alia X-Plane model failed validation: {error}"))?;
-    if model.airframe_id != expected_airframe {
+    if model.airframe_id() != expected_airframe {
         return Err(format!(
             "X-Plane model airframe {:?} does not match app airframe {expected_airframe:?}",
-            model.airframe_id
+            model.airframe_id()
         ));
+    }
+    let preset_digest =
+        aviate_config::airframe_preset::ContentDigest::calculate(AIRFRAME_PRESET_TOML.as_bytes());
+    if model.airframe_preset_digest() != preset_digest.to_string() {
+        return Err("X-Plane model does not match the embedded airframe preset".to_owned());
     }
     Ok(model)
 }
 
-/// Reads `--bridge HOST:PORT`, defaulting to the bridge's own port on
-/// loopback. A malformed address is refused, never silently defaulted.
-fn bridge_address(args: &[String]) -> Result<std::net::SocketAddr, String> {
-    let default = std::net::SocketAddr::from(([127, 0, 0, 1], 4560));
-    let Some(index) = args.iter().position(|arg| arg == "--bridge") else {
-        return Ok(default);
-    };
-    let value = args
-        .get(index + 1)
-        .ok_or_else(|| "--bridge requires HOST:PORT".to_owned())?;
-    value
-        .parse()
-        .map_err(|error| format!("--bridge {value:?} is not HOST:PORT: {error}"))
-}
-
-/// Reads `--auto-arm SECONDS`, absent when the flag is not given.
-fn auto_arm_delay(args: &[String]) -> Option<Duration> {
-    let index = args.iter().position(|arg| arg == "--auto-arm")?;
-    let seconds = args.get(index + 1)?.parse().ok()?;
-    Some(Duration::from_secs(seconds))
-}
-
-/// Read one calibration candidate at startup.
-fn load_candidate(args: &[String]) -> Result<Option<String>, String> {
-    let Some(index) = args.iter().position(|arg| arg == "--candidate") else {
-        return Ok(None);
-    };
-    let path = args
-        .get(index + 1)
-        .ok_or_else(|| "--candidate requires a TOML file path".to_owned())?;
-    std::fs::read_to_string(path)
-        .map(Some)
-        .map_err(|error| format!("cannot read calibration candidate {path:?}: {error}"))
+fn experiment_exit(result: Result<(), identify::ExperimentError>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            log::error!("experiment failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }

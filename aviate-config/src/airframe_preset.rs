@@ -29,8 +29,10 @@ use serde::Deserialize;
 mod candidate;
 
 pub use candidate::{
-    resolve_candidate, CalibrationCandidate, CandidateError, CandidateIdentity, ContentDigest,
-    GainOverrides, ResolvedCandidate,
+    calculate_overlay_lineage_digest, resolve_candidate, CalibrationCandidate, CalibrationOverlay,
+    CalibrationStage, CandidateError, CandidateIdentity, ContentDigest, GainOverrides,
+    InnerLoopDesign, PlantArtifactError, PlantIdentificationArtifact, PlantSampleClock,
+    ResolvedCandidate,
 };
 
 /// Registered mixer geometries a preset may name. The app resolves

@@ -247,6 +247,7 @@ where
             &aviate_core::mixer::ActuatorState::default(),
             None,
         );
+        self.last_effective_command = result.effective_command.clone();
         let actuator_cmd = result.actuator.clone();
 
         // 8. Write outputs via BoardHal (ActuatorHal implementation)

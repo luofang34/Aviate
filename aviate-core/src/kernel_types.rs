@@ -425,6 +425,9 @@ impl Default for ChannelStatus {
 /// Full result from kernel update() - spec §20
 #[derive(Clone, Debug)]
 pub struct UpdateResult {
+    /// Exact command that reached the active controller, or the safe
+    /// fallback command when the controller did not run.
+    pub effective_command: crate::control::Command,
     pub actuator: ActuatorCmd,
     pub status: ChannelStatus,
     pub estimate: StateEstimate,

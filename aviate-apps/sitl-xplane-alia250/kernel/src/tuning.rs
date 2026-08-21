@@ -26,6 +26,27 @@ pub(crate) fn gains_from_preset(gains: GainsPreset) -> CascadeGains {
     }
 }
 
+/// Convert an immutable kernel gain set to its preset representation.
+pub(crate) fn gains_to_preset(gains: CascadeGains) -> GainsPreset {
+    GainsPreset {
+        pos_p: gains.pos_p,
+        pos_accel_limits: gains.pos_accel_limits,
+        pos_vel_caps: gains.pos_vel_caps,
+        vel_p: gains.vel_p,
+        vel_i: gains.vel_i,
+        vel_d: gains.vel_d,
+        vel_max_roll_pitch: gains.vel_max_roll_pitch,
+        vel_max_yaw_step: gains.vel_max_yaw_step,
+        vel_accel_ff: gains.vel_accel_ff,
+        att_p: gains.att_p,
+        att_max_rate_cmd: gains.att_max_rate_cmd,
+        rate_p: gains.rate_p,
+        rate_i: gains.rate_i,
+        rate_d: gains.rate_d,
+        rate_d_lpf_alpha: gains.rate_d_lpf_alpha,
+    }
+}
+
 /// Convert all preset envelope fields to the kernel limit types.
 pub(crate) fn limits_from_preset(limits: LimitsPreset) -> Limits {
     Limits {
@@ -75,5 +96,6 @@ mod tests {
         assert_eq!(mapped.rate_i, preset.gains.rate_i);
         assert_eq!(mapped.rate_d, preset.gains.rate_d);
         assert_eq!(mapped.rate_d_lpf_alpha, preset.gains.rate_d_lpf_alpha);
+        assert_eq!(gains_to_preset(mapped), preset.gains);
     }
 }
