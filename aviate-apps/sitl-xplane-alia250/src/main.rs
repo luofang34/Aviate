@@ -17,7 +17,6 @@
 //! the numbers that kernel's derivation should be fed.
 
 mod identify;
-mod motors;
 
 use aviate_core::ekf::Estimator as _;
 
@@ -44,6 +43,8 @@ const SENSOR_RATE_HZ: u32 = 100;
 /// The app configuration, embedded so a deployment cannot drift from
 /// the binary it runs.
 const APP_CONFIG_TOML: &str = include_str!("../AviateApp.toml");
+/// The simulator boundary, embedded with the app binary.
+const XPLANE_MODEL_TOML: &str = include_str!("../../../presets/alia250-xplane.toml");
 
 fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -65,6 +66,21 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let xplane_model = match load_xplane_model(&config.app.airframe) {
+        Ok(model) => model,
+        Err(message) => {
+            log::error!("{message}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let model_digest = match xplane_model.canonical_digest() {
+        Ok(digest) => digest,
+        Err(error) => {
+            log::error!("X-Plane model identity failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    log::info!("X-Plane model identity={model_digest}");
 
     let experiment_flight = args
         .iter()
@@ -110,20 +126,8 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // The wire lane order is airframe knowledge: the Alia's channel
-    // map wants the [0,2,1,3] permutation; the qtailsitter's channels
-    // are the PX4 quad-x order the mixer already emits, and applying
-    // the Alia permutation there cross-feeds roll into pitch and flips
-    // the vehicle on the ground at 9 % thrust.
-    let lane_order = Some(motors::to_airframe_order as fn(&mut [f32; 16], u8));
-    let mut board = match XPlaneBoard::with_config(
-        kernel,
-        XPlaneConfig {
-            simulator_addr: bridge,
-            lane_order,
-            ..XPlaneConfig::default()
-        },
-    ) {
+    let mut board = match XPlaneBoard::with_config(kernel, XPlaneConfig::new(bridge, xplane_model))
+    {
         Ok(board) => board,
         Err(error) => {
             log::error!("board construction failed: {error}");
@@ -345,6 +349,20 @@ fn load_app_config() -> Result<aviate_config::AppConfig, String> {
         }
     }
     Ok(config)
+}
+
+fn load_xplane_model(
+    expected_airframe: &str,
+) -> Result<aviate_config::xplane_model::XPlaneSimulatorModel, String> {
+    let model = aviate_config::xplane_model::XPlaneSimulatorModel::from_toml_str(XPLANE_MODEL_TOML)
+        .map_err(|error| format!("Alia X-Plane model failed validation: {error}"))?;
+    if model.airframe_id != expected_airframe {
+        return Err(format!(
+            "X-Plane model airframe {:?} does not match app airframe {expected_airframe:?}",
+            model.airframe_id
+        ));
+    }
+    Ok(model)
 }
 
 /// Reads `--bridge HOST:PORT`, defaulting to the bridge's own port on

@@ -5,7 +5,7 @@
 use aviate_core::kernel::config::ActuatorCurveKind;
 use aviate_hal_xil::sim_types::SimActuatorCmd;
 
-use super::{apply_actuator_curve, BOARD_INFO};
+use super::{apply_actuator_curve, reorder_lanes, BOARD_INFO};
 
 #[test]
 fn the_quadratic_curve_applies_per_active_lane_only() {
@@ -40,4 +40,20 @@ fn the_linear_curve_is_the_identity() {
 #[test]
 fn the_board_names_itself() {
     assert_eq!(BOARD_INFO.name, "sitl-xplane");
+}
+
+#[test]
+fn the_model_lane_order_is_applied_once() {
+    let mut outputs = [0.0_f32; 16];
+    outputs[..4].copy_from_slice(&[0.1, 0.2, 0.3, 0.4]);
+    reorder_lanes(&mut outputs, 4, [0, 2, 1, 3]);
+    assert_eq!(&outputs[..4], &[0.1, 0.3, 0.2, 0.4]);
+}
+
+#[test]
+fn a_short_command_does_not_use_the_four_lane_map() {
+    let mut outputs = [0.0_f32; 16];
+    outputs[..2].copy_from_slice(&[0.7, 0.8]);
+    reorder_lanes(&mut outputs, 2, [0, 2, 1, 3]);
+    assert_eq!(&outputs[..2], &[0.7, 0.8]);
 }

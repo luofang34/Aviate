@@ -18,6 +18,7 @@ mod wire;
 use std::io;
 
 use aviate_backend_mavlink_hil::{HilBackend, HilBackendConfig};
+use aviate_config::xplane_model::{XPlaneModelDigest, XPlaneSimulatorModel};
 use aviate_core::control::Command;
 use aviate_core::hal::{ActuatorHal, SystemHal};
 use aviate_core::mixer::ActuatorCmd;
@@ -40,23 +41,19 @@ pub struct XPlaneConfig {
     pub sys_id: u8,
     /// Component ID for outgoing messages.
     pub comp_id: u8,
-    /// Reorders mixer lanes into the simulated airframe's rotor order,
-    /// applied once just before the command reaches the wire.
-    ///
-    /// Motor NUMBERING is airframe knowledge, which belongs to the
-    /// application, but the send belongs to the board — so the app
-    /// injects the mapping here rather than the board guessing it. An
-    /// absent mapping sends the mixer's own order.
-    pub lane_order: Option<fn(&mut [f32; 16], u8)>,
+    /// Versioned plant-protection and actuator-lane model.
+    pub model: XPlaneSimulatorModel,
 }
 
-impl Default for XPlaneConfig {
-    fn default() -> Self {
+impl XPlaneConfig {
+    /// Build a bridge configuration for one validated simulator model.
+    #[must_use]
+    pub fn new(simulator_addr: std::net::SocketAddr, model: XPlaneSimulatorModel) -> Self {
         Self {
-            simulator_addr: std::net::SocketAddr::from(([127, 0, 0, 1], 4560)),
+            simulator_addr,
             sys_id: 1,
             comp_id: 1,
-            lane_order: None,
+            model,
         }
     }
 }
@@ -69,7 +66,8 @@ where
 {
     hil_backend: HilBackend,
     runner: SitlRunner<C, M>,
-    lane_order: Option<fn(&mut [f32; 16], u8)>,
+    lane_order: [u8; 4],
+    model_digest: XPlaneModelDigest,
     armed: bool,
     last_fix: Option<aviate_hal_xil::sim_types::SimGnssData>,
     last_imu: Option<aviate_hal_xil::sim_types::SimImuData>,
@@ -108,6 +106,14 @@ where
         kernel: DefaultAviateKernel<C, M>,
         config: XPlaneConfig,
     ) -> io::Result<Self> {
+        config
+            .model
+            .validate()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        let model_digest = config
+            .model
+            .canonical_digest()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         let hil_backend = HilBackend::connect_tcp(HilBackendConfig {
             local_port: 0,
             simulator_addr: config.simulator_addr,
@@ -126,12 +132,13 @@ where
         Ok(Self {
             hil_backend,
             runner: SitlRunner::new(transport, board_hal, kernel),
-            lane_order: config.lane_order,
+            lane_order: config.model.lane_order,
+            model_digest,
             armed: false,
             last_fix: None,
             last_imu: None,
             lane_injection: [0.0; 4],
-            wire: wire::WireConstraints::new(),
+            wire: wire::WireConstraints::new(config.model.wire),
             last_packet_at: None,
             last_sample_time_us: None,
             sample_dt_sec: 0.01,
@@ -225,14 +232,18 @@ where
         // Lane order is applied AFTER the curve and only here: the
         // mixer, the controller and the curve all reason in the mixer's
         // own numbering.
-        if let Some(reorder) = self.lane_order {
-            reorder(&mut sim_cmd.outputs, sim_cmd.count);
-        }
+        reorder_lanes(&mut sim_cmd.outputs, sim_cmd.count, self.lane_order);
         if let Err(error) = self.hil_backend.send_actuators(&sim_cmd) {
             // A dropped command is the bridge's cue to stall; it must be
             // visible, not swallowed.
             log::warn!("actuator command not sent: {error}");
         }
+    }
+
+    /// Return the identity of the plant-protection boundary in use.
+    #[must_use]
+    pub fn model_digest(&self) -> XPlaneModelDigest {
+        self.model_digest
     }
 
     /// Whether the HIL link to the bridge is up.
@@ -382,6 +393,16 @@ fn apply_actuator_curve(
         *lane = curve
             .boundary_command(aviate_core::types::NormalizedThrust(*lane))
             .0;
+    }
+}
+
+fn reorder_lanes(outputs: &mut [f32; 16], count: u8, lane_order: [u8; 4]) {
+    if usize::from(count) < lane_order.len() {
+        return;
+    }
+    let source = *outputs;
+    for (target, source_index) in lane_order.into_iter().enumerate() {
+        outputs[target] = source[usize::from(source_index)];
     }
 }
 

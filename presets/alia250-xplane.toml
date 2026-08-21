@@ -1,0 +1,15 @@
+schema_version = 1
+model_id = "alia250-xplane-12"
+airframe_id = "alia250"
+lane_order = [0, 2, 1, 3]
+
+# These values protect the simulator plant. The tuner cannot change them.
+[wire]
+rise_per_s = 0.035
+band_boundary = 0.40
+low_band_rise_per_s = 0.15
+fall_per_s = 0.30
+mean_ceiling = 0.55
+lane_ceiling = 0.85
+airborne_clearance_m = 0.5
+ground_squeeze = 0.5
