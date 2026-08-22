@@ -299,7 +299,9 @@ dependencies = [
  "aviate-core",
  "aviate-hal-io",
  "aviate-link",
+ "getrandom",
  "log",
+ "sha2",
 ]
 
 [[package]]

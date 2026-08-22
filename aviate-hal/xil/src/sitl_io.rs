@@ -58,10 +58,13 @@ use aviate_link::mavlink::protocol::{
     CommandAck, CommandLong, Heartbeat, SetAttitudeTarget, SetPositionTargetLocalNed,
 };
 use aviate_link::mavlink::{
-    mav_cmd, mav_result, parse_mavlink, serialize_mavlink, MavAutopilot, MavMessage, MavModeFlag,
-    MavState, MavType, FORCE_ARM_DISARM_MAGIC,
+    mav_cmd, mav_result, parse_mavlink_frame, serialize_mavlink, MavAutopilot, MavMessage,
+    MavModeFlag, MavState, MavType, FORCE_ARM_DISARM_MAGIC,
 };
 
+use crate::command_provenance::{
+    MavlinkCommandFamily, MavlinkCommandProvenance, SourceEpochTracker,
+};
 use crate::sim_types::{SimActuatorCmd, SimGnssFix, SimSensorPacket};
 use crate::{bridge, XilConfig};
 
@@ -77,6 +80,15 @@ pub struct HilSensorData {
 #[derive(Debug, Clone, Default)]
 pub struct HilGpsData {
     pub gnss: RawGnssReading,
+}
+
+/// One received command with exact raw provenance for a MAVLink setpoint.
+#[derive(Clone, Debug)]
+pub struct ReceivedCommand {
+    /// Typed command supplied to the runtime.
+    pub command: SystemCommand,
+    /// Exact raw identity. Discrete commands do not carry this value.
+    pub provenance: Option<MavlinkCommandProvenance>,
 }
 
 /// SITL I/O transport layer
@@ -120,7 +132,8 @@ pub struct SitlIO {
     command: Option<SystemCommand>,
     // High-rate setpoint slot (latest-wins is the correct semantics
     // for a stream — only the newest setpoint matters).
-    flight_cmd: Option<SystemCommand>,
+    flight_cmd: Option<ReceivedCommand>,
+    command_source_epochs: SourceEpochTracker,
 
     // Heartbeat timing
     last_heartbeat_us: u64,
@@ -148,6 +161,7 @@ impl SitlIO {
         info!("SitlIO: Binding MAVLink/GCS port {}", config.sensor_port());
         let socket = UdpSocket::bind(("0.0.0.0", config.sensor_port()))?;
         socket.set_nonblocking(true)?;
+        let command_source_epochs = SourceEpochTracker::new()?;
 
         Ok(Self {
             socket,
@@ -159,6 +173,7 @@ impl SitlIO {
             gps_data: None,
             command: None,
             flight_cmd: None,
+            command_source_epochs,
             last_heartbeat_us: 0,
             gcs_addr: None,
             rx_count: 0,
@@ -298,10 +313,10 @@ impl SitlIO {
 
     /// Process received MAVLink data
     fn process_mavlink_data(&mut self, data: &[u8], src: std::net::SocketAddr) {
-        match parse_mavlink(data) {
-            Ok((msg, _sig, _consumed)) => {
-                self.rx_count += 1;
-                self.handle_message(msg, src);
+        match parse_mavlink_frame(data) {
+            Ok(parsed) => {
+                self.rx_count = self.rx_count.wrapping_add(1);
+                self.handle_message(parsed.message, src, parsed.header, &data[..parsed.consumed]);
             }
             Err(e) => {
                 // Log parse errors to help debug GCS communication issues
@@ -320,15 +335,21 @@ impl SitlIO {
     ///
     /// Handles GCS commands (arm/disarm, setpoints). Sensor data is provided
     /// via the Rust API (feed_sensor_packet) from the simulator backend.
-    fn handle_message(&mut self, msg: MavMessage, src: std::net::SocketAddr) {
+    fn handle_message(
+        &mut self,
+        msg: MavMessage,
+        src: std::net::SocketAddr,
+        header: aviate_link::mavlink::protocol::MavHeader,
+        frame: &[u8],
+    ) {
         match msg {
             MavMessage::SetAttitudeTarget(tgt) => {
                 self.gcs_addr = Some(src);
-                self.handle_set_attitude_target(tgt);
+                self.handle_set_attitude_target(tgt, src, header, frame);
             }
             MavMessage::SetPositionTargetLocalNed(tgt) => {
                 self.gcs_addr = Some(src);
-                self.handle_set_position_target(tgt);
+                self.handle_set_position_target(tgt, src, header, frame);
             }
             MavMessage::CommandLong(cmd) => {
                 self.gcs_addr = Some(src);
@@ -341,14 +362,69 @@ impl SitlIO {
         }
     }
 
-    fn handle_set_attitude_target(&mut self, tgt: SetAttitudeTarget) {
-        let cmd = bridge::mavlink_to_command(&tgt);
-        self.flight_cmd = Some(SystemCommand::FlightControl(cmd));
+    fn handle_set_attitude_target(
+        &mut self,
+        tgt: SetAttitudeTarget,
+        source: std::net::SocketAddr,
+        header: aviate_link::mavlink::protocol::MavHeader,
+        frame: &[u8],
+    ) {
+        let mut cmd = bridge::mavlink_to_command(&tgt);
+        cmd.sequence = u32::from(header.seq);
+        let provenance = MavlinkCommandProvenance::new(
+            &mut self.command_source_epochs,
+            source,
+            header,
+            tgt.time_boot_ms,
+            MavlinkCommandFamily::AttitudeTarget,
+            frame,
+        );
+        self.flight_cmd = Some(ReceivedCommand {
+            command: SystemCommand::FlightControl(cmd),
+            provenance: Some(provenance),
+        });
     }
 
-    fn handle_set_position_target(&mut self, tgt: SetPositionTargetLocalNed) {
-        let cmd = bridge::mavlink_position_to_command(&tgt);
-        self.flight_cmd = Some(SystemCommand::FlightControl(cmd));
+    fn handle_set_position_target(
+        &mut self,
+        tgt: SetPositionTargetLocalNed,
+        source: std::net::SocketAddr,
+        header: aviate_link::mavlink::protocol::MavHeader,
+        frame: &[u8],
+    ) {
+        let mut cmd = bridge::mavlink_position_to_command(&tgt);
+        cmd.sequence = u32::from(header.seq);
+        let provenance = MavlinkCommandProvenance::new(
+            &mut self.command_source_epochs,
+            source,
+            header,
+            tgt.time_boot_ms,
+            MavlinkCommandFamily::PositionTargetLocalNed,
+            frame,
+        );
+        self.flight_cmd = Some(ReceivedCommand {
+            command: SystemCommand::FlightControl(cmd),
+            provenance: Some(provenance),
+        });
+    }
+
+    #[cfg(test)]
+    fn inject_attitude_target(&mut self, target: SetAttitudeTarget) {
+        let header = aviate_link::mavlink::protocol::MavHeader {
+            payload_len: 39,
+            incompat_flags: 0,
+            compat_flags: 0,
+            seq: 0,
+            sysid: 255,
+            compid: 190,
+            msgid: 82,
+        };
+        self.handle_set_attitude_target(
+            target,
+            std::net::SocketAddr::from(([127, 0, 0, 1], 30_000)),
+            header,
+            &[1; 51],
+        );
     }
 
     /// Decode a COMMAND_LONG and queue the command it names.
@@ -465,7 +541,7 @@ impl SitlIO {
         if let Some(len) = serialize_mavlink(msg, self.seq, self.config.instance + 1, 1, &mut buf) {
             self.seq = self.seq.wrapping_add(1);
             let _ = self.socket.send_to(&buf[..len], addr);
-            self.tx_count += 1;
+            self.tx_count = self.tx_count.wrapping_add(1);
         }
     }
 
@@ -523,6 +599,18 @@ impl SitlIO {
     pub fn config(&self) -> &XilConfig {
         &self.config
     }
+
+    /// Receive one command and retain exact raw setpoint provenance.
+    pub fn recv_command_with_provenance(&mut self) -> Option<ReceivedCommand> {
+        self.poll();
+        self.command
+            .take()
+            .map(|command| ReceivedCommand {
+                command,
+                provenance: None,
+            })
+            .or_else(|| self.flight_cmd.take())
+    }
 }
 
 // Implement SystemHal - timing and system functions
@@ -558,10 +646,8 @@ impl SystemHal for SitlIO {
 // Implement CommandHal - receives commands from GCS
 impl CommandHal for SitlIO {
     fn recv_command(&mut self) -> Option<SystemCommand> {
-        self.poll();
-        // Discrete commands (arm/disarm) first: they must never be
-        // starved or dropped by the setpoint stream.
-        self.command.take().or_else(|| self.flight_cmd.take())
+        self.recv_command_with_provenance()
+            .map(|received| received.command)
     }
 
     /// Answer the station with what the kernel actually did.
@@ -644,13 +730,64 @@ mod tests {
         }
     }
 
+    fn raw_attitude(
+        io: &mut SitlIO,
+        source: std::net::SocketAddr,
+        sequence: u8,
+        time_boot_ms: u32,
+    ) -> (ReceivedCommand, Vec<u8>) {
+        let mut target = attitude_msg(0.5);
+        target.time_boot_ms = time_boot_ms;
+        let message = MavMessage::SetAttitudeTarget(target);
+        let mut frame = [0_u8; 128];
+        let length = serialize_mavlink(&message, sequence, 255, 190, &mut frame)
+            .expect("serialize setpoint");
+        io.process_mavlink_data(&frame[..length], source);
+        let received = io
+            .recv_command_with_provenance()
+            .expect("received setpoint");
+        (received, frame[..length].to_vec())
+    }
+
+    #[test]
+    fn raw_setpoint_provenance_tracks_wrap_sender_and_boot_epoch() {
+        use sha2::{Digest as _, Sha256};
+
+        let mut io = test_io();
+        let first_source = std::net::SocketAddr::from(([127, 0, 0, 1], 30_000));
+        let second_source = std::net::SocketAddr::from(([127, 0, 0, 1], 30_001));
+        let (first, first_frame) = raw_attitude(&mut io, first_source, 255, 5_000);
+        let first_raw = first.provenance.expect("first provenance");
+        let (wrapped, _) = raw_attitude(&mut io, first_source, 0, 5_001);
+        let wrapped_raw = wrapped.provenance.expect("wrapped provenance");
+        assert_eq!(first_raw.source_epoch, wrapped_raw.source_epoch);
+        assert_eq!(first_raw.mavlink_frame_sequence, 255);
+        assert_eq!(wrapped_raw.mavlink_frame_sequence, 0);
+        assert_eq!(
+            first_raw.frame_digest,
+            <[u8; 32]>::from(Sha256::digest(first_frame))
+        );
+
+        let (restarted, _) = raw_attitude(&mut io, first_source, 1, 1);
+        let restarted_raw = restarted.provenance.expect("restart provenance");
+        assert_ne!(restarted_raw.source_epoch, wrapped_raw.source_epoch);
+        let (competitor, _) = raw_attitude(&mut io, second_source, 1, 1);
+        let competitor_raw = competitor.provenance.expect("competitor provenance");
+        assert_ne!(competitor_raw.source_epoch, restarted_raw.source_epoch);
+        assert_eq!(competitor_raw.source_endpoint, second_source);
+        assert!(matches!(
+            competitor.command,
+            SystemCommand::FlightControl(command) if command.sequence == 1
+        ));
+    }
+
     /// A setpoint parsed in the same poll batch after an Arm must not
     /// clobber it: both survive, discrete command first.
     #[test]
     fn setpoint_in_same_batch_does_not_clobber_arm() {
         let mut io = test_io();
         io.handle_command_long(arm_msg());
-        io.handle_set_attitude_target(attitude_msg(0.4));
+        io.inject_attitude_target(attitude_msg(0.4));
 
         assert!(matches!(io.recv_command(), Some(SystemCommand::Arm)));
         match io.recv_command() {
@@ -666,7 +803,7 @@ mod tests {
     #[test]
     fn arm_after_setpoint_in_same_batch_preserves_both() {
         let mut io = test_io();
-        io.handle_set_attitude_target(attitude_msg(0.7));
+        io.inject_attitude_target(attitude_msg(0.7));
         io.handle_command_long(arm_msg());
 
         assert!(matches!(io.recv_command(), Some(SystemCommand::Arm)));
@@ -681,8 +818,8 @@ mod tests {
     #[test]
     fn setpoint_slot_is_latest_wins() {
         let mut io = test_io();
-        io.handle_set_attitude_target(attitude_msg(0.2));
-        io.handle_set_attitude_target(attitude_msg(0.9));
+        io.inject_attitude_target(attitude_msg(0.2));
+        io.inject_attitude_target(attitude_msg(0.9));
 
         match io.recv_command() {
             Some(SystemCommand::FlightControl(cmd)) => {

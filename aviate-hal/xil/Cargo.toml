@@ -20,7 +20,9 @@ xil-fault = ["aviate-hal-io/xil-fault"]
 aviate-core = { path = "../../aviate-core" }
 aviate-link = { path = "../../aviate-link" }
 aviate-hal-io = { path = "../io" }
+getrandom = "0.4"
 log = "0.4"
+sha2 = "0.10"
 
 [lints]
 workspace = true

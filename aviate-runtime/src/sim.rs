@@ -163,6 +163,9 @@ where
     /// Exact command supplied to the kernel in the most recent step.
     pub(crate) last_effective_command: Command,
 
+    /// Exact raw identity retained with the current external setpoint.
+    pub(crate) last_command_provenance: Option<aviate_hal_xil::MavlinkCommandProvenance>,
+
     /// Last IMU timestamp for dt calculation
     pub last_imu_time: Option<u64>,
 
@@ -211,6 +214,7 @@ where
             kernel,
             ingress: crate::command_ingress::CommandIngress::default(),
             last_effective_command: default_command(),
+            last_command_provenance: None,
             last_imu_time: None,
             sensor_cache: SensorCache::new(),
             ekf_initialized: false,
@@ -224,6 +228,12 @@ where
     #[must_use]
     pub fn last_effective_command(&self) -> &Command {
         &self.last_effective_command
+    }
+
+    /// Return the exact raw identity retained with the active setpoint.
+    #[must_use]
+    pub fn last_command_provenance(&self) -> Option<aviate_hal_xil::MavlinkCommandProvenance> {
+        self.last_command_provenance
     }
 
     /// Initialize telemetry from config (called in AppRuntime::run)

@@ -20,7 +20,7 @@ use serde::Serialize;
 
 use super::XPlaneControlObservation;
 
-pub(super) const TUNING_TRACE_SCHEMA_VERSION: u16 = 1;
+pub(super) const TUNING_TRACE_SCHEMA_VERSION: u16 = 2;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 const OBSERVATION_TIMEOUT: Duration = Duration::from_millis(20);
 const MAX_FRAME_BYTES: usize = 65_536;
@@ -222,6 +222,7 @@ impl TuningTracePublisher {
         &mut self,
         observation: XPlaneControlObservation,
         requested: Option<&Command>,
+        command_provenance: Option<aviate_hal_xil::MavlinkCommandProvenance>,
         effective: &Command,
         estimate: &StateEstimate,
         armed: bool,
@@ -234,6 +235,7 @@ impl TuningTracePublisher {
             sequence,
             observation,
             requested,
+            command_provenance,
             effective,
             estimate,
             armed,

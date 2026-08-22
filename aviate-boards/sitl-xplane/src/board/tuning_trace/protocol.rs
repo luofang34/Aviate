@@ -3,6 +3,7 @@
 use aviate_core::control::{Command, CommandSource, ConfigMode, ControlMode, Setpoint};
 use aviate_core::state::{EstimateQuality, StateEstimate, StateValidFlags};
 use aviate_hal_xil::sim_types::SimImuData;
+use aviate_hal_xil::{MavlinkCommandFamily, MavlinkCommandProvenance};
 use serde::{Deserialize, Serialize};
 
 use super::super::{XPlaneConstraintFlags, XPlaneControlObservation};
@@ -115,6 +116,38 @@ pub enum TuningCommandSource {
     Gcs,
     /// Failsafe command.
     Failsafe,
+}
+
+/// MAVLink setpoint-family names used by raw command provenance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TuningCommandFamily {
+    /// MAVLink `SET_ATTITUDE_TARGET`.
+    AttitudeTarget,
+    /// MAVLink `SET_POSITION_TARGET_LOCAL_NED`.
+    PositionTargetLocalNed,
+}
+
+/// Exact producer-side identity of one raw MAVLink setpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TuningCommandProvenance {
+    /// UDP source endpoint observed by Aviate.
+    pub source_endpoint: std::net::SocketAddr,
+    /// Nonzero source epoch for this process and sender incarnation.
+    pub source_epoch: u64,
+    /// MAVLink header system identifier.
+    pub mavlink_system_id: u8,
+    /// MAVLink header component identifier.
+    pub mavlink_component_id: u8,
+    /// Full MAVLink header sequence field.
+    pub mavlink_frame_sequence: u8,
+    /// MAVLink setpoint boot time.
+    pub time_boot_ms: u32,
+    /// MAVLink setpoint family.
+    pub command_family: TuningCommandFamily,
+    /// SHA-256 digest of the exact received frame.
+    pub frame_digest: [u8; 32],
 }
 
 /// Requested configuration mode.
@@ -268,6 +301,8 @@ pub struct TuningControlObservation {
     pub simulator_timestamp_us: u64,
     /// Command retained from an external or experiment request.
     pub requested_command: Option<TuningCommand>,
+    /// Exact raw-frame identity for a retained GCS command.
+    pub command_provenance: Option<TuningCommandProvenance>,
     /// Exact command supplied to the kernel update.
     pub effective_command: TuningCommand,
     /// Effective control mode, repeated for streaming gates.
@@ -291,6 +326,7 @@ impl TuningControlObservation {
         sequence: u64,
         observation: XPlaneControlObservation,
         requested: Option<&Command>,
+        command_provenance: Option<MavlinkCommandProvenance>,
         effective: &Command,
         estimate: &StateEstimate,
         armed: bool,
@@ -301,6 +337,7 @@ impl TuningControlObservation {
             sequence,
             simulator_timestamp_us: observation.timestamp_us,
             requested_command: requested.map(TuningCommand::from),
+            command_provenance: command_provenance.map(Into::into),
             effective_command: TuningCommand::from(effective),
             control_mode: effective.mode.into(),
             estimate: TuningEstimate::from(estimate),
@@ -309,6 +346,21 @@ impl TuningControlObservation {
             applied_force_lanes: observation.applied_force_lanes,
             constraint_flags: observation.constraint_flags.into(),
             armed,
+        }
+    }
+}
+
+impl From<MavlinkCommandProvenance> for TuningCommandProvenance {
+    fn from(value: MavlinkCommandProvenance) -> Self {
+        Self {
+            source_endpoint: value.source_endpoint,
+            source_epoch: value.source_epoch,
+            mavlink_system_id: value.mavlink_system_id,
+            mavlink_component_id: value.mavlink_component_id,
+            mavlink_frame_sequence: value.mavlink_frame_sequence,
+            time_boot_ms: value.time_boot_ms,
+            command_family: value.command_family.into(),
+            frame_digest: value.frame_digest,
         }
     }
 }
@@ -405,5 +457,6 @@ macro_rules! enum_map {
 enum_map!(ControlMode => TuningControlMode,
     Rate, Attitude, AltitudeHold, PositionHold, VelocityControl, DeviationTracking);
 enum_map!(CommandSource => TuningCommandSource, Pilot, Autopilot, Gcs, Failsafe);
+enum_map!(MavlinkCommandFamily => TuningCommandFamily, AttitudeTarget, PositionTargetLocalNed);
 enum_map!(ConfigMode => TuningConfigMode, Hover, Cruise, Transition, Degraded);
 enum_map!(EstimateQuality => TuningEstimateQuality, Good, Degraded, Unusable);

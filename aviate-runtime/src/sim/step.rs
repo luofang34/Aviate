@@ -121,9 +121,11 @@ where
         // engages (safe: zero-collective on the ground) and releases
         // on the first real setpoint per LLR-FLT-209. The old "anchor
         // freshness on arm" hack was exactly the #133 defect.
-        if let Some(sys_cmd) = self.transport.recv_command() {
+        if let Some(received) = self.transport.recv_command_with_provenance() {
+            let sys_cmd = received.command;
             let now_ticks = self.transport.now().ticks;
             if let SystemCommand::FlightControl(cmd) = &sys_cmd {
+                self.last_command_provenance = received.provenance;
                 self.kernel
                     .state
                     .checks

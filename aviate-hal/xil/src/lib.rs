@@ -31,6 +31,7 @@
 
 pub mod backend;
 pub mod bridge;
+pub mod command_provenance;
 pub mod config;
 pub mod fault_ctrl;
 pub mod fault_protocol;
@@ -49,8 +50,9 @@ pub use world::{
 };
 
 // Transport exports
+pub use command_provenance::{MavlinkCommandFamily, MavlinkCommandProvenance};
 pub use mock::SitlHal;
-pub use sitl_io::{HilGpsData, HilSensorData, SitlIO};
+pub use sitl_io::{HilGpsData, HilSensorData, ReceivedCommand, SitlIO};
 
 // Simulator-neutral data types (for direct FFI integration)
 pub use sim_types::{

@@ -5,7 +5,9 @@
 use std::net::TcpListener;
 use std::thread;
 
+use aviate_core::control::CommandSource;
 use aviate_core::state::StateEstimate;
+use aviate_hal_xil::{MavlinkCommandFamily, MavlinkCommandProvenance};
 
 use super::*;
 use crate::{XPlaneConstraintFlags, XPlaneControlObservation};
@@ -60,6 +62,25 @@ fn fake_runner_accepts_identity_and_each_exact_sequence() {
         let frame: TuningControlObservation = read_frame(&mut stream).expect("observation");
         assert_eq!(frame.sequence, 0);
         assert_eq!(frame.simulator_timestamp_us, 10_000);
+        assert_eq!(
+            frame.requested_command.as_ref().map(|value| value.sequence),
+            Some(255)
+        );
+        let raw = frame.command_provenance.expect("raw command provenance");
+        assert_eq!(
+            raw.source_endpoint,
+            "127.0.0.1:30000".parse().expect("source")
+        );
+        assert_eq!(raw.source_epoch, 41);
+        assert_eq!(raw.mavlink_system_id, 255);
+        assert_eq!(raw.mavlink_component_id, 190);
+        assert_eq!(raw.mavlink_frame_sequence, 255);
+        assert_eq!(raw.time_boot_ms, 5_000);
+        assert_eq!(
+            raw.command_family,
+            MavlinkCommandFamily::AttitudeTarget.into()
+        );
+        assert_eq!(raw.frame_digest, [9; 32]);
         write_frame(
             &mut stream,
             &TuningObservationAck {
@@ -73,10 +94,23 @@ fn fake_runner_accepts_identity_and_each_exact_sequence() {
     });
     let config = XPlaneTuningTraceConfig::new(endpoint, identity()).expect("config");
     let mut publisher = TuningTracePublisher::connect(config).expect("publisher");
-    let command = aviate_runtime::default_command();
+    let mut command = aviate_runtime::default_command();
+    command.source = CommandSource::Gcs;
+    command.sequence = 255;
+    let provenance = MavlinkCommandProvenance {
+        source_endpoint: "127.0.0.1:30000".parse().expect("source"),
+        source_epoch: 41,
+        mavlink_system_id: 255,
+        mavlink_component_id: 190,
+        mavlink_frame_sequence: 255,
+        time_boot_ms: 5_000,
+        command_family: MavlinkCommandFamily::AttitudeTarget,
+        frame_digest: [9; 32],
+    };
     publisher.publish(
         observation(),
-        None,
+        Some(&command),
+        Some(provenance),
         &command,
         &StateEstimate::default(),
         false,
@@ -119,6 +153,7 @@ fn wrong_ack_sequence_permanently_fails_the_transport() {
     publisher.publish(
         observation(),
         None,
+        None,
         &aviate_runtime::default_command(),
         &StateEstimate::default(),
         false,
@@ -156,6 +191,7 @@ fn disconnect_before_ack_permanently_fails_the_transport() {
     let mut publisher = TuningTracePublisher::connect(config).expect("publisher");
     publisher.publish(
         observation(),
+        None,
         None,
         &aviate_runtime::default_command(),
         &StateEstimate::default(),

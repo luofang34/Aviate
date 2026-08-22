@@ -76,6 +76,7 @@ where
             _ => None,
         };
         let effective = self.runner.last_effective_command().clone();
+        let command_provenance = self.runner.last_command_provenance();
         let estimate = self
             .runner
             .kernel
@@ -87,6 +88,7 @@ where
             trace.publish(
                 observation,
                 requested.as_ref(),
+                command_provenance,
                 &effective,
                 &estimate,
                 armed,
