@@ -7,6 +7,9 @@ use aviate_config::airframe_preset::{CandidateIdentity, ContentDigest};
 
 use crate::{AliaKernel, CalibrationRunManifest};
 
+mod source_identity;
+use source_identity::application_source_identity;
+
 const MANIFEST_SCHEMA_VERSION: u16 = 2;
 const APPLICATION_ID: &str = "sitl-xplane-alia250";
 
@@ -257,137 +260,6 @@ impl AliaRunManifest {
         }
         text
     }
-}
-
-fn application_source_identity() -> ContentDigest {
-    let sources: &[(&str, &[u8])] = &[
-        ("kernel/construct.rs", include_bytes!("construct.rs")),
-        ("kernel/tuning.rs", include_bytes!("tuning.rs")),
-        ("kernel/manifest.rs", include_bytes!("manifest.rs")),
-        ("kernel/build.rs", include_bytes!("../build.rs")),
-        (
-            "workspace/Cargo.toml",
-            include_bytes!("../../../../Cargo.toml"),
-        ),
-        ("kernel/Cargo.toml", include_bytes!("../Cargo.toml")),
-        ("app/Cargo.toml", include_bytes!("../../Cargo.toml")),
-        ("app/AviateApp.toml", include_bytes!("../../AviateApp.toml")),
-        (
-            "board/Cargo.toml",
-            include_bytes!("../../../../aviate-boards/sitl-xplane/Cargo.toml"),
-        ),
-        ("app/main.rs", include_bytes!("../../src/main.rs")),
-        ("app/cli.rs", include_bytes!("../../src/cli.rs")),
-        ("app/cli/error.rs", include_bytes!("../../src/cli/error.rs")),
-        (
-            "app/cli/runtime_binding.rs",
-            include_bytes!("../../src/cli/runtime_binding.rs"),
-        ),
-        ("app/artifact.rs", include_bytes!("../../src/artifact.rs")),
-        (
-            "app/tuning_trace.rs",
-            include_bytes!("../../src/tuning_trace.rs"),
-        ),
-        ("app/identify.rs", include_bytes!("../../src/identify.rs")),
-        (
-            "app/report.rs",
-            include_bytes!("../../src/identify/report.rs"),
-        ),
-        (
-            "app/stand.rs",
-            include_bytes!("../../src/identify/stand.rs"),
-        ),
-        (
-            "app/identify/trace.rs",
-            include_bytes!("../../src/identify/trace.rs"),
-        ),
-        (
-            "app/identify/sweep.rs",
-            include_bytes!("../../src/identify/sweep.rs"),
-        ),
-        (
-            "app/identify/yaw_sign.rs",
-            include_bytes!("../../src/identify/yaw_sign.rs"),
-        ),
-        (
-            "board/board.rs",
-            include_bytes!("../../../../aviate-boards/sitl-xplane/src/board.rs"),
-        ),
-        (
-            "board/handshake.rs",
-            include_bytes!("../../../../aviate-boards/sitl-xplane/src/board/handshake.rs"),
-        ),
-        (
-            "board/observation.rs",
-            include_bytes!("../../../../aviate-boards/sitl-xplane/src/board/observation.rs"),
-        ),
-        (
-            "board/packet.rs",
-            include_bytes!("../../../../aviate-boards/sitl-xplane/src/board/packet.rs"),
-        ),
-        (
-            "board/tuning_trace.rs",
-            include_bytes!("../../../../aviate-boards/sitl-xplane/src/board/tuning_trace.rs"),
-        ),
-        (
-            "board/tuning_trace/protocol.rs",
-            include_bytes!(
-                "../../../../aviate-boards/sitl-xplane/src/board/tuning_trace/protocol.rs"
-            ),
-        ),
-        (
-            "board/wire.rs",
-            include_bytes!("../../../../aviate-boards/sitl-xplane/src/board/wire.rs"),
-        ),
-        (
-            "config/candidate.rs",
-            include_bytes!("../../../../aviate-config/src/airframe_preset/candidate.rs"),
-        ),
-        (
-            "config/candidate/design.rs",
-            include_bytes!("../../../../aviate-config/src/airframe_preset/candidate/design.rs"),
-        ),
-        (
-            "config/candidate/lineage.rs",
-            include_bytes!("../../../../aviate-config/src/airframe_preset/candidate/lineage.rs"),
-        ),
-        (
-            "config/candidate/plant.rs",
-            include_bytes!("../../../../aviate-config/src/airframe_preset/candidate/plant.rs"),
-        ),
-        (
-            "config/model.rs",
-            include_bytes!("../../../../aviate-config/src/xplane_model.rs"),
-        ),
-        (
-            "config/runtime.rs",
-            include_bytes!("../../../../aviate-config/src/xplane_runtime.rs"),
-        ),
-        (
-            "runtime/sim.rs",
-            include_bytes!("../../../../aviate-runtime/src/sim.rs"),
-        ),
-        (
-            "runtime/sim/step.rs",
-            include_bytes!("../../../../aviate-runtime/src/sim/step.rs"),
-        ),
-        (
-            "core/kernel_update.rs",
-            include_bytes!("../../../../aviate-core/src/kernel_update.rs"),
-        ),
-        (
-            "core/kernel_types.rs",
-            include_bytes!("../../../../aviate-core/src/kernel_types.rs"),
-        ),
-    ];
-    let mut bytes = Vec::new();
-    for (name, source) in sources {
-        bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(name.as_bytes());
-        bytes.extend_from_slice(&(source.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(source);
-    }
-    ContentDigest::calculate(&bytes)
 }
 
 #[cfg(test)]
