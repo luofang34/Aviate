@@ -178,6 +178,7 @@ version = "0.1.0"
 dependencies = [
  "aviate-config",
  "aviate-core",
+ "aviate-hal-xil",
  "aviate-runtime",
 ]
 
@@ -300,8 +301,12 @@ dependencies = [
  "aviate-hal-io",
  "aviate-link",
  "getrandom",
+ "libc",
  "log",
+ "serde",
+ "serde_json",
  "sha2",
+ "thiserror",
 ]
 
 [[package]]

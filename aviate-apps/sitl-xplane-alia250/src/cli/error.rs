@@ -17,6 +17,15 @@ pub(crate) enum CliError {
         value: String,
         source: std::num::ParseIntError,
     },
+    InvalidDigest {
+        flag: &'static str,
+        value: String,
+    },
+    InvalidRunSeed {
+        value: String,
+        source: std::num::ParseIntError,
+    },
+    InvalidCapabilitySet(String),
     InvalidCombination(&'static str),
     ClaimRuntimeBinding {
         path: PathBuf,
@@ -40,6 +49,10 @@ pub(crate) enum CliError {
         kind: &'static str,
         path: PathBuf,
         source: std::io::Error,
+    },
+    ConditionArtifact {
+        path: PathBuf,
+        source: aviate_hal_xil::perturbation::ArtifactError,
     },
 }
 
@@ -65,6 +78,22 @@ impl core::fmt::Display for CliError {
             Self::InvalidDuration { value, source } => {
                 write!(formatter, "--auto-arm {value:?} is not seconds: {source}")
             }
+            Self::InvalidDigest { flag, value } => {
+                write!(
+                    formatter,
+                    "{flag} {value:?} is not 64 lowercase hexadecimal digits"
+                )
+            }
+            Self::InvalidRunSeed { value, source } => {
+                write!(
+                    formatter,
+                    "--run-seed {value:?} is not an unsigned integer: {source}"
+                )
+            }
+            Self::InvalidCapabilitySet(value) => write!(
+                formatter,
+                "--required-perturbation-capabilities {value:?} is invalid"
+            ),
             Self::InvalidCombination(message) => formatter.write_str(message),
             Self::ClaimRuntimeBinding { path, source } => {
                 write!(
@@ -96,6 +125,9 @@ impl core::fmt::Display for CliError {
             Self::ReadArtifact { kind, path, source } => {
                 write!(formatter, "cannot read {kind} {path:?}: {source}")
             }
+            Self::ConditionArtifact { path, source } => {
+                write!(formatter, "condition artifact {path:?} failed: {source}")
+            }
         }
     }
 }
@@ -105,14 +137,18 @@ impl std::error::Error for CliError {
         match self {
             Self::InvalidSocket { source, .. } => Some(source),
             Self::InvalidDuration { source, .. } => Some(source),
+            Self::InvalidRunSeed { source, .. } => Some(source),
             Self::ClaimRuntimeBinding { source, .. }
             | Self::ConsumeRuntimeBinding { source, .. } => Some(source),
             Self::InvalidRuntimeBinding(error) => Some(error),
             Self::ReadArtifact { source, .. } => Some(source),
+            Self::ConditionArtifact { source, .. } => Some(source),
             Self::UnknownArgument(_)
             | Self::MissingValue(_)
             | Self::Duplicate(_)
             | Self::NonLoopbackTrace(_)
+            | Self::InvalidDigest { .. }
+            | Self::InvalidCapabilitySet(_)
             | Self::InvalidCombination(_)
             | Self::InsecureRuntimeBinding { .. }
             | Self::RuntimeBindingChanged(_)

@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use aviate_app_sitl_xplane_alia250_kernel::RunPurpose;
 
+mod condition;
 mod error;
 mod runtime_binding;
 
@@ -22,6 +23,7 @@ pub(super) struct Cli {
     runtime_handshake: Option<PathBuf>,
     candidate: Option<PathBuf>,
     plant_artifact: Option<PathBuf>,
+    condition: condition::ConditionArguments,
     bridge_set: bool,
 }
 
@@ -47,6 +49,7 @@ impl Cli {
             runtime_handshake: None,
             candidate: None,
             plant_artifact: None,
+            condition: condition::ConditionArguments::default(),
             bridge_set: false,
         };
         while let Some(flag) = values.next() {
@@ -114,6 +117,21 @@ impl Cli {
                     PathBuf::from(next_value(&mut values, "--runtime-handshake")?),
                     "--runtime-handshake",
                 )?,
+                "--condition-artifact"
+                | "--condition-artifact-sha256"
+                | "--condition-digest"
+                | "--run-seed"
+                | "--required-perturbation-capabilities" => {
+                    let stable_flag = match flag.as_str() {
+                        "--condition-artifact" => "--condition-artifact",
+                        "--condition-artifact-sha256" => "--condition-artifact-sha256",
+                        "--condition-digest" => "--condition-digest",
+                        "--run-seed" => "--run-seed",
+                        _ => "--required-perturbation-capabilities",
+                    };
+                    let value = next_value(&mut values, stable_flag)?;
+                    parsed.condition.set(&flag, value)?;
+                }
                 "--identify" => parsed.select_experiment(RunPurpose::Identify)?,
                 "--sweep" => parsed.select_experiment(RunPurpose::Sweep)?,
                 "--yaw-sign" => parsed.select_experiment(RunPurpose::YawSign)?,
@@ -157,6 +175,12 @@ impl Cli {
         runtime_binding::claim(path, self.bridge)
     }
 
+    pub(super) fn load_condition_artifact(
+        &self,
+    ) -> Result<Option<aviate_hal_xil::perturbation::LoadedPerturbationArtifact>, CliError> {
+        self.condition.load()
+    }
+
     fn select_experiment(&mut self, purpose: RunPurpose) -> Result<(), CliError> {
         if self.experiment.is_some() {
             return Err(CliError::InvalidCombination(
@@ -168,23 +192,29 @@ impl Cli {
     }
 
     fn validate(&self) -> Result<(), CliError> {
+        self.condition.validate()?;
         if self.runtime_handshake.is_none() {
             return Err(CliError::InvalidCombination(
                 "--runtime-handshake is required",
             ));
         }
         let has_candidate = self.candidate.is_some() || self.plant_artifact.is_some();
+        let has_condition = self.condition.is_some();
         if let Some(endpoint) = self.tuning_trace_endpoint {
             if !endpoint.ip().is_loopback() {
                 return Err(CliError::NonLoopbackTrace(endpoint));
             }
         }
-        if (has_candidate || self.experiment.is_some()) && self.tuning_trace_endpoint.is_none() {
+        if (has_candidate || has_condition || self.experiment.is_some())
+            && self.tuning_trace_endpoint.is_none()
+        {
             return Err(CliError::InvalidCombination(
                 "candidate and experiment runs require --tuning-trace-endpoint",
             ));
         }
-        if (has_candidate || self.experiment.is_some()) && self.run_manifest.is_none() {
+        if (has_candidate || has_condition || self.experiment.is_some())
+            && self.run_manifest.is_none()
+        {
             return Err(CliError::InvalidCombination(
                 "candidate and experiment runs require --run-manifest",
             ));
@@ -192,6 +222,11 @@ impl Cli {
         if has_candidate && self.experiment.is_some() {
             return Err(CliError::InvalidCombination(
                 "a candidate cannot be combined with an identification experiment",
+            ));
+        }
+        if has_condition && self.experiment.is_some() {
+            return Err(CliError::InvalidCombination(
+                "a condition artifact cannot be combined with an identification experiment",
             ));
         }
         if self.plant_output.is_some() && self.experiment != Some(RunPurpose::Identify) {
@@ -352,6 +387,39 @@ mod tests {
         ]))
         .expect("valid identify arguments");
         assert_eq!(parsed.experiment, Some(RunPurpose::Identify));
+    }
+
+    #[test]
+    fn condition_identity_arguments_are_all_or_none_and_strict() {
+        let digest = "a".repeat(64);
+        let mut complete = args(&[
+            "--runtime-handshake",
+            "runtime.toml",
+            "--run-manifest",
+            "run.toml",
+            "--tuning-trace-endpoint",
+            "127.0.0.1:9000",
+            "--condition-artifact",
+            "condition.json",
+            "--condition-artifact-sha256",
+        ]);
+        complete.extend([
+            digest.clone(),
+            "--condition-digest".to_owned(),
+            digest,
+            "--run-seed".to_owned(),
+            "42".to_owned(),
+            "--required-perturbation-capabilities".to_owned(),
+            "sensor_perturbation,command_hold".to_owned(),
+        ]);
+        assert!(Cli::parse(complete).is_ok());
+        assert!(Cli::parse(args(&[
+            "--runtime-handshake",
+            "runtime.toml",
+            "--condition-artifact",
+            "condition.json",
+        ]))
+        .is_err());
     }
 
     #[test]

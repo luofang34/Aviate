@@ -9,10 +9,14 @@
 mod board;
 
 pub use board::{
-    RuntimeHandshakeError, TuningCommand, TuningCommandSource, TuningConfigMode,
+    RuntimeHandshakeError, TuningActuatorApplication, TuningActuatorBypassReason,
+    TuningActuatorEligibility, TuningCommand, TuningCommandSource, TuningConfigMode,
     TuningConstraintFlags, TuningControlMode, TuningControlObservation, TuningEstimate,
-    TuningEstimateQuality, TuningEstimateValidity, TuningFrameType, TuningHandshake, TuningImu,
-    TuningObservationAck, TuningReady, TuningSetpoint, TuningTraceError, XPlaneBoard, XPlaneConfig,
-    XPlaneConstraintFlags, XPlaneControlObservation, XPlaneRuntimeHandshake,
-    XPlaneTuningTraceConfig, XPlaneTuningTraceIdentity, BOARD_INFO,
+    TuningEstimateQuality, TuningEstimateValidity, TuningFrameType, TuningHandshake,
+    TuningHoverEstimatorMode, TuningHoverInitialization, TuningImu, TuningObservationAck,
+    TuningPerturbationCapability, TuningReady, TuningSendEvidence, TuningSensorApplication,
+    TuningSetpoint, TuningTraceError, XPlaneBoard, XPlaneConfig, XPlaneConstraintFlags,
+    XPlaneControlObservation, XPlaneHoverInitialization, XPlanePerturbationBindingError,
+    XPlaneRuntimeHandshake, XPlaneSendEvidence, XPlaneTuningTraceConfig, XPlaneTuningTraceIdentity,
+    BOARD_INFO,
 };

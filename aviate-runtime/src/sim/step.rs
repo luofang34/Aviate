@@ -7,7 +7,7 @@
 
 use log::{info, warn};
 
-use super::{init_state_to_mav_state, SitlRunner};
+use super::{init_state_to_mav_state, AllowArm, ArmAuthorizer, SitlRunner};
 use crate::telemetry::TelemetrySnapshot;
 
 use aviate_core::hal::{ActuatorHal, SensorHal, SystemHal};
@@ -42,6 +42,14 @@ where
     /// 11. Forward actuator commands to simulator
     /// 12. Kick watchdog
     pub fn step(&mut self) -> ActuatorCmd {
+        self.step_with_arm_authorizer(&AllowArm)
+    }
+
+    /// Step with a live authorization check for each inbound Arm command.
+    pub fn step_with_arm_authorizer<A>(&mut self, authorizer: &A) -> ActuatorCmd
+    where
+        A: ArmAuthorizer,
+    {
         // 1. Poll transport for incoming messages
         self.transport.poll();
 
@@ -137,7 +145,7 @@ where
                             < aviate_core::kernel_types::THROTTLE_LOW_MAX_COLLECTIVE,
                     );
             }
-            let outcome = self.enact_discrete(&sys_cmd);
+            let outcome = self.enact_discrete(&sys_cmd, authorizer);
             if let Some(outcome) = outcome {
                 // The link answers the operator; the log is for the
                 // maintainer. Both, not either.
@@ -311,9 +319,16 @@ where
     /// latest one). Every other arm returns a `Some`, so the link always
     /// has something to answer with — the silence this replaces was the
     /// operator-visible defect, not the refusal itself.
-    fn enact_discrete(&mut self, sys_cmd: &SystemCommand) -> Option<CommandOutcome> {
+    fn enact_discrete<A>(
+        &mut self,
+        sys_cmd: &SystemCommand,
+        authorizer: &A,
+    ) -> Option<CommandOutcome>
+    where
+        A: ArmAuthorizer,
+    {
         match sys_cmd {
-            SystemCommand::Arm => Some(self.enact_arm()),
+            SystemCommand::Arm => Some(self.enact_arm(authorizer)),
             SystemCommand::Disarm => Some(self.enact_disarm()),
             SystemCommand::EmergencyTerminate => {
                 warn!("Emergency terminate: cutting outputs");
@@ -326,8 +341,16 @@ where
         }
     }
 
-    fn enact_arm(&mut self) -> CommandOutcome {
+    fn enact_arm<A>(&mut self, authorizer: &A) -> CommandOutcome
+    where
+        A: ArmAuthorizer,
+    {
         info!("Arm command (state={:?})", self.kernel.state.init_state);
+        if let Err(error) = authorizer.authorize_arm() {
+            let missing = self.kernel.state.checks.pre_arm.missing();
+            warn!("Arming authorization refused: {error:?}");
+            return CommandOutcome::ArmRejected { error, missing };
+        }
         match self.kernel.arm() {
             Ok(()) => {
                 info!("Armed successfully");
@@ -418,3 +441,6 @@ fn triad_init_quat(accel_body: [f32; 3], mag_body: [f32; 3]) -> Quaternion {
     let qx = Quaternion::from_axis_angle(V3::new(1.0, 0.0, 0.0), roll);
     qz.mul(&qy).mul(&qx)
 }
+
+#[cfg(test)]
+mod tests;

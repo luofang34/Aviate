@@ -22,7 +22,13 @@ mod manifest;
 mod tuning;
 
 pub use construct::{
-    build_alia250_identification_kernel, build_alia250_kernel, build_alia250_kernel_with_candidate,
+    build_alia250_identification_kernel, build_alia250_identification_kernel_with_hover_scale,
+    build_alia250_kernel, build_alia250_kernel_with_candidate,
+    build_alia250_kernel_with_candidate_and_hover_scale, build_alia250_kernel_with_hover_scale,
     AliaKernel, AliaKernelBuildError, CalibratedAliaKernel, CalibrationRunManifest,
+    HoverEstimatorMode, HoverInitializationEvidence, InitializedAliaKernel,
 };
-pub use manifest::{AliaRunManifest, BuildIdentity, RunManifestError, RunPurpose};
+pub use manifest::{
+    AliaRunManifest, BuildIdentity, ManifestPerturbationIdentity, RunExecutionIdentity,
+    RunManifestError, RunPurpose,
+};

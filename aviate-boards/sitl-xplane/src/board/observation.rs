@@ -1,23 +1,56 @@
 //! Exact actuator observations at the X-Plane plant boundary.
 
 use aviate_core::kernel::config::ActuatorCurveKind;
+use aviate_hal_xil::perturbation::{ActuatorApplication, SensorApplication};
 use aviate_hal_xil::sim_types::{SimActuatorCmd, SimImuData};
 
 use super::wire::WireConstraints;
+use super::XPlaneHoverInitialization;
 
 /// One causal sensor-to-actuator observation.
 #[derive(Clone, Copy, Debug)]
 pub struct XPlaneControlObservation {
+    /// Global zero-based HIL sample sequence.
+    pub sample_sequence: u64,
     /// Simulator timestamp of the sensor sample.
     pub timestamp_us: u64,
     /// IMU sample that caused this actuator answer.
     pub imu: Option<SimImuData>,
+    /// Sensor perturbation applied before the flight-controller input.
+    pub sensor_application: Option<SensorApplication>,
+    /// Actuator perturbation applied before plant constraints.
+    pub actuator_application: Option<ActuatorApplication>,
+    /// Force-domain offsets supplied to plant preparation.
+    pub lane_injection: [f32; 4],
+    /// Altitude supplied to the plant-protection state machine.
+    pub fix_altitude_m: Option<f32>,
+    /// Sample duration supplied to the plant-protection state machine.
+    pub sample_dt_sec: f32,
     /// Force-domain lanes after injection and before wire constraints.
     pub pre_wire_force_lanes: [f32; 4],
     /// Force-domain lanes after all wire constraints and before the actuator curve.
     pub applied_force_lanes: [f32; 4],
+    /// Final reordered actuator lanes used by the send attempt.
+    pub sent_lanes: [f32; 4],
+    /// Result of the single lockstep reply attempt.
+    pub send: XPlaneSendEvidence,
+    /// Immutable hover initialization for this complete run.
+    pub hover_initialization: XPlaneHoverInitialization,
     /// Constraints and safe fallbacks applied to this packet.
     pub constraint_flags: XPlaneConstraintFlags,
+}
+
+/// Evidence for the only actuator reply attempted for one sensor packet.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct XPlaneSendEvidence {
+    /// A send call completed for this sample.
+    pub reply_attempted: bool,
+    /// The transport accepted the complete reply.
+    pub reply_succeeded: bool,
+    /// Timestamp echoed in the actuator reply.
+    pub echoed_timestamp_us: u64,
+    /// The reply declared lockstep operation.
+    pub lockstep: bool,
 }
 
 /// Causal constraint flags for one sensor-to-actuator packet.

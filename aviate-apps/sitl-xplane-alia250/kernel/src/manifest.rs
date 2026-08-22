@@ -4,13 +4,14 @@ use std::string::String;
 use std::{fmt, path::PathBuf};
 
 use aviate_config::airframe_preset::{CandidateIdentity, ContentDigest};
+use aviate_hal_xil::perturbation::PerturbationArtifactIdentity;
 
-use crate::{AliaKernel, CalibrationRunManifest};
+use crate::{AliaKernel, CalibrationRunManifest, HoverInitializationEvidence};
 
 mod source_identity;
 use source_identity::application_source_identity;
 
-const MANIFEST_SCHEMA_VERSION: u16 = 2;
+const MANIFEST_SCHEMA_VERSION: u16 = 3;
 const APPLICATION_ID: &str = "sitl-xplane-alia250";
 
 /// The purpose of one flight-controller run.
@@ -73,10 +74,45 @@ pub struct AliaRunManifest {
     pub algorithm_identity_hash: u64,
     /// Resolved kernel configuration identity.
     pub kernel_config_hash: u64,
+    /// Canonical fold state immediately before the effective hover force.
+    pub hover_kernel_prefix_hash: u64,
+    /// Immutable force-domain hover initialization.
+    pub hover_initialization: HoverInitializationEvidence,
+    /// Optional condition artifact identity for a perturbation run.
+    pub perturbation: Option<ManifestPerturbationIdentity>,
+    perturbation_artifact: Option<PerturbationArtifactIdentity>,
     /// Optional candidate name.
     pub candidate_id: Option<String>,
     /// Optional candidate and plant identities.
     pub candidate_identity: Option<CandidateIdentity>,
+}
+
+/// Condition artifact identity encoded into one run manifest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManifestPerturbationIdentity {
+    /// Artifact path supplied by the harness.
+    pub artifact_path: String,
+    /// SHA-256 of the exact artifact bytes.
+    pub artifact_sha256: String,
+    /// SHA-256 of canonical condition JSON.
+    pub condition_digest: String,
+    /// Run seed supplied by the harness.
+    pub run_seed: u64,
+    /// Exact Aviate-owned capability names.
+    pub required_capabilities: Vec<&'static str>,
+}
+
+/// Simulator and condition identities used to build one run manifest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunExecutionIdentity {
+    /// Simulator plant-protection identity.
+    pub simulator_model: ContentDigest,
+    /// Exact verified runtime handshake identity.
+    pub runtime_handshake: ContentDigest,
+    /// Immutable force-domain hover initialization.
+    pub hover_initialization: HoverInitializationEvidence,
+    /// Optional verified condition artifact identity.
+    pub perturbation: Option<PerturbationArtifactIdentity>,
 }
 
 /// Complete build provenance calculated from the running executable.
@@ -118,6 +154,14 @@ pub enum RunManifestError {
     CandidateBaseMismatch,
     /// Candidate presence does not match the run purpose.
     CandidatePurposeMismatch,
+    /// Hover evidence does not match the checked kernel.
+    HoverInitializationMismatch,
+    /// The hover prefix does not reconstruct the checked kernel identity.
+    HoverKernelIdentityMismatch,
+    /// The condition artifact path cannot be encoded without loss.
+    InvalidConditionArtifactPath(PathBuf),
+    /// The condition artifact identity repeats one capability.
+    DuplicateConditionCapability(&'static str),
 }
 
 impl fmt::Display for RunManifestError {
@@ -141,6 +185,18 @@ impl fmt::Display for RunManifestError {
             Self::CandidatePurposeMismatch => {
                 formatter.write_str("candidate presence does not match the run purpose")
             }
+            Self::HoverInitializationMismatch => {
+                formatter.write_str("hover initialization does not match the run kernel")
+            }
+            Self::HoverKernelIdentityMismatch => {
+                formatter.write_str("hover kernel prefix does not reconstruct the run kernel")
+            }
+            Self::InvalidConditionArtifactPath(path) => {
+                write!(formatter, "condition artifact path {path:?} is not UTF-8")
+            }
+            Self::DuplicateConditionCapability(capability) => {
+                write!(formatter, "condition capability {capability} repeats")
+            }
         }
     }
 }
@@ -153,7 +209,11 @@ impl std::error::Error for RunManifestError {
             Self::CandidateKernelMismatch
             | Self::CandidateModelMismatch
             | Self::CandidateBaseMismatch
-            | Self::CandidatePurposeMismatch => None,
+            | Self::CandidatePurposeMismatch
+            | Self::HoverInitializationMismatch
+            | Self::HoverKernelIdentityMismatch
+            | Self::InvalidConditionArtifactPath(_)
+            | Self::DuplicateConditionCapability(_) => None,
         }
     }
 }
@@ -184,11 +244,10 @@ impl AliaRunManifest {
     /// Build a manifest from a checked kernel and its immutable inputs.
     pub fn new(
         kernel: &AliaKernel,
-        simulator_model: ContentDigest,
         purpose: RunPurpose,
         candidate: Option<&CalibrationRunManifest>,
         build: BuildIdentity,
-        runtime_handshake: ContentDigest,
+        execution: RunExecutionIdentity,
     ) -> Result<Self, RunManifestError> {
         let base_preset = ContentDigest::calculate(crate::construct::ALIA250_PRESET.as_bytes());
         if (purpose == RunPurpose::Candidate) != candidate.is_some() {
@@ -201,9 +260,27 @@ impl AliaRunManifest {
         {
             return Err(RunManifestError::CandidateKernelMismatch);
         }
-        if candidate.is_some_and(|value| value.simulator_model != simulator_model) {
+        if candidate.is_some_and(|value| value.simulator_model != execution.simulator_model) {
             return Err(RunManifestError::CandidateModelMismatch);
         }
+        validate_hover_initialization(kernel, execution.hover_initialization)?;
+        let hover_kernel_prefix_hash = kernel.cfg().hover_kernel_prefix_hash();
+        let reconstructed =
+            aviate_core::kernel::config::ResolvedKernelConfig::canonical_hash_from_hover_prefix(
+                hover_kernel_prefix_hash,
+                kernel.cfg().hover_thrust_norm.0,
+                kernel.cfg().mixer_geometry,
+                kernel.cfg().actuator_curve,
+            );
+        if reconstructed != kernel.cfg().canonical_hash() {
+            return Err(RunManifestError::HoverKernelIdentityMismatch);
+        }
+        let perturbation = execution
+            .perturbation
+            .as_ref()
+            .map(ManifestPerturbationIdentity::try_from)
+            .transpose()?;
+        let perturbation_artifact = execution.perturbation;
         let (candidate_id, candidate_identity) = candidate.map_or((None, None), |value| {
             (Some(value.candidate_id.clone()), Some(value.identity))
         });
@@ -219,10 +296,14 @@ impl AliaRunManifest {
             build_features: build.features,
             purpose,
             base_preset,
-            simulator_model,
-            runtime_handshake,
+            simulator_model: execution.simulator_model,
+            runtime_handshake: execution.runtime_handshake,
             algorithm_identity_hash: kernel.pipeline().algorithm_identity_hash(),
             kernel_config_hash: kernel.cfg().canonical_hash(),
+            hover_kernel_prefix_hash,
+            hover_initialization: execution.hover_initialization,
+            perturbation,
+            perturbation_artifact,
             candidate_id,
             candidate_identity,
         })
@@ -232,7 +313,7 @@ impl AliaRunManifest {
     #[must_use]
     pub fn to_toml(&self) -> String {
         let mut text = format!(
-            "schema_version = {}\napplication_id = {:?}\nbuild_identity = {:?}\nsource_identity = {:?}\nlock_identity = {:?}\nbuild_target = {:?}\nbuild_profile = {:?}\nbuild_compiler = {:?}\nbuild_features = {:?}\npurpose = {:?}\nbase_preset_digest = {:?}\nsimulator_model_digest = {:?}\nruntime_handshake_digest = {:?}\nalgorithm_identity_hash = {:?}\nkernel_config_hash = {:?}\n",
+            "schema_version = {}\napplication_id = {:?}\nbuild_identity = {:?}\nsource_identity = {:?}\nlock_identity = {:?}\nbuild_target = {:?}\nbuild_profile = {:?}\nbuild_compiler = {:?}\nbuild_features = {:?}\npurpose = {:?}\nbase_preset_digest = {:?}\nsimulator_model_digest = {:?}\nruntime_handshake_digest = {:?}\nalgorithm_identity_hash = {:?}\nkernel_config_hash = {:?}\nhover_baseline_force_bits = {:?}\nhover_effective_force_bits = {:?}\nhover_scale_basis_points = {}\nhover_estimator_mode = {:?}\nhover_kernel_prefix_hash = {:?}\nhover_mixer_geometry = {:?}\nhover_actuator_curve = {:?}\nhover_kernel_config_hash = {:?}\n",
             self.schema_version,
             self.application_id,
             self.build_identity.to_string(),
@@ -248,7 +329,25 @@ impl AliaRunManifest {
             self.runtime_handshake.to_string(),
             format!("{:016x}", self.algorithm_identity_hash),
             format!("{:016x}", self.kernel_config_hash),
+            format!("{:08x}", self.hover_initialization.baseline_force_bits),
+            format!("{:08x}", self.hover_initialization.effective_force_bits),
+            self.hover_initialization.scale_basis_points,
+            self.hover_initialization.estimator_mode.as_str(),
+            format!("{:016x}", self.hover_kernel_prefix_hash),
+            "quad-x-x500-reversed-spin",
+            "quadratic",
+            format!("{:016x}", self.hover_kernel_config_hash()),
         );
+        if let Some(identity) = &self.perturbation {
+            text.push_str(&format!(
+                "condition_artifact_path = {:?}\ncondition_artifact_sha256 = {:?}\ncondition_digest = {:?}\ncondition_run_seed = {}\ncondition_required_capabilities = {:?}\n",
+                identity.artifact_path,
+                identity.artifact_sha256,
+                identity.condition_digest,
+                identity.run_seed,
+                identity.required_capabilities,
+            ));
+        }
         if let (Some(candidate_id), Some(identity)) = (&self.candidate_id, self.candidate_identity)
         {
             text.push_str(&format!(
@@ -260,96 +359,74 @@ impl AliaRunManifest {
         }
         text
     }
+
+    /// Return the effective full kernel configuration identity.
+    #[must_use]
+    pub const fn hover_kernel_config_hash(&self) -> u64 {
+        self.kernel_config_hash
+    }
+
+    /// Return the verified artifact identity encoded in this manifest.
+    #[must_use]
+    pub const fn perturbation_artifact_identity(&self) -> Option<&PerturbationArtifactIdentity> {
+        self.perturbation_artifact.as_ref()
+    }
+}
+
+impl TryFrom<&PerturbationArtifactIdentity> for ManifestPerturbationIdentity {
+    type Error = RunManifestError;
+
+    fn try_from(value: &PerturbationArtifactIdentity) -> Result<Self, Self::Error> {
+        let artifact_path = value
+            .artifact_path
+            .to_str()
+            .ok_or_else(|| {
+                RunManifestError::InvalidConditionArtifactPath(value.artifact_path.clone())
+            })?
+            .to_owned();
+        let mut required_capabilities = value
+            .required_capabilities
+            .iter()
+            .map(|capability| capability.as_str())
+            .collect::<Vec<_>>();
+        required_capabilities.sort_unstable();
+        if let Some(repeated) = required_capabilities
+            .windows(2)
+            .find(|pair| pair[0] == pair[1])
+        {
+            return Err(RunManifestError::DuplicateConditionCapability(repeated[0]));
+        }
+        Ok(Self {
+            artifact_path,
+            artifact_sha256: hex_digest(value.artifact_sha256),
+            condition_digest: hex_digest(value.condition_digest),
+            run_seed: value.run_seed,
+            required_capabilities,
+        })
+    }
+}
+
+fn validate_hover_initialization(
+    kernel: &AliaKernel,
+    evidence: HoverInitializationEvidence,
+) -> Result<(), RunManifestError> {
+    if evidence.effective_force_bits != kernel.cfg().hover_thrust_norm.0.to_bits()
+        || evidence.effective_kernel_config_hash != kernel.cfg().canonical_hash()
+        || !(8_000..=12_000).contains(&evidence.scale_basis_points)
+    {
+        Err(RunManifestError::HoverInitializationMismatch)
+    } else {
+        Ok(())
+    }
+}
+
+fn hex_digest(value: [u8; 32]) -> String {
+    let mut encoded = String::with_capacity(64);
+    for byte in value {
+        encoded.push_str(&format!("{byte:02x}"));
+    }
+    encoded
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::expect_used)]
-
-    use super::*;
-
-    #[test]
-    fn normal_manifest_contains_all_non_candidate_identities() {
-        let kernel = crate::build_alia250_kernel().expect("valid kernel");
-        let model = ContentDigest::calculate(b"model");
-        let runtime = ContentDigest::calculate(b"runtime");
-        let build = BuildIdentity::current().expect("build identity");
-        let manifest =
-            AliaRunManifest::new(&kernel, model, RunPurpose::Normal, None, build, runtime)
-                .expect("manifest");
-        let text = manifest.to_toml();
-        assert!(text.contains("application_id = \"sitl-xplane-alia250\""));
-        assert!(text.contains(&format!("simulator_model_digest = \"{model}\"")));
-        assert!(text.contains(&format!("runtime_handshake_digest = \"{runtime}\"")));
-        assert!(text.contains("algorithm_identity_hash = \""));
-        assert!(!text.contains("candidate_id"));
-    }
-
-    #[test]
-    fn candidate_manifest_must_match_the_kernel_and_model() {
-        let kernel = crate::build_alia250_kernel().expect("valid kernel");
-        let model = ContentDigest::calculate(b"model");
-        let runtime = ContentDigest::calculate(b"runtime");
-        let identity = CandidateIdentity {
-            base_preset: ContentDigest::calculate(crate::construct::ALIA250_PRESET.as_bytes()),
-            candidate: ContentDigest::calculate(b"candidate"),
-            plant_artifact: ContentDigest::calculate(b"plant"),
-            lineage: ContentDigest::calculate(b"lineage"),
-        };
-        let build = BuildIdentity::current().expect("build identity");
-        let mut candidate = CalibrationRunManifest {
-            candidate_id: "candidate-a".to_owned(),
-            identity,
-            simulator_model: model,
-            kernel_config_hash: kernel.cfg().canonical_hash().wrapping_add(1),
-        };
-        let mut wrong_base = candidate.clone();
-        wrong_base.identity.base_preset = ContentDigest::calculate(b"wrong-base");
-        assert!(matches!(
-            AliaRunManifest::new(
-                &kernel,
-                model,
-                RunPurpose::Candidate,
-                Some(&wrong_base),
-                build.clone(),
-                runtime,
-            ),
-            Err(RunManifestError::CandidateBaseMismatch)
-        ));
-        assert!(matches!(
-            AliaRunManifest::new(
-                &kernel,
-                model,
-                RunPurpose::Normal,
-                Some(&candidate),
-                build.clone(),
-                runtime,
-            ),
-            Err(RunManifestError::CandidatePurposeMismatch)
-        ));
-        assert!(matches!(
-            AliaRunManifest::new(
-                &kernel,
-                model,
-                RunPurpose::Candidate,
-                Some(&candidate),
-                build.clone(),
-                runtime,
-            ),
-            Err(RunManifestError::CandidateKernelMismatch)
-        ));
-        candidate.kernel_config_hash = kernel.cfg().canonical_hash();
-        candidate.simulator_model = ContentDigest::calculate(b"other-model");
-        assert!(matches!(
-            AliaRunManifest::new(
-                &kernel,
-                model,
-                RunPurpose::Candidate,
-                Some(&candidate),
-                build,
-                runtime,
-            ),
-            Err(RunManifestError::CandidateModelMismatch)
-        ));
-    }
-}
+mod tests;

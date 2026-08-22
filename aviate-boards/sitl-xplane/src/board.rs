@@ -13,70 +13,46 @@
 //!   not on a wall-clock cadence — a timer-driven send would leave the
 //!   bridge waiting and stall the simulation.
 
+mod arm_authorization;
+mod config;
 mod handshake;
 mod observation;
 mod packet;
 mod tuning_trace;
 mod wire;
 
+pub use config::{
+    XPlaneConfig, XPlaneHoverInitialization, XPlanePerturbationBindingError, BOARD_INFO,
+};
 pub use handshake::{RuntimeHandshakeError, XPlaneRuntimeHandshake};
-pub use observation::{XPlaneConstraintFlags, XPlaneControlObservation};
+pub use observation::{XPlaneConstraintFlags, XPlaneControlObservation, XPlaneSendEvidence};
 pub use tuning_trace::{
+    TuningActuatorApplication, TuningActuatorBypassReason, TuningActuatorEligibility,
     TuningCommand, TuningCommandSource, TuningConfigMode, TuningConstraintFlags, TuningControlMode,
     TuningControlObservation, TuningEstimate, TuningEstimateQuality, TuningEstimateValidity,
-    TuningFrameType, TuningHandshake, TuningImu, TuningObservationAck, TuningReady, TuningSetpoint,
-    TuningTraceError, XPlaneTuningTraceConfig, XPlaneTuningTraceIdentity,
+    TuningFrameType, TuningHandshake, TuningHoverEstimatorMode, TuningHoverInitialization,
+    TuningImu, TuningObservationAck, TuningPerturbationCapability, TuningReady, TuningSendEvidence,
+    TuningSensorApplication, TuningSetpoint, TuningTraceError, XPlaneTuningTraceConfig,
+    XPlaneTuningTraceIdentity,
 };
 
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use aviate_backend_mavlink_hil::{HilBackend, HilBackendConfig};
-use aviate_config::xplane_model::{XPlaneModelDigest, XPlaneSimulatorModel};
+use aviate_config::xplane_model::XPlaneModelDigest;
 use aviate_core::control::Command;
 use aviate_core::hal::{ActuatorHal, SystemHal};
 use aviate_core::mixer::ActuatorCmd;
 use aviate_core::{ArmError, DefaultAviateKernel, DisarmError, InitState};
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{SitlConfig, SitlIO};
-use aviate_runtime::{SitlBoardInfo, SitlRunner, SitlTime};
+use aviate_runtime::{SitlRunner, SitlTime};
 use log::{info, warn};
 
+use config::validate_hover_initialization;
 use handshake::{validate_kernel_model, RuntimeIdentityGate};
-
-/// Board configuration.
-#[derive(Debug, Clone)]
-pub struct XPlaneConfig {
-    /// The bridge plugin's listening address the board dials.
-    pub simulator_addr: std::net::SocketAddr,
-    /// System ID for outgoing messages.
-    pub sys_id: u8,
-    /// Component ID for outgoing messages.
-    pub comp_id: u8,
-    /// Versioned plant-protection and actuator-lane model.
-    pub model: XPlaneSimulatorModel,
-    tuning_trace: Option<XPlaneTuningTraceConfig>,
-}
-
-impl XPlaneConfig {
-    /// Build a bridge configuration for one validated simulator model.
-    #[must_use]
-    pub fn new(simulator_addr: std::net::SocketAddr, model: XPlaneSimulatorModel) -> Self {
-        Self {
-            simulator_addr,
-            sys_id: 1,
-            comp_id: 1,
-            model,
-            tuning_trace: None,
-        }
-    }
-
-    /// Enable one required packet-synchronous tuning trace.
-    #[must_use]
-    pub fn with_tuning_trace(mut self, config: XPlaneTuningTraceConfig) -> Self {
-        self.tuning_trace = Some(config);
-        self
-    }
-}
 
 /// X-Plane SITL board, generic over the injected controller and mixer.
 pub struct XPlaneBoard<C, M>
@@ -113,6 +89,14 @@ where
     runtime_failure: Option<RuntimeHandshakeError>,
     control_observations: Vec<XPlaneControlObservation>,
     tuning_trace: Option<tuning_trace::TuningTracePublisher>,
+    perturbation: Option<aviate_hal_xil::perturbation::PerturbationEngine>,
+    perturbation_failure: Option<aviate_hal_xil::perturbation::PerturbationError>,
+    perturbation_guard: Option<aviate_hal_xil::perturbation::LiveArtifactGuard>,
+    perturbation_identity_bound: bool,
+    artifact_failure: Arc<AtomicBool>,
+    hover_initialization: XPlaneHoverInitialization,
+    sample_sequence: u64,
+    last_answer_armed: Option<bool>,
 }
 
 impl<C, M> XPlaneBoard<C, M>
@@ -141,12 +125,29 @@ where
             .canonical_digest()
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         validate_kernel_model(&kernel, &config.model)?;
+        let effective_hover_bits = kernel.cfg().hover_thrust_norm.0.to_bits();
+        let hover_initialization =
+            config
+                .hover_initialization
+                .unwrap_or(XPlaneHoverInitialization {
+                    baseline_force_bits: effective_hover_bits,
+                    effective_force_bits: effective_hover_bits,
+                    scale_basis_points: 10_000,
+                    kernel_config_hash: kernel.cfg().canonical_hash(),
+                });
+        validate_hover_initialization(&kernel, hover_initialization)?;
         let runtime_identity = RuntimeIdentityGate::new(config.model.clone());
         let tuning_trace = config
             .tuning_trace
             .map(tuning_trace::TuningTracePublisher::connect)
             .transpose()
             .map_err(io::Error::other)?;
+        let perturbation = config
+            .perturbation
+            .clone()
+            .map(aviate_hal_xil::perturbation::PerturbationEngine::new)
+            .transpose()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         let hil_backend = HilBackend::connect_tcp(HilBackendConfig {
             local_port: 0,
             simulator_addr: config.simulator_addr,
@@ -183,6 +184,14 @@ where
                 config.model.max_samples_per_iteration().into(),
             ),
             tuning_trace,
+            perturbation,
+            perturbation_failure: None,
+            perturbation_guard: config.perturbation_guard,
+            perturbation_identity_bound: config.perturbation_identity_bound,
+            artifact_failure: Arc::new(AtomicBool::new(false)),
+            hover_initialization,
+            sample_sequence: 0,
+            last_answer_armed: None,
         })
     }
 
@@ -197,9 +206,13 @@ where
     /// and its own command.
     pub fn step(&mut self) -> ActuatorCmd {
         self.control_observations.clear();
+        if self.artifact_failure.load(Ordering::Acquire) {
+            self.terminate();
+        }
         let mut last = ActuatorCmd::default();
         let mut answered = 0_usize;
-        while let Some(packet) = self.hil_backend.poll() {
+        while let Some(mut packet) = self.hil_backend.poll() {
+            let sample_sequence = self.sample_sequence;
             if let Err(error) = self.runtime_identity.observe_timestamp(packet.timestamp_us) {
                 warn!("runtime HIL clock rejected: {error}");
                 self.runtime_failure = Some(error);
@@ -230,9 +243,38 @@ where
             if let Some(imu) = packet.imu {
                 self.last_imu = Some(imu);
             }
+            let sensor_application = match self.perturbation.as_mut() {
+                Some(engine) => match engine.apply_sensor(sample_sequence, &mut packet) {
+                    Ok(application) => Some(application),
+                    Err(error) => {
+                        warn!("sensor perturbation failed: {error}");
+                        self.perturbation_failure = Some(error);
+                        self.terminate();
+                        None
+                    }
+                },
+                None => None,
+            };
             self.runner.transport.feed_sensor_packet(&packet);
-            last = self.runner.step();
-            self.answer_sample(packet.timestamp_us, packet.imu);
+            let arm_authorizer = self.arm_authorizer();
+            let was_armed = self.runner.is_armed();
+            last = self.runner.step_with_arm_authorizer(&arm_authorizer);
+            if self.artifact_failure.load(Ordering::Acquire) {
+                self.terminate();
+            }
+            let is_armed = self.runner.is_armed();
+            if !was_armed && is_armed {
+                self.wire.arm(self.last_fix.map(|fix| fix.alt_m));
+            }
+            self.armed = is_armed;
+            self.answer_sample(
+                sample_sequence,
+                packet.timestamp_us,
+                packet.imu,
+                &last,
+                sensor_application,
+            );
+            self.sample_sequence = self.sample_sequence.wrapping_add(1);
             answered = answered.wrapping_add(1);
             // A bounded drain keeps one iteration from monopolizing the
             // loop when the link floods.
@@ -291,6 +333,18 @@ where
             .and_then(tuning_trace::TuningTracePublisher::failure)
     }
 
+    /// Return a permanent perturbation failure for this run.
+    #[must_use]
+    pub fn perturbation_failure(&self) -> Option<&aviate_hal_xil::perturbation::PerturbationError> {
+        self.perturbation_failure.as_ref()
+    }
+
+    /// Return true when Arm-time verification found a changed artifact.
+    #[must_use]
+    pub fn perturbation_artifact_failed(&self) -> bool {
+        self.artifact_failure.load(Ordering::Acquire)
+    }
+
     /// Take all causal observations produced by the most recent step.
     #[must_use]
     pub fn take_control_observations(&mut self) -> Vec<XPlaneControlObservation> {
@@ -345,14 +399,7 @@ where
     /// Returns the kernel's refusal, so a harness sees a refused arm
     /// rather than a silent no-op.
     pub fn arm(&mut self) -> Result<(), ArmError> {
-        if !self.runtime_identity.is_verified()
-            || self
-                .tuning_trace
-                .as_ref()
-                .is_some_and(|trace| !trace.is_ready())
-        {
-            return Err(ArmError::NotReady);
-        }
+        aviate_runtime::ArmAuthorizer::authorize_arm(&self.arm_authorizer())?;
         info!(
             "Arm command (state={:?})",
             self.runner.kernel.state.init_state
@@ -407,6 +454,7 @@ where
                 .as_ref()
                 .is_none_or(tuning_trace::TuningTracePublisher::is_ready)
             && self.runner.kernel.is_ready()
+            && !self.perturbation_artifact_failed()
     }
 
     /// Whether the kernel is armed.
@@ -445,12 +493,6 @@ where
         self.hil_backend.send_heartbeat(self.armed).ok();
     }
 }
-
-/// Board info for the X-Plane SITL board.
-pub const BOARD_INFO: SitlBoardInfo = SitlBoardInfo {
-    name: "sitl-xplane",
-    description: "X-Plane SITL via the MAVLink HIL bridge over TCP",
-};
 
 #[cfg(test)]
 mod tests;

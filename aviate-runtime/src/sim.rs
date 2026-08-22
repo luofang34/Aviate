@@ -40,6 +40,21 @@ use aviate_core::{DefaultAviateKernel, InitState};
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::SitlIO;
 
+/// A live check that runs immediately before an arm mutation.
+pub trait ArmAuthorizer {
+    /// Refuse the arm request when the live execution boundary is not ready.
+    fn authorize_arm(&self) -> Result<(), aviate_core::ArmError>;
+}
+
+/// Compatibility authorizer for SITL boards without an external run identity.
+pub struct AllowArm;
+
+impl ArmAuthorizer for AllowArm {
+    fn authorize_arm(&self) -> Result<(), aviate_core::ArmError> {
+        Ok(())
+    }
+}
+
 /// Time source for SITL (re-exported for convenience)
 ///
 /// Implements both `aviate_hal_io::TimeSource` (legacy) and `aviate_hal_io::TimeHal` (new).

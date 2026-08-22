@@ -1,11 +1,17 @@
 //! Fail-closed, packet-synchronous tuning observation transport.
 
+mod identity;
 mod protocol;
 
+pub use identity::{XPlaneTuningTraceConfig, XPlaneTuningTraceIdentity};
+
 pub use protocol::{
+    TuningActuatorApplication, TuningActuatorBypassReason, TuningActuatorEligibility,
     TuningCommand, TuningCommandSource, TuningConfigMode, TuningConstraintFlags, TuningControlMode,
     TuningControlObservation, TuningEstimate, TuningEstimateQuality, TuningEstimateValidity,
-    TuningFrameType, TuningHandshake, TuningImu, TuningObservationAck, TuningReady, TuningSetpoint,
+    TuningFrameType, TuningHandshake, TuningHoverEstimatorMode, TuningHoverInitialization,
+    TuningImu, TuningObservationAck, TuningPerturbationCapability, TuningReady, TuningSendEvidence,
+    TuningSensorApplication, TuningSetpoint,
 };
 
 use std::fmt;
@@ -19,64 +25,12 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::XPlaneControlObservation;
+use identity::handshake_from_identity;
 
-pub(super) const TUNING_TRACE_SCHEMA_VERSION: u16 = 2;
+pub(super) const TUNING_TRACE_SCHEMA_VERSION: u16 = 3;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 const OBSERVATION_TIMEOUT: Duration = Duration::from_millis(20);
 const MAX_FRAME_BYTES: usize = 65_536;
-
-/// Immutable identities for one tuning trace.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct XPlaneTuningTraceIdentity {
-    /// SHA-256 of the exact run manifest text.
-    pub run_manifest_digest: String,
-    /// SHA-256 of the running executable.
-    pub build_identity: String,
-    /// SHA-256 of the embedded source bundle.
-    pub source_identity: String,
-    /// SHA-256 of the dependency lock file.
-    pub lock_identity: String,
-    /// SHA-256 of the simulator model.
-    pub simulator_model_digest: String,
-    /// SHA-256 of the consumed runtime handshake.
-    pub runtime_handshake_digest: String,
-    /// Candidate document identity for a candidate run.
-    pub candidate_digest: Option<String>,
-    /// Final candidate lineage identity for a candidate run.
-    pub candidate_lineage_digest: Option<String>,
-    /// Plant artifact identity for a candidate run.
-    pub plant_artifact_digest: Option<String>,
-    /// Flight algorithm identity as 16 lowercase hexadecimal digits.
-    pub algorithm_identity_hash: String,
-    /// Resolved kernel identity as 16 lowercase hexadecimal digits.
-    pub kernel_config_hash: String,
-}
-
-/// Configuration for the packet-synchronous tuning trace.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct XPlaneTuningTraceConfig {
-    endpoint: SocketAddr,
-    identity: XPlaneTuningTraceIdentity,
-}
-
-impl XPlaneTuningTraceConfig {
-    /// Validate one loopback endpoint and its immutable identity.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for a non-loopback address, malformed digest, or
-    /// incomplete candidate identity.
-    pub fn new(
-        endpoint: SocketAddr,
-        identity: XPlaneTuningTraceIdentity,
-    ) -> Result<Self, TuningTraceError> {
-        if !endpoint.ip().is_loopback() {
-            return Err(TuningTraceError::NonLoopbackEndpoint(endpoint));
-        }
-        validate_identity(&identity)?;
-        Ok(Self { endpoint, identity })
-    }
-}
 
 /// Tuning trace transport failure.
 #[derive(Debug)]
@@ -120,6 +74,8 @@ pub enum TuningTraceError {
         /// Sequence the runner accepted.
         received: u64,
     },
+    /// The observation sequence is at its maximum value.
+    ObservationSequenceExhausted,
     /// The transport failed earlier and cannot resume this run.
     Failed,
 }
@@ -161,6 +117,9 @@ impl fmt::Display for TuningTraceError {
                 formatter,
                 "tuning trace ack sequence {received} does not match {expected}"
             ),
+            Self::ObservationSequenceExhausted => {
+                formatter.write_str("tuning trace observation sequence is exhausted")
+            }
             Self::Failed => formatter.write_str("tuning trace transport already failed"),
         }
     }
@@ -178,6 +137,7 @@ impl std::error::Error for TuningTraceError {
             | Self::ReadyMismatch
             | Self::ObservationAckIdentityMismatch
             | Self::ObservationAckSequenceMismatch { .. }
+            | Self::ObservationSequenceExhausted
             | Self::Failed => None,
         }
     }
@@ -187,6 +147,7 @@ pub(super) struct TuningTracePublisher {
     stream: Option<TcpStream>,
     run_manifest_digest: String,
     sequence: u64,
+    sequence_exhausted: bool,
     failure: Option<TuningTraceError>,
 }
 
@@ -214,6 +175,7 @@ impl TuningTracePublisher {
             stream: Some(stream),
             run_manifest_digest: handshake.run_manifest_digest,
             sequence: 0,
+            sequence_exhausted: false,
             failure: None,
         })
     }
@@ -230,6 +192,10 @@ impl TuningTracePublisher {
         if self.failure.is_some() {
             return;
         }
+        if self.sequence_exhausted {
+            self.fail(TuningTraceError::ObservationSequenceExhausted);
+            return;
+        }
         let sequence = self.sequence;
         let frame = TuningControlObservation::from_packet(
             sequence,
@@ -244,6 +210,7 @@ impl TuningTracePublisher {
             self.fail(error);
             return;
         }
+        self.sequence_exhausted = sequence == u64::MAX;
         self.sequence = self.sequence.wrapping_add(1);
     }
 
@@ -280,74 +247,6 @@ impl TuningTracePublisher {
     pub(super) fn failure(&self) -> Option<&TuningTraceError> {
         self.failure.as_ref()
     }
-}
-
-fn handshake_from_identity(identity: XPlaneTuningTraceIdentity) -> TuningHandshake {
-    TuningHandshake {
-        frame_type: TuningFrameType::AviateTuningHandshake,
-        schema_version: TUNING_TRACE_SCHEMA_VERSION,
-        run_manifest_digest: identity.run_manifest_digest,
-        build_identity: identity.build_identity,
-        source_identity: identity.source_identity,
-        lock_identity: identity.lock_identity,
-        simulator_model_digest: identity.simulator_model_digest,
-        runtime_handshake_digest: identity.runtime_handshake_digest,
-        candidate_digest: identity.candidate_digest,
-        candidate_lineage_digest: identity.candidate_lineage_digest,
-        plant_artifact_digest: identity.plant_artifact_digest,
-        algorithm_identity_hash: identity.algorithm_identity_hash,
-        kernel_config_hash: identity.kernel_config_hash,
-    }
-}
-
-fn validate_identity(identity: &XPlaneTuningTraceIdentity) -> Result<(), TuningTraceError> {
-    for (field, value) in [
-        ("run_manifest_digest", identity.run_manifest_digest.as_str()),
-        ("build_identity", identity.build_identity.as_str()),
-        ("source_identity", identity.source_identity.as_str()),
-        ("lock_identity", identity.lock_identity.as_str()),
-        (
-            "simulator_model_digest",
-            identity.simulator_model_digest.as_str(),
-        ),
-        (
-            "runtime_handshake_digest",
-            identity.runtime_handshake_digest.as_str(),
-        ),
-    ] {
-        validate_hex(field, value, 64)?;
-    }
-    validate_hex(
-        "algorithm_identity_hash",
-        &identity.algorithm_identity_hash,
-        16,
-    )?;
-    validate_hex("kernel_config_hash", &identity.kernel_config_hash, 16)?;
-    let candidate_fields = [
-        identity.candidate_digest.as_deref(),
-        identity.candidate_lineage_digest.as_deref(),
-        identity.plant_artifact_digest.as_deref(),
-    ];
-    if candidate_fields.iter().any(Option::is_some) && !candidate_fields.iter().all(Option::is_some)
-    {
-        return Err(TuningTraceError::InvalidIdentity("candidate identity"));
-    }
-    for value in candidate_fields.into_iter().flatten() {
-        validate_hex("candidate identity", value, 64)?;
-    }
-    Ok(())
-}
-
-fn validate_hex(field: &'static str, value: &str, length: usize) -> Result<(), TuningTraceError> {
-    if value.len() != length
-        || !value
-            .as_bytes()
-            .iter()
-            .all(|byte| byte.is_ascii_digit() || matches!(*byte, b'a'..=b'f'))
-    {
-        return Err(TuningTraceError::InvalidIdentity(field));
-    }
-    Ok(())
 }
 
 fn configure(stream: &TcpStream, timeout: Duration) -> Result<(), TuningTraceError> {
