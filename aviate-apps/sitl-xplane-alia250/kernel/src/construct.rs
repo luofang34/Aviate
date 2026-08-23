@@ -444,6 +444,39 @@ mod tests {
     }
 
     #[test]
+    fn allowed_candidate_field_changes_both_resolved_identities() {
+        let base = ContentDigest::calculate(ALIA250_PRESET.as_bytes());
+        let plant = plant_artifact();
+        let plant_digest = ContentDigest::calculate(plant.as_bytes());
+        let original = format!(
+            "schema_version = 1\ncandidate_id = \"candidate-identity\"\nbase_preset_digest = \"{base}\"\nplant_artifact_digest = \"{plant_digest}\"\nstage = \"rate-integral-derivative\"\n[gains]\nrate_d_lpf_alpha = 0.45\n"
+        );
+        let changed = original.replace("rate_d_lpf_alpha = 0.45", "rate_d_lpf_alpha = 0.55");
+        let model = XPlaneSimulatorModel::from_toml_str(XPLANE_MODEL).expect("valid model");
+
+        let first = build_alia250_kernel_with_candidate(&original, &plant, &model)
+            .expect("valid original candidate");
+        let repeated = build_alia250_kernel_with_candidate(&original, &plant, &model)
+            .expect("repeat original candidate");
+        let mutated = build_alia250_kernel_with_candidate(&changed, &plant, &model)
+            .expect("valid mutated candidate");
+
+        assert_eq!(first.manifest.identity, repeated.manifest.identity);
+        assert_eq!(
+            first.manifest.kernel_config_hash,
+            repeated.manifest.kernel_config_hash
+        );
+        assert_ne!(
+            first.manifest.identity.candidate,
+            mutated.manifest.identity.candidate
+        );
+        assert_ne!(
+            first.manifest.kernel_config_hash,
+            mutated.manifest.kernel_config_hash
+        );
+    }
+
+    #[test]
     fn pilotage_candidate_prefix_has_a_pinned_vector() {
         let base = ContentDigest::calculate(ALIA250_PRESET.as_bytes());
         let plant = plant_artifact();
