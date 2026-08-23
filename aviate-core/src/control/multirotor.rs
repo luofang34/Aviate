@@ -35,9 +35,8 @@ pub struct MultirotorRuntimeState {
     /// differentiating against the default (zero) value.
     pub vel_sp_primed: bool,
     /// Per-cycle interval used for the velocity-loop integrator
-    /// and rate-loop derivative. The kernel `update` path writes
-    /// it before each `step()` so the controller doesn't need a
-    /// separate trait-signature change for `dt`.
+    /// and rate-loop derivative. The kernel writes a validated
+    /// interval before each controller step.
     pub dt_sec: Scalar,
     /// Effective mode from the preceding controller cycle.
     pub previous_effective_mode: Option<crate::control::ControlMode>,
@@ -70,6 +69,14 @@ impl Default for MultirotorRuntimeState {
 }
 
 impl crate::control::runtime::ControllerRuntimeState for MultirotorRuntimeState {
+    fn set_cycle_interval(&mut self, interval: crate::types::Seconds) {
+        self.dt_sec = if interval.0.is_finite() && interval.0 > 0.0 {
+            interval.0
+        } else {
+            0.0
+        };
+    }
+
     fn reset(&mut self) {
         self.velocity_loop.reset();
         self.rate_loop.reset();
@@ -79,8 +86,8 @@ impl crate::control::runtime::ControllerRuntimeState for MultirotorRuntimeState 
             MetersPerSecond(0.0),
         );
         self.vel_sp_primed = false;
-        // dt_sec is overwritten each cycle; resetting to zero
-        // makes the next step a quiet "no time has passed" cycle.
+        // Timed terms stay inactive until the caller supplies a valid
+        // interval for a controller step.
         self.dt_sec = 0.0;
         self.previous_effective_mode = None;
         self.previous_topology = None;
@@ -280,10 +287,12 @@ impl VehicleController for MultirotorController {
     type RuntimeState = MultirotorRuntimeState;
 
     // Registered in cert/algorithm_id_registry.toml as
-    // "controller.multirotor.v3". This identity includes explicit
+    // "controller.multirotor.v4". This identity includes the kernel
+    // cycle interval that activates the controller dynamic terms.
+    // It also includes explicit
     // production mode refusal, topology-edge derivative hygiene,
     // and automatic fallback output continuity.
-    const ALGORITHM_ID: u64 = 0x4354_4C4D_5552_5633; // "CTLMURV3"
+    const ALGORITHM_ID: u64 = 0x4354_4C4D_5552_5634; // "CTLMURV4"
 
     fn verify_config_binding(
         &self,

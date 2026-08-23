@@ -207,6 +207,10 @@ fn application_source_inputs() -> &'static [(&'static str, &'static [u8])] {
             include_bytes!("../../../../../aviate-core/src/control/mode_gate.rs"),
         ),
         (
+            "core/control/runtime.rs",
+            include_bytes!("../../../../../aviate-core/src/control/runtime.rs"),
+        ),
+        (
             "core/control/observation.rs",
             include_bytes!("../../../../../aviate-core/src/control/observation.rs"),
         ),
@@ -278,6 +282,7 @@ mod tests {
             "core/kernel_types.rs",
             "core/control.rs",
             "core/control/mode_gate.rs",
+            "core/control/runtime.rs",
             "core/control/observation.rs",
             "core/control/transfer.rs",
             "core/control/vehicle_control_mode.rs",

@@ -47,7 +47,10 @@
 # 0x4554_494D_454B_4631.
 
 [controller]
-"controller.multirotor.v3"  = 0x4354_4C4D_5552_5633  # MultirotorController
+"controller.multirotor.v4"  = 0x4354_4C4D_5552_5634  # MultirotorController
+# Retired: "controller.multirotor.v3" = 0x4354_4C4D_5552_5633. v3
+# left the controller cycle interval at zero in the production kernel.
+# Its dynamic terms did not use elapsed time. Never reuse the v3 ID.
 # Retired: "controller.multirotor.v2" = 0x4354_4C4D_5552_5632. v2
 # did not define production mode refusal, topology-edge sample
 # hygiene, or automatic fallback output continuity. Never reuse the

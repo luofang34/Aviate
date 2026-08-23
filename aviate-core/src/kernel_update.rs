@@ -4,6 +4,7 @@
 //! the 500-line per-.rs limit and is easy to locate at review time.
 
 use crate::checks::DegradationReason;
+use crate::control::runtime::ControllerRuntimeState;
 use crate::control::{
     AuthorityProfile, Command, CommandSource, ControlLawV1, ControlMode, ModeEntryDecision,
     VehicleControlMode, VehicleController,
@@ -398,6 +399,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             // effective command's mode.
             let control_flags = VehicleControlMode::from_control_mode(effective_cmd.mode)
                 .with_mode_entry(mode_entry);
+            self.state.controller.set_cycle_interval(time.dt_sec);
             let controller_step = self.pipeline.controller.step_with_observation(
                 &mut self.state.controller,
                 &state,
