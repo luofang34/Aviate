@@ -151,6 +151,10 @@ fn application_source_inputs() -> &'static [(&'static str, &'static [u8])] {
             include_bytes!("../../../../../aviate-hal/xil/src/sitl_io.rs"),
         ),
         (
+            "hal-xil/sitl_io/command_link.rs",
+            include_bytes!("../../../../../aviate-hal/xil/src/sitl_io/command_link.rs"),
+        ),
+        (
             "link/Cargo.toml",
             include_bytes!("../../../../../aviate-link/Cargo.toml"),
         ),
@@ -194,6 +198,42 @@ fn application_source_inputs() -> &'static [(&'static str, &'static [u8])] {
             "core/kernel_types.rs",
             include_bytes!("../../../../../aviate-core/src/kernel_types.rs"),
         ),
+        (
+            "core/control.rs",
+            include_bytes!("../../../../../aviate-core/src/control.rs"),
+        ),
+        (
+            "core/control/mode_gate.rs",
+            include_bytes!("../../../../../aviate-core/src/control/mode_gate.rs"),
+        ),
+        (
+            "core/control/observation.rs",
+            include_bytes!("../../../../../aviate-core/src/control/observation.rs"),
+        ),
+        (
+            "core/control/transfer.rs",
+            include_bytes!("../../../../../aviate-core/src/control/transfer.rs"),
+        ),
+        (
+            "core/control/vehicle_control_mode.rs",
+            include_bytes!("../../../../../aviate-core/src/control/vehicle_control_mode.rs"),
+        ),
+        (
+            "core/control/multirotor.rs",
+            include_bytes!("../../../../../aviate-core/src/control/multirotor.rs"),
+        ),
+        (
+            "core/control/multirotor/step.rs",
+            include_bytes!("../../../../../aviate-core/src/control/multirotor/step.rs"),
+        ),
+        (
+            "core/control/velocity.rs",
+            include_bytes!("../../../../../aviate-core/src/control/velocity.rs"),
+        ),
+        (
+            "core/control/rate.rs",
+            include_bytes!("../../../../../aviate-core/src/control/rate.rs"),
+        ),
     ]
 }
 
@@ -213,13 +253,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn application_identity_commits_the_raw_command_provenance_boundary() {
+    fn application_identity_commits_the_production_control_boundary() {
         let required = [
             "hal-xil/Cargo.toml",
             "hal-xil/lib.rs",
             "hal-xil/bridge.rs",
             "hal-xil/command_provenance.rs",
             "hal-xil/sitl_io.rs",
+            "hal-xil/sitl_io/command_link.rs",
             "link/Cargo.toml",
             "link/mavlink.rs",
             "link/mavlink/protocol.rs",
@@ -233,6 +274,17 @@ mod tests {
             "board/tuning_trace.rs",
             "board/tuning_trace/protocol.rs",
             "link/lib.rs",
+            "core/kernel_update.rs",
+            "core/kernel_types.rs",
+            "core/control.rs",
+            "core/control/mode_gate.rs",
+            "core/control/observation.rs",
+            "core/control/transfer.rs",
+            "core/control/vehicle_control_mode.rs",
+            "core/control/multirotor.rs",
+            "core/control/multirotor/step.rs",
+            "core/control/velocity.rs",
+            "core/control/rate.rs",
         ];
         let inputs = application_source_inputs();
         let base = application_source_identity_from(inputs);

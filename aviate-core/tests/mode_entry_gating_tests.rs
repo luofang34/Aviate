@@ -84,13 +84,14 @@ fn position_command() -> Command {
 fn step_cascade(state: &StateEstimate, command: Command) -> aviate_core::control::AxisCommand {
     let decision = gate_mode_entry(command.mode, state.valid_flags);
     let gated = apply_mode_entry(command, decision);
+    let flags = VehicleControlMode::from_control_mode(gated.mode).with_mode_entry(decision);
     let controller = MultirotorController::default();
     let mut runtime = MultirotorRuntimeState::default();
     controller.step(
         &mut runtime,
         state,
         &gated,
-        &VehicleControlMode::from_control_mode(gated.mode),
+        &flags,
         aviate_core::control::ConfigMode::Hover,
         &cascade_limits(),
     )
@@ -134,21 +135,24 @@ fn falling_back_to_attitude_does_not_run_the_position_loop() {
 }
 
 #[test]
-fn falling_back_to_attitude_inherits_the_raw_collective_setpoint_residual_risk() {
-    // Documents a known, deliberate scope boundary (see PR notes):
-    // `Attitude` has no closed-loop collective path in this
-    // architecture (it always passes `Setpoint::collective_thrust`
-    // through manually), so an autonomous PositionHold command that
-    // never populated it — the normal case, since Position derives
-    // collective from the velocity loop — falls through to zero once
-    // gated this far down. The gate still correctly refuses the
-    // position loop; synthesizing a safe open-loop collective for a
-    // fully-autonomous Attitude fallback is out of this issue's
-    // scope. This test pins the gap so a future fix must consciously
-    // update it rather than silently regress it further.
+fn falling_back_to_attitude_uses_the_controller_hover_seed() {
     let state = cascade_state(StateValidFlags::ATTITUDE);
     let axis = step_cascade(&state, position_command());
-    assert_eq!(axis.collective.0, 0.0);
+    assert_eq!(axis.collective.0.to_bits(), 0.5_f32.to_bits());
+}
+
+#[test]
+fn explicit_attitude_command_keeps_its_direct_collective() {
+    let state = cascade_state(StateValidFlags::ATTITUDE);
+    let mut command = position_command();
+    command.mode = ControlMode::Attitude;
+    command.setpoint = Setpoint {
+        attitude: Some(Quaternion::IDENTITY),
+        collective_thrust: aviate_core::types::NormalizedThrust(0.37),
+        ..Default::default()
+    };
+    let axis = step_cascade(&state, command);
+    assert_eq!(axis.collective.0.to_bits(), 0.37_f32.to_bits());
 }
 
 #[test]
@@ -394,6 +398,49 @@ fn kernel_grants_position_mode_unmodified_when_estimate_is_fully_valid() {
         ModeEntryDecision::Granted(ControlMode::PositionHold)
     );
     assert_eq!(result.effective_command.mode, ControlMode::PositionHold);
+    let observation = result
+        .controller_observation
+        .multirotor
+        .expect("the multirotor controller must report its diagnostic witness");
+    assert_eq!(observation.current_mode, ControlMode::PositionHold);
+    assert_eq!(
+        observation.current_topology,
+        aviate_core::control::EffectiveControlTopology::Position
+    );
+}
+
+#[test]
+fn kernel_refuses_modes_that_the_multirotor_controller_does_not_implement() {
+    for requested in [ControlMode::Rate, ControlMode::DeviationTracking] {
+        let mut kernel = make_kernel();
+        set_estimate(&mut kernel, StateValidFlags::all());
+        kernel.state.controller.last_axis_command.collective =
+            aviate_core::types::NormalizedThrust(0.8);
+        kernel.state.controller.axis_command_primed = true;
+        let mut command = position_command();
+        command.mode = requested;
+        let result = kernel.update(
+            ChannelId::PRIMARY,
+            dt_100hz(),
+            &minimal_sensors(),
+            &command,
+            0,
+            &ActuatorState::default(),
+            None,
+        );
+
+        assert_eq!(result.status.mode, ControlMode::Attitude);
+        assert_eq!(
+            result.status.mode_entry,
+            ModeEntryDecision::Unsupported { requested }
+        );
+        assert_eq!(result.effective_command.mode, ControlMode::Attitude);
+        assert_eq!(result.effective_command.source, CommandSource::Failsafe);
+        assert_eq!(result.actuator.fallback_mask, 0xFF);
+        assert!(result.actuator.outputs.iter().all(|output| output.0 == 0.0));
+        assert!(result.controller_observation.multirotor.is_none());
+        assert!(!kernel.state.controller.axis_command_primed);
+    }
 }
 
 #[test]

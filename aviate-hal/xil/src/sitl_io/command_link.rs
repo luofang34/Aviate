@@ -69,7 +69,17 @@ impl SitlIO {
         header: aviate_link::mavlink::protocol::MavHeader,
         frame: &[u8],
     ) {
-        let mut command = bridge::mavlink_to_command(&target);
+        let mut command = match bridge::mavlink_to_command(&target) {
+            Ok(command) => command,
+            Err(error) => {
+                tracing::warn!(
+                    command_family = "SET_ATTITUDE_TARGET",
+                    error = %error,
+                    "rejected MAVLink flight command"
+                );
+                return;
+            }
+        };
         command.sequence = u32::from(header.seq);
         let provenance = MavlinkCommandProvenance::new(
             &mut self.command_source_epochs,
@@ -92,7 +102,17 @@ impl SitlIO {
         header: aviate_link::mavlink::protocol::MavHeader,
         frame: &[u8],
     ) {
-        let mut command = bridge::mavlink_position_to_command(&target);
+        let mut command = match bridge::mavlink_position_to_command(&target) {
+            Ok(command) => command,
+            Err(error) => {
+                tracing::warn!(
+                    command_family = "SET_POSITION_TARGET_LOCAL_NED",
+                    error = %error,
+                    "rejected MAVLink flight command"
+                );
+                return;
+            }
+        };
         command.sequence = u32::from(header.seq);
         let provenance = MavlinkCommandProvenance::new(
             &mut self.command_source_epochs,
@@ -124,6 +144,25 @@ impl SitlIO {
             std::net::SocketAddr::from(([127, 0, 0, 1], 30_000)),
             header,
             &[1; 51],
+        );
+    }
+
+    #[cfg(test)]
+    pub(super) fn inject_position_target(&mut self, target: SetPositionTargetLocalNed) {
+        let header = aviate_link::mavlink::protocol::MavHeader {
+            payload_len: 53,
+            incompat_flags: 0,
+            compat_flags: 0,
+            seq: 0,
+            sysid: 255,
+            compid: 190,
+            msgid: 84,
+        };
+        self.handle_set_position_target(
+            target,
+            std::net::SocketAddr::from(([127, 0, 0, 1], 30_000)),
+            header,
+            &[2; 65],
         );
     }
 

@@ -258,6 +258,7 @@ where
             None,
         );
         self.last_effective_command = result.effective_command.clone();
+        self.last_controller_observation = result.controller_observation;
         let actuator_cmd = result.actuator.clone();
 
         // 8. Write outputs via BoardHal (ActuatorHal implementation)

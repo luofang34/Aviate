@@ -178,6 +178,9 @@ where
     /// Exact command supplied to the kernel in the most recent step.
     pub(crate) last_effective_command: Command,
 
+    /// Non-authoritative diagnostic output from the latest controller cycle.
+    pub(crate) last_controller_observation: aviate_core::control::ControllerStepObservation,
+
     /// Exact raw identity retained with the current external setpoint.
     pub(crate) last_command_provenance: Option<aviate_hal_xil::MavlinkCommandProvenance>,
 
@@ -229,6 +232,7 @@ where
             kernel,
             ingress: crate::command_ingress::CommandIngress::default(),
             last_effective_command: default_command(),
+            last_controller_observation: Default::default(),
             last_command_provenance: None,
             last_imu_time: None,
             sensor_cache: SensorCache::new(),
@@ -243,6 +247,12 @@ where
     #[must_use]
     pub fn last_effective_command(&self) -> &Command {
         &self.last_effective_command
+    }
+
+    /// Return the latest controller-only diagnostic witness.
+    #[must_use]
+    pub fn last_controller_observation(&self) -> aviate_core::control::ControllerStepObservation {
+        self.last_controller_observation
     }
 
     /// Return the exact raw identity retained with the active setpoint.
