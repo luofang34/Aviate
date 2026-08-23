@@ -197,6 +197,44 @@ fn pilotage_condition_v4_bytes_and_decisions_match_the_cross_repository_golden()
     std::fs::remove_file(path).ok();
 }
 
+#[test]
+fn golden_command_hold_stream_is_repeatable_and_run_seed_bound() {
+    const GOLDEN: &[u8] = include_bytes!("../../../fixtures/condition-v4.golden.json");
+    const RUN_SEED: u64 = 0x1112_1314_1516_1718;
+
+    let raw_digest = digest(GOLDEN);
+    let canonical_bytes = GOLDEN.strip_suffix(b"\n").expect("fixture terminal LF");
+    let condition: ConditionSet = serde_json::from_slice(canonical_bytes).expect("golden JSON");
+    let condition_digest = digest(&serde_json::to_vec(&condition).expect("canonical JSON"));
+    let path = artifact_path("pilotage-golden-run-seed");
+    std::fs::write(&path, GOLDEN).expect("write golden artifact");
+    let load = |run_seed| {
+        LoadedPerturbationArtifact::load(
+            &path,
+            raw_digest,
+            condition_digest,
+            run_seed,
+            &capabilities(),
+        )
+        .expect("load Pilotage golden")
+    };
+    let first = load(RUN_SEED);
+    let repeated = load(RUN_SEED);
+    let changed = load(RUN_SEED.wrapping_add(1));
+    let mut expected_changed = first.config().clone();
+    expected_changed.identity.run_seed = RUN_SEED.wrapping_add(1);
+    assert_eq!(first.config(), repeated.config());
+    assert_eq!(changed.config(), &expected_changed);
+
+    let hold = first.config().actuator.command_hold.expect("golden hold");
+    let stream = |artifact: &LoadedPerturbationArtifact| {
+        schedule(artifact.config().identity, 2, 3, 1_001, hold).expect("golden hold schedule")
+    };
+    assert_eq!(stream(&first), stream(&repeated));
+    assert_ne!(stream(&first), stream(&changed));
+    std::fs::remove_file(path).ok();
+}
+
 fn hex(value: [u8; 32]) -> String {
     value.iter().map(|byte| format!("{byte:02x}")).collect()
 }
