@@ -183,7 +183,17 @@ pub struct ModelStateBlock {
     /// `synthesize.rs` derives body rates from successive `quat`
     /// samples.
     pub ang_vel_bits: [u64; 3],
-    /// Non-zero once the first physics step has been published.
+    /// Whether THIS snapshot carries readings, decided per snapshot
+    /// rather than latched for the run.
+    ///
+    /// It goes non-zero once the first physics step is published, and
+    /// back to zero for any step the plugin cannot take a full reading
+    /// on — a model whose pose or whose canonical link's velocity is
+    /// unavailable publishes invalid rather than publishing defaults,
+    /// because the world origin and an identity quaternion are the most
+    /// plausible position and attitude a stationary vehicle has. A
+    /// reader that cached "valid once, valid forever" would believe a
+    /// snapshot nobody took a reading for.
     pub valid: u32,
     /// Padding; zero.
     pub _pad1: u32,

@@ -357,10 +357,17 @@ pub struct TraceSample {
 /// Speeds are compared, not per-axis components: the finite difference is
 /// noisy per axis at step rate, while a lane nobody writes is wrong by its
 /// whole magnitude and shows up in the speed at once.
+///
+/// The error accumulated is the mean of the per-sample DIFFERENCES, not the
+/// difference of the means. Errors that change sign — a lever arm between the
+/// two lanes' origins adds to the speed in one turn and subtracts in the
+/// other — cancel in the second form and would pass a mission that turned
+/// both ways. Taking the magnitude first means an error can only ever add.
 fn velocity_tracks_position(trace: &[TraceSample], tolerance: f32) -> CriterionResult {
     /// Below this the vehicle is not moving enough for the comparison to
     /// mean anything, and the finite difference is mostly noise.
     const MOVING_MPS: f32 = 0.5;
+    let mut error_sum = 0.0_f32;
     let mut derived_sum = 0.0_f32;
     let mut published_sum = 0.0_f32;
     let mut moving = 0_u32;
@@ -376,10 +383,15 @@ fn velocity_tracks_position(trace: &[TraceSample], tolerance: f32) -> CriterionR
             })
             .sum::<f32>()
             .sqrt();
+        // Gated on the DERIVED speed, never the published one: a lane nobody
+        // writes reads zero, and gating on it would skip every sample and
+        // report that the vehicle never moved.
         if derived < MOVING_MPS {
             continue;
         }
-        published_sum += pair[1].velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let published = pair[1].velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
+        error_sum += (published - derived).abs();
+        published_sum += published;
         derived_sum += derived;
         moving += 1;
     }
@@ -396,7 +408,7 @@ fn velocity_tracks_position(trace: &[TraceSample], tolerance: f32) -> CriterionR
     }
     let derived = derived_sum / moving as f32;
     let published = published_sum / moving as f32;
-    let error = (published - derived).abs();
+    let error = error_sum / moving as f32;
     CriterionResult {
         criterion: "velocity_tracks_position".to_string(),
         passed: error <= tolerance,

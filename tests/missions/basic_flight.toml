@@ -41,7 +41,20 @@ verify = [{ type = "armed", value = true }]
 name = "takeoff"
 duration_ms = 6000
 action = { type = "thrust", value = 0.64 }
-verify = [{ type = "min_altitude", value = 0.1 }]
+# The velocity lane of the simulator's state block is written by the gz plugin
+# and read by nothing else here — the FC derives its own from position. A lane
+# that stops being written therefore goes unnoticed by every other criterion:
+# zero is a plausible speed, contradicted only by the position beside it. This
+# phase is where the two can be compared in a BLOCKING lane; it commands 0.64
+# against the x500's 0.5929 force-domain trim, so the climb holds several m/s.
+# Measured error between the lanes on a healthy run is 0.30 m/s.
+#
+# NOTE: comments must stay OUTSIDE the array. A comment line between entries
+# makes the parser drop every criterion in it, silently.
+verify = [
+  { type = "min_altitude", value = 0.1 },
+  { type = "velocity_tracks_position", tolerance = 1.0 },
+]
 
 # Phase 3: Brief hover — vehicle stays above the ground.
 [[vehicles.mission.phases]]
