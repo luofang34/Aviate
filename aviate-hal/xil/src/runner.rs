@@ -347,6 +347,67 @@ pub struct TraceSample {
     pub angular_velocity: [f32; 3],
 }
 
+/// Whether the published velocity agrees with the derivative of the
+/// published position over the moving part of a phase.
+///
+/// Position and velocity are independent lanes of the simulator's state
+/// block, so this is what catches a lane that is never written. Zero is a
+/// plausible speed; only the position beside it says otherwise.
+///
+/// Speeds are compared, not per-axis components: the finite difference is
+/// noisy per axis at step rate, while a lane nobody writes is wrong by its
+/// whole magnitude and shows up in the speed at once.
+fn velocity_tracks_position(trace: &[TraceSample], tolerance: f32) -> CriterionResult {
+    /// Below this the vehicle is not moving enough for the comparison to
+    /// mean anything, and the finite difference is mostly noise.
+    const MOVING_MPS: f32 = 0.5;
+    let mut derived_sum = 0.0_f32;
+    let mut published_sum = 0.0_f32;
+    let mut moving = 0_u32;
+    for pair in trace.windows(2) {
+        let dt = pair[1].elapsed - pair[0].elapsed;
+        if dt <= 0.0 {
+            continue;
+        }
+        let derived = (0..3)
+            .map(|axis| {
+                let d = (pair[1].position[axis] - pair[0].position[axis]) / dt;
+                d * d
+            })
+            .sum::<f32>()
+            .sqrt();
+        if derived < MOVING_MPS {
+            continue;
+        }
+        published_sum += pair[1].velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
+        derived_sum += derived;
+        moving += 1;
+    }
+    if moving == 0 {
+        // A phase that never moved cannot support the claim. Passing here
+        // would report the lane healthy on exactly the run that says nothing
+        // about it.
+        return CriterionResult {
+            criterion: "velocity_tracks_position".to_string(),
+            passed: false,
+            actual_value: "the vehicle never moved".to_string(),
+            expected: format!("motion above {MOVING_MPS:.2}m/s to compare against"),
+        };
+    }
+    let derived = derived_sum / moving as f32;
+    let published = published_sum / moving as f32;
+    let error = (published - derived).abs();
+    CriterionResult {
+        criterion: "velocity_tracks_position".to_string(),
+        passed: error <= tolerance,
+        actual_value: format!(
+            "published {published:.2}m/s vs {derived:.2}m/s from position \
+             (error {error:.2}m/s over {moving} samples)"
+        ),
+        expected: format!("<= {tolerance:.2}m/s"),
+    }
+}
+
 /// Mission runner state
 ///
 /// Generic over the simulator backend. Each vehicle instance gets its own runner.
@@ -779,6 +840,9 @@ impl<B: SimulatorBackend> MissionRunner<B> {
                     actual_value: format!("{:.2}m", drift),
                     expected: format!("<= {:.2}m", max),
                 }
+            }
+            Criterion::VelocityTracksPosition { tolerance } => {
+                velocity_tracks_position(trace, *tolerance)
             }
             Criterion::ReachedWaypoint { target, tolerance } => {
                 let min_err = trace
@@ -1263,6 +1327,59 @@ mod tests {
         let state = VehicleState::default();
         assert!(!state.valid);
         assert_eq!(state.time_us, 0);
+    }
+
+    fn sample(elapsed: f32, north: f32, speed: f32) -> TraceSample {
+        TraceSample {
+            elapsed,
+            position: [north, 0.0, -5.0],
+            velocity: [speed, 0.0, 0.0],
+            attitude: [1.0, 0.0, 0.0, 0.0],
+            angular_velocity: [0.0; 3],
+        }
+    }
+
+    /// A vehicle covering ground at 3 m/s, with the velocity lane reporting it.
+    fn healthy() -> Vec<TraceSample> {
+        (0..20)
+            .map(|i| sample(i as f32 * 0.1, i as f32 * 0.3, 3.0))
+            .collect()
+    }
+
+    #[test]
+    fn a_velocity_lane_nobody_writes_is_caught_by_the_position_beside_it() {
+        // The defect this criterion exists for: the vehicle moves, the
+        // position lane tracks it, and the velocity lane reads a structural
+        // zero. Every other criterion in the harness passes on this trace.
+        let dead: Vec<_> = (0..20)
+            .map(|i| sample(i as f32 * 0.1, i as f32 * 0.3, 0.0))
+            .collect();
+        let result = velocity_tracks_position(&dead, 1.0);
+        assert!(
+            !result.passed,
+            "a dead lane passed: {}",
+            result.actual_value
+        );
+        assert!(
+            result.actual_value.contains("3.00m/s"),
+            "{}",
+            result.actual_value
+        );
+    }
+
+    #[test]
+    fn a_lane_that_agrees_with_the_position_passes() {
+        assert!(velocity_tracks_position(&healthy(), 1.0).passed);
+    }
+
+    #[test]
+    fn a_phase_that_never_moved_cannot_support_the_claim() {
+        // Vacuously passing here would report the lane healthy on the one
+        // run that says nothing about it.
+        let parked: Vec<_> = (0..20).map(|i| sample(i as f32 * 0.1, 0.0, 0.0)).collect();
+        let result = velocity_tracks_position(&parked, 1.0);
+        assert!(!result.passed);
+        assert!(result.actual_value.contains("never moved"));
     }
 
     #[test]

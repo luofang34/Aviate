@@ -257,19 +257,21 @@ typedef struct AviateModelStateBlock {
   // gyro.
   //
   // Reads zero, and the reason is now known: the physics engine
-  // maintains the world-velocity components for LINK entities, and
-  // this one is enabled on the MODEL, where nothing ever writes it.
-  // It is not a platform quirk. The linear lane beside it was the
-  // same defect and reads from the model's canonical link now.
+  // maintains the world-velocity components for LINK entities,
+  // and this one is enabled on the MODEL, where nothing ever
+  // writes it. It is not a platform quirk. The linear lane beside
+  // it was the same defect and reads from the model's canonical
+  // link now.
   //
-  // This one is deliberately left where it is. The component holds
-  // omega in WORLD coordinates while its consumers relabel it as a
-  // body rate, so moving it would replace a zero that everything
-  // routes around with a plausible wrong number — a pure roll at
-  // heading 090 recorded as a pitch rate of the wrong sign. It stays
-  // asleep until the frame is converted where it is read. The X500
-  // FC does not use it either way; `synthesize.rs` derives body
-  // rates from successive `quat` samples.
+  // This one is deliberately left where it is. The component
+  // holds omega in WORLD coordinates while its consumers relabel
+  // it as a body rate, so moving it would replace a zero that
+  // everything routes around with a plausible wrong number — a
+  // pure roll at heading 090 recorded as a pitch rate of the
+  // wrong sign. It stays asleep until the frame is converted
+  // where it is read. The X500 FC does not use it either way;
+  // `synthesize.rs` derives body rates from successive `quat`
+  // samples.
   uint64_t ang_vel_bits[3];
   // Non-zero once the first physics step has been published.
   uint32_t valid;

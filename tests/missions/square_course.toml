@@ -65,6 +65,13 @@ verify = [
   { type = "armed", value = true },
   { type = "reached_waypoint", position = [10.0, 0.0, -5.0], tolerance = 1.5 },
   { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
+  # The state block's velocity lane is written by the gz plugin and read by
+  # nothing else in this harness — the FC derives its own from position. So a
+  # lane that stops being written goes unnoticed by every other criterion
+  # here: zero is a plausible speed, and only the position beside it
+  # contradicts it. This leg is the one place the two can be compared while
+  # the vehicle is definitely moving.
+  { type = "velocity_tracks_position", tolerance = 1.0 },
 ]
 
 [[vehicles.mission.phases]]

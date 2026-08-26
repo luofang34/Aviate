@@ -483,6 +483,7 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
             "min_altitude" => Criterion::MinAltitude(value),
             "max_altitude" => Criterion::MaxAltitude(value),
             "max_drift" => Criterion::MaxDrift(value),
+            "velocity_tracks_position" => Criterion::VelocityTracksPosition { tolerance },
             "altitude_hold" => Criterion::AltitudeHold { target, tolerance },
             "position_hold" => Criterion::PositionHold {
                 target: position,

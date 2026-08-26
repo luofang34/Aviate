@@ -181,6 +181,20 @@ pub enum Criterion {
     PositionHold { target: [f32; 3], tolerance: f32 },
     /// End-of-phase horizontal drift from `start_position` ≤ `max`
     MaxDrift(f32),
+    /// Published velocity must agree with the derivative of published
+    /// position over the moving part of the phase.
+    ///
+    /// Position and velocity are independent lanes of the simulator's
+    /// state block, so this is the one criterion that can catch a lane
+    /// which is never written. A frozen lane reads zero, and zero is a
+    /// speed — plausible on its own, and contradicted only by the
+    /// position beside it. Every other check here would pass while a
+    /// moving vehicle published no velocity at all.
+    ///
+    /// Only samples where the vehicle is genuinely moving are compared;
+    /// a phase that never moves fails, because the assertion would
+    /// otherwise be vacuous exactly where it is needed.
+    VelocityTracksPosition { tolerance: f32 },
     /// Sensor data received at least once
     SensorDataReceived,
     /// Vehicle was within `tolerance` metres of `target` at some
