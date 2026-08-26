@@ -10,6 +10,7 @@
 #include <gz/sim/components/LinearVelocity.hh>
 #include <gz/sim/components/Name.hh>
 #include <gz/sim/components/Pose.hh>
+#include <gz/sim/Model.hh>
 #include <gz/sim/Util.hh>
 #include <gz/plugin/Register.hh>
 #include <gz/msgs/actuators.pb.h>
@@ -419,8 +420,15 @@ void AviateGzPlugin::PreUpdate(
 
         if (modelEntity_ != gz::sim::kNullEntity) {
             std::cout << "[AviateGzPlugin] Found model '" << modelName_ << "'" << std::endl;
-            gz::sim::enableComponent<gz::sim::components::WorldLinearVelocity>(ecm, modelEntity_);
-            gz::sim::enableComponent<gz::sim::components::WorldAngularVelocity>(ecm, modelEntity_);
+            velocityEntity_ = gz::sim::Model(modelEntity_).CanonicalLink(ecm);
+            if (velocityEntity_ == gz::sim::kNullEntity) {
+                velocityEntity_ = modelEntity_;
+                std::cout << "[AviateGzPlugin] model '" << modelName_
+                          << "' has no canonical link; velocity will read zero"
+                          << std::endl;
+            }
+            gz::sim::enableComponent<gz::sim::components::WorldLinearVelocity>(ecm, velocityEntity_);
+            gz::sim::enableComponent<gz::sim::components::WorldAngularVelocity>(ecm, velocityEntity_);
             if (!motorPub_.Valid()) {
                 motorPub_ = node_.Advertise<gz::msgs::Actuators>(motorTopic_);
             }
@@ -490,6 +498,7 @@ void AviateGzPlugin::PostUpdate(
         resetGeneration_ = __atomic_add_fetch(
             &shm_->header.reset_generation, 1, __ATOMIC_ACQ_REL);
         modelEntity_ = gz::sim::kNullEntity;
+        velocityEntity_ = gz::sim::kNullEntity;
         // Retire the outgoing snapshot in the same act. Until the new
         // world publishes its first step the block still holds the
         // retired epoch's pose — valid, coherent, and from a world
@@ -522,13 +531,13 @@ void AviateGzPlugin::PostUpdate(
         quat[2] = pose.Rot().Y();
         quat[3] = pose.Rot().Z();
     }
-    auto linVelComp = ecm.Component<gz::sim::components::WorldLinearVelocity>(modelEntity_);
+    auto linVelComp = ecm.Component<gz::sim::components::WorldLinearVelocity>(velocityEntity_);
     if (linVelComp) {
         vel[0] = linVelComp->Data().X();
         vel[1] = linVelComp->Data().Y();
         vel[2] = linVelComp->Data().Z();
     }
-    auto angVelComp = ecm.Component<gz::sim::components::WorldAngularVelocity>(modelEntity_);
+    auto angVelComp = ecm.Component<gz::sim::components::WorldAngularVelocity>(velocityEntity_);
     if (angVelComp) {
         angVel[0] = angVelComp->Data().X();
         angVel[1] = angVelComp->Data().Y();
