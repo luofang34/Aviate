@@ -341,10 +341,94 @@ impl MavClient {
 #[derive(Debug, Clone, Copy)]
 pub struct TraceSample {
     pub elapsed: f32,
+    /// Simulation time, microseconds — the clock the position and velocity
+    /// beside it were sampled on. `elapsed` is wall clock and bounds the
+    /// phase; the two differ by the real-time factor, so a rate computed
+    /// from a sim-frame delta must divide by this one or it reports the
+    /// vehicle's speed scaled by how fast the simulator happened to run.
+    pub sim_time_us: u64,
     pub position: [f32; 3],
     pub velocity: [f32; 3],
     pub attitude: [f32; 4],
     pub angular_velocity: [f32; 3],
+}
+
+/// Whether the published velocity agrees with the derivative of the
+/// published position over the moving part of a phase.
+///
+/// Position and velocity are independent lanes of the simulator's state
+/// block, so this is what catches a lane that is never written. Zero is a
+/// plausible speed; only the position beside it says otherwise.
+///
+/// Speeds are compared, not per-axis components: the finite difference is
+/// noisy per axis at step rate, while a lane nobody writes is wrong by its
+/// whole magnitude and shows up in the speed at once.
+///
+/// The error accumulated is the mean of the per-sample DIFFERENCES, not the
+/// difference of the means. Errors that change sign — a lever arm between the
+/// two lanes' origins adds to the speed in one turn and subtracts in the
+/// other — cancel in the second form and would pass a mission that turned
+/// both ways. Taking the magnitude first means an error can only ever add.
+fn velocity_tracks_position(trace: &[TraceSample], tolerance: f32) -> CriterionResult {
+    /// Below this the vehicle is not moving enough for the comparison to
+    /// mean anything, and the finite difference is mostly noise.
+    const MOVING_MPS: f32 = 0.5;
+    let mut error_sum = 0.0_f32;
+    let mut derived_sum = 0.0_f32;
+    let mut published_sum = 0.0_f32;
+    let mut moving = 0_u32;
+    for pair in trace.windows(2) {
+        // Simulation time, not wall clock: both lanes in the pair were sampled
+        // on the sim clock, and dividing their delta by elapsed real time
+        // would scale the result by the real-time factor — reporting a
+        // disagreement between the lanes where there is only a simulator
+        // running slower than the wall.
+        let dt = pair[1].sim_time_us.saturating_sub(pair[0].sim_time_us) as f32 * 1e-6;
+        if dt <= 0.0 {
+            continue;
+        }
+        let derived = (0..3)
+            .map(|axis| {
+                let d = (pair[1].position[axis] - pair[0].position[axis]) / dt;
+                d * d
+            })
+            .sum::<f32>()
+            .sqrt();
+        // Gated on the DERIVED speed, never the published one: a lane nobody
+        // writes reads zero, and gating on it would skip every sample and
+        // report that the vehicle never moved.
+        if derived < MOVING_MPS {
+            continue;
+        }
+        let published = pair[1].velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
+        error_sum += (published - derived).abs();
+        published_sum += published;
+        derived_sum += derived;
+        moving += 1;
+    }
+    if moving == 0 {
+        // A phase that never moved cannot support the claim. Passing here
+        // would report the lane healthy on exactly the run that says nothing
+        // about it.
+        return CriterionResult {
+            criterion: "velocity_tracks_position".to_string(),
+            passed: false,
+            actual_value: "the vehicle never moved".to_string(),
+            expected: format!("motion above {MOVING_MPS:.2}m/s to compare against"),
+        };
+    }
+    let derived = derived_sum / moving as f32;
+    let published = published_sum / moving as f32;
+    let error = error_sum / moving as f32;
+    CriterionResult {
+        criterion: "velocity_tracks_position".to_string(),
+        passed: error <= tolerance,
+        actual_value: format!(
+            "published {published:.2}m/s vs {derived:.2}m/s from position \
+             (error {error:.2}m/s over {moving} samples)"
+        ),
+        expected: format!("<= {tolerance:.2}m/s"),
+    }
 }
 
 /// Mission runner state
@@ -602,6 +686,7 @@ impl<B: SimulatorBackend> MissionRunner<B> {
                     let elapsed = phase_start.elapsed().as_secs_f32();
                     trace.push(TraceSample {
                         elapsed,
+                        sim_time_us: self.current_state.time_us,
                         position: self.current_state.position,
                         velocity: self.current_state.velocity,
                         attitude: self.current_state.orientation,
@@ -779,6 +864,9 @@ impl<B: SimulatorBackend> MissionRunner<B> {
                     actual_value: format!("{:.2}m", drift),
                     expected: format!("<= {:.2}m", max),
                 }
+            }
+            Criterion::VelocityTracksPosition { tolerance } => {
+                velocity_tracks_position(trace, *tolerance)
             }
             Criterion::ReachedWaypoint { target, tolerance } => {
                 let min_err = trace
@@ -1263,6 +1351,62 @@ mod tests {
         let state = VehicleState::default();
         assert!(!state.valid);
         assert_eq!(state.time_us, 0);
+    }
+
+    fn sample(elapsed: f32, north: f32, speed: f32) -> TraceSample {
+        TraceSample {
+            elapsed,
+            // The unit tests advance both clocks together; the criterion reads
+            // only the simulation one.
+            sim_time_us: (elapsed * 1e6) as u64,
+            position: [north, 0.0, -5.0],
+            velocity: [speed, 0.0, 0.0],
+            attitude: [1.0, 0.0, 0.0, 0.0],
+            angular_velocity: [0.0; 3],
+        }
+    }
+
+    /// A vehicle covering ground at 3 m/s, with the velocity lane reporting it.
+    fn healthy() -> Vec<TraceSample> {
+        (0..20)
+            .map(|i| sample(i as f32 * 0.1, i as f32 * 0.3, 3.0))
+            .collect()
+    }
+
+    #[test]
+    fn a_velocity_lane_nobody_writes_is_caught_by_the_position_beside_it() {
+        // The defect this criterion exists for: the vehicle moves, the
+        // position lane tracks it, and the velocity lane reads a structural
+        // zero. Every other criterion in the harness passes on this trace.
+        let dead: Vec<_> = (0..20)
+            .map(|i| sample(i as f32 * 0.1, i as f32 * 0.3, 0.0))
+            .collect();
+        let result = velocity_tracks_position(&dead, 1.0);
+        assert!(
+            !result.passed,
+            "a dead lane passed: {}",
+            result.actual_value
+        );
+        assert!(
+            result.actual_value.contains("3.00m/s"),
+            "{}",
+            result.actual_value
+        );
+    }
+
+    #[test]
+    fn a_lane_that_agrees_with_the_position_passes() {
+        assert!(velocity_tracks_position(&healthy(), 1.0).passed);
+    }
+
+    #[test]
+    fn a_phase_that_never_moved_cannot_support_the_claim() {
+        // Vacuously passing here would report the lane healthy on the one
+        // run that says nothing about it.
+        let parked: Vec<_> = (0..20).map(|i| sample(i as f32 * 0.1, 0.0, 0.0)).collect();
+        let result = velocity_tracks_position(&parked, 1.0);
+        assert!(!result.passed);
+        assert!(result.actual_value.contains("never moved"));
     }
 
     #[test]
