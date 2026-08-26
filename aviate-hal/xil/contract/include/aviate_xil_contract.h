@@ -256,34 +256,19 @@ typedef struct AviateModelStateBlock {
   // `WorldAngularVelocity` component verbatim, not a body-frame
   // gyro.
   //
-  // Reads zero, and the reason is now known: the physics engine
-  // maintains the world-velocity components for LINK entities,
-  // and this one is enabled on the MODEL, where nothing ever
-  // writes it. It is not a platform quirk. The linear lane beside
-  // it was the same defect and reads from the model's canonical
-  // link now.
-  //
-  // This one is deliberately left where it is. The component
-  // holds omega in WORLD coordinates while its consumers relabel
-  // it as a body rate, so moving it would replace a zero that
-  // everything routes around with a plausible wrong number — a
-  // pure roll at heading 090 recorded as a pitch rate of the
-  // wrong sign. It stays asleep until the frame is converted
-  // where it is read. The X500 FC does not use it either way;
-  // `synthesize.rs` derives body rates from successive `quat`
-  // samples.
+  // Reads zero: physics maintains these components for LINK
+  // entities and this one is on the MODEL — not a platform quirk;
+  // the linear lane was the same defect, fixed. Left there
+  // deliberately: it holds omega in WORLD coordinates while
+  // consumers read it as a body rate, so waking it trades a
   uint64_t ang_vel_bits[3];
-  // Whether THIS snapshot carries readings, decided per snapshot
-  // rather than latched for the run.
+  // Whether THIS snapshot carries readings — per snapshot, not
+  // latched for the run.
   //
-  // It goes non-zero once the first physics step is published, and
-  // back to zero for any step the plugin cannot take a full reading
-  // on — a model whose pose or whose canonical link's velocity is
-  // unavailable publishes invalid rather than publishing defaults,
-  // because the world origin and an identity quaternion are the most
-  // plausible position and attitude a stationary vehicle has. A
-  // reader that cached "valid once, valid forever" would believe a
-  // snapshot nobody took a reading for.
+  // Non-zero once the first physics step publishes, zero again for
+  // any step the plugin cannot fully read: missing pose or velocity
+  // publishes invalid rather than defaults, since origin and
+  // identity are the most plausible pose a parked vehicle has.
   uint32_t valid;
   // Padding; zero.
   uint32_t _pad1;
