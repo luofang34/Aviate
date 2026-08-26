@@ -61,13 +61,11 @@ verify = [
 name = "leg_north"
 duration_ms = 8000
 action = { type = "goto", position = [10.0, 0.0, -5.0], heading = 0.0 }
-# Comments must stay OUTSIDE the array: one between entries makes the parser
-# drop every criterion in it, with no diagnostic.
 verify = [
   { type = "armed", value = true },
   { type = "reached_waypoint", position = [10.0, 0.0, -5.0], tolerance = 1.5 },
   { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
-  { type = "velocity_tracks_position", tolerance = 1.0 },
+  { type = "velocity_tracks_position", tolerance = 0.25 },
 ]
 
 [[vehicles.mission.phases]]

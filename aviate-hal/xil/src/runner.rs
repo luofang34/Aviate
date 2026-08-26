@@ -341,6 +341,12 @@ impl MavClient {
 #[derive(Debug, Clone, Copy)]
 pub struct TraceSample {
     pub elapsed: f32,
+    /// Simulation time, microseconds — the clock the position and velocity
+    /// beside it were sampled on. `elapsed` is wall clock and bounds the
+    /// phase; the two differ by the real-time factor, so a rate computed
+    /// from a sim-frame delta must divide by this one or it reports the
+    /// vehicle's speed scaled by how fast the simulator happened to run.
+    pub sim_time_us: u64,
     pub position: [f32; 3],
     pub velocity: [f32; 3],
     pub attitude: [f32; 4],
@@ -372,7 +378,12 @@ fn velocity_tracks_position(trace: &[TraceSample], tolerance: f32) -> CriterionR
     let mut published_sum = 0.0_f32;
     let mut moving = 0_u32;
     for pair in trace.windows(2) {
-        let dt = pair[1].elapsed - pair[0].elapsed;
+        // Simulation time, not wall clock: both lanes in the pair were sampled
+        // on the sim clock, and dividing their delta by elapsed real time
+        // would scale the result by the real-time factor — reporting a
+        // disagreement between the lanes where there is only a simulator
+        // running slower than the wall.
+        let dt = pair[1].sim_time_us.saturating_sub(pair[0].sim_time_us) as f32 * 1e-6;
         if dt <= 0.0 {
             continue;
         }
@@ -675,6 +686,7 @@ impl<B: SimulatorBackend> MissionRunner<B> {
                     let elapsed = phase_start.elapsed().as_secs_f32();
                     trace.push(TraceSample {
                         elapsed,
+                        sim_time_us: self.current_state.time_us,
                         position: self.current_state.position,
                         velocity: self.current_state.velocity,
                         attitude: self.current_state.orientation,
@@ -1344,6 +1356,9 @@ mod tests {
     fn sample(elapsed: f32, north: f32, speed: f32) -> TraceSample {
         TraceSample {
             elapsed,
+            // The unit tests advance both clocks together; the criterion reads
+            // only the simulation one.
+            sim_time_us: (elapsed * 1e6) as u64,
             position: [north, 0.0, -5.0],
             velocity: [speed, 0.0, 0.0],
             attitude: [1.0, 0.0, 0.0, 0.0],

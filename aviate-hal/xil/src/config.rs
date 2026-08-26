@@ -53,7 +53,7 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
     // captures one logical key per line, so a `verify = [\n {...},
     // \n {...}\n]` block would otherwise produce `verify_str = "["`
     // and the inner items would fall through as unknown keys.
-    let content = collapse_multiline_arrays(content);
+    let content = collapse_multiline_arrays(&strip_comments(content));
     let content = &content;
 
     let mut config = TestConfig {
@@ -211,6 +211,38 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
 /// — they're benign. String literals in our config schema do not
 /// contain bracket characters, so a plain bracket-depth counter is
 /// sufficient.
+/// Removes `#` comments before anything else reads the text.
+///
+/// This has to happen BEFORE arrays are collapsed. The main parse loop drops a
+/// line that starts with `#`, but a collapsed array is one logical line
+/// starting with `verify`, so a comment written between two entries survived
+/// into the value and merged with the entry that followed it — destroying that
+/// entry's `type` key and, until the parser was made to refuse it, deleting the
+/// criterion silently.
+///
+/// A `#` inside a quoted string is left alone: quoting is the only way to say
+/// that a hash is data.
+fn strip_comments(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    for line in content.lines() {
+        let mut in_string = false;
+        let mut cut = line.len();
+        for (index, ch) in line.char_indices() {
+            match ch {
+                '"' => in_string = !in_string,
+                '#' if !in_string => {
+                    cut = index;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        out.push_str(line[..cut].trim_end());
+        out.push('\n');
+    }
+    out
+}
+
 fn collapse_multiline_arrays(content: &str) -> String {
     let mut out = String::with_capacity(content.len());
     let mut depth: i32 = 0;
@@ -522,6 +554,15 @@ fn parse_criteria(s: &str) -> Vec<Criterion> {
                 max_descent_mps,
                 ground_tolerance,
             },
+            // Still a silent skip, and it should not stay one: a dropped
+            // criterion does not weaken a phase, it deletes it, and a phase
+            // with no criteria passes unconditionally. Refusing here needs
+            // this function to return a Result, which ripples through the
+            // phase builder and the parse loop, and this hand-rolled reader
+            // wants replacing with the `toml` crate rather than extending.
+            // `every_declared_criterion_survives_the_parser` catches the
+            // consequence in the meantime: a type nobody recognises makes the
+            // parsed count disagree with the declared one.
             _ => continue,
         };
 
@@ -710,5 +751,91 @@ min_separation = 4.0
             return;
         };
         assert_eq!(global_verification.min_separation, Some(4.0));
+    }
+}
+
+#[cfg(test)]
+mod corpus_criteria_tests {
+    #![allow(clippy::expect_used, clippy::panic)]
+
+    use std::path::Path;
+
+    /// Counts the criterion entries a `verify` array literally declares.
+    ///
+    /// Deliberately naive: it counts `{ type = ` occurrences in the source
+    /// text, which is what a reader counts. The parser is the thing under
+    /// test, so the expectation must not be produced by the parser.
+    fn declared_criteria(source: &str) -> usize {
+        let mut count = 0;
+        let mut in_verify = false;
+        let mut depth = 0_i32;
+        for line in source.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') {
+                continue;
+            }
+            if trimmed.starts_with("verify") {
+                in_verify = true;
+                depth = 0;
+            }
+            if in_verify {
+                count += trimmed.matches("{ type =").count();
+                depth += trimmed.matches('[').count() as i32;
+                depth -= trimmed.matches(']').count() as i32;
+                if depth <= 0 && trimmed.contains(']') {
+                    in_verify = false;
+                }
+            }
+        }
+        count
+    }
+
+    /// Every criterion a mission declares must survive the parser.
+    ///
+    /// A criterion that is dropped does not weaken a phase — it deletes it.
+    /// `runner.rs` passes a phase when every criterion passed, and an empty
+    /// list satisfies that vacuously, so a phase whose only check is dropped
+    /// reports success without verifying anything. That is indistinguishable
+    /// from a phase that genuinely passed, which is why this has to be a test
+    /// rather than a reading.
+    #[test]
+    fn every_declared_criterion_survives_the_parser() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/missions");
+        let mut losses = Vec::new();
+        let mut checked = 0_usize;
+        for entry in std::fs::read_dir(&dir).expect("missions directory") {
+            let path = entry.expect("mission entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("read mission");
+            let declared = declared_criteria(&source);
+            let config = match super::parse_test_config_str(&source) {
+                Ok(config) => config,
+                Err(error) => {
+                    losses.push(format!("{path:?} did not parse: {error}"));
+                    continue;
+                }
+            };
+            let parsed: usize = config
+                .vehicles
+                .iter()
+                .flat_map(|vehicle| vehicle.mission.phases.iter())
+                .map(|phase| phase.verify.len())
+                .sum();
+            checked += 1;
+            if parsed != declared {
+                losses.push(format!(
+                    "{:?}: declared {declared} criteria, parsed {parsed}",
+                    path.file_name().unwrap_or_default()
+                ));
+            }
+        }
+        assert!(checked > 0, "no missions were checked");
+        assert!(
+            losses.is_empty(),
+            "criteria were silently dropped:\n{}",
+            losses.join("\n")
+        );
     }
 }

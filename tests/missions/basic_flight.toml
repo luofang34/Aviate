@@ -48,12 +48,9 @@ action = { type = "thrust", value = 0.64 }
 # phase is where the two can be compared in a BLOCKING lane; it commands 0.64
 # against the x500's 0.5929 force-domain trim, so the climb holds several m/s.
 # Measured error between the lanes on a healthy run is 0.30 m/s.
-#
-# NOTE: comments must stay OUTSIDE the array. A comment line between entries
-# makes the parser drop every criterion in it, silently.
 verify = [
   { type = "min_altitude", value = 0.1 },
-  { type = "velocity_tracks_position", tolerance = 1.0 },
+  { type = "velocity_tracks_position", tolerance = 0.25 },
 ]
 
 # Phase 3: Brief hover — vehicle stays above the ground.
