@@ -11,12 +11,9 @@ use super::trace;
 const MIN_SAMPLES: usize = 200;
 const MIN_BLOCKS: usize = 3;
 const MAX_K_DISAGREEMENT: f32 = 0.25;
-// A correlation fit over three-plus probe periods averages hundreds of
-// clean samples per block; distributed railing bursts at this level
-// perturb it far less than the parameters it feeds tolerate, while a
-// loop genuinely fighting the stand still shows an order more and is
-// refused.
-const MAX_WINDOW_SATURATION: f32 = 0.12;
+// The saturation bar is the artifact validator's own — one authority,
+// so the report cannot admit a window the artifact then refuses.
+const MAX_WINDOW_SATURATION: f32 = aviate_config::airframe_preset::MAX_SATURATION_FRACTION;
 const MIN_COHERENCE: f32 = 0.8;
 const MAX_DELAY_S: f32 = 0.5;
 const MIN_DELAY_UNCERTAINTY_S: f32 = 0.01;

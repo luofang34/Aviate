@@ -158,6 +158,26 @@ fn candidate_rejects_a_bandwidth_that_the_delay_cannot_support() {
 }
 
 #[test]
+fn saturation_bar_admits_the_census_bound_and_refuses_just_past_it() {
+    let at_bar = plant("").replace(
+        "saturation_fraction = [0.0, 0.0, 0.0]",
+        "saturation_fraction = [0.12, 0.12, 0.12]",
+    );
+    let text = candidate(&at_bar, "");
+    assert!(resolve_candidate(ALIA250, &text, &at_bar, &model()).is_ok());
+
+    let past_bar = plant("").replace(
+        "saturation_fraction = [0.0, 0.0, 0.0]",
+        "saturation_fraction = [0.121, 0.0, 0.0]",
+    );
+    let text = candidate(&past_bar, "");
+    assert!(matches!(
+        resolve_candidate(ALIA250, &text, &past_bar, &model()),
+        Err(CandidateError::PlantArtifact(_))
+    ));
+}
+
+#[test]
 fn candidate_rejects_weak_or_clipped_plant_evidence() {
     for replacement in [
         (
@@ -166,7 +186,7 @@ fn candidate_rejects_weak_or_clipped_plant_evidence() {
         ),
         (
             "saturation_fraction = [0.0, 0.0, 0.0]",
-            "saturation_fraction = [0.06, 0.0, 0.0]",
+            "saturation_fraction = [0.13, 0.0, 0.0]",
         ),
         (
             "sample_count = [500, 500, 500]",

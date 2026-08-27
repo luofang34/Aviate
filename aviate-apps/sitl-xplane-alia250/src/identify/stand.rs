@@ -115,13 +115,13 @@ pub(super) fn write_dataref(sock: &UdpSocket, path: &str, value: f32) -> Result<
         .map_err(StandError::Transport)
 }
 
-/// The virtual test stand: every cycle of an excitation window pins
-/// the vehicle's TRANSLATION (altitude held, linear velocity zeroed)
-/// while leaving its ROTATION entirely to the flight model — the
-/// degree-of-freedom separation a physical identification rig provides
-/// with a gimbal mount. A SITL-only affordance, and the reason the
-/// experiment needs no working attitude cascade: free fall would bury
-/// the torque response under the aerodynamics of a 30 m/s plunge.
+/// The virtual test stand: pins the vehicle's TRANSLATION (altitude
+/// held, linear velocity zeroed) while leaving its ROTATION entirely
+/// to the flight model. The excitation windows do NOT use it — a
+/// translation pin couples back into rotation and rocks the vehicle
+/// harder than the free hover it would replace — so its one flight
+/// role is the landing ride at the end of the sequence, plus the
+/// ground-referenced altitude reads the sequence plans against.
 pub(super) struct TestStand {
     sock: UdpSocket,
     held_y: Option<f32>,

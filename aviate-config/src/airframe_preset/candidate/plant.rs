@@ -13,6 +13,19 @@ use super::ContentDigest;
 const PLANT_ARTIFACT_SCHEMA_VERSION: u16 = 1;
 const MAX_ID_BYTES: usize = 64;
 
+/// Most of a window's samples the wire or an actuator may constrain
+/// before the evidence is refused. The census behind this fraction
+/// counts LANE-LEVEL constraints only — the mean-path rate limiter
+/// trims the collective every sample by construction, and the probe it
+/// would refuse is a pure differential that travels untouched. A
+/// correlation fit over three-plus probe periods averages hundreds of
+/// clean samples per block, so distributed railing at this level
+/// perturbs it far less than the parameters it feeds tolerate, while a
+/// loop genuinely fighting its hold shows an order more and is still
+/// refused. The identification report and this validator both hold
+/// evidence to this same bar.
+pub const MAX_SATURATION_FRACTION: f32 = 0.12;
+
 /// Per-axis evidence from one plant-identification run.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -189,7 +202,7 @@ impl PlantIdentificationArtifact {
                 "saturation_fraction",
                 self.saturation_fraction[axis],
                 0.0,
-                0.05,
+                MAX_SATURATION_FRACTION,
             )?;
             if self.sample_count[axis] < 100 {
                 return Err(PlantArtifactError::InsufficientSamples(axis));

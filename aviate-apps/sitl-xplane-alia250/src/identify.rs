@@ -8,9 +8,9 @@
 //! and each wrong guess costs a full flight to discover.
 //!
 //! The experiment mirrors PX4's autotune shape but runs OFFLINE in
-//! SITL: fly a short hop, hold an attitude-setpoint square wave one
-//! axis at a time, and fit the open-loop relation ẏ = K·u from what was
-//! MEASURED — u is the mixer's own force-domain axis torque (linear in
+//! SITL: fly a short hop, hold attitude while a differential-force sine
+//! rides one axis's actuator lanes at a time, and fit the open-loop
+//! relation ẏ = K·u from what was MEASURED — u is the mixer's own force-domain axis torque (linear in
 //! thrust under the quadratic rotor curve), y the bridge's gyro. The
 //! closed loop only shapes the input spectrum; the fit does not depend
 //! on the loop being any good, which is the point — it runs under
@@ -135,6 +135,7 @@ where
     let mut ground_y: Option<f32> = None;
     let mut held_attitude: Option<Quaternion> = None;
     let mut last_sample_us: Option<u64> = None;
+    let mut last_new_samples: usize = 0;
     let mut stand = TestStand::new(match UdpSocket::bind("0.0.0.0:0") {
         Ok(sock) => {
             sock.set_read_timeout(Some(Duration::from_millis(100))).ok();
@@ -164,6 +165,15 @@ where
             return Err(ExperimentError::Timeout("plant identification"));
         }
 
+        // Everything the fit will read is paced on the SAMPLE clock: the
+        // probe sine, the hold leak, and every phase deadline. The board
+        // clock is wall time, the simulator dilates under load, and a
+        // probe advanced on the wall clock lands at the wrong stamped
+        // frequency by exactly the dilation factor — the demodulator
+        // then reads a sine that is not there. Wall time appears only in
+        // the heartbeat, the progress log, and the global timeout.
+        let clock_us = last_sample_us.unwrap_or(0);
+
         // The attitude the loop is asked to hold: live outside the
         // excitation windows, LEAKY inside them. A hard freeze makes the
         // loop fight every estimator wobble at full gain and rail the
@@ -171,7 +181,8 @@ where
         // residual rate integrates to a rollover before the window ends.
         // A hold that leaks toward the estimate over seconds arrests the
         // rollover while staying transparent at the probe frequency, so
-        // the loop hosts the probe instead of fighting it.
+        // the loop hosts the probe instead of fighting it. The leak
+        // advances once per recorded sample, never per loop spin.
         let estimate = board
             .kernel()
             .pipeline()
@@ -179,7 +190,12 @@ where
             .estimate(&board.kernel().state.estimator);
         let hold = match (&phase, held_attitude) {
             (Phase::Excite { .. }, Some(frozen)) => {
-                let leaked = leak_toward(frozen, estimate.attitude, HOLD_LEAK);
+                let leaked = if last_new_samples == 0 {
+                    frozen
+                } else {
+                    let alpha = HOLD_LEAK * last_new_samples as f32;
+                    leak_toward(frozen, estimate.attitude, alpha)
+                };
                 held_attitude = Some(leaked);
                 leaked
             }
@@ -189,12 +205,12 @@ where
         // The probe: a sine of differential force on the excited
         // axis's lanes at the analysis frequency, so the correlation
         // fit reads the plant exactly where the loop design needs it.
-        board.set_lane_injection(injection_for(&phase, board.now_us()));
+        board.set_lane_injection(injection_for(&phase, clock_us));
         if matches!(phase, Phase::Lower { .. }) {
             stand.pin().map_err(ExperimentError::Stand)?;
         }
 
-        let command = command_for(&phase, board.now_us(), sequence, hold, hover_collective);
+        let command = command_for(&phase, clock_us, sequence, hold, hover_collective);
         sequence = sequence.wrapping_add(1);
         if let Some(cmd) = command {
             board.set_command(cmd);
@@ -204,12 +220,8 @@ where
         last_motor_mean = out.outputs[..4].iter().map(|m| m.0).sum::<f32>() / 4.0;
 
         let observations = board.take_control_observations();
-        let latest_us = record_observations(
-            observations,
-            &mut samples,
-            &mut last_sample_us,
-            board.now_us(),
-        )?;
+        last_new_samples = observations.len();
+        let latest_us = record_observations(observations, &mut samples, &mut last_sample_us)?;
 
         if let Some((axis, freq, from_us)) = window_open {
             if latest_us >= from_us {
@@ -335,11 +347,11 @@ where
             loop {
                 match board.disarm() {
                     Ok(()) => break,
-                    Err(error) if Instant::now() < disarm_deadline => {
+                    Err(_) if Instant::now() < disarm_deadline => {
                         for _ in 0..40 {
                             let cmd = command_for(
                                 &phase,
-                                board.now_us(),
+                                clock_us,
                                 sequence,
                                 estimate.attitude,
                                 hover_collective,
@@ -351,7 +363,6 @@ where
                             board.step();
                             board.wait_for_sample(Duration::from_micros(2_500));
                         }
-                        let _ = error;
                     }
                     Err(error) => {
                         log::warn!("disarm refused after landing ({error:?}); leaving shutdown to the process owner");
@@ -386,14 +397,14 @@ fn record_observations(
     observations: Vec<aviate_board_sitl_xplane::XPlaneControlObservation>,
     samples: &mut Vec<Sample>,
     last_sample_us: &mut Option<u64>,
-    fallback_us: u64,
 ) -> Result<u64, ExperimentError> {
     // Phase arithmetic lives on the SAMPLE clock. The board clock is
     // wall time, the samples are simulation time, and the simulator
     // dilates when its flight model cannot keep real time — a deadline
     // built from one and compared against the other shortens every
-    // window by the dilation factor.
-    let mut latest_us = last_sample_us.unwrap_or(fallback_us);
+    // window by the dilation factor. Before the first sample the clock
+    // reads zero; nothing leaves WaitReady until samples flow.
+    let mut latest_us = last_sample_us.unwrap_or(0);
     for observation in observations {
         if let Some(previous_us) = *last_sample_us {
             if observation.timestamp_us <= previous_us {

@@ -15,7 +15,9 @@ mod design;
 mod lineage;
 mod plant;
 pub use lineage::calculate_overlay_lineage_digest;
-pub use plant::{PlantArtifactError, PlantIdentificationArtifact, PlantSampleClock};
+pub use plant::{
+    PlantArtifactError, PlantIdentificationArtifact, PlantSampleClock, MAX_SATURATION_FRACTION,
+};
 
 use crate::xplane_model::XPlaneSimulatorModel;
 use lineage::apply_candidate_layers;

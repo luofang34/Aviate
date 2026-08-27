@@ -41,9 +41,13 @@ pub(super) const SETTLE: Duration = Duration::from_millis(1_500);
 /// Transient rejected from the head of every excitation window.
 pub(super) const TRANSIENT_SKIP: Duration = Duration::from_millis(1_800);
 
-/// Per-cycle blend of the held attitude toward the live estimate.
-/// Sets a restoring time constant of a few seconds — an order below
-/// the slowest probe frequency, an order above the rollover rate.
+/// Per-SAMPLE blend of the held attitude toward the live estimate,
+/// advanced on the sample clock. At the declared 80 Hz this sets a
+/// restoring time constant near three seconds — an order below the
+/// slowest probe frequency, an order above the rollover rate. A blend
+/// advanced per loop spin instead would tighten with machine speed and
+/// with the simulator's dilation, neither of which is a property of
+/// the experiment.
 pub(super) const HOLD_LEAK: f32 = 0.004;
 
 /// The reversed-spin mixer's per-motor axis signs, in mixer lane
@@ -88,12 +92,14 @@ pub(super) enum Phase {
 /// The command each phase holds. `None` keeps the previous command.
 /// The EXCITATION does not travel through here — it is injected on the
 /// actuator lanes — so every phase simply asks the closed loop to hold
-/// `attitude` (the current estimate, frozen at each window's start:
-/// commanding a fixed world frame instead would have the loop fighting
-/// the vehicle's heading with saturated torque, drowning the probe).
+/// `attitude`: the live estimate outside the windows, the caller's
+/// leaky hold inside them (commanding a fixed world frame instead
+/// would have the loop fighting the vehicle's heading with saturated
+/// torque, drowning the probe). `sample_us` is the SAMPLE clock; the
+/// climb ramp is paced in simulation time like every other deadline.
 pub(super) fn command_for(
     phase: &Phase,
-    now_us: u64,
+    sample_us: u64,
     sequence: u32,
     attitude: Quaternion,
     hover_collective: f32,
@@ -101,9 +107,9 @@ pub(super) fn command_for(
     let setpoint = match phase {
         Phase::WaitReady => return None,
         Phase::Climb { started_us, .. } => {
-            // Ten seconds to full ramp, held for the rest: the rotor
+            // Six seconds to full ramp, held for the rest: the rotor
             // inertia needs the time regardless of the command.
-            let elapsed_s = now_us.saturating_sub(*started_us) as f32 / 1_000_000.0;
+            let elapsed_s = sample_us.saturating_sub(*started_us) as f32 / 1_000_000.0;
             let ramp = (elapsed_s / 6.0).min(1.0);
             let target = hover_collective + 0.08;
             let collective = ramp * target;
@@ -151,7 +157,11 @@ pub(super) fn leak_toward(from: Quaternion, to: Quaternion, alpha: f32) -> Quate
     blended.normalize()
 }
 
-pub(super) fn injection_for(phase: &Phase, now_us: u64) -> [f32; 4] {
+/// The probe on the excited axis's lanes. `sample_us` is the SAMPLE
+/// clock: the fit demodulates against sample timestamps, and a sine
+/// advanced on any other clock arrives at the wrong stamped frequency
+/// by the simulator's dilation factor.
+pub(super) fn injection_for(phase: &Phase, sample_us: u64) -> [f32; 4] {
     let Phase::Excite {
         axis,
         freq,
@@ -161,7 +171,7 @@ pub(super) fn injection_for(phase: &Phase, now_us: u64) -> [f32; 4] {
     else {
         return [0.0; 4];
     };
-    let elapsed_s = now_us.saturating_sub(*started_us) as f32 / 1_000_000.0;
+    let elapsed_s = sample_us.saturating_sub(*started_us) as f32 / 1_000_000.0;
     let value = libm::sinf(PROBE_RAD_S[*freq] * elapsed_s) * INJECT_FORCE;
     let mut lanes = [0.0; 4];
     for (lane, sign) in lanes.iter_mut().zip(SIGNS[*axis]) {

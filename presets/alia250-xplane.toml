@@ -9,13 +9,16 @@ bridge_protocol = "mavlink-hil-tcp-v1"
 mixer_geometry = "quad-x-x500-reversed-spin"
 actuator_curve = "quadratic-rotor"
 motor_count = 4
-# The sensor-rate target the launcher CONFIGURES the bridge to, not an
-# average of what any one machine delivered. The launcher rewrites the
-# installed bridge's `mavlink_sensor_rate_hz` to this value when it
-# installs the plugins (Pilotage's build-xplane-plugins.sh), overriding
-# whatever the bridge ships with. That install is stamp-gated on the
-# launcher's own sources, and nothing checks the setting at launch or at
-# run time, so a lane can still meet a bridge configured otherwise.
+# The sample rate the bridge STAMPS on this lane, not the bridge's
+# configured target and not an average of what any one machine
+# delivered. The launcher (Pilotage's build-xplane-plugins.sh) pins the
+# installed bridge's `mavlink_sensor_rate_hz` to 100 when it installs
+# the plugins; editing this field reconfigures nothing. On a display
+# whose flight loop steps at 12.5 ms, the first whole frame that clears
+# the 10 ms target is one frame, and the stamped period is 12.5 ms —
+# this declaration. The install is stamp-gated on the launcher's own
+# sources, and nothing checks the setting at launch or at run time, so a
+# lane can still meet a bridge configured otherwise.
 #
 # What the runtime gate observes is not wall-clock delivery. It reads the
 # simulation timestamps the bridge stamps. The bridge carries no phase

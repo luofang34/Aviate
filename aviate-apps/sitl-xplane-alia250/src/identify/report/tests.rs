@@ -75,11 +75,14 @@ fn clipped_evidence_is_rejected() {
 fn one_clipped_frequency_is_rejected_before_aggregation() {
     let (mut samples, windows) = synthetic_trace([5.3, 3.1, 1.0]);
     let (start, end) = windows[0][1];
-    let clipped = ((end - start) as f32 * 0.08) as usize;
+    let clipped = ((end - start) as f32 * 0.15) as usize;
     for sample in &mut samples[start..start + clipped] {
         sample.saturated = true;
     }
-    assert!(report(&samples, &windows, context()).is_err());
+    let error = report(&samples, &windows, context()).expect_err("must refuse");
+    // The per-window gate must be the refusing authority, not the
+    // artifact validator after aggregation.
+    assert!(error.contains("constrained samples"), "{error}");
 }
 
 #[test]
