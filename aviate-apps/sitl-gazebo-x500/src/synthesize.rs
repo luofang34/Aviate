@@ -78,15 +78,25 @@ pub fn apply_packet_noise(packet: &mut SimSensorPacket, tier: NoiseTier, rng: &m
 ///
 /// `prev_ned_vel` is the NED-frame velocity this function returned
 /// on its previous call (so the caller — typically the FC main
-/// loop — passes its own state forward). The argument is required
-/// because gz's `WorldLinearVelocity` component returns zero on
-/// macOS for the same reason `WorldAngularVelocity` does; reading
-/// `state.vel` directly leaves the EKF with no velocity signal at
-/// all and the controller flying blind during fast transients.
-/// Computing velocity from a position derivative and acceleration
-/// from a velocity derivative keeps the controllers sim-agnostic
-/// — they receive the same shape of sensor data they would from a
-/// real IMU + GNSS pair.
+/// loop — passes its own state forward).
+///
+/// Deriving velocity from a position difference, and acceleration
+/// from a velocity difference, is what keeps the controllers
+/// sim-agnostic: they receive the same SHAPE of sensor data a real
+/// IMU and GNSS pair would produce, rather than a state vector the
+/// simulator happened to publish. That reason stands on its own and
+/// is why this is not dead code.
+///
+/// It is worth being explicit about what is NOT the reason, because
+/// the earlier text here said it was: `state.vel` is live. It used
+/// to read zero, and that was neither a macOS quirk nor a property
+/// of gz — the plugin enabled the world-velocity component on the
+/// MODEL entity, where the physics engine never writes it. Reading
+/// `state.vel` today would give a real velocity. It would also give
+/// the canonical LINK's velocity, which differs from the model's by
+/// a lever arm on any airframe whose canonical link sits off the
+/// model origin, so switching to it is not the free simplification
+/// it looks like.
 ///
 /// Returns `(packet, current_ned_vel)`; the caller threads the
 /// velocity through to the next call.
@@ -103,9 +113,9 @@ pub fn synthesize_packet(
         _ => 0.001,
     };
 
-    // Velocity from finite difference of position (the gz
-    // `state.vel` field is reported as zero on macOS — see
-    // doc-comment above).
+    // Velocity from a finite difference of position: the shape a real
+    // IMU and GNSS pair would deliver, independent of what the
+    // simulator publishes — see the doc-comment above.
     let now_ned_vel = match prev {
         Some(p) if now_us > prev_t_us && dt > 1e-6 => {
             let prev_ned_pos = enu_to_ned_f32(p.pos);

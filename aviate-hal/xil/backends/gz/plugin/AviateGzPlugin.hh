@@ -60,6 +60,11 @@ private:
 
     /// Model entity (re-resolved after a world reset)
     gz::sim::Entity modelEntity_{gz::sim::kNullEntity};
+    // The entity the world velocity components are carried on. Physics
+    // maintains WorldLinearVelocity/WorldAngularVelocity for LINKS; a
+    // model entity keeps its Pose but its velocity components stay at
+    // zero, which publishes a moving vehicle as stationary.
+    gz::sim::Entity velocityEntity_{gz::sim::kNullEntity};
 
     /// Shared block (aviate-xil-contract layout v2)
     AviateSharedStateV2* shm_{nullptr};

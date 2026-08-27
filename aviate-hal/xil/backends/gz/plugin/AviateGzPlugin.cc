@@ -10,6 +10,9 @@
 #include <gz/sim/components/LinearVelocity.hh>
 #include <gz/sim/components/Name.hh>
 #include <gz/sim/components/Pose.hh>
+#include <gz/sim/components/CanonicalLink.hh>
+#include <gz/sim/components/Link.hh>
+#include <gz/sim/Model.hh>
 #include <gz/sim/Util.hh>
 #include <gz/plugin/Register.hh>
 #include <gz/msgs/actuators.pb.h>
@@ -419,8 +422,37 @@ void AviateGzPlugin::PreUpdate(
 
         if (modelEntity_ != gz::sim::kNullEntity) {
             std::cout << "[AviateGzPlugin] Found model '" << modelName_ << "'" << std::endl;
-            gz::sim::enableComponent<gz::sim::components::WorldLinearVelocity>(ecm, modelEntity_);
-            gz::sim::enableComponent<gz::sim::components::WorldAngularVelocity>(ecm, modelEntity_);
+            // ModelCanonicalLink is set on the MODEL when the canonical link is
+            // a deeper descendant — a rig, or any composition whose body comes
+            // from an included sub-model. Model::CanonicalLink only matches a
+            // direct child, so on those airframes it returns null and the
+            // velocity lane would silently go back to reading zero.
+            velocityEntity_ = gz::sim::kNullEntity;
+            if (auto* nested =
+                    ecm.Component<gz::sim::components::ModelCanonicalLink>(modelEntity_)) {
+                velocityEntity_ = nested->Data();
+            }
+            if (velocityEntity_ == gz::sim::kNullEntity) {
+                velocityEntity_ = gz::sim::Model(modelEntity_).CanonicalLink(ecm);
+            }
+            // Physics writes the world velocity components for LINKS and for
+            // nothing else, so an entity that is not a link cannot carry a
+            // velocity however the lookup arrived at it.
+            if (velocityEntity_ != gz::sim::kNullEntity
+                && !ecm.Component<gz::sim::components::Link>(velocityEntity_)) {
+                velocityEntity_ = gz::sim::kNullEntity;
+            }
+            if (velocityEntity_ == gz::sim::kNullEntity) {
+                std::cerr << "[AviateGzPlugin] model '" << modelName_
+                          << "' resolves no link to read velocity from; "
+                          << "state will publish as INVALID rather than as zero"
+                          << std::endl;
+            } else {
+                gz::sim::enableComponent<gz::sim::components::WorldLinearVelocity>(
+                    ecm, velocityEntity_);
+            }
+            gz::sim::enableComponent<gz::sim::components::WorldAngularVelocity>(
+                ecm, modelEntity_);
             if (!motorPub_.Valid()) {
                 motorPub_ = node_.Advertise<gz::msgs::Actuators>(motorTopic_);
             }
@@ -490,6 +522,7 @@ void AviateGzPlugin::PostUpdate(
         resetGeneration_ = __atomic_add_fetch(
             &shm_->header.reset_generation, 1, __ATOMIC_ACQ_REL);
         modelEntity_ = gz::sim::kNullEntity;
+        velocityEntity_ = gz::sim::kNullEntity;
         // Retire the outgoing snapshot in the same act. Until the new
         // world publishes its first step the block still holds the
         // retired epoch's pose — valid, coherent, and from a world
@@ -512,7 +545,22 @@ void AviateGzPlugin::PostUpdate(
 
     double pos[3] = {0}, quat[4] = {1, 0, 0, 0}, vel[3] = {0}, angVel[3] = {0};
     auto poseComp = ecm.Component<gz::sim::components::Pose>(modelEntity_);
-    if (poseComp) {
+    const gz::sim::components::WorldLinearVelocity* linVelComp = nullptr;
+    if (velocityEntity_ != gz::sim::kNullEntity) {
+        linVelComp = ecm.Component<gz::sim::components::WorldLinearVelocity>(velocityEntity_);
+    }
+    // A default is not a measurement. Identity attitude is the most plausible
+    // attitude a stationary vehicle has, the world origin is exactly where an
+    // unstarted one sits, and zero is a speed. Publishing any of them under
+    // valid=1 hands a consumer a reading nobody took, so the snapshot is
+    // marked invalid instead and the reader withholds rather than believes.
+    if (!poseComp || !linVelComp) {
+        __atomic_add_fetch(&shm_->state.seq, 1, __ATOMIC_ACQ_REL);
+        __atomic_store_n(&shm_->state.valid, 0u, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&shm_->state.seq, 1, __ATOMIC_RELEASE);
+        return;
+    }
+    {
         const auto& pose = poseComp->Data();
         pos[0] = pose.Pos().X();
         pos[1] = pose.Pos().Y();
@@ -522,14 +570,19 @@ void AviateGzPlugin::PostUpdate(
         quat[2] = pose.Rot().Y();
         quat[3] = pose.Rot().Z();
     }
-    auto linVelComp = ecm.Component<gz::sim::components::WorldLinearVelocity>(modelEntity_);
-    if (linVelComp) {
-        vel[0] = linVelComp->Data().X();
-        vel[1] = linVelComp->Data().Y();
-        vel[2] = linVelComp->Data().Z();
-    }
-    auto angVelComp = ecm.Component<gz::sim::components::WorldAngularVelocity>(modelEntity_);
-    if (angVelComp) {
+    vel[0] = linVelComp->Data().X();
+    vel[1] = linVelComp->Data().Y();
+    vel[2] = linVelComp->Data().Z();
+    // Angular velocity is deliberately NOT moved onto the link with the linear
+    // lane. The component holds omega in WORLD coordinates, and two consumers
+    // relabel it as a body rate: a pure roll at heading 090 would be recorded
+    // as a pitch rate of the wrong sign. Today it reads a structural zero,
+    // which is documented and which those consumers already route around.
+    // Waking it here would replace an inert zero with a believable wrong
+    // number in the evidence traces. It stays asleep until the frame is
+    // converted where it is read.
+    if (auto* angVelComp =
+            ecm.Component<gz::sim::components::WorldAngularVelocity>(modelEntity_)) {
         angVel[0] = angVelComp->Data().X();
         angVel[1] = angVelComp->Data().Y();
         angVel[2] = angVelComp->Data().Z();
