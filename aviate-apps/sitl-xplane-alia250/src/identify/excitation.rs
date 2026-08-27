@@ -17,7 +17,7 @@ use aviate_core::types::NormalizedThrust;
 /// pitch, and at the upper probe frequency its response otherwise
 /// sinks toward the gyro noise floor; its softened host loop leaves
 /// the lane headroom the larger probe spends.
-const INJECT_FORCE: [f32; 3] = [0.06, 0.06, 0.10];
+const INJECT_FORCE: [f32; 3] = [0.06, 0.06, 0.08];
 
 /// The probe frequencies, rad/s. Both sit where FREE FLIGHT can host
 /// the probe: an integrator plant turns a lane differential u into an
@@ -41,7 +41,7 @@ pub(super) const PROBE_RAD_S: [f32; 2] = [2.5, 5.0];
 // the coherence and the census are RATIOS whose run-to-run variance
 // shrinks with block count. Short upper windows made every gate a
 // coin flip at the margin.
-pub(super) const EXCITE_S: [f32; 2] = [11.0, 11.0];
+pub(super) const EXCITE_S: [f32; 2] = [16.0, 11.0];
 
 /// Climb budget: the fail-closed bound on reaching the working height.
 /// Rotor spool from rest is the slow part and varies with the machine;
@@ -57,7 +57,7 @@ pub(super) const SETTLE: Duration = Duration::from_millis(4_000);
 /// over with vertical speed still decaying and the trim near its clamp;
 /// the early windows otherwise inherit that transient as clipping the
 /// census refuses. The later windows need only [`SETTLE`].
-pub(super) const FIRST_SETTLE: Duration = Duration::from_secs(12);
+pub(super) const FIRST_SETTLE: Duration = Duration::from_secs(20);
 
 /// Transient rejected from the head of every excitation window.
 pub(super) const TRANSIENT_SKIP: Duration = Duration::from_millis(1_800);

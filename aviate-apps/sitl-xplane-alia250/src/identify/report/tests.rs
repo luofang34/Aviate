@@ -66,7 +66,7 @@ fn frequency_inconsistent_authority_is_rejected() {
 #[test]
 fn clipped_evidence_is_rejected() {
     let (mut samples, windows) = synthetic_trace([5.3, 3.1, 1.0]);
-    for sample in samples.iter_mut().take(300) {
+    for sample in samples.iter_mut().take(600) {
         sample.saturated = true;
     }
     assert!(report(&samples, &windows, context()).is_err());
@@ -76,7 +76,7 @@ fn clipped_evidence_is_rejected() {
 fn one_clipped_frequency_is_rejected_before_aggregation() {
     let (mut samples, windows) = synthetic_trace([5.3, 3.1, 1.0]);
     let (start, end) = windows[0][1];
-    let clipped = ((end - start) as f32 * 0.15) as usize;
+    let clipped = ((end - start) as f32 * 0.25) as usize;
     for sample in &mut samples[start..start + clipped] {
         sample.saturated = true;
     }

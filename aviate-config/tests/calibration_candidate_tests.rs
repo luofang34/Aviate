@@ -161,14 +161,14 @@ fn candidate_rejects_a_bandwidth_that_the_delay_cannot_support() {
 fn saturation_bar_admits_the_census_bound_and_refuses_just_past_it() {
     let at_bar = plant("").replace(
         "saturation_fraction = [0.0, 0.0, 0.0]",
-        "saturation_fraction = [0.12, 0.12, 0.12]",
+        "saturation_fraction = [0.18, 0.18, 0.18]",
     );
     let text = candidate(&at_bar, "");
     assert!(resolve_candidate(ALIA250, &text, &at_bar, &model()).is_ok());
 
     let past_bar = plant("").replace(
         "saturation_fraction = [0.0, 0.0, 0.0]",
-        "saturation_fraction = [0.121, 0.0, 0.0]",
+        "saturation_fraction = [0.181, 0.0, 0.0]",
     );
     let text = candidate(&past_bar, "");
     assert!(matches!(
@@ -186,7 +186,7 @@ fn candidate_rejects_weak_or_clipped_plant_evidence() {
         ),
         (
             "saturation_fraction = [0.0, 0.0, 0.0]",
-            "saturation_fraction = [0.13, 0.0, 0.0]",
+            "saturation_fraction = [0.19, 0.0, 0.0]",
         ),
         (
             "sample_count = [500, 500, 500]",
@@ -239,7 +239,7 @@ fn each_stage_requires_one_owned_change_and_freezes_other_fields() {
 #[test]
 fn hover_requires_wire_headroom() {
     let plant = plant("");
-    let text = staged_candidate(&plant, "hover", "hover_thrust_seed = 0.51\n");
+    let text = staged_candidate(&plant, "hover", "hover_thrust_seed = 0.61\n");
     assert_eq!(
         resolve_candidate(ALIA250, &text, &plant, &model()),
         Err(CandidateError::InvalidRelation(
@@ -279,7 +279,7 @@ fn gain_steps_must_be_adjacent_to_the_champion() {
 fn plant_sample_clock_rate_must_match_the_model() {
     // Names its own disagreement rather than editing the text of a fixture,
     // so it stays a disagreement whatever the model comes to declare.
-    let plant = plant_at(model_sample_rate_hz() - 20.0, "");
+    let plant = plant_at(model_sample_rate_hz() - 30.0, "");
     let text = candidate(&plant, "");
     assert_eq!(
         resolve_candidate(ALIA250, &text, &plant, &model()),

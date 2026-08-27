@@ -32,7 +32,7 @@ pub use candidate::{
     calculate_overlay_lineage_digest, resolve_candidate, CalibrationCandidate, CalibrationOverlay,
     CalibrationStage, CandidateError, CandidateIdentity, ContentDigest, GainOverrides,
     InnerLoopDesign, PlantArtifactError, PlantIdentificationArtifact, PlantSampleClock,
-    ResolvedCandidate, MAX_SATURATION_FRACTION,
+    ResolvedCandidate, MAX_SATURATION_FRACTION, MIN_COHERENCE,
 };
 
 /// Registered mixer geometries a preset may name. The app resolves

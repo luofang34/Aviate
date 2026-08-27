@@ -19,6 +19,7 @@ pub use digest::ContentDigest;
 pub use lineage::calculate_overlay_lineage_digest;
 pub use plant::{
     PlantArtifactError, PlantIdentificationArtifact, PlantSampleClock, MAX_SATURATION_FRACTION,
+    MIN_COHERENCE,
 };
 
 use crate::xplane_model::XPlaneSimulatorModel;

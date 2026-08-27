@@ -13,12 +13,17 @@ motor_count = 4
 # configured target and not an average of what any one machine
 # delivered. The launcher (Pilotage's build-xplane-plugins.sh) pins the
 # installed bridge's `mavlink_sensor_rate_hz` to 100 when it installs
-# the plugins; editing this field reconfigures nothing. On a display
-# whose flight loop steps at 12.5 ms, the first whole frame that clears
-# the 10 ms target is one frame, and the stamped period is 12.5 ms —
-# this declaration. The install is stamp-gated on the launcher's own
-# sources, and nothing checks the setting at launch or at run time, so a
-# lane can still meet a bridge configured otherwise.
+# the plugins; editing this field reconfigures nothing. The flight loop
+# is synced to the display, one whole frame clears the 10 ms target,
+# and an adaptive-sync display steps its frame period with machine
+# state — observed stamps span roughly 12.6 ms to 10.7 ms across
+# instances, loads, and warm-up. The declaration centers the observed
+# range so the board's tolerance covers all of it; the experiment's own
+# arithmetic rides measured stamps, and the plant artifact records the
+# rate a run actually delivered. The install is stamp-gated on
+# the launcher's own sources, and nothing checks the setting at launch
+# or at run time, so a lane can still meet a bridge configured
+# otherwise.
 #
 # What the runtime gate observes is not wall-clock delivery. It reads the
 # simulation timestamps the bridge stamps. The bridge carries no phase
@@ -34,7 +39,7 @@ motor_count = 4
 # An average of delivered samples taken under load therefore describes the
 # machine during the measurement, not the lane, and a declaration built
 # from one refuses healthy runs while accepting degraded ones.
-sample_rate_hz = 80
+sample_rate_hz = 88
 max_samples_per_iteration = 32
 # Mixer lane for each simulator actuator lane, checked against the aircraft
 # file rather than assumed. ALIA-250.acf places its lift rotors at
@@ -62,7 +67,7 @@ rise_per_s = 0.5
 band_boundary = 0.40
 low_band_rise_per_s = 0.6
 fall_per_s = 0.30
-mean_ceiling = 0.55
+mean_ceiling = 0.65
 lane_ceiling = 0.92
 airborne_clearance_m = 0.5
 ground_squeeze = 0.5

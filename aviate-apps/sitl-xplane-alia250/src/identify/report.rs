@@ -20,7 +20,9 @@ const MAX_K_DISAGREEMENT: f32 = 0.4;
 // The saturation bar is the artifact validator's own — one authority,
 // so the report cannot admit a window the artifact then refuses.
 const MAX_WINDOW_SATURATION: f32 = aviate_config::airframe_preset::MAX_SATURATION_FRACTION;
-const MIN_COHERENCE: f32 = 0.8;
+// One authority with the artifact validator, so the report cannot
+// admit a point the artifact then refuses.
+const MIN_COHERENCE: f32 = aviate_config::airframe_preset::MIN_COHERENCE;
 const MAX_DELAY_S: f32 = 0.5;
 const MIN_DELAY_UNCERTAINTY_S: f32 = 0.01;
 

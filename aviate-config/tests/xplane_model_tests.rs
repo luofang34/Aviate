@@ -14,9 +14,9 @@ fn alia_model_has_the_measured_protection_boundary() {
     assert_eq!(model.airframe_id(), "alia250");
     assert_eq!(model.lane_order(), [0, 2, 1, 3]);
     assert_eq!(model.wire().rise_per_s, 0.5);
-    assert_eq!(model.wire().mean_ceiling, 0.55);
+    assert_eq!(model.wire().mean_ceiling, 0.65);
     assert_eq!(model.motor_count(), 4);
-    assert_eq!(model.sample_rate_hz(), 80);
+    assert_eq!(model.sample_rate_hz(), 88);
     assert_eq!(
         model.airframe_preset_digest(),
         ContentDigest::calculate(AIRFRAME.as_bytes()).to_string()
@@ -40,7 +40,7 @@ fn alia_model_identity_is_pinned() {
     let model = XPlaneSimulatorModel::from_toml_str(MODEL).expect("valid model");
     assert_eq!(
         model.canonical_digest().expect("model digest").to_string(),
-        "d6e7fb97af2b81554ab8b429db7970e3870b73fe0add1ae6f12612b3e46229e4"
+        "a8414f78429582932664626d89e42afbebd84b2496c6d239877af81d2c666e52"
     );
 }
 
@@ -88,7 +88,7 @@ fn every_model_field_changes_the_identity() {
             "actuator_curve = \"quadratic-rotor\"",
             "actuator_curve = \"linear\"",
         ),
-        MODEL.replace("sample_rate_hz = 80", "sample_rate_hz = 81"),
+        MODEL.replace("sample_rate_hz = 88", "sample_rate_hz = 89"),
         MODEL.replace(
             "max_samples_per_iteration = 32",
             "max_samples_per_iteration = 33",
@@ -98,7 +98,7 @@ fn every_model_field_changes_the_identity() {
         MODEL.replace("band_boundary = 0.40", "band_boundary = 0.41"),
         MODEL.replace("low_band_rise_per_s = 0.6", "low_band_rise_per_s = 0.61"),
         MODEL.replace("fall_per_s = 0.30", "fall_per_s = 0.31"),
-        MODEL.replace("mean_ceiling = 0.55", "mean_ceiling = 0.56"),
+        MODEL.replace("mean_ceiling = 0.65", "mean_ceiling = 0.66"),
         MODEL.replace("lane_ceiling = 0.92", "lane_ceiling = 0.93"),
         MODEL.replace("airborne_clearance_m = 0.5", "airborne_clearance_m = 0.6"),
         MODEL.replace("ground_squeeze = 0.5", "ground_squeeze = 0.6"),
@@ -140,7 +140,7 @@ fn invalid_lane_order_fails_closed() {
 
 #[test]
 fn protection_relations_fail_closed() {
-    let text = MODEL.replace("mean_ceiling = 0.55", "mean_ceiling = 0.95");
+    let text = MODEL.replace("mean_ceiling = 0.65", "mean_ceiling = 0.95");
     assert!(matches!(
         XPlaneSimulatorModel::from_toml_str(&text),
         Err(XPlaneModelError::InvalidRelation(_))

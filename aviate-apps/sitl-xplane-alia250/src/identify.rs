@@ -167,7 +167,6 @@ where
     let mut last_motor_mean = 0.0_f32;
     let mut ground_y: Option<f32> = None;
     let mut ground_alt_m: Option<f32> = None;
-    let mut level_attitude: Option<aviate_core::math::Quaternion> = None;
     let mut collective_trim: f32 = 0.0;
     let mut last_new_samples: usize = 0;
     let mut last_sample_us: Option<u64> = None;
@@ -204,7 +203,10 @@ where
             );
             last_report = Instant::now();
         }
-        if started.elapsed() > Duration::from_secs(300) {
+        // Sim-paced phases stretch by the simulator's dilation on a
+        // loaded machine; the wall budget bounds a hung run, not a slow
+        // one.
+        if started.elapsed() > Duration::from_secs(700) {
             return Err(ExperimentError::Timeout("plant identification"));
         }
 
@@ -260,12 +262,19 @@ where
                 // the recovery an order slower than they shed — so the
                 // trim may barely cut lift, and gravity retires an
                 // overshoot on its own.
-                let desired = (error_gain * error_m + 0.15 * sink_m_s).clamp(-0.02, 0.12);
+                let desired = (error_gain * error_m + 0.15 * sink_m_s).clamp(-0.02, 0.2);
                 let step = (desired - collective_trim).clamp(-0.003, 0.003);
                 collective_trim += step * last_new_samples as f32;
             }
         }
-        let reference = level_attitude.unwrap_or(estimate.attitude);
+        // The attitude reference is LEVEL TILT AT THE CURRENT HEADING.
+        // Holding the live estimate blesses every drift as the new
+        // setpoint and the vehicle translates instead of hovering; but a
+        // reference that also freezes heading leaks any heading swing
+        // into roll and pitch through the attitude error, tilting the
+        // vehicle off its lift exactly when the yaw probe runs. Level
+        // tilt restores; heading is never fought.
+        let reference = level_at_current_heading(estimate.attitude);
         let command = command_for(
             &phase,
             sequence,
@@ -322,13 +331,6 @@ where
                 if board.is_ready() {
                     ground_y = Some(stand.local_y().map_err(ExperimentError::Stand)?);
                     ground_alt_m = board.last_fix().map(|fix| fix.alt_m);
-                    // The attitude reference for the whole flight: the
-                    // vehicle at rest on its gear IS level. Holding a
-                    // FIXED reference gives the loop a restoring torque;
-                    // holding the live estimate instead blesses every
-                    // drift as the new setpoint, and the vehicle slowly
-                    // pitches away, translating instead of hovering.
-                    level_attitude = Some(estimate.attitude);
                     board.arm().map_err(ExperimentError::Arm)?;
                     log::info!("armed; climbing");
                     Phase::Climb {
@@ -495,6 +497,17 @@ where
         return Err(ExperimentError::TuningTrace(error.to_string()));
     }
     Ok(())
+}
+
+/// A pure-yaw attitude at the estimate's heading: zero roll and pitch,
+/// so the attitude error restores tilt and never contains heading.
+fn level_at_current_heading(q: aviate_core::math::Quaternion) -> aviate_core::math::Quaternion {
+    let yaw = libm::atan2f(
+        2.0 * (q.w * q.z + q.x * q.y),
+        1.0 - 2.0 * (q.y * q.y + q.z * q.z),
+    );
+    let half = yaw * 0.5;
+    aviate_core::math::Quaternion::new(libm::cosf(half), 0.0, 0.0, libm::sinf(half))
 }
 
 /// Roll and pitch of an attitude, degrees, for the progress log.

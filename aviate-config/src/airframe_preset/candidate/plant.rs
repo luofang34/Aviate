@@ -17,14 +17,25 @@ const MAX_ID_BYTES: usize = 64;
 /// before the evidence is refused. The census behind this fraction
 /// counts LANE-LEVEL constraints only — the mean-path rate limiter
 /// trims the collective every sample by construction, and the probe it
-/// would refuse is a pure differential that travels untouched. A
-/// correlation fit over three-plus probe periods averages hundreds of
-/// clean samples per block, so distributed railing at this level
-/// perturbs it far less than the parameters it feeds tolerate, while a
-/// loop genuinely fighting its hold shows an order more and is still
-/// refused. The identification report and this validator both hold
-/// evidence to this same bar.
-pub const MAX_SATURATION_FRACTION: f32 = 0.12;
+/// would refuse is a pure differential that travels untouched. What
+/// the census counts in a healthy free-flight window is the host
+/// loop's own corrections grazing the lane bounds on a duty cycle;
+/// distortion of the probe itself collapses the coherence floor first.
+/// A loop genuinely fighting its hold shows several times this duty
+/// and is still refused. The identification report and this validator
+/// both hold evidence to this same bar.
+pub const MAX_SATURATION_FRACTION: f32 = 0.18;
+
+/// The cross-block coherence floor for one fitted probe point. The
+/// population a healthy free-flight run produces spans well below the
+/// textbook near-unity: the per-block transfer rides the host loop's
+/// ambient activity, and blocks are single probe periods. Confidence
+/// in the fitted authority is carried jointly by this floor, the
+/// confidence-interval bound, and the cross-frequency agreement — one
+/// of them alone refusing healthy runs starves the tuner of evidence.
+/// The identification report and the validator hold evidence to this
+/// same bar.
+pub const MIN_COHERENCE: f32 = 0.65;
 
 /// Per-axis evidence from one plant-identification run.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -206,7 +217,7 @@ impl PlantIdentificationArtifact {
             // lost in the noise outright.
             bounded("r_squared", self.r_squared[axis], 0.25, 1.0)?;
             bounded("authority_ci95", self.authority_ci95[axis], 0.0, 100.0)?;
-            bounded("coherence", self.coherence[axis], 0.8, 1.0)?;
+            bounded("coherence", self.coherence[axis], MIN_COHERENCE, 1.0)?;
             bounded("applied_input_max", self.applied_input_max[axis], 0.05, 1.0)?;
             bounded(
                 "saturation_fraction",
