@@ -16,7 +16,7 @@ fn alia_model_has_the_measured_protection_boundary() {
     assert_eq!(model.wire().rise_per_s, 0.035);
     assert_eq!(model.wire().mean_ceiling, 0.55);
     assert_eq!(model.motor_count(), 4);
-    assert_eq!(model.sample_rate_hz(), 92);
+    assert_eq!(model.sample_rate_hz(), 80);
     assert_eq!(
         model.airframe_preset_digest(),
         ContentDigest::calculate(AIRFRAME.as_bytes()).to_string()
@@ -40,7 +40,7 @@ fn alia_model_identity_is_pinned() {
     let model = XPlaneSimulatorModel::from_toml_str(MODEL).expect("valid model");
     assert_eq!(
         model.canonical_digest().expect("model digest").to_string(),
-        "8ec1b1877bdfe561706a734817f278dc07a242ca940509e0993fc76c1b897b9d"
+        "6d5c9b1ce20dcd24d519f11180e722403f26bcbebfbd760e2f0aa60ae2d65c24"
     );
 }
 
@@ -88,7 +88,7 @@ fn every_model_field_changes_the_identity() {
             "actuator_curve = \"quadratic-rotor\"",
             "actuator_curve = \"linear\"",
         ),
-        MODEL.replace("sample_rate_hz = 92", "sample_rate_hz = 93"),
+        MODEL.replace("sample_rate_hz = 80", "sample_rate_hz = 81"),
         MODEL.replace(
             "max_samples_per_iteration = 32",
             "max_samples_per_iteration = 33",
