@@ -17,7 +17,11 @@ fn zero_vel() -> Vector3<MetersPerSecond> {
 
 /// Declared by path: this file is itself loaded by one, so a bare `mod`
 /// would be looked for beside a directory nobody creates.
-#[path = "velocity_tests/heading.rs"]
+///
+/// Named `*_tests.rs` because the control-limits gate reads every file under
+/// this tree that is not one, and would refuse the bare float literals a test
+/// is entitled to write.
+#[path = "velocity_tests/heading_tests.rs"]
 mod heading;
 
 #[test]
