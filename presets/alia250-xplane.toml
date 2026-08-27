@@ -9,7 +9,23 @@ bridge_protocol = "mavlink-hil-tcp-v1"
 mixer_geometry = "quad-x-x500-reversed-spin"
 actuator_curve = "quadratic-rotor"
 motor_count = 4
-sample_rate_hz = 100
+# What X-Plane actually delivers for this aircraft, rather than what would be
+# convenient. Measured over five runs on an M3 Max: 88.3, 90.0, 93.1, 93.4 and
+# 96.7 Hz.
+#
+# Two facts decide this number. The rate is bounded by the flight model and not
+# by rendering — shrinking the window from 1400x900 to 1024x640 moved it
+# 93.1 -> 93.4 Hz — so it cannot be bought with graphics settings. And it VARIES
+# run to run by about nine percent end to end, which is most of the board's own
+# five percent tolerance, so the declared rate has to sit where the whole spread
+# fits rather than at any single observation. 92 is the only integer that puts
+# all five inside; 91 and 93 each leave one outside, and 100 left every one of
+# them outside.
+#
+# The margin is thin by construction. A slower frame than any yet seen will
+# still be refused, and that refusal is the board doing its job: a run whose
+# sample clock wandered is a run whose plant identification cannot be trusted.
+sample_rate_hz = 92
 max_samples_per_iteration = 32
 # Mixer lane for each simulator actuator lane, checked against the aircraft
 # file rather than assumed. ALIA-250.acf places its lift rotors at

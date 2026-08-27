@@ -24,12 +24,28 @@ fn model() -> XPlaneSimulatorModel {
     XPlaneSimulatorModel::from_toml_str(MODEL).expect("valid model")
 }
 
+/// The rate the MODEL declares.
+///
+/// A plant states the rate it was fitted at and the two must agree, so a
+/// fixture that types the number is the same fact written twice — and pins the
+/// declaration, because moving it then fails tests with nothing to say about
+/// the change.
+fn model_sample_rate_hz() -> f64 {
+    f64::from(model().sample_rate_hz())
+}
+
 fn plant(extra: &str) -> String {
+    plant_at(model_sample_rate_hz(), extra)
+}
+
+/// A plant fitted at `rate_hz`, for tests that need it to disagree.
+fn plant_at(rate_hz: f64, extra: &str) -> String {
     format!(
-        "schema_version = 1\nartifact_id = \"plant-a\"\nairframe_id = \"alia250\"\nsimulator_model_digest = \"{}\"\nrun_manifest_digest = \"{}\"\ntrace_digest = \"{}\"\nsample_clock = \"simulator-microseconds\"\noperating_hover_force = 0.43\nprobe_rad_s = [1.0, 2.5]\nsample_rate_hz = 100.0\nauthority_k = [5.3, 3.1, 1.0]\ndelay_s = [0.02, 0.02, 0.03]\ndelay_ci95_s = [0.005, 0.005, 0.005]\nr_squared = [0.96, 0.95, 0.94]\nauthority_ci95 = [0.2, 0.15, 0.05]\ncoherence = [0.96, 0.95, 0.94]\napplied_input_max = [0.2, 0.2, 0.2]\nsample_count = [500, 500, 500]\nsaturation_fraction = [0.0, 0.0, 0.0]\nresponse_sign = [1, 1, 1]\n{extra}",
+        "schema_version = 1\nartifact_id = \"plant-a\"\nairframe_id = \"alia250\"\nsimulator_model_digest = \"{}\"\nrun_manifest_digest = \"{}\"\ntrace_digest = \"{}\"\nsample_clock = \"simulator-microseconds\"\noperating_hover_force = 0.43\nprobe_rad_s = [1.0, 2.5]\nsample_rate_hz = {}\nauthority_k = [5.3, 3.1, 1.0]\ndelay_s = [0.02, 0.02, 0.03]\ndelay_ci95_s = [0.005, 0.005, 0.005]\nr_squared = [0.96, 0.95, 0.94]\nauthority_ci95 = [0.2, 0.15, 0.05]\ncoherence = [0.96, 0.95, 0.94]\napplied_input_max = [0.2, 0.2, 0.2]\nsample_count = [500, 500, 500]\nsaturation_fraction = [0.0, 0.0, 0.0]\nresponse_sign = [1, 1, 1]\n{extra}",
         model_digest(),
         "a".repeat(64),
         "b".repeat(64),
+        rate_hz,
     )
 }
 
@@ -241,7 +257,9 @@ fn gain_steps_must_be_adjacent_to_the_champion() {
 
 #[test]
 fn plant_sample_clock_rate_must_match_the_model() {
-    let plant = plant("").replace("sample_rate_hz = 100.0", "sample_rate_hz = 80.0");
+    // Names its own disagreement rather than editing the text of a fixture,
+    // so it stays a disagreement whatever the model comes to declare.
+    let plant = plant_at(model_sample_rate_hz() - 20.0, "");
     let text = candidate(&plant, "");
     assert_eq!(
         resolve_candidate(ALIA250, &text, &plant, &model()),
