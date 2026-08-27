@@ -65,6 +65,11 @@ impl VehicleControlMode {
     }
 }
 
+/// Gated with its only caller. The multirotor controller hashes these tags
+/// into its transition identity, and that controller is behind `mc`; without
+/// the gate a build without it carries two functions nobody can reach, which
+/// the lint set refuses.
+#[cfg(feature = "mc")]
 pub(crate) const fn mode_option_tag(mode: Option<ControlMode>) -> u8 {
     match mode {
         None => 0,
@@ -77,6 +82,7 @@ pub(crate) const fn mode_option_tag(mode: Option<ControlMode>) -> u8 {
     }
 }
 
+#[cfg(feature = "mc")]
 pub(crate) const fn topology_option_tag(topology: Option<EffectiveControlTopology>) -> u8 {
     match topology {
         None => 0,
