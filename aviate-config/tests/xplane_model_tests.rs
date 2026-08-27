@@ -16,7 +16,7 @@ fn alia_model_has_the_measured_protection_boundary() {
     assert_eq!(model.wire().rise_per_s, 0.035);
     assert_eq!(model.wire().mean_ceiling, 0.55);
     assert_eq!(model.motor_count(), 4);
-    assert_eq!(model.sample_rate_hz(), 100);
+    assert_eq!(model.sample_rate_hz(), 92);
     assert_eq!(
         model.airframe_preset_digest(),
         ContentDigest::calculate(AIRFRAME.as_bytes()).to_string()
@@ -40,7 +40,7 @@ fn alia_model_identity_is_pinned() {
     let model = XPlaneSimulatorModel::from_toml_str(MODEL).expect("valid model");
     assert_eq!(
         model.canonical_digest().expect("model digest").to_string(),
-        "74ead3977eb71ba0fbcd075a926a3de3d628c19573e88cf6899471e19e28e3f8"
+        "8ec1b1877bdfe561706a734817f278dc07a242ca940509e0993fc76c1b897b9d"
     );
 }
 
@@ -88,7 +88,7 @@ fn every_model_field_changes_the_identity() {
             "actuator_curve = \"quadratic-rotor\"",
             "actuator_curve = \"linear\"",
         ),
-        MODEL.replace("sample_rate_hz = 100", "sample_rate_hz = 101"),
+        MODEL.replace("sample_rate_hz = 92", "sample_rate_hz = 93"),
         MODEL.replace(
             "max_samples_per_iteration = 32",
             "max_samples_per_iteration = 33",
@@ -105,6 +105,12 @@ fn every_model_field_changes_the_identity() {
         MODEL.replace("max_sample_dt_s = 0.05", "max_sample_dt_s = 0.06"),
     ];
     for text in mutations {
+        // A replacement whose pattern has stopped matching leaves the text
+        // untouched, and an untouched text has the base digest — so the
+        // assertion below would be comparing the model against itself and
+        // passing for the wrong reason. Every field this claims to cover has
+        // to actually change something.
+        assert_ne!(text, MODEL, "a mutation left the model unchanged");
         let model = XPlaneSimulatorModel::from_toml_str(&text).expect("valid mutation");
         assert_ne!(model.canonical_digest().expect("digest"), base_digest);
     }

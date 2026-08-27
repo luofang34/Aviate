@@ -282,8 +282,15 @@ mod tests {
         let mut gate = RuntimeIdentityGate::new(model.clone());
         gate.accept(handshake(&model)).expect("matching handshake");
         assert!(!gate.is_verified());
+        // The period comes from the rate the MODEL declares, not from a
+        // number typed here. The gate exists to refuse a clock that disagrees
+        // with the declaration, so a fixture with its own period tests the
+        // gate against a rate nobody declared — and pins the declaration in
+        // place, since changing it then fails a test that has nothing to say
+        // about the change.
+        let period_us = 1_000_000 / u64::from(model.sample_rate_hz());
         for index in 0..=SAMPLE_RATE_EVIDENCE_INTERVALS {
-            gate.observe_timestamp(u64::from(index) * 10_000)
+            gate.observe_timestamp(u64::from(index) * period_us)
                 .expect("valid sample clock");
         }
         assert!(gate.is_verified());

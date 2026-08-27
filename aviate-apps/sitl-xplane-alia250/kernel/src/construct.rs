@@ -336,12 +336,25 @@ mod tests {
             .expect("compatible digest")
     }
 
+    /// The rate the MODEL declares, so the fixture cannot drift from it.
+    ///
+    /// A plant states the rate it was fitted at, and the two are required to
+    /// agree. Typing the number here made the preset's rate unchangeable: the
+    /// declaration and the fixture were the same fact written twice, and
+    /// moving one broke tests that had nothing to say about the change.
+    fn model_sample_rate_hz() -> u16 {
+        XPlaneSimulatorModel::from_toml_str(XPLANE_MODEL)
+            .expect("valid model")
+            .sample_rate_hz()
+    }
+
     fn plant_artifact() -> String {
         format!(
-            "schema_version = 1\nartifact_id = \"plant-a\"\nairframe_id = \"alia250\"\nsimulator_model_digest = \"{}\"\nrun_manifest_digest = \"{}\"\ntrace_digest = \"{}\"\nsample_clock = \"simulator-microseconds\"\noperating_hover_force = 0.43\nprobe_rad_s = [1.0, 2.5]\nsample_rate_hz = 100.0\nauthority_k = [5.3, 3.1, 1.0]\ndelay_s = [0.02, 0.02, 0.03]\ndelay_ci95_s = [0.005, 0.005, 0.005]\nr_squared = [0.96, 0.95, 0.94]\nauthority_ci95 = [0.2, 0.15, 0.05]\ncoherence = [0.96, 0.95, 0.94]\napplied_input_max = [0.2, 0.2, 0.2]\nsample_count = [500, 500, 500]\nsaturation_fraction = [0.0, 0.0, 0.0]\nresponse_sign = [1, 1, 1]\n",
+            "schema_version = 1\nartifact_id = \"plant-a\"\nairframe_id = \"alia250\"\nsimulator_model_digest = \"{}\"\nrun_manifest_digest = \"{}\"\ntrace_digest = \"{}\"\nsample_clock = \"simulator-microseconds\"\noperating_hover_force = 0.43\nprobe_rad_s = [1.0, 2.5]\nsample_rate_hz = {}\nauthority_k = [5.3, 3.1, 1.0]\ndelay_s = [0.02, 0.02, 0.03]\ndelay_ci95_s = [0.005, 0.005, 0.005]\nr_squared = [0.96, 0.95, 0.94]\nauthority_ci95 = [0.2, 0.15, 0.05]\ncoherence = [0.96, 0.95, 0.94]\napplied_input_max = [0.2, 0.2, 0.2]\nsample_count = [500, 500, 500]\nsaturation_fraction = [0.0, 0.0, 0.0]\nresponse_sign = [1, 1, 1]\n",
             model_digest(),
             "a".repeat(64),
             "b".repeat(64),
+            f64::from(model_sample_rate_hz()),
         )
     }
 
