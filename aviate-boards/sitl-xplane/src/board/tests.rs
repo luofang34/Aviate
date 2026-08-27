@@ -166,3 +166,46 @@ fn observation_reports_the_constrained_force_input() {
         .iter()
         .all(|value| *value <= model.wire().lane_ceiling));
 }
+
+#[test]
+fn a_clamp_is_only_blamed_on_injection_when_injection_caused_it() {
+    // The flag is attribution, not detection. A lane can reach the clamp on
+    // its own — the perturbation authority scale runs past unity and is
+    // applied upstream — and recording that as an injection cause writes a
+    // reason into a trial record that the run did not have.
+    let model = XPlaneSimulatorModel::from_toml_str(MODEL).expect("valid model");
+    let mut wire = WireConstraints::new(model.wire());
+    let prepared = |wire: &mut WireConstraints, lanes: [f32; 4], injection: [f32; 4]| {
+        let mut cmd = SimActuatorCmd {
+            count: 4,
+            armed: true,
+            ..SimActuatorCmd::default()
+        };
+        cmd.outputs[..4].copy_from_slice(&lanes);
+        prepare_actuator_command(
+            &mut cmd,
+            injection,
+            wire,
+            ActuatorCurveKind::QuadraticRotor,
+            model.lane_order(),
+            model.motor_count(),
+            Some(11.0),
+            0.01,
+        )
+    };
+
+    // Out of range on its own: clamped, but not by an injection.
+    let alone = prepared(&mut wire, [1.4, 0.4, 0.4, 0.4], [0.0; 4]);
+    assert!(
+        !alone.constraint_flags.injection_clamp,
+        "a lane that clamped with no injection was blamed on one"
+    );
+
+    // The same clamp, this time caused by the injection.
+    let mut fresh = WireConstraints::new(model.wire());
+    let injected = prepared(&mut fresh, [0.4, 0.4, 0.4, 0.4], [1.0, 0.0, 0.0, 0.0]);
+    assert!(
+        injected.constraint_flags.injection_clamp,
+        "an injection that pushed a lane past the range was not recorded"
+    );
+}

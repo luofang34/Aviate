@@ -56,7 +56,11 @@ pub struct XPlaneSendEvidence {
 /// Causal constraint flags for one sensor-to-actuator packet.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct XPlaneConstraintFlags {
-    /// Lane injection exceeded the normalized force range.
+    /// Lane injection pushed a lane past the normalized force range.
+    ///
+    /// Attribution, not detection: a lane that reaches the clamp with no
+    /// injection applied is NOT recorded here, because the injection did not
+    /// cause it. Nothing else records that case today.
     pub injection_clamp: bool,
     /// The actuator lane count did not match the model.
     pub invalid_actuator_count: bool,
@@ -112,7 +116,12 @@ pub(crate) fn prepare_actuator_command(
     for (lane, injection) in cmd.outputs.iter_mut().zip(lane_injection) {
         let requested = *lane + injection;
         let applied = requested.clamp(0.0, 1.0);
-        injection_clamped |= applied != requested;
+        // Only when the INJECTION is what pushed it out of range. A lane can
+        // reach the clamp on its own — the perturbation authority scale runs
+        // past unity and is applied upstream of here — and recording that as
+        // an injection cause puts a reason in a trial record that the run did
+        // not have.
+        injection_clamped |= applied != requested && injection != 0.0;
         *lane = applied;
     }
     let pre_wire_force_lanes = first_four(&cmd.outputs);
