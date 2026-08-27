@@ -104,15 +104,14 @@ pub(super) enum Phase {
 /// The EXCITATION does not travel through here — it is injected on the
 /// actuator lanes beneath whatever the loop commands.
 ///
-/// The climb and the windows fly under the VELOCITY loop, holding a
-/// climb rate and then zero velocity: the loop that demonstrably flies
-/// this vehicle also owns collective and attitude through the
-/// experiment, so height keeps itself and the probe's tilt excursions
-/// are ridden out. The loop's own corrections live an order below the
-/// probe frequencies, and the fit reads the TOTAL applied input, so
-/// they shape the probe's spectrum without invalidating it. The
-/// landing phases drop to a low fixed collective in attitude mode so
-/// releasing the stand on the ground stays a landing.
+/// Every phase flies ATTITUDE mode: the loop holds the caller's level
+/// reference while the caller's slew-limited trim rides the collective
+/// on the GPS fix, because the vertical ESTIMATE this kernel flies is
+/// not trustworthy enough for the velocity loop. The attitude loop's
+/// corrections live an order below the probe frequencies, and the fit
+/// reads the TOTAL applied input, so they shape the probe's spectrum
+/// without invalidating it. The landing phases drop to a low fixed
+/// collective so releasing the stand on the ground stays a landing.
 pub(super) fn command_for(
     phase: &Phase,
     sequence: u32,

@@ -160,7 +160,7 @@ fn residual_quality(
         let predicted = estimate.rate_cos * cos + estimate.rate_sin * sin;
         residual_sum += (sample.gyro[axis] - mean - predicted).powi(2);
         total_sum += (sample.gyro[axis] - mean).powi(2);
-        saturated = saturated.wrapping_add(u32::from(sample.saturated));
+        saturated = saturated.wrapping_add(u32::from(sample.saturated()));
     }
     let count = u32::try_from(selected.len()).map_err(|_| "too many samples".to_owned())?;
     Ok(ResidualQuality {

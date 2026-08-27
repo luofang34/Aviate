@@ -9,7 +9,7 @@ const MODEL: &str = include_str!("../../presets/alia250-xplane.toml");
 const AIRFRAME: &str = include_str!("../../presets/alia250.toml");
 
 #[test]
-fn alia_model_has_the_measured_protection_boundary() {
+fn alia_model_pins_the_protection_boundary_placement() {
     let model = XPlaneSimulatorModel::from_toml_str(MODEL).expect("valid Alia model");
     assert_eq!(model.airframe_id(), "alia250");
     assert_eq!(model.lane_order(), [0, 2, 1, 3]);

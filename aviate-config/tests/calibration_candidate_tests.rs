@@ -158,6 +158,26 @@ fn candidate_rejects_a_bandwidth_that_the_delay_cannot_support() {
 }
 
 #[test]
+fn coherence_floor_admits_the_bar_and_refuses_just_under_it() {
+    let at_bar = plant("").replace(
+        "coherence = [0.96, 0.95, 0.94]",
+        "coherence = [0.65, 0.65, 0.65]",
+    );
+    let text = candidate(&at_bar, "");
+    assert!(resolve_candidate(ALIA250, &text, &at_bar, &model()).is_ok());
+
+    let under_bar = plant("").replace(
+        "coherence = [0.96, 0.95, 0.94]",
+        "coherence = [0.649, 0.95, 0.94]",
+    );
+    let text = candidate(&under_bar, "");
+    assert!(matches!(
+        resolve_candidate(ALIA250, &text, &under_bar, &model()),
+        Err(CandidateError::PlantArtifact(_))
+    ));
+}
+
+#[test]
 fn saturation_bar_admits_the_census_bound_and_refuses_just_past_it() {
     let at_bar = plant("").replace(
         "saturation_fraction = [0.0, 0.0, 0.0]",

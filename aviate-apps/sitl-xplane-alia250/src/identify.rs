@@ -13,8 +13,9 @@
 //! relation ẏ = K·u from what was MEASURED — u is the mixer's own force-domain axis torque (linear in
 //! thrust under the quadratic rotor curve), y the bridge's gyro. The
 //! closed loop only shapes the input spectrum; the fit does not depend
-//! on the loop being any good, which is the point — it runs under
-//! known-marginal gains to produce the numbers that fix them.
+//! on the loop being any good, which is the point — it runs under the
+//! airframe's own law at reduced authority to produce the numbers that
+//! refine it.
 //!
 //! The result prints as a plant-identity block to paste into the
 //! kernel's derivation, with fit quality (R²) and the input-output lag
@@ -170,8 +171,13 @@ where
                 // trim may barely cut lift, and gravity retires an
                 // overshoot on its own.
                 let desired = (error_gain * error_m + 0.15 * sink_m_s).clamp(-0.02, 0.2);
-                let step = (desired - collective_trim).clamp(-0.003, 0.003);
-                collective_trim += step * last_new_samples as f32;
+                // The slew bound scales with the samples this iteration
+                // carried, and the WHOLE step is clamped toward the
+                // target — a burst of buffered samples advances faster
+                // but can never overshoot past `desired`.
+                let bound = 0.003 * last_new_samples as f32;
+                let step = (desired - collective_trim).clamp(-bound, bound);
+                collective_trim += step;
             }
         }
         // The attitude reference is LEVEL TILT AT THE CURRENT HEADING.
@@ -474,11 +480,6 @@ fn record_observations(
             // sample by construction of a rate limiter, and counting
             // those as saturation refuses windows whose torque probe
             // went through untouched.
-            saturated: observation.constraint_flags.lane_ceiling
-                || observation.constraint_flags.injection_clamp
-                || observation.constraint_flags.invalid_actuator_count
-                || observation.constraint_flags.missing_actuator_answer
-                || observation.constraint_flags.ground_squeeze,
             constraints: [
                 observation.constraint_flags.lane_ceiling,
                 observation.constraint_flags.injection_clamp,

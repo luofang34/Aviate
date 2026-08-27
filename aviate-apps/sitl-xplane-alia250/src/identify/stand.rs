@@ -227,11 +227,16 @@ pub(super) struct Sample {
     pub(super) gyro: [f32; 3],
     /// Applied mean force-domain collective.
     pub(super) collective_force: f32,
-    /// True when the control output reached a known wire boundary.
-    pub(super) saturated: bool,
-    /// The individual census constraints behind `saturated`, in
-    /// [`CONSTRAINT_NAMES`] order.
+    /// The individual census constraints, in [`CONSTRAINT_NAMES`] order.
     pub(super) constraints: [bool; 5],
+}
+
+impl Sample {
+    /// True when any census constraint touched this sample — the one
+    /// derivation, so the census and its breakdown cannot disagree.
+    pub(super) fn saturated(&self) -> bool {
+        self.constraints.iter().any(|hit| *hit)
+    }
 }
 
 /// Names for [`Sample::constraints`], in field order.

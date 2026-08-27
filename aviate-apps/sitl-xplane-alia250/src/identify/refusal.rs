@@ -41,7 +41,8 @@ pub(crate) enum ExperimentError {
     Report {
         /// The refusing gate's own words.
         reason: String,
-        /// The encoded sample trace of the refused run.
+        /// The encoded sample trace of the refused run; empty when the
+        /// refusing experiment records no sample trace.
         trace_text: String,
     },
 }
@@ -52,12 +53,23 @@ impl core::fmt::Display for ExperimentError {
             Self::Timeout(name) => write!(formatter, "{name} timed out"),
             Self::Arm(error) => write!(formatter, "arm failed: {error:?}"),
             Self::Disarm(error) => write!(formatter, "disarm failed: {error:?}"),
-            Self::NeverLifted { alt_m } => write!(
-                formatter,
-                "the climb budget expired with the vehicle still on its gear \
-                 (fix altitude {alt_m:.1} m); rotor spool or thrust never \
-                 overcame weight"
-            ),
+            Self::NeverLifted { alt_m } => {
+                if alt_m.is_finite() {
+                    write!(
+                        formatter,
+                        "the climb budget expired with the vehicle still on its \
+                         gear (fix altitude {alt_m:.1} m); rotor spool or thrust \
+                         never overcame weight"
+                    )
+                } else {
+                    write!(
+                        formatter,
+                        "the climb budget expired without a GNSS fix ever \
+                         arriving; the achieved-height gate could not observe \
+                         the vehicle at all"
+                    )
+                }
+            }
             Self::GroundContact { window, alt_m, .. } => write!(
                 formatter,
                 "the vehicle contacted the ground during the {window} window \
