@@ -153,4 +153,23 @@ mod tests {
         assert_eq!(MixerGeometry::QuadXX500.motor_count(), 4);
         assert_eq!(MixerGeometry::QuadXX500ReversedSpin.motor_count(), 4);
     }
+
+    #[test]
+    fn every_geometry_and_curve_names_itself_as_a_preset_declares_it() {
+        // Each arm, not just the one this airframe happens to use. These names
+        // go into a run manifest that says which vehicle flew, so a wrong one
+        // is a wrong record — and an arm no test reaches is an arm nobody has
+        // read against the preset vocabulary it is supposed to match.
+        assert_eq!(MixerGeometry::QuadX.as_str(), "quad-x");
+        assert_eq!(MixerGeometry::QuadXX500.as_str(), "quad-x-x500");
+        assert_eq!(
+            MixerGeometry::QuadXX500ReversedSpin.as_str(),
+            "quad-x-x500-reversed-spin"
+        );
+        assert_eq!(ActuatorCurveKind::Linear.as_str(), "linear");
+        assert_eq!(
+            ActuatorCurveKind::QuadraticRotor.as_str(),
+            "quadratic-rotor"
+        );
+    }
 }

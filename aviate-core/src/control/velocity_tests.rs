@@ -485,3 +485,44 @@ fn tilt_compensation_is_floored_past_the_cos_floor() {
         "past the floor the amplification must be capped, got {past_a} vs {past_b}"
     );
 }
+
+#[test]
+fn a_saturated_tilt_axis_freezes_both_horizontal_integrators() {
+    // Anti-windup. The saturation flags live on the body-frame tilt axes while
+    // the integrators are NED, so a saturated tilt axis is a mix of both NED
+    // axes — the controller freezes both rather than guessing an attribution.
+    //
+    // Without this, a demand the airframe cannot reach winds the integrator up
+    // for as long as it is held, and the wind-down afterwards is an overshoot
+    // nobody commanded.
+    let c = ctrl(0.77);
+    let mut s = VelocityLoopState::default();
+
+    // Far beyond what the tilt limit can deliver, so the pitch/roll setpoints
+    // clamp and both horizontal axes report saturation.
+    let setpoint = Vector3::new(
+        MetersPerSecond(50.0),
+        MetersPerSecond(50.0),
+        MetersPerSecond(0.0),
+    );
+    for _ in 0..20 {
+        let _ = c.step(
+            &mut s,
+            setpoint,
+            zero_vel(),
+            AccelFeedforward::default(),
+            &Quaternion::IDENTITY,
+            None,
+            0.02,
+        );
+    }
+
+    assert_eq!(
+        s.integrator_ned.x.0, 0.0,
+        "the north integrator wound up while the tilt axis was saturated"
+    );
+    assert_eq!(
+        s.integrator_ned.y.0, 0.0,
+        "the east integrator wound up while the tilt axis was saturated"
+    );
+}
