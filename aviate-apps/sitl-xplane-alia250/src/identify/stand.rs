@@ -229,7 +229,19 @@ pub(super) struct Sample {
     pub(super) collective_force: f32,
     /// True when the control output reached a known wire boundary.
     pub(super) saturated: bool,
+    /// The individual census constraints behind `saturated`, in
+    /// [`CONSTRAINT_NAMES`] order.
+    pub(super) constraints: [bool; 5],
 }
+
+/// Names for [`Sample::constraints`], in field order.
+pub(super) const CONSTRAINT_NAMES: [&str; 5] = [
+    "lane-ceiling",
+    "injection-clamp",
+    "actuator-count",
+    "missing-answer",
+    "ground-squeeze",
+];
 
 fn verify_readback(
     field: &'static str,

@@ -29,7 +29,12 @@ use identity::handshake_from_identity;
 
 pub(super) const TUNING_TRACE_SCHEMA_VERSION: u16 = 3;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
-const OBSERVATION_TIMEOUT: Duration = Duration::from_millis(20);
+// Generous enough that an external consumer's scheduling hiccup under
+// machine load does not kill a multi-minute run: a late ack merely
+// staleness-costs a few buffered control cycles in SITL, while the
+// phase arithmetic rides sample timestamps and never notices. A dead
+// consumer still fails the run closed here.
+const OBSERVATION_TIMEOUT: Duration = Duration::from_millis(100);
 const MAX_FRAME_BYTES: usize = 65_536;
 
 /// Tuning trace transport failure.

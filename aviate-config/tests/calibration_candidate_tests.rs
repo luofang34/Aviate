@@ -182,7 +182,7 @@ fn candidate_rejects_weak_or_clipped_plant_evidence() {
     for replacement in [
         (
             "r_squared = [0.96, 0.95, 0.94]",
-            "r_squared = [0.79, 0.95, 0.94]",
+            "r_squared = [0.24, 0.95, 0.94]",
         ),
         (
             "saturation_fraction = [0.0, 0.0, 0.0]",

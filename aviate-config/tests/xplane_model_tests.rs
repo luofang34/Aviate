@@ -40,7 +40,7 @@ fn alia_model_identity_is_pinned() {
     let model = XPlaneSimulatorModel::from_toml_str(MODEL).expect("valid model");
     assert_eq!(
         model.canonical_digest().expect("model digest").to_string(),
-        "87d37c910348fd752f81771da205d3d979e54e9428eb5d980555c27412d35b13"
+        "d6e7fb97af2b81554ab8b429db7970e3870b73fe0add1ae6f12612b3e46229e4"
     );
 }
 
@@ -99,7 +99,7 @@ fn every_model_field_changes_the_identity() {
         MODEL.replace("low_band_rise_per_s = 0.6", "low_band_rise_per_s = 0.61"),
         MODEL.replace("fall_per_s = 0.30", "fall_per_s = 0.31"),
         MODEL.replace("mean_ceiling = 0.55", "mean_ceiling = 0.56"),
-        MODEL.replace("lane_ceiling = 0.85", "lane_ceiling = 0.86"),
+        MODEL.replace("lane_ceiling = 0.92", "lane_ceiling = 0.93"),
         MODEL.replace("airborne_clearance_m = 0.5", "airborne_clearance_m = 0.6"),
         MODEL.replace("ground_squeeze = 0.5", "ground_squeeze = 0.6"),
         MODEL.replace("max_sample_dt_s = 0.05", "max_sample_dt_s = 0.06"),
@@ -140,7 +140,7 @@ fn invalid_lane_order_fails_closed() {
 
 #[test]
 fn protection_relations_fail_closed() {
-    let text = MODEL.replace("mean_ceiling = 0.55", "mean_ceiling = 0.90");
+    let text = MODEL.replace("mean_ceiling = 0.55", "mean_ceiling = 0.95");
     assert!(matches!(
         XPlaneSimulatorModel::from_toml_str(&text),
         Err(XPlaneModelError::InvalidRelation(_))

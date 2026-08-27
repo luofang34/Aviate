@@ -48,13 +48,22 @@ fn normal_kernel_uses_the_shipped_preset() {
 }
 
 #[test]
-fn identification_kernel_has_a_matching_config_witness() {
+fn identification_kernel_hosts_the_airframes_own_law_at_reduced_authority() {
+    let preset = load_preset().expect("valid preset");
+    let flight = gains_from_preset(preset.gains);
     let kernel = build_alia250_identification_kernel().expect("valid kernel");
-    assert_eq!(kernel.cfg().cascade_gains, CascadeGains::x500_defaults());
-    assert_eq!(
-        kernel.cfg().hover_kernel_prefix_hash(),
-        0x6007_fa96_434b_827d
-    );
+    let host = kernel.cfg().cascade_gains;
+    let rate_scale = [0.5, 0.5, 0.2];
+    let att_scale = [0.7, 0.7, 0.3];
+    for axis in 0..3 {
+        assert_eq!(host.rate_p[axis], flight.rate_p[axis] * rate_scale[axis]);
+        assert_eq!(host.rate_d[axis], flight.rate_d[axis] * rate_scale[axis]);
+        assert_eq!(host.rate_i[axis], 0.0);
+        assert_eq!(host.att_p[axis], flight.att_p[axis] * att_scale[axis]);
+    }
+    // Everything the scaling does not name stays the flight law's own.
+    assert_eq!(host.pos_p, flight.pos_p);
+    assert_eq!(host.vel_p, flight.vel_p);
 }
 
 #[test]

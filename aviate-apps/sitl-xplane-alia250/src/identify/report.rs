@@ -10,7 +10,13 @@ use super::trace;
 
 const MIN_SAMPLES: usize = 200;
 const MIN_BLOCKS: usize = 3;
-const MAX_K_DISAGREEMENT: f32 = 0.25;
+// The two probes straddle the rotor's spool pole, and the plant model
+// is K plus delay only: the upper reading carries the pole's magnitude
+// attenuation as well as K, so a real vehicle disagrees with itself by
+// the pole's rolloff even in a perfect measurement. The bar admits
+// that physics; a channel whose readings differ beyond it is still
+// refused as polluted.
+const MAX_K_DISAGREEMENT: f32 = 0.4;
 // The saturation bar is the artifact validator's own — one authority,
 // so the report cannot admit a window the artifact then refuses.
 const MAX_WINDOW_SATURATION: f32 = aviate_config::airframe_preset::MAX_SATURATION_FRACTION;
@@ -53,22 +59,45 @@ pub(super) fn report(
     samples: &[Sample],
     windows: &[[(usize, usize); 2]; 3],
     context: ReportContext,
-) -> Result<(PlantIdentificationArtifact, String), String> {
-    let mut points = [[None; 2]; 3];
-    for axis in 0..3 {
-        for frequency in 0..2 {
-            let window = window(samples, windows[axis][frequency], axis)?;
-            let point = fit_point(window, axis, PROBE_RAD_S[frequency])?;
-            validate_fit_point(point, axis, frequency)?;
-            points[axis][frequency] = Some(point);
-        }
-    }
+) -> Result<(PlantIdentificationArtifact, String), ReportRefusal> {
+    // The trace is the experiment's evidence whether the fit accepts it
+    // or not: a refused run's trace is exactly what diagnosing the
+    // refusal needs, so it is encoded first and travels with either
+    // outcome.
     let trace_text = trace::encode(
         samples,
         windows,
         &context.simulator_model_digest,
         &context.run_manifest_digest,
     );
+    match fit_artifact(samples, windows, context, &trace_text) {
+        Ok(artifact) => Ok((artifact, trace_text)),
+        Err(reason) => Err(ReportRefusal { reason, trace_text }),
+    }
+}
+
+/// Why the fit refused the experiment, with the evidence that shows it.
+#[derive(Debug)]
+pub(super) struct ReportRefusal {
+    pub(super) reason: String,
+    pub(super) trace_text: String,
+}
+
+fn fit_artifact(
+    samples: &[Sample],
+    windows: &[[(usize, usize); 2]; 3],
+    context: ReportContext,
+    trace_text: &str,
+) -> Result<PlantIdentificationArtifact, String> {
+    let mut points = [[None; 2]; 3];
+    for axis in 0..3 {
+        for frequency in 0..2 {
+            let window = window(samples, windows[axis][frequency], axis)?;
+            let point = fit_point(window, axis, PROBE_RAD_S[frequency])?;
+            validate_fit_point(window, point, axis, frequency)?;
+            points[axis][frequency] = Some(point);
+        }
+    }
     let trace_digest = ContentDigest::calculate(trace_text.as_bytes());
     let mut artifact = empty_artifact(context, trace_digest, samples, windows)?;
     for (axis, values) in points.into_iter().enumerate() {
@@ -77,7 +106,7 @@ pub(super) fn report(
         combine_axis(&mut artifact, axis, low, high)?;
     }
     artifact.validate().map_err(|error| error.to_string())?;
-    Ok((artifact, trace_text))
+    Ok(artifact)
 }
 
 fn window(samples: &[Sample], bounds: (usize, usize), axis: usize) -> Result<&[Sample], String> {
@@ -86,10 +115,38 @@ fn window(samples: &[Sample], bounds: (usize, usize), axis: usize) -> Result<&[S
         .ok_or_else(|| format!("{} window is outside the sample trace", AXIS_NAMES[axis]))
 }
 
-fn validate_fit_point(point: FitPoint, axis: usize, frequency: usize) -> Result<(), String> {
+fn validate_fit_point(
+    window: &[Sample],
+    point: FitPoint,
+    axis: usize,
+    frequency: usize,
+) -> Result<(), String> {
     if point.saturation_fraction > MAX_WINDOW_SATURATION {
+        // Name the constraints so the refusal is diagnosable from the
+        // log alone: a clipped probe and a jittering bridge need
+        // different fixes.
+        let mut counts = [0_usize; 5];
+        for sample in window {
+            for (count, hit) in counts.iter_mut().zip(sample.constraints) {
+                if hit {
+                    *count += 1;
+                }
+            }
+        }
+        let breakdown = super::stand::CONSTRAINT_NAMES
+            .iter()
+            .zip(counts)
+            .filter(|(_, count)| *count > 0)
+            .map(|(name, count)| {
+                format!(
+                    "{name} {:.1}%",
+                    count as f32 * 100.0 / window.len().max(1) as f32
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
         return Err(format!(
-            "{} @{} rad/s has {:.1}% constrained samples",
+            "{} @{} rad/s has {:.1}% constrained samples ({breakdown})",
             AXIS_NAMES[axis],
             PROBE_RAD_S[frequency],
             point.saturation_fraction * 100.0

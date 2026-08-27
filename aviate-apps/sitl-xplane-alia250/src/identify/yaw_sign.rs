@@ -78,9 +78,11 @@ where
                     let plus = sums[0] / counts[0].max(1) as f32;
                     let minus = sums[1] / counts[1].max(1) as f32;
                     if counts.contains(&0) || plus <= minus {
-                        return Err(ExperimentError::Report(
-                            "yaw response sign does not match the compiled mixer".to_owned(),
-                        ));
+                        return Err(ExperimentError::Report {
+                            reason: "yaw response sign does not match the compiled mixer"
+                                .to_owned(),
+                            trace_text: String::new(),
+                        });
                     }
                     log::info!(
                         "yaw-sign result plus={plus:+.3}rad/s minus={minus:+.3}rad/s verdict=correct"

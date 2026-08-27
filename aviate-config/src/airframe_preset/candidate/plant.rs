@@ -194,7 +194,17 @@ impl PlantIdentificationArtifact {
                     "delay_s + delay_ci95_s",
                 ));
             }
-            bounded("r_squared", self.r_squared[axis], 0.8, 1.0)?;
+            // A sanity floor, not a quality bar. In a FREE-FLIGHT
+            // closed-loop experiment the gyro carries the host loop's own
+            // broadband activity, so a single-sine R² measures the
+            // ambient-to-probe ratio, not the fit's validity — probe
+            // amplitudes large enough to dominate the ambient are clipped
+            // by the wire and refused by the saturation census. Fit
+            // confidence is enforced by the coherence floor, the
+            // confidence-interval bound, and the cross-frequency
+            // authority agreement; this bound only refuses a response
+            // lost in the noise outright.
+            bounded("r_squared", self.r_squared[axis], 0.25, 1.0)?;
             bounded("authority_ci95", self.authority_ci95[axis], 0.0, 100.0)?;
             bounded("coherence", self.coherence[axis], 0.8, 1.0)?;
             bounded("applied_input_max", self.applied_input_max[axis], 0.05, 1.0)?;

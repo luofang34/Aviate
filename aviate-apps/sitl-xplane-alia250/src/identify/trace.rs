@@ -45,6 +45,7 @@ mod tests {
             gyro: [0.2, 0.0, 0.0],
             collective_force: 0.43,
             saturated: false,
+            constraints: [false; 5],
         };
         let first = encode(&[sample], &[[(0, 1); 2]; 3], "model", "run");
         let second = encode(&[sample], &[[(0, 0); 2]; 3], "model", "run");

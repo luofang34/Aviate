@@ -21,6 +21,7 @@ fn synthetic_trace(authority: [f32; 3]) -> (Vec<Sample>, [[(usize, usize); 2]; 3
                     gyro,
                     collective_force: 0.43,
                     saturated: false,
+                    constraints: [false; 5],
                 });
             }
             windows[axis][frequency] = (start, samples.len());
@@ -79,10 +80,14 @@ fn one_clipped_frequency_is_rejected_before_aggregation() {
     for sample in &mut samples[start..start + clipped] {
         sample.saturated = true;
     }
-    let error = report(&samples, &windows, context()).expect_err("must refuse");
+    let refusal = report(&samples, &windows, context()).expect_err("must refuse");
     // The per-window gate must be the refusing authority, not the
     // artifact validator after aggregation.
-    assert!(error.contains("constrained samples"), "{error}");
+    assert!(
+        refusal.reason.contains("constrained samples"),
+        "{}",
+        refusal.reason
+    );
 }
 
 #[test]

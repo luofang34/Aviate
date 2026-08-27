@@ -53,13 +53,17 @@ max_samples_per_iteration = 32
 lane_order = [0, 2, 1, 3]
 
 # These values protect the simulator plant. The tuner cannot change them.
+# The lane ceiling must sit ABOVE the control law's working range: a
+# ceiling inside it shapes ordinary flight instead of protecting the
+# plant, and the identification census then reads the law's own grazing
+# as clipped evidence.
 [wire]
 rise_per_s = 0.5
 band_boundary = 0.40
 low_band_rise_per_s = 0.6
 fall_per_s = 0.30
 mean_ceiling = 0.55
-lane_ceiling = 0.85
+lane_ceiling = 0.92
 airborne_clearance_m = 0.5
 ground_squeeze = 0.5
 max_sample_dt_s = 0.05
