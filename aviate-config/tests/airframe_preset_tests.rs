@@ -65,11 +65,22 @@ fn unknown_schema_version_is_rejected() {
 #[test]
 fn schema_2_seed_is_force_domain_verbatim() {
     // Schema 2 defines the seed as force: no conversion applies.
+    //
+    // The seed is 0.60 rather than the preset's own 0.77 for a reason. Schema
+    // 1 squares the boundary command, and 0.77 squared is 0.5929 EXACTLY — so
+    // a test seeded at 0.77 expecting 0.5929 holds whether schema 2 reads the
+    // seed verbatim or squares it like schema 1, which are the two hypotheses
+    // it exists to tell apart. 0.60 squared is 0.36, so only the verbatim
+    // reading gives 0.60 back.
     let text = X500
         .replace("schema_version = 1", "schema_version = 2")
-        .replace("hover_thrust_seed = 0.77", "hover_thrust_seed = 0.5929");
+        .replace("hover_thrust_seed = 0.77", "hover_thrust_seed = 0.60");
     let p = preset_from_toml_str(&text).expect("schema 2 must parse");
-    assert!((p.hover_thrust_force_seed() - 0.5929).abs() < 1e-6);
+    assert!(
+        (p.hover_thrust_force_seed() - 0.60).abs() < 1e-6,
+        "schema 2 did not read the seed verbatim: {}",
+        p.hover_thrust_force_seed()
+    );
 }
 
 #[test]
