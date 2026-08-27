@@ -13,7 +13,7 @@ fn alia_model_has_the_measured_protection_boundary() {
     let model = XPlaneSimulatorModel::from_toml_str(MODEL).expect("valid Alia model");
     assert_eq!(model.airframe_id(), "alia250");
     assert_eq!(model.lane_order(), [0, 2, 1, 3]);
-    assert_eq!(model.wire().rise_per_s, 0.035);
+    assert_eq!(model.wire().rise_per_s, 0.5);
     assert_eq!(model.wire().mean_ceiling, 0.55);
     assert_eq!(model.motor_count(), 4);
     assert_eq!(model.sample_rate_hz(), 80);
@@ -40,7 +40,7 @@ fn alia_model_identity_is_pinned() {
     let model = XPlaneSimulatorModel::from_toml_str(MODEL).expect("valid model");
     assert_eq!(
         model.canonical_digest().expect("model digest").to_string(),
-        "6d5c9b1ce20dcd24d519f11180e722403f26bcbebfbd760e2f0aa60ae2d65c24"
+        "87d37c910348fd752f81771da205d3d979e54e9428eb5d980555c27412d35b13"
     );
 }
 
@@ -94,9 +94,9 @@ fn every_model_field_changes_the_identity() {
             "max_samples_per_iteration = 33",
         ),
         MODEL.replace("lane_order = [0, 2, 1, 3]", "lane_order = [0, 1, 2, 3]"),
-        MODEL.replace("rise_per_s = 0.035", "rise_per_s = 0.036"),
+        MODEL.replace("rise_per_s = 0.5", "rise_per_s = 0.51"),
         MODEL.replace("band_boundary = 0.40", "band_boundary = 0.41"),
-        MODEL.replace("low_band_rise_per_s = 0.15", "low_band_rise_per_s = 0.16"),
+        MODEL.replace("low_band_rise_per_s = 0.6", "low_band_rise_per_s = 0.61"),
         MODEL.replace("fall_per_s = 0.30", "fall_per_s = 0.31"),
         MODEL.replace("mean_ceiling = 0.55", "mean_ceiling = 0.56"),
         MODEL.replace("lane_ceiling = 0.85", "lane_ceiling = 0.86"),
