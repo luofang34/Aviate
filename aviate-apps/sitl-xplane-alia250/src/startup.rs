@@ -271,6 +271,7 @@ fn run_normal(
     app_config: &aviate_config::AppConfig,
     sensor_rate_hz: u32,
 ) -> Result<ExitCode, String> {
+    crate::transition::announce_envelope();
     let truth_tx = truth_socket(app_config);
     if truth_tx.is_none() {
         log::warn!("no telemetry endpoint; sim truth will not be forwarded");

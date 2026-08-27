@@ -25,6 +25,7 @@ mod cli;
 mod flight_loop;
 mod identify;
 mod startup;
+mod transition;
 mod tuning_trace;
 
 use std::process::ExitCode;
