@@ -162,7 +162,11 @@ fn fake_runner_accepts_identity_and_each_exact_sequence() {
         &StateEstimate::default(),
         false,
     );
-    assert!(publisher.failure().is_none());
+    assert!(
+        publisher.failure().is_none(),
+        "the publisher recorded a failure: {:?}",
+        publisher.failure()
+    );
     assert!(publisher.is_ready());
     server.join().expect("server join");
 }
@@ -212,7 +216,11 @@ fn accepted_maximum_observation_sequence_is_never_wrapped() {
         &StateEstimate::default(),
         false,
     );
-    assert!(publisher.failure().is_none());
+    assert!(
+        publisher.failure().is_none(),
+        "the publisher recorded a failure: {:?}",
+        publisher.failure()
+    );
 
     publisher.publish(
         observation(),
