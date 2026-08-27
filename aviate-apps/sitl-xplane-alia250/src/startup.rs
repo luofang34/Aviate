@@ -221,6 +221,9 @@ fn dispatch(
     sensor_rate_hz: u32,
     manifest_digest: ContentDigest,
 ) -> Result<ExitCode, String> {
+    // Every run — the experiment flights command actuators too, so the
+    // envelope boundary is stated before any of them dials the bridge.
+    crate::transition::announce_envelope();
     match cli.experiment {
         Some(RunPurpose::Identify) => run_identification(cli, board, manifest_digest),
         Some(RunPurpose::YawSign) => {
@@ -271,7 +274,6 @@ fn run_normal(
     app_config: &aviate_config::AppConfig,
     sensor_rate_hz: u32,
 ) -> Result<ExitCode, String> {
-    crate::transition::announce_envelope();
     let truth_tx = truth_socket(app_config);
     if truth_tx.is_none() {
         log::warn!("no telemetry endpoint; sim truth will not be forwarded");

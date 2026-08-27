@@ -38,10 +38,11 @@ pub(crate) enum FlightRegime {
 ///
 /// The numbers are the px4xplane channel map for the Alia airframe:
 /// channels zero through three are the lift rotors this application
-/// already commands; the wing set starts above them. Declared here so
-/// a later implementation and the bridge configuration are held to one
-/// vocabulary, and so a mismatch is a compile-site diff rather than a
-/// silent cross-mapping.
+/// already commands; the wing set starts above them. This declaration
+/// pins THIS crate's vocabulary only — nothing here reads the bridge's
+/// configuration, so agreement with the bridge side is a review-time
+/// obligation. The runtime handshake digests the bridge's configuration
+/// file, which catches an edited file, not a re-mapped meaning.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WingChannel {
     /// Left aileron group.
@@ -94,7 +95,7 @@ impl core::fmt::Display for RegimeRefusal {
 /// # Errors
 ///
 /// Returns [`RegimeRefusal::NoLawForRegime`] for every regime the
-/// production controller has no law for — today, everything but
+/// production controller has no law for — every regime but
 /// [`FlightRegime::Hover`].
 pub(crate) fn request_regime(target: FlightRegime) -> Result<FlightRegime, RegimeRefusal> {
     match target {
@@ -108,16 +109,15 @@ pub(crate) fn request_regime(target: FlightRegime) -> Result<FlightRegime, Regim
 /// left un-commanded. The operator reading the log learns the
 /// fail-closed boundary before the first setpoint arrives.
 pub(crate) fn announce_envelope() {
-    if let Ok(flown) = request_regime(FlightRegime::Hover) {
-        log::info!("flight regime: {flown:?}");
-    }
     for regime in [
+        FlightRegime::Hover,
         FlightRegime::TransitionToWing,
         FlightRegime::WingBorne,
         FlightRegime::TransitionToHover,
     ] {
-        if let Err(refusal) = request_regime(regime) {
-            log::info!("{refusal}");
+        match request_regime(regime) {
+            Ok(flown) => log::info!("flight regime: {flown:?}"),
+            Err(refusal) => log::info!("{refusal}"),
         }
     }
     let channels = WingChannel::ALL.map(|channel| channel as u8);
@@ -152,8 +152,10 @@ mod tests {
         assert_eq!(request_regime(FlightRegime::Hover), Ok(FlightRegime::Hover));
     }
 
-    /// The wing channel numbers are the bridge's channel map for this
-    /// airframe. A change on either side must meet this test.
+    /// Pins this crate's channel vocabulary to the numbers reviewed
+    /// against the bridge's channel map. A change HERE must meet this
+    /// test; a bridge-side remap is invisible to it and is caught by
+    /// review, not by CI.
     #[test]
     fn wing_channels_match_the_bridge_channel_map() {
         assert_eq!(WingChannel::AileronLeft as u8, 4);
