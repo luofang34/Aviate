@@ -214,6 +214,8 @@ where
                 sensor_packet.baro = Some(SimBaroData {
                     pressure_pa: baro.pressure_pa,
                     temperature_c: baro.temperature_c,
+                    differential_pressure_pa: baro.differential_pressure_pa,
+                    pressure_altitude_m: baro.pressure_altitude_m,
                 });
             }
 

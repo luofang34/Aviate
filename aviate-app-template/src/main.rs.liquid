@@ -468,6 +468,7 @@ fn run_control_loop(
     plugin: &aviate_backend_gz::GzPluginBridge,
 ) {
     use aviate_backend_gz::{enu_to_ned_f32, enu_vel_to_ned_f32};
+    use aviate_hal_xil::sim_types::sensor_presence;
     use aviate_hal_xil::{SimBaroData, SimGnssData, SimGnssFix, SimImuData, SimMagData, SimSensorPacket};
 
     let loop_period_us = 1000u64;
@@ -495,6 +496,12 @@ fn run_control_loop(
 
                 let baro = SimBaroData {
                     pressure_pa: 101325.0 + ned_pos[2] * 12.0,
+                    // Named rather than defaulted: a template teaches by
+                    // example, and a simulator that reports neither an
+                    // airspeed differential nor its own pressure altitude
+                    // should say so where the reader can see it.
+                    differential_pressure_pa: None,
+                    pressure_altitude_m: None,
                     temperature_c: 25.0,
                 };
 
@@ -514,6 +521,15 @@ fn run_control_loop(
 
                 let packet = SimSensorPacket {
                     timestamp_us: state.time_us,
+                    // Which lanes this packet actually carries. Stated rather
+                    // than left to a default, because a consumer reads it to
+                    // decide what is present — and a template that shipped a
+                    // zero here would teach every generated app to publish
+                    // sensors while announcing none.
+                    presence_mask: sensor_presence::ACCELEROMETER
+                        | sensor_presence::GYROSCOPE
+                        | sensor_presence::MAGNETOMETER
+                        | sensor_presence::ABSOLUTE_PRESSURE,
                     imu: Some(imu),
                     baro: Some(baro),
                     mag: Some(mag),

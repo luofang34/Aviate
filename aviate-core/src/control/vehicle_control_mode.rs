@@ -29,6 +29,8 @@ use crate::types::{Meters, MetersPerSecond};
 /// hierarchy.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct VehicleControlMode {
+    /// Requested mode when the kernel selected an automatic fallback.
+    pub automatic_fallback_from: Option<ControlMode>,
     /// Pilot stick inputs feed the active loops directly.
     pub flag_control_manual_enabled: bool,
     /// Setpoints originate from an external (offboard) computer.
@@ -78,6 +80,7 @@ impl VehicleControlMode {
     pub const fn from_control_mode(mode: ControlMode) -> Self {
         match mode {
             ControlMode::Rate => Self {
+                automatic_fallback_from: None,
                 flag_control_manual_enabled: true,
                 flag_control_offboard_enabled: false,
                 flag_control_rates_enabled: true,
@@ -89,6 +92,7 @@ impl VehicleControlMode {
                 flag_control_termination_enabled: false,
             },
             ControlMode::Attitude => Self {
+                automatic_fallback_from: None,
                 flag_control_manual_enabled: true,
                 flag_control_offboard_enabled: false,
                 flag_control_rates_enabled: true,
@@ -100,6 +104,7 @@ impl VehicleControlMode {
                 flag_control_termination_enabled: false,
             },
             ControlMode::AltitudeHold => Self {
+                automatic_fallback_from: None,
                 flag_control_manual_enabled: true,
                 flag_control_offboard_enabled: false,
                 flag_control_rates_enabled: true,
@@ -111,6 +116,7 @@ impl VehicleControlMode {
                 flag_control_termination_enabled: false,
             },
             ControlMode::PositionHold => Self {
+                automatic_fallback_from: None,
                 flag_control_manual_enabled: false,
                 flag_control_offboard_enabled: false,
                 flag_control_rates_enabled: true,
@@ -122,6 +128,7 @@ impl VehicleControlMode {
                 flag_control_termination_enabled: false,
             },
             ControlMode::VelocityControl => Self {
+                automatic_fallback_from: None,
                 flag_control_manual_enabled: false,
                 flag_control_offboard_enabled: true,
                 flag_control_rates_enabled: true,
@@ -133,6 +140,7 @@ impl VehicleControlMode {
                 flag_control_termination_enabled: false,
             },
             ControlMode::DeviationTracking => Self {
+                automatic_fallback_from: None,
                 flag_control_manual_enabled: false,
                 flag_control_offboard_enabled: false,
                 flag_control_rates_enabled: true,
@@ -144,6 +152,17 @@ impl VehicleControlMode {
                 flag_control_termination_enabled: false,
             },
         }
+    }
+
+    /// Add the requested mode that caused an automatic mode fallback.
+    pub const fn with_mode_entry(mut self, decision: super::ModeEntryDecision) -> Self {
+        self.automatic_fallback_from = match decision {
+            super::ModeEntryDecision::FallenBack { requested, .. } => Some(requested),
+            super::ModeEntryDecision::Granted(_)
+            | super::ModeEntryDecision::Refused { .. }
+            | super::ModeEntryDecision::Unsupported { .. } => None,
+        };
+        self
     }
 
     /// Decide which outer loop runs, from the flags alone.
@@ -310,6 +329,7 @@ mod tests {
         assert_eq!(
             VehicleControlMode::default(),
             VehicleControlMode {
+                automatic_fallback_from: None,
                 flag_control_manual_enabled: false,
                 flag_control_offboard_enabled: false,
                 flag_control_rates_enabled: false,

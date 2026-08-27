@@ -18,10 +18,21 @@ pub use crate::types::Scalar;
 
 pub mod enums;
 pub mod mode_gate;
+pub mod observation;
 pub mod runtime;
+pub mod transfer;
 pub mod vehicle_control_mode;
 pub use enums::{CommandSource, ConfigMode, ControlLawV1, ControlMode, SafetyLevelV1};
-pub use mode_gate::{apply_mode_entry, gate_mode_entry, ModeEntryDecision};
+pub use mode_gate::{
+    apply_mode_entry, gate_controller_mode_entry, gate_mode_entry, ModeEntryDecision,
+};
+pub use observation::{
+    ControllerLoopObservation, ControllerStep, ControllerStepObservation,
+    EffectiveSetpointObservation, IntegratorAction, MultirotorControllerObservation,
+};
+pub use transfer::{
+    multirotor_mode_capability, EffectiveControlTopology, MultirotorModeCapability,
+};
 pub use vehicle_control_mode::{OuterLoopSelection, VehicleControlMode};
 
 #[derive(Clone, Debug)]
@@ -149,7 +160,7 @@ pub struct LawProfile {
 }
 // COV:EXCL_STOP
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct AxisCommand {
     pub roll: NormalizedSigned,
     pub pitch: NormalizedSigned,
@@ -224,6 +235,14 @@ pub trait VehicleController {
         cfg: &crate::kernel::config::ResolvedKernelConfig,
     ) -> Result<(), ControllerConfigMismatch>;
 
+    /// Return whether this controller implements the requested mode.
+    ///
+    /// Existing controller types accept their current mode surface. A
+    /// controller with an incomplete mode surface must override this method.
+    fn supports_mode(&self, _mode: ControlMode) -> bool {
+        true
+    }
+
     fn step(
         &self,
         runtime: &mut Self::RuntimeState,
@@ -233,6 +252,25 @@ pub trait VehicleController {
         mode: ConfigMode,
         limits: &Limits, // COV:EXCL(phantom DA from enums.rs re-export; param decl)
     ) -> AxisCommand; // COV:EXCL(phantom DA from enums.rs re-export; return type)
+
+    /// Run one controller cycle and return a diagnostic witness.
+    ///
+    /// The default keeps existing controller implementations output-only.
+    /// A diagnostic witness must not become a later control input.
+    fn step_with_observation(
+        &self,
+        runtime: &mut Self::RuntimeState,
+        state: &StateEstimate,
+        command: &Command,
+        flags: &VehicleControlMode,
+        mode: ConfigMode,
+        limits: &Limits,
+    ) -> ControllerStep {
+        ControllerStep {
+            axis_command: self.step(runtime, state, command, flags, mode, limits),
+            observation: ControllerStepObservation::default(),
+        }
+    }
 
     /// Return controller runtime state to its post-power-on baseline.
     /// Default impl delegates to `runtime.reset()`. The kernel calls

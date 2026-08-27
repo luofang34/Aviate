@@ -167,6 +167,8 @@ dependencies = [
  "aviate-core",
  "aviate-hal-xil",
  "env_logger",
+ "libc",
+ "libm",
  "log",
 ]
 
@@ -174,7 +176,9 @@ dependencies = [
 name = "aviate-app-sitl-xplane-alia250-kernel"
 version = "0.1.0"
 dependencies = [
+ "aviate-config",
  "aviate-core",
+ "aviate-hal-xil",
  "aviate-runtime",
 ]
 
@@ -243,6 +247,8 @@ dependencies = [
  "aviate-hal-xil",
  "aviate-runtime",
  "log",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -250,7 +256,9 @@ name = "aviate-config"
 version = "0.1.3"
 dependencies = [
  "aviate-core",
+ "libm",
  "serde",
+ "sha2",
  "toml 1.1.3+spec-1.1.0",
 ]
 
@@ -292,7 +300,14 @@ dependencies = [
  "aviate-core",
  "aviate-hal-io",
  "aviate-link",
+ "getrandom",
+ "libc",
  "log",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]

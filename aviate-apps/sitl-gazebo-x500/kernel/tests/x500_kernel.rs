@@ -30,7 +30,7 @@ fn config_and_controller_share_one_gains_source() {
 }
 
 #[test]
-fn app_built_kernel_matches_pre_change_identity() {
+fn app_built_kernel_matches_registered_identity() {
     let kernel = build_x500_kernel().expect("binding check must accept the single-source build");
     // Canonical-hash pin. Moves when the hashed tuning surface or its
     // encoding changes — e.g. a `CascadeGains` field addition — even
@@ -39,6 +39,6 @@ fn app_built_kernel_matches_pre_change_identity() {
     assert_eq!(kernel.cfg().canonical_hash(), 0x51f4_1b49_06cf_605c);
     assert_eq!(
         kernel.pipeline().algorithm_identity_hash(),
-        0x20ce_8c48_7287_24d5
+        0x99ae_668f_493e_0e4b
     );
 }

@@ -32,23 +32,15 @@ use aviate_board_sitl_xplane::XPlaneBoard;
 
 mod report;
 mod stand;
+mod sweep;
+mod trace;
 mod yaw_sign;
 
-pub use yaw_sign::run_yaw_sign;
+pub(super) use sweep::run_sweep;
+pub(super) use yaw_sign::run_yaw_sign;
 
 use report::report;
 use stand::{Sample, TestStand};
-
-/// Force-domain collective held through the experiment: the kernel's
-/// own hover trim (env-overridable, so a new airframe's sweep result
-/// flows straight in); vertical drift over the experiment's seconds is
-/// acceptable and irrelevant to the angular fit.
-fn collective() -> f32 {
-    std::env::var("AVIATE_HOVER_TRIM")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0.43)
-}
 
 /// Injected differential force per excited axis. Large enough that
 /// the response dominates the closed loop's own corrections, small
@@ -86,140 +78,101 @@ const AXIS_NAMES: [&str; 3] = ["roll", "pitch", "yaw"];
 enum Phase {
     WaitReady,
     Climb {
-        started: Instant,
-        until: Instant,
+        started_us: u64,
+        until_us: u64,
     },
     Settle {
         axis: usize,
         freq: usize,
-        until: Instant,
+        until_us: u64,
     },
     Excite {
         axis: usize,
         freq: usize,
-        until: Instant,
+        started_us: u64,
+        until_us: u64,
     },
     Done,
 }
 
-/// Runs a grounded collective staircase so the thrust curve can be
-/// read against the simulator's own prop-force dataref: 12 steps, held
-/// long enough for RPM to settle, printed with a timestamp to pair
-/// with an RREF watcher. The vehicle stays on its gear the whole time
-/// (a step that lifts it ends the sweep early in the log, which is
-/// itself a data point).
-pub fn run_sweep<C, M>(board: &mut XPlaneBoard<C, M>)
-where
-    C: aviate_core::control::VehicleController,
-    M: aviate_core::mixer::Mixer,
-{
-    const STEPS: usize = 12;
-    const HOLD: Duration = Duration::from_millis(2500);
-    let mut sequence: u32 = 0;
-    let mut last_heartbeat = Instant::now();
-    let started = Instant::now();
-    let mut armed = false;
-    let mut step_started: Option<Instant> = None;
-    let mut step: usize = 0;
-    let mut step_printed = false;
+/// Failure of one identification experiment.
+#[derive(Debug)]
+pub(super) enum ExperimentError {
+    /// The experiment made no safe progress before its wall-clock guard expired.
+    Timeout(&'static str),
+    /// The kernel refused to arm.
+    Arm(aviate_core::ArmError),
+    /// The kernel refused to disarm.
+    Disarm(aviate_core::DisarmError),
+    /// The X-Plane test stand did not confirm an operation.
+    Stand(stand::StandError),
+    /// The process could not open the X-Plane test-stand socket.
+    StandSocket(std::io::Error),
+    /// Simulator sample time did not increase.
+    ClockRegression { previous_us: u64, next_us: u64 },
+    /// Runtime identity or sample-clock evidence failed.
+    RuntimeHandshake(aviate_board_sitl_xplane::RuntimeHandshakeError),
+    /// The external tuning trace did not accept a packet.
+    TuningTrace(String),
+    /// Plant fitting rejected the trace.
+    Report(String),
+}
 
-    log::info!("collective sweep: waiting for the link");
-    loop {
-        let now = Instant::now();
-        if last_heartbeat.elapsed() >= Duration::from_secs(1) {
-            board.send_heartbeat();
-            last_heartbeat = now;
+impl core::fmt::Display for ExperimentError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Timeout(name) => write!(formatter, "{name} timed out"),
+            Self::Arm(error) => write!(formatter, "arm failed: {error:?}"),
+            Self::Disarm(error) => write!(formatter, "disarm failed: {error:?}"),
+            Self::Stand(error) => write!(formatter, "test stand failed: {error}"),
+            Self::StandSocket(error) => write!(formatter, "test stand socket failed: {error}"),
+            Self::ClockRegression {
+                previous_us,
+                next_us,
+            } => write!(
+                formatter,
+                "simulator clock did not increase: {previous_us} then {next_us}"
+            ),
+            Self::RuntimeHandshake(error) => write!(formatter, "runtime handshake failed: {error}"),
+            Self::TuningTrace(error) => write!(formatter, "tuning trace failed: {error}"),
+            Self::Report(error) => write!(formatter, "plant report failed: {error}"),
         }
-        if started.elapsed() > Duration::from_secs(120) {
-            log::error!("sweep timed out");
-            return;
-        }
-        if !armed {
-            if board.is_ready() {
-                match board.arm() {
-                    Ok(()) => {
-                        armed = true;
-                        step_started = Some(now);
-                        log::info!("armed; sweeping");
-                    }
-                    Err(error) => log::warn!("arm refused: {error:?}"),
-                }
-            }
-        } else if let Some(at) = step_started {
-            if now.duration_since(at) >= HOLD {
-                step += 1;
-                step_started = Some(now);
-                step_printed = false;
-                if step >= STEPS {
-                    let _ = board.disarm();
-                    log::info!("sweep complete");
-                    return;
-                }
-            }
-        }
-        if armed {
-            // Hold the CURRENT attitude, not a fixed world frame: a
-            // commanded identity quaternion carries the parking
-            // heading as a huge yaw error, and the resulting torque
-            // rail skids the vehicle over on its gear.
-            let hold = board
-                .kernel()
-                .pipeline()
-                .estimator
-                .estimate(&board.kernel().state.estimator)
-                .attitude;
-            let force = step as f32 / (STEPS - 1) as f32;
-            let cmd = Command {
-                mode: ControlMode::Attitude,
-                setpoint: Setpoint {
-                    attitude: Some(hold),
-                    collective_thrust: NormalizedThrust(force),
-                    ..Setpoint::default()
-                },
-                config_mode_request: None,
-                sensor_overrides: None,
-                sequence,
-                source: CommandSource::Autopilot,
-            };
-            sequence = sequence.wrapping_add(1);
-            board.set_command(cmd);
-        }
-        let out = board.step();
-        if armed
-            && !step_printed
-            && step_started
-                .is_some_and(|at| now.duration_since(at) > HOLD - Duration::from_millis(300))
-        {
-            // One line late in each hold, after RPM settles.
-            let alt = board.last_fix().map_or(0.0, |fix| fix.alt_m);
-            let est = board
-                .kernel()
-                .pipeline()
-                .estimator
-                .estimate(&board.kernel().state.estimator);
-            let (er, ep, _) = est.attitude.to_euler();
-            let gyro = board.last_imu().map_or([0.0; 3], |imu| imu.gyro);
-            log::info!(
-                "sweep step={step} force={:.2} motors=[{:.2},{:.2},{:.2},{:.2}] est_rp=({:.2},{:.2}) gyro=[{:.2},{:.2},{:.2}] alt={alt:.1}",
-                step as f32 / (STEPS - 1) as f32,
-                out.outputs[0].0, out.outputs[1].0, out.outputs[2].0, out.outputs[3].0,
-                er, ep, gyro[0], gyro[1], gyro[2],
-            );
-            step_printed = true;
-        }
-        if !board.wait_for_sample(Duration::from_micros(2_500)) && !board.connected() {
-            std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+impl std::error::Error for ExperimentError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Stand(error) => Some(error),
+            Self::StandSocket(error) => Some(error),
+            Self::RuntimeHandshake(error) => Some(error),
+            Self::Timeout(_)
+            | Self::Arm(_)
+            | Self::Disarm(_)
+            | Self::ClockRegression { .. }
+            | Self::TuningTrace(_)
+            | Self::Report(_) => None,
         }
     }
 }
 
 /// Runs the identification flight and prints the plant identity.
 /// Returns when the experiment is over; the caller exits.
-pub fn run<C, M>(board: &mut XPlaneBoard<C, M>)
+pub(super) fn run<C, M>(
+    board: &mut XPlaneBoard<C, M>,
+    run_manifest_digest: String,
+) -> Result<
+    (
+        aviate_config::airframe_preset::PlantIdentificationArtifact,
+        String,
+    ),
+    ExperimentError,
+>
 where
     C: aviate_core::control::VehicleController,
     M: aviate_core::mixer::Mixer,
 {
+    let hover_collective = board.kernel().cfg().hover_thrust_norm.0;
     let mut phase = Phase::WaitReady;
     let mut sequence: u32 = 0;
     let mut samples: Vec<Sample> = Vec::with_capacity(8192);
@@ -229,15 +182,13 @@ where
     let mut last_report = Instant::now();
     let mut last_motor_mean = 0.0_f32;
     let mut held_attitude: Option<Quaternion> = None;
+    let mut last_sample_us: Option<u64> = None;
     let mut stand = TestStand::new(match UdpSocket::bind("0.0.0.0:0") {
         Ok(sock) => {
             sock.set_read_timeout(Some(Duration::from_millis(100))).ok();
             sock
         }
-        Err(error) => {
-            log::error!("no UDP socket for the test stand: {error}");
-            return;
-        }
+        Err(error) => return Err(ExperimentError::StandSocket(error)),
     });
 
     log::info!("identification flight: waiting for the link");
@@ -258,8 +209,7 @@ where
             last_report = Instant::now();
         }
         if started.elapsed() > Duration::from_secs(180) {
-            log::error!("identification timed out before completing");
-            return;
+            return Err(ExperimentError::Timeout("plant identification"));
         }
 
         // The attitude the loop is asked to hold: live outside the
@@ -278,97 +228,71 @@ where
         // The probe: a sine of differential force on the excited
         // axis's lanes at the analysis frequency, so the correlation
         // fit reads the plant exactly where the loop design needs it.
-        let injection = match &phase {
-            Phase::Excite { axis, freq, until } => {
-                let t = Duration::from_secs_f32(EXCITE_S[*freq])
-                    .saturating_sub(until.saturating_duration_since(now))
-                    .as_secs_f32();
-                let value = (PROBE_RAD_S[*freq] * t).sin() * INJECT_FORCE;
-                let mut lanes = [0.0_f32; 4];
-                for (lane, s) in lanes.iter_mut().zip(SIGNS[*axis]) {
-                    *lane = s * value;
-                }
-                (lanes, value)
-            }
-            _ => ([0.0; 4], 0.0),
-        };
-        board.set_lane_injection(injection.0);
+        board.set_lane_injection(injection_for(&phase, board.now_us()));
         if matches!(phase, Phase::Settle { .. } | Phase::Excite { .. }) {
-            stand.pin();
+            stand.pin().map_err(ExperimentError::Stand)?;
         }
 
-        let command = command_for(&phase, now, sequence, hold);
+        let command = command_for(&phase, board.now_us(), sequence, hold, hover_collective);
         sequence = sequence.wrapping_add(1);
         if let Some(cmd) = command {
             board.set_command(cmd);
         }
         let out = board.step();
+        check_run_gates(board)?;
         last_motor_mean = out.outputs[..4].iter().map(|m| m.0).sum::<f32>() / 4.0;
 
-        // Record every cycle that has an IMU sample behind it.
-        if let Some(imu) = board.last_imu() {
-            let mut u = [0.0_f32; 3];
-            for axis in 0..3 {
-                let mut sum = 0.0;
-                for (lane, sign) in SIGNS[axis].iter().enumerate() {
-                    sum += sign * out.outputs[lane].0;
-                }
-                u[axis] = sum / 4.0;
-            }
-            if let Phase::Excite { axis, .. } = &phase {
-                // The injection bypasses the kernel's output, so the
-                // recorded input must add it back.
-                u[*axis] += injection.1;
-            }
-            samples.push(Sample {
-                at: now,
-                u,
-                gyro: imu.gyro,
-            });
-        }
+        let observations = board.take_control_observations();
+        let latest_us = record_observations(
+            observations,
+            &mut samples,
+            &mut last_sample_us,
+            board.now_us(),
+        )?;
 
         phase = match phase {
             Phase::WaitReady => {
                 if board.is_ready() {
-                    match board.arm() {
-                        Ok(()) => {
-                            log::info!("armed; climbing");
-                            Phase::Climb {
-                                started: now,
-                                until: now + CLIMB,
-                            }
-                        }
-                        Err(error) => {
-                            log::warn!("arm refused: {error:?}");
-                            Phase::WaitReady
-                        }
+                    board.arm().map_err(ExperimentError::Arm)?;
+                    log::info!("armed; climbing");
+                    Phase::Climb {
+                        started_us: latest_us,
+                        until_us: add_duration(latest_us, CLIMB),
                     }
                 } else {
                     Phase::WaitReady
                 }
             }
-            Phase::Climb { until, .. } if now >= until => {
+            Phase::Climb { until_us, .. } if latest_us >= until_us => {
                 log::info!("exciting roll");
-                stand.engage(120.0);
+                stand.engage(120.0).map_err(ExperimentError::Stand)?;
                 Phase::Settle {
                     axis: 0,
                     freq: 0,
-                    until: now + SETTLE,
+                    until_us: add_duration(latest_us, SETTLE),
                 }
             }
-            Phase::Settle { axis, freq, until } if now >= until => {
+            Phase::Settle {
+                axis,
+                freq,
+                until_us,
+            } if latest_us >= until_us => {
                 windows[axis][freq].0 = samples.len();
                 held_attitude = Some(estimate.attitude);
-                // A window starts from rotational rest, so residual
-                // spin from the previous one cannot leak into it.
-                stand.zero_rates();
+                stand.zero_rates().map_err(ExperimentError::Stand)?;
                 Phase::Excite {
                     axis,
                     freq,
-                    until: now + Duration::from_secs_f32(EXCITE_S[freq]),
+                    started_us: latest_us,
+                    until_us: add_duration(latest_us, Duration::from_secs_f32(EXCITE_S[freq])),
                 }
             }
-            Phase::Excite { axis, freq, until } if now >= until => {
+            Phase::Excite {
+                axis,
+                freq,
+                until_us,
+                ..
+            } if latest_us >= until_us => {
                 windows[axis][freq].1 = samples.len();
                 held_attitude = None;
                 if axis == 2 && freq == 1 {
@@ -384,22 +308,42 @@ where
                     Phase::Settle {
                         axis,
                         freq,
-                        until: now + SETTLE,
+                        until_us: add_duration(latest_us, SETTLE),
                     }
                 }
             }
-            Phase::Done => {
-                let _ = board.disarm();
-                report(&samples, &windows);
-                return;
-            }
             other => other,
         };
+
+        if matches!(phase, Phase::Done) {
+            board.set_lane_injection([0.0; 4]);
+            board.disarm().map_err(ExperimentError::Disarm)?;
+            let context = report::ReportContext {
+                simulator_model_digest: board.model_digest().to_string(),
+                run_manifest_digest,
+                hover_force: hover_collective,
+            };
+            return report(&samples, &windows, context).map_err(ExperimentError::Report);
+        }
 
         if !board.wait_for_sample(Duration::from_micros(2_500)) && !board.connected() {
             std::thread::sleep(Duration::from_millis(2));
         }
     }
+}
+
+pub(super) fn check_run_gates<C, M>(board: &XPlaneBoard<C, M>) -> Result<(), ExperimentError>
+where
+    C: aviate_core::control::VehicleController,
+    M: aviate_core::mixer::Mixer,
+{
+    if let Some(error) = board.runtime_handshake_failure() {
+        return Err(ExperimentError::RuntimeHandshake(error.clone()));
+    }
+    if let Some(error) = board.tuning_trace_failure() {
+        return Err(ExperimentError::TuningTrace(error.to_string()));
+    }
+    Ok(())
 }
 
 /// The command each phase holds. `None` keeps the previous command.
@@ -410,17 +354,19 @@ where
 /// the vehicle's heading with saturated torque, drowning the probe).
 fn command_for(
     phase: &Phase,
-    now: Instant,
+    now_us: u64,
     sequence: u32,
     attitude: Quaternion,
+    hover_collective: f32,
 ) -> Option<Command> {
     let setpoint = match phase {
         Phase::WaitReady => return None,
-        Phase::Climb { started, until: _ } => {
+        Phase::Climb { started_us, .. } => {
             // Ten seconds to full ramp, held for the rest: the rotor
             // inertia needs the time regardless of the command.
-            let ramp = (now.duration_since(*started).as_secs_f32() / 6.0).min(1.0);
-            let target = collective() + 0.08;
+            let elapsed_s = now_us.saturating_sub(*started_us) as f32 / 1_000_000.0;
+            let ramp = (elapsed_s / 6.0).min(1.0);
+            let target = hover_collective + 0.08;
             let collective = ramp * target;
             Setpoint {
                 attitude: Some(attitude),
@@ -430,7 +376,7 @@ fn command_for(
         }
         Phase::Settle { .. } | Phase::Excite { .. } | Phase::Done => Setpoint {
             attitude: Some(attitude),
-            collective_thrust: NormalizedThrust(collective()),
+            collective_thrust: NormalizedThrust(hover_collective),
             ..Setpoint::default()
         },
     };
@@ -442,4 +388,69 @@ fn command_for(
         sequence,
         source: CommandSource::Autopilot,
     })
+}
+
+fn injection_for(phase: &Phase, now_us: u64) -> [f32; 4] {
+    let Phase::Excite {
+        axis,
+        freq,
+        started_us,
+        ..
+    } = phase
+    else {
+        return [0.0; 4];
+    };
+    let elapsed_s = now_us.saturating_sub(*started_us) as f32 / 1_000_000.0;
+    let value = libm::sinf(PROBE_RAD_S[*freq] * elapsed_s) * INJECT_FORCE;
+    let mut lanes = [0.0; 4];
+    for (lane, sign) in lanes.iter_mut().zip(SIGNS[*axis]) {
+        *lane = sign * value;
+    }
+    lanes
+}
+
+fn record_observations(
+    observations: Vec<aviate_board_sitl_xplane::XPlaneControlObservation>,
+    samples: &mut Vec<Sample>,
+    last_sample_us: &mut Option<u64>,
+    fallback_us: u64,
+) -> Result<u64, ExperimentError> {
+    let mut latest_us = fallback_us;
+    for observation in observations {
+        if let Some(previous_us) = *last_sample_us {
+            if observation.timestamp_us <= previous_us {
+                return Err(ExperimentError::ClockRegression {
+                    previous_us,
+                    next_us: observation.timestamp_us,
+                });
+            }
+        }
+        *last_sample_us = Some(observation.timestamp_us);
+        latest_us = observation.timestamp_us;
+        let Some(imu) = observation.imu else {
+            continue;
+        };
+        let mut input = [0.0; 3];
+        for axis in 0..3 {
+            input[axis] = SIGNS[axis]
+                .iter()
+                .zip(observation.applied_force_lanes)
+                .map(|(sign, lane)| sign * lane)
+                .sum::<f32>()
+                / 4.0;
+        }
+        samples.push(Sample {
+            timestamp_us: observation.timestamp_us,
+            u: input,
+            gyro: imu.gyro,
+            collective_force: observation.applied_force_lanes.iter().sum::<f32>() / 4.0,
+            saturated: observation.constraint_flags.any(),
+        });
+    }
+    Ok(latest_us)
+}
+
+fn add_duration(timestamp_us: u64, duration: Duration) -> u64 {
+    let micros = u64::try_from(duration.as_micros()).unwrap_or(u64::MAX);
+    timestamp_us.saturating_add(micros)
 }

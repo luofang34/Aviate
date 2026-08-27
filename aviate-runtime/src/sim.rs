@@ -40,6 +40,21 @@ use aviate_core::{DefaultAviateKernel, InitState};
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::SitlIO;
 
+/// A live check that runs immediately before an arm mutation.
+pub trait ArmAuthorizer {
+    /// Refuse the arm request when the live execution boundary is not ready.
+    fn authorize_arm(&self) -> Result<(), aviate_core::ArmError>;
+}
+
+/// Compatibility authorizer for SITL boards without an external run identity.
+pub struct AllowArm;
+
+impl ArmAuthorizer for AllowArm {
+    fn authorize_arm(&self) -> Result<(), aviate_core::ArmError> {
+        Ok(())
+    }
+}
+
 /// Time source for SITL (re-exported for convenience)
 ///
 /// Implements both `aviate_hal_io::TimeSource` (legacy) and `aviate_hal_io::TimeHal` (new).
@@ -160,6 +175,15 @@ where
     /// one-shot and never refresh setpoint age.
     pub ingress: crate::command_ingress::CommandIngress<aviate_hal_io::SystemCommand>,
 
+    /// Exact command supplied to the kernel in the most recent step.
+    pub(crate) last_effective_command: Command,
+
+    /// Non-authoritative diagnostic output from the latest controller cycle.
+    pub(crate) last_controller_observation: aviate_core::control::ControllerStepObservation,
+
+    /// Exact raw identity retained with the current external setpoint.
+    pub(crate) last_command_provenance: Option<aviate_hal_xil::MavlinkCommandProvenance>,
+
     /// Last IMU timestamp for dt calculation
     pub last_imu_time: Option<u64>,
 
@@ -207,6 +231,9 @@ where
             board_hal,
             kernel,
             ingress: crate::command_ingress::CommandIngress::default(),
+            last_effective_command: default_command(),
+            last_controller_observation: Default::default(),
+            last_command_provenance: None,
             last_imu_time: None,
             sensor_cache: SensorCache::new(),
             ekf_initialized: false,
@@ -214,6 +241,24 @@ where
             iteration: 0,
             process_start: std::time::Instant::now(),
         }
+    }
+
+    /// Return the exact command supplied to the most recent kernel update.
+    #[must_use]
+    pub fn last_effective_command(&self) -> &Command {
+        &self.last_effective_command
+    }
+
+    /// Return the latest controller-only diagnostic witness.
+    #[must_use]
+    pub fn last_controller_observation(&self) -> aviate_core::control::ControllerStepObservation {
+        self.last_controller_observation
+    }
+
+    /// Return the exact raw identity retained with the active setpoint.
+    #[must_use]
+    pub fn last_command_provenance(&self) -> Option<aviate_hal_xil::MavlinkCommandProvenance> {
+        self.last_command_provenance
     }
 
     /// Initialize telemetry from config (called in AppRuntime::run)

@@ -7,6 +7,7 @@
 use aviate_config::airframe_preset::{preset_from_toml_str, ActuatorCurve, MixerKind, PresetError};
 
 const X500: &str = include_str!("../../presets/x500.toml");
+const ALIA250: &str = include_str!("../../presets/alia250.toml");
 
 #[test]
 fn shipped_x500_preset_parses_and_validates() {
@@ -21,6 +22,19 @@ fn shipped_x500_preset_parses_and_validates() {
     assert!((p.hover_thrust_force_seed() - 0.5929).abs() < 1e-6);
     assert_eq!(p.gains.att_p, [3.5, 3.5, 2.5]);
     assert!((p.limits.max_altitude - 100.0).abs() < 1e-6);
+}
+
+#[test]
+fn shipped_alia250_preset_parses_and_validates() {
+    let preset = preset_from_toml_str(ALIA250).expect("Alia 250 preset must be valid");
+    assert_eq!(preset.schema_version, 2);
+    assert_eq!(preset.name, "alia250");
+    assert_eq!(preset.mixer, MixerKind::QuadXX500ReversedSpin);
+    assert_eq!(preset.motor_count, 4);
+    assert_eq!(preset.actuator_curve, ActuatorCurve::Quadratic);
+    assert!((preset.hover_thrust_force_seed() - 0.43).abs() < 1e-6);
+    assert_eq!(preset.gains.att_p, [0.8, 0.8, 0.36]);
+    assert_eq!(preset.gains.att_max_rate_cmd, 1.0);
 }
 
 #[test]
@@ -51,11 +65,22 @@ fn unknown_schema_version_is_rejected() {
 #[test]
 fn schema_2_seed_is_force_domain_verbatim() {
     // Schema 2 defines the seed as force: no conversion applies.
+    //
+    // The seed is 0.60 rather than the preset's own 0.77 for a reason. Schema
+    // 1 squares the boundary command, and 0.77 squared is 0.5929 EXACTLY — so
+    // a test seeded at 0.77 expecting 0.5929 holds whether schema 2 reads the
+    // seed verbatim or squares it like schema 1, which are the two hypotheses
+    // it exists to tell apart. 0.60 squared is 0.36, so only the verbatim
+    // reading gives 0.60 back.
     let text = X500
         .replace("schema_version = 1", "schema_version = 2")
-        .replace("hover_thrust_seed = 0.77", "hover_thrust_seed = 0.5929");
+        .replace("hover_thrust_seed = 0.77", "hover_thrust_seed = 0.60");
     let p = preset_from_toml_str(&text).expect("schema 2 must parse");
-    assert!((p.hover_thrust_force_seed() - 0.5929).abs() < 1e-6);
+    assert!(
+        (p.hover_thrust_force_seed() - 0.60).abs() < 1e-6,
+        "schema 2 did not read the seed verbatim: {}",
+        p.hover_thrust_force_seed()
+    );
 }
 
 #[test]
@@ -84,6 +109,9 @@ fn non_finite_and_out_of_range_values_are_rejected() {
         ("hover_thrust_seed = 0.77", "hover_thrust_seed = 1.2"),
         ("rate_d_lpf_alpha = 0.5", "rate_d_lpf_alpha = inf"),
         ("att_p = [3.5, 3.5, 2.5]", "att_p = [3.5, -1.0, 2.5]"),
+        ("vel_max_yaw_step = 0.6", "vel_max_yaw_step = -0.1"),
+        ("att_max_rate_cmd = 3.0", "att_max_rate_cmd = inf"),
+        ("rate_i = [0.0, 0.0, 0.0]", "rate_i = [0.0, -0.1, 0.0]"),
         ("max_altitude = 100.0", "max_altitude = -5.0"),
     ] {
         let text = X500.replace(from, to);
@@ -124,9 +152,12 @@ fn x500_preset_matches_compiled_defaults() {
     assert_eq!(p.gains.vel_i, d.vel_i);
     assert_eq!(p.gains.vel_d, d.vel_d);
     assert_eq!(p.gains.vel_max_roll_pitch, d.vel_max_roll_pitch);
+    assert_eq!(p.gains.vel_max_yaw_step, d.vel_max_yaw_step);
     assert_eq!(p.gains.vel_accel_ff, d.vel_accel_ff);
     assert_eq!(p.gains.att_p, d.att_p);
+    assert_eq!(p.gains.att_max_rate_cmd, d.att_max_rate_cmd);
     assert_eq!(p.gains.rate_p, d.rate_p);
+    assert_eq!(p.gains.rate_i, d.rate_i);
     assert_eq!(p.gains.rate_d, d.rate_d);
     assert_eq!(p.gains.rate_d_lpf_alpha, d.rate_d_lpf_alpha);
 }

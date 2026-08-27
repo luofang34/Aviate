@@ -317,6 +317,18 @@ fn every_runtime_state_field_changes_the_canonical_encoding() {
     mutations.push(("dt_sec", |s| {
         s.dt_sec = 0.001;
     }));
+    mutations.push(("previous_effective_mode", |s| {
+        s.previous_effective_mode = Some(aviate_core::control::ControlMode::Attitude);
+    }));
+    mutations.push(("previous_topology", |s| {
+        s.previous_topology = Some(aviate_core::control::EffectiveControlTopology::Attitude);
+    }));
+    mutations.push(("last_axis_command", |s| {
+        s.last_axis_command.roll.0 = 0.25;
+    }));
+    mutations.push(("axis_command_primed", |s| {
+        s.axis_command_primed = true;
+    }));
 
     for (name, mutate) in mutations {
         let mut state = MultirotorRuntimeState::default();

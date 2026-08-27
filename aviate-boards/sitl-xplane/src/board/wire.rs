@@ -2,54 +2,21 @@
 //! between the mixer and the bridge, as a pure state machine so the
 //! plant-protection math is testable without a TCP link.
 
-/// Maximum collective rise in the working band, force-domain units per
-/// second — paced to the rotors' RPM inertia so blade angle of attack
-/// never outruns rotor speed. The bracketing is empirical and
-/// consistent across every flight of the night: staircase ramps at
-/// 0.036/s always spool cleanly, ramps at 0.08/s and above always
-/// leave the props partially stalled and the vehicle perched at
-/// "full" thrust.
-const RISE_PER_S: f32 = 0.035;
-/// Below this collective the blades are lightly loaded and the stall
-/// latch has never been observed; that band rises faster so an armed
-/// vehicle answers the stick in seconds rather than reading as dead.
-const BAND_BOUNDARY: f32 = 0.40;
-/// Rise rate inside the lightly-loaded band.
-const LOW_BAND_RISE_PER_S: f32 = 0.15;
-/// Maximum collective FALL while armed. Cutting thrust is safe for
-/// the PLANT, but an unlimited cut against a rate-limited rise is an
-/// asymmetry inside the vertical loop: a climb arrest slams the
-/// collective low, the recovery crawls back at the rise limit, and
-/// the loop rings — measured as a growing hover oscillation into the
-/// ground on a full-thrust simulator boot. A bounded fall keeps the
-/// dip inside what the rise limit can catch; a DISARM still cuts
-/// instantly, because a disarm must not ramp.
-const FALL_PER_S: f32 = 0.30;
-/// Collective mean ceiling, the more important half of the spool
-/// constraint: the prop model's thrust COLLAPSES under a sustained
-/// high command (measured: force 1.0 held on the ground reads
-/// near-zero prop force — blade stall latched by RPM that can no
-/// longer catch up). Hover sits near 0.43; the ceiling keeps every
-/// commander out of the latch while reserving differential headroom.
-const MEAN_CEILING: f32 = 0.55;
-/// Per-lane ceiling, below the ~0.9 latch threshold with margin. The
-/// mean ceiling alone cannot keep a lane healthy: differentials stack
-/// on top of the mean, and a railed lane latches its prop — a single
-/// latched prop is an asymmetric-thrust departure, not a soft limit.
-const LANE_CEILING: f32 = 0.85;
-/// How far above the arming altitude the vehicle must climb before
-/// the on-gear differential squeeze releases.
-const AIRBORNE_CLEARANCE_M: f32 = 0.5;
-/// The on-gear differential retention: half authority, not near-zero
-/// — wind grabs the vehicle the moment it unloads its gear, and a
-/// liftoff with no attitude authority is swept downwind faster than
-/// any later correction can recover. Half keeps the anti-stall dither
-/// suppression while leaving the wind something to fight it with.
-const GROUND_SQUEEZE: f32 = 0.5;
+use aviate_config::xplane_model::XPlaneWireModel;
+
+/// Constraints that changed one force-domain actuator command.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WireConstraintFlags {
+    pub(crate) collective_rate: bool,
+    pub(crate) mean_ceiling: bool,
+    pub(crate) lane_ceiling: bool,
+    pub(crate) ground_squeeze: bool,
+}
 
 /// The constraint state that survives between samples.
 #[derive(Debug, Clone)]
 pub(crate) struct WireConstraints {
+    config: XPlaneWireModel,
     /// The collective mean this state last let onto the wire — the
     /// ACTUAL wire mean, so the spool bookkeeping can never believe a
     /// ramp happened that the rotors did not see.
@@ -63,8 +30,9 @@ pub(crate) struct WireConstraints {
 }
 
 impl WireConstraints {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(config: XPlaneWireModel) -> Self {
         Self {
+            config,
             last_collective: 0.0,
             ground_alt: None,
             airborne: false,
@@ -89,23 +57,26 @@ impl WireConstraints {
         armed: bool,
         fix_alt_m: Option<f32>,
         dt_sec: f32,
-    ) {
-        let lanes = usize::from(count).clamp(1, 4);
-        let dt = dt_sec.clamp(0.0, 0.05);
+    ) -> WireConstraintFlags {
+        let mut flags = WireConstraintFlags::default();
+        let lanes = usize::from(count);
+        let dt = dt_sec.clamp(0.0, self.config.max_sample_dt_s);
         let mean: f32 = outputs[..lanes].iter().sum::<f32>() / lanes as f32;
-        let rise = if self.last_collective < BAND_BOUNDARY {
-            LOW_BAND_RISE_PER_S
+        let rise = if self.last_collective < self.config.band_boundary {
+            self.config.low_band_rise_per_s
         } else {
-            RISE_PER_S
+            self.config.rise_per_s
         };
         let allowed = if mean > self.last_collective {
             (self.last_collective + rise * dt).min(mean)
         } else if armed {
-            (self.last_collective - FALL_PER_S * dt).max(mean)
+            (self.last_collective - self.config.fall_per_s * dt).max(mean)
         } else {
             mean
         }
-        .min(MEAN_CEILING);
+        .min(self.config.mean_ceiling);
+        flags.collective_rate = allowed != mean && mean <= self.config.mean_ceiling;
+        flags.mean_ceiling = mean > self.config.mean_ceiling;
         let shift = allowed - mean;
         if shift != 0.0 {
             // Both directions: the rise limit pulls a too-fast climb
@@ -127,14 +98,15 @@ impl WireConstraints {
         let mut squeeze = 1.0f32;
         for lane in &outputs[..lanes] {
             let dev = *lane - mean_now;
-            if dev > 0.0 && mean_now + dev > LANE_CEILING {
-                squeeze = squeeze.min((LANE_CEILING - mean_now) / dev);
+            if dev > 0.0 && mean_now + dev > self.config.lane_ceiling {
+                squeeze = squeeze.min((self.config.lane_ceiling - mean_now) / dev);
             }
             if dev < 0.0 && mean_now + dev < 0.0 {
                 squeeze = squeeze.min(mean_now / -dev);
             }
         }
         if squeeze < 1.0 {
+            flags.lane_ceiling = true;
             for lane in &mut outputs[..lanes] {
                 *lane = mean_now + (*lane - mean_now) * squeeze;
             }
@@ -152,18 +124,21 @@ impl WireConstraints {
                 self.ground_alt = fix_alt_m;
             }
             let clear = match (self.ground_alt, fix_alt_m) {
-                (Some(ground), Some(alt)) => alt > ground + AIRBORNE_CLEARANCE_M,
+                (Some(ground), Some(alt)) => alt > ground + self.config.airborne_clearance_m,
                 _ => false,
             };
             if clear {
                 self.airborne = true;
             } else {
+                flags.ground_squeeze = true;
                 let new_mean: f32 = outputs[..lanes].iter().sum::<f32>() / lanes as f32;
                 for lane in &mut outputs[..lanes] {
-                    *lane = (new_mean + (*lane - new_mean) * GROUND_SQUEEZE).clamp(0.0, 1.0);
+                    *lane = (new_mean + (*lane - new_mean) * self.config.ground_squeeze)
+                        .clamp(0.0, 1.0);
                 }
             }
         }
+        flags
     }
 }
 
