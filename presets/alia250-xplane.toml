@@ -11,6 +11,20 @@ actuator_curve = "quadratic-rotor"
 motor_count = 4
 sample_rate_hz = 100
 max_samples_per_iteration = 32
+# Mixer lane for each simulator actuator lane, checked against the aircraft
+# file rather than assumed. ALIA-250.acf places its lift rotors at
+# _engn/0 (x +8.5, z -9.98) front-right, _engn/1 (-8.5, -9.98) front-left,
+# _engn/2 (-8.5, +9.98) rear-left, _engn/3 (+8.5, +9.98) rear-right — X-Plane
+# part coordinates being starboard-positive and aft-positive. The mixer emits
+# gz/PX4 order (FR, RL, FL, RR), so this gather delivers FR, FL, RL, RR, which
+# is what those engine indices are.
+#
+# The permutation is self-inverse, so reading it as a scatter gives the same
+# answer here and would not reveal a direction error. It agrees because the
+# positions agree, not because the shape is forgiving.
+#
+# _prop_dir is -1, +1, -1, +1 across those four, putting FR+RL on one sense and
+# FL+RR on the other — the diagonal `quad-x-x500-reversed-spin` declares.
 lane_order = [0, 2, 1, 3]
 
 # These values protect the simulator plant. The tuner cannot change them.
