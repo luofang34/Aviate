@@ -39,6 +39,20 @@ impl MixerGeometry {
             | MixerGeometry::QuadXX500ReversedSpin => 4,
         }
     }
+
+    /// The name a preset declares this geometry by.
+    ///
+    /// So a record naming what it flew reads that name off the thing rather
+    /// than restating it. A literal at the writing site states what somebody
+    /// expected, and goes on stating it after that stops being true.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            MixerGeometry::QuadX => "quad-x",
+            MixerGeometry::QuadXX500 => "quad-x-x500",
+            MixerGeometry::QuadXX500ReversedSpin => "quad-x-x500-reversed-spin",
+        }
+    }
 }
 
 /// Plant curve between the cascade's force-domain collective
@@ -73,6 +87,15 @@ impl ActuatorCurveKind {
         match self {
             ActuatorCurveKind::Linear => Normalized(t),
             ActuatorCurveKind::QuadraticRotor => Normalized(t.sqrt()),
+        }
+    }
+
+    /// The name a preset declares this curve by.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ActuatorCurveKind::Linear => "linear",
+            ActuatorCurveKind::QuadraticRotor => "quadratic-rotor",
         }
     }
 }

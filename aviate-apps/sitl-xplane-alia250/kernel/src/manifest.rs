@@ -4,6 +4,7 @@ use std::string::String;
 use std::{fmt, path::PathBuf};
 
 use aviate_config::airframe_preset::{CandidateIdentity, ContentDigest};
+use aviate_core::kernel::config::{ActuatorCurveKind, MixerGeometry};
 use aviate_hal_xil::perturbation::PerturbationArtifactIdentity;
 
 use crate::{AliaKernel, CalibrationRunManifest, HoverInitializationEvidence};
@@ -76,6 +77,17 @@ pub struct AliaRunManifest {
     pub kernel_config_hash: u64,
     /// Canonical fold state immediately before the effective hover force.
     pub hover_kernel_prefix_hash: u64,
+    /// The mixer geometry the kernel was built with.
+    ///
+    /// Carried rather than restated at write time. A record that names the
+    /// vehicle it flew has to read that name off the kernel it flew with; a
+    /// literal in the writer says what someone expected, and goes on saying it
+    /// after the expectation stops being true.
+    pub mixer_geometry: MixerGeometry,
+    /// The actuator curve the kernel was built with, carried for the same
+    /// reason — and this one can genuinely differ, since it is resolved from
+    /// the preset rather than fixed by the kernel's type.
+    pub actuator_curve: ActuatorCurveKind,
     /// Immutable force-domain hover initialization.
     pub hover_initialization: HoverInitializationEvidence,
     /// Optional condition artifact identity for a perturbation run.
@@ -285,6 +297,10 @@ impl AliaRunManifest {
             (Some(value.candidate_id.clone()), Some(value.identity))
         });
         Ok(Self {
+            // Read off the kernel that will fly, so the record cannot name a
+            // vehicle other than the one it flew.
+            mixer_geometry: kernel.cfg().mixer_geometry,
+            actuator_curve: kernel.cfg().actuator_curve,
             schema_version: MANIFEST_SCHEMA_VERSION,
             application_id: APPLICATION_ID,
             build_identity: build.executable,
@@ -334,8 +350,8 @@ impl AliaRunManifest {
             self.hover_initialization.scale_basis_points,
             self.hover_initialization.estimator_mode.as_str(),
             format!("{:016x}", self.hover_kernel_prefix_hash),
-            "quad-x-x500-reversed-spin",
-            "quadratic",
+            self.mixer_geometry.as_str(),
+            self.actuator_curve.as_str(),
             format!("{:016x}", self.hover_kernel_config_hash()),
         );
         if let Some(identity) = &self.perturbation {

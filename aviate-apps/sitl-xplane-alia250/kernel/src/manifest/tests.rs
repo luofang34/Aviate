@@ -26,6 +26,19 @@ fn normal_manifest_contains_all_non_candidate_identities() {
     assert_eq!(manifest.hover_kernel_prefix_hash, 0xf899_1c7f_ac65_1ee8);
     assert_eq!(manifest.kernel_config_hash, 0x396d_fd92_ca64_b405);
     assert!(text.contains("application_id = \"sitl-xplane-alia250\""));
+    // The record has to name the vehicle it actually flew. These were written
+    // as literals at the writing site, so falsifying them changed nothing any
+    // test could see — the manifest would have gone on naming a geometry and
+    // a curve the kernel was not built with, and the curve can genuinely
+    // differ, being resolved from the preset rather than fixed by the type.
+    assert!(text.contains(&format!(
+        "hover_mixer_geometry = \"{}\"",
+        manifest.mixer_geometry.as_str()
+    )));
+    assert!(text.contains(&format!(
+        "hover_actuator_curve = \"{}\"",
+        manifest.actuator_curve.as_str()
+    )));
     assert!(text.contains(&format!("simulator_model_digest = \"{model}\"")));
     assert!(text.contains(&format!("runtime_handshake_digest = \"{runtime}\"")));
     assert!(text.contains("hover_baseline_force_bits = \""));
