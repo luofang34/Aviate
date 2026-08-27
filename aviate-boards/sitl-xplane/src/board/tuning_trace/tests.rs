@@ -97,6 +97,21 @@ fn fake_runner_accepts_identity_and_each_exact_sequence() {
             },
         )
         .expect("ready");
+        // Acked before the observation is read; see the note in
+        // `accepted_maximum_observation_sequence_is_never_wrapped`. The
+        // publisher allows 20ms for this ack, and making that depend on the
+        // OS scheduling this thread tests the scheduler rather than the
+        // sequence contract.
+        write_frame(
+            &mut stream,
+            &TuningObservationAck {
+                frame_type: TuningFrameType::AviateTuningObservationAck,
+                schema_version: TUNING_TRACE_SCHEMA_VERSION,
+                run_manifest_digest: handshake.run_manifest_digest.clone(),
+                sequence: 0,
+            },
+        )
+        .expect("ack");
         let frame: TuningControlObservation = read_frame(&mut stream).expect("observation");
         assert_eq!(frame.sequence, 0);
         assert_eq!(frame.simulator_timestamp_us, 10_000);
@@ -128,16 +143,6 @@ fn fake_runner_accepts_identity_and_each_exact_sequence() {
             MavlinkCommandFamily::AttitudeTarget.into()
         );
         assert_eq!(raw.frame_digest, [9; 32]);
-        write_frame(
-            &mut stream,
-            &TuningObservationAck {
-                frame_type: TuningFrameType::AviateTuningObservationAck,
-                schema_version: TUNING_TRACE_SCHEMA_VERSION,
-                run_manifest_digest: handshake.run_manifest_digest,
-                sequence: frame.sequence,
-            },
-        )
-        .expect("ack");
     });
     let config = XPlaneTuningTraceConfig::new(endpoint, identity()).expect("config");
     let mut publisher = TuningTracePublisher::connect(config).expect("publisher");
@@ -187,18 +192,26 @@ fn accepted_maximum_observation_sequence_is_never_wrapped() {
             },
         )
         .expect("ready");
-        let frame: TuningControlObservation = read_frame(&mut stream).expect("observation");
-        assert_eq!(frame.sequence, u64::MAX);
+        // The ack is written BEFORE the observation is read, and that is not
+        // a stylistic choice. The publisher gives each ack 20ms of
+        // SO_RCVTIMEO, so a server that acks only after being scheduled to
+        // read makes this test depend on the OS scheduling a thread inside
+        // that window — which is not its subject and is not something CI can
+        // promise. Length-prefixed framing means the client consumes exactly
+        // the ready frame and leaves these bytes in its own receive buffer,
+        // so the deadline is met from bytes already delivered.
         write_frame(
             &mut stream,
             &TuningObservationAck {
                 frame_type: TuningFrameType::AviateTuningObservationAck,
                 schema_version: TUNING_TRACE_SCHEMA_VERSION,
                 run_manifest_digest: handshake.run_manifest_digest,
-                sequence: frame.sequence,
+                sequence: u64::MAX,
             },
         )
         .expect("ack");
+        let frame: TuningControlObservation = read_frame(&mut stream).expect("observation");
+        assert_eq!(frame.sequence, u64::MAX);
         assert!(matches!(
             read_frame::<TuningControlObservation>(&mut stream),
             Err(TuningTraceError::Read(_))
@@ -254,17 +267,26 @@ fn wrong_ack_sequence_permanently_fails_the_transport() {
             },
         )
         .expect("ready");
-        let frame: TuningControlObservation = read_frame(&mut stream).expect("observation");
+        // Acked before the observation is read; see the note in
+        // `accepted_maximum_observation_sequence_is_never_wrapped`. This is
+        // the clearest case for it: under load this test failed with a read
+        // timeout where it expects an ack-sequence mismatch, so it stopped
+        // exercising the thing it is named for while still going red.
+        //
+        // The publisher's first observation is sequence 0, so acking 1 is the
+        // off-by-one under test.
         write_frame(
             &mut stream,
             &TuningObservationAck {
                 frame_type: TuningFrameType::AviateTuningObservationAck,
                 schema_version: TUNING_TRACE_SCHEMA_VERSION,
                 run_manifest_digest: handshake.run_manifest_digest,
-                sequence: frame.sequence.wrapping_add(1),
+                sequence: 1,
             },
         )
         .expect("bad ack");
+        let frame: TuningControlObservation = read_frame(&mut stream).expect("observation");
+        assert_eq!(frame.sequence, 0, "the ack above is deliberately one ahead");
     });
     let config = XPlaneTuningTraceConfig::new(endpoint, identity()).expect("config");
     let mut publisher = TuningTracePublisher::connect(config).expect("publisher");
