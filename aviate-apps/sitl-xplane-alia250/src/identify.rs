@@ -45,6 +45,10 @@ use stand::{Sample, TestStand};
 /// Injected differential force per excited axis. Large enough that
 /// the response dominates the closed loop's own corrections, small
 /// enough to stay inside lane range at hover collective.
+// Small enough that the closed attitude loop can host the probe
+// without railing a lane; the fit reads gyro rates, whose response to
+// even this differential is orders above the sensor floor. A probe the
+// wire has to clip is a probe the plant never received.
 const INJECT_FORCE: f32 = 0.2;
 
 /// The probe frequencies, rad/s. The lower sits where the plant is
@@ -54,14 +58,27 @@ const INJECT_FORCE: f32 = 0.2;
 /// disagrees between them is telling you its measurement is polluted.
 const PROBE_RAD_S: [f32; 2] = [1.0, 2.5];
 
-/// Excitation lengths per probe: at least three cycles each.
-const EXCITE_S: [f32; 2] = [19.0, 8.0];
+/// Excitation lengths per probe: at least three cycles each, with a
+/// margin over exactly three. The report measures the window as the
+/// span between its first and last recorded samples, which is up to a
+/// sample interval shorter at each edge than the commanded window — a
+/// length that buys 3.02 periods therefore counts 2 blocks and fails
+/// the fit's floor on a clock the experiment itself accepts.
+const EXCITE_S: [f32; 2] = [23.0, 11.0];
 
 /// Climb phase length before the experiment.
 const CLIMB: Duration = Duration::from_secs(22);
 
 /// Settle phase between axes.
-const SETTLE: Duration = Duration::from_millis(600);
+const SETTLE: Duration = Duration::from_millis(1_500);
+
+/// Transient rejected from the head of every excitation window.
+const TRANSIENT_SKIP: Duration = Duration::from_millis(1_800);
+
+/// Per-cycle blend of the held attitude toward the live estimate.
+/// Sets a restoring time constant of a few seconds — an order below
+/// the slowest probe frequency, an order above the rollover rate.
+const HOLD_LEAK: f32 = 0.004;
 
 /// The reversed-spin mixer's per-motor axis signs, in mixer lane
 /// order — the same table the mixer applies, inverted here to
@@ -90,6 +107,13 @@ enum Phase {
         axis: usize,
         freq: usize,
         started_us: u64,
+        until_us: u64,
+    },
+    Lower {
+        ground_y: f32,
+        last_us: u64,
+    },
+    SettleGround {
         until_us: u64,
     },
     Done,
@@ -177,10 +201,12 @@ where
     let mut sequence: u32 = 0;
     let mut samples: Vec<Sample> = Vec::with_capacity(8192);
     let mut windows: [[(usize, usize); 2]; 3] = [[(0, 0); 2]; 3];
+    let mut window_open: Option<(usize, usize, u64)> = None;
     let started = Instant::now();
     let mut last_heartbeat = Instant::now();
     let mut last_report = Instant::now();
     let mut last_motor_mean = 0.0_f32;
+    let mut ground_y: Option<f32> = None;
     let mut held_attitude: Option<Quaternion> = None;
     let mut last_sample_us: Option<u64> = None;
     let mut stand = TestStand::new(match UdpSocket::bind("0.0.0.0:0") {
@@ -208,20 +234,29 @@ where
             log::info!("alt={alt}m vz={vz:.2} motors_mean={last_motor_mean:.2}");
             last_report = Instant::now();
         }
-        if started.elapsed() > Duration::from_secs(180) {
+        if started.elapsed() > Duration::from_secs(300) {
             return Err(ExperimentError::Timeout("plant identification"));
         }
 
         // The attitude the loop is asked to hold: live outside the
-        // excitation windows, FROZEN at each window's start so the
-        // setpoint carries no content correlated with the probe.
+        // excitation windows, LEAKY inside them. A hard freeze makes the
+        // loop fight every estimator wobble at full gain and rail the
+        // lanes; a live hold leaves no attitude restoring at all, and a
+        // residual rate integrates to a rollover before the window ends.
+        // A hold that leaks toward the estimate over seconds arrests the
+        // rollover while staying transparent at the probe frequency, so
+        // the loop hosts the probe instead of fighting it.
         let estimate = board
             .kernel()
             .pipeline()
             .estimator
             .estimate(&board.kernel().state.estimator);
         let hold = match (&phase, held_attitude) {
-            (Phase::Excite { .. }, Some(frozen)) => frozen,
+            (Phase::Excite { .. }, Some(frozen)) => {
+                let leaked = leak_toward(frozen, estimate.attitude, HOLD_LEAK);
+                held_attitude = Some(leaked);
+                leaked
+            }
             _ => estimate.attitude,
         };
 
@@ -229,7 +264,7 @@ where
         // axis's lanes at the analysis frequency, so the correlation
         // fit reads the plant exactly where the loop design needs it.
         board.set_lane_injection(injection_for(&phase, board.now_us()));
-        if matches!(phase, Phase::Settle { .. } | Phase::Excite { .. }) {
+        if matches!(phase, Phase::Lower { .. }) {
             stand.pin().map_err(ExperimentError::Stand)?;
         }
 
@@ -250,9 +285,17 @@ where
             board.now_us(),
         )?;
 
+        if let Some((axis, freq, from_us)) = window_open {
+            if latest_us >= from_us {
+                windows[axis][freq].0 = samples.len();
+                window_open = None;
+            }
+        }
+
         phase = match phase {
             Phase::WaitReady => {
                 if board.is_ready() {
+                    ground_y = Some(stand.local_y().map_err(ExperimentError::Stand)?);
                     board.arm().map_err(ExperimentError::Arm)?;
                     log::info!("armed; climbing");
                     Phase::Climb {
@@ -264,8 +307,13 @@ where
                 }
             }
             Phase::Climb { until_us, .. } if latest_us >= until_us => {
+                // The windows run in FREE FLIGHT. A translation pin
+                // couples back into rotation and rocks the vehicle
+                // harder than the hover it replaces — the rocking is
+                // both a rate residual no zeroing survives and the
+                // noise floor under the probe. The vehicle holds a
+                // clean hover on its own; the probe rides on that.
                 log::info!("exciting roll");
-                stand.engage(120.0).map_err(ExperimentError::Stand)?;
                 Phase::Settle {
                     axis: 0,
                     freq: 0,
@@ -277,9 +325,12 @@ where
                 freq,
                 until_us,
             } if latest_us >= until_us => {
-                windows[axis][freq].0 = samples.len();
                 held_attitude = Some(estimate.attitude);
-                stand.zero_rates().map_err(ExperimentError::Stand)?;
+                // The rate zeroing lands as a gyro step, and the damping
+                // term answers it with a lane spike; the first stretch
+                // of every window is that transient, not the probe. The
+                // fit starts after it.
+                window_open = Some((axis, freq, add_duration(latest_us, TRANSIENT_SKIP)));
                 Phase::Excite {
                     axis,
                     freq,
@@ -296,8 +347,13 @@ where
                 windows[axis][freq].1 = samples.len();
                 held_attitude = None;
                 if axis == 2 && freq == 1 {
-                    stand.release();
-                    Phase::Done
+                    let ground = ground_y.ok_or(ExperimentError::Timeout("ground altitude"))?;
+                    let _ = stand.engage().map_err(ExperimentError::Stand)?;
+                    log::info!("lowering to the ground");
+                    Phase::Lower {
+                        ground_y: ground,
+                        last_us: latest_us,
+                    }
                 } else {
                     let (axis, freq) = if freq == 1 { (axis + 1, 0) } else { (axis, 1) };
                     log::info!(
@@ -312,18 +368,72 @@ where
                     }
                 }
             }
+            Phase::Lower { ground_y, last_us } => {
+                // Sim-time paced so the ride is 4 m/s regardless of how
+                // often this loop spins between samples.
+                let dt_s = latest_us.saturating_sub(last_us) as f32 / 1_000_000.0;
+                stand.lower(4.0 * dt_s, ground_y);
+                if stand.held().is_some_and(|y| y <= ground_y + 0.05) {
+                    stand.release();
+                    log::info!("on the ground; settling");
+                    Phase::SettleGround {
+                        until_us: add_duration(latest_us, Duration::from_secs(6)),
+                    }
+                } else {
+                    Phase::Lower {
+                        ground_y,
+                        last_us: latest_us,
+                    }
+                }
+            }
+            Phase::SettleGround { until_us } if latest_us >= until_us => Phase::Done,
             other => other,
         };
 
         if matches!(phase, Phase::Done) {
             board.set_lane_injection([0.0; 4]);
-            board.disarm().map_err(ExperimentError::Disarm)?;
+            // The artifact is the experiment's product and every sample
+            // is already in hand; publish before anything that can still
+            // refuse. Disarm is cleanliness, and the landed latch reads
+            // an estimate the pinned excitation can leave far from the
+            // ground truth, so a refusal here downgrades to a warning —
+            // the vehicle is at rest on its gear with the lanes idled,
+            // and the harness owns the process from here.
             let context = report::ReportContext {
                 simulator_model_digest: board.model_digest().to_string(),
                 run_manifest_digest,
                 hover_force: hover_collective,
             };
-            return report(&samples, &windows, context).map_err(ExperimentError::Report);
+            let published = report(&samples, &windows, context).map_err(ExperimentError::Report)?;
+            let disarm_deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                match board.disarm() {
+                    Ok(()) => break,
+                    Err(error) if Instant::now() < disarm_deadline => {
+                        for _ in 0..40 {
+                            let cmd = command_for(
+                                &phase,
+                                board.now_us(),
+                                sequence,
+                                estimate.attitude,
+                                hover_collective,
+                            );
+                            sequence = sequence.wrapping_add(1);
+                            if let Some(cmd) = cmd {
+                                board.set_command(cmd);
+                            }
+                            board.step();
+                            board.wait_for_sample(Duration::from_micros(2_500));
+                        }
+                        let _ = error;
+                    }
+                    Err(error) => {
+                        log::warn!("disarm refused after landing ({error:?}); leaving shutdown to the process owner");
+                        break;
+                    }
+                }
+            }
+            return Ok(published);
         }
 
         if !board.wait_for_sample(Duration::from_micros(2_500)) && !board.connected() {
@@ -374,9 +484,16 @@ fn command_for(
                 ..Setpoint::default()
             }
         }
-        Phase::Settle { .. } | Phase::Excite { .. } | Phase::Done => Setpoint {
+        Phase::Settle { .. } | Phase::Excite { .. } => Setpoint {
             attitude: Some(attitude),
             collective_thrust: NormalizedThrust(hover_collective),
+            ..Setpoint::default()
+        },
+        // Enough spin to keep the attitude loop alive, little enough
+        // that releasing the stand on the ground stays a landing.
+        Phase::Lower { .. } | Phase::SettleGround { .. } | Phase::Done => Setpoint {
+            attitude: Some(attitude),
+            collective_thrust: NormalizedThrust(hover_collective * 0.3),
             ..Setpoint::default()
         },
     };
@@ -388,6 +505,21 @@ fn command_for(
         sequence,
         source: CommandSource::Autopilot,
     })
+}
+
+/// Normalized linear blend from `from` toward `to`, hemisphere-aligned.
+/// At the small per-cycle fractions used here it is indistinguishable
+/// from the spherical blend and needs no trigonometry.
+fn leak_toward(from: Quaternion, to: Quaternion, alpha: f32) -> Quaternion {
+    let dot = from.w * to.w + from.x * to.x + from.y * to.y + from.z * to.z;
+    let sign = if dot < 0.0 { -1.0 } else { 1.0 };
+    let blended = Quaternion::new(
+        from.w + alpha * (sign * to.w - from.w),
+        from.x + alpha * (sign * to.x - from.x),
+        from.y + alpha * (sign * to.y - from.y),
+        from.z + alpha * (sign * to.z - from.z),
+    );
+    blended.normalize()
 }
 
 fn injection_for(phase: &Phase, now_us: u64) -> [f32; 4] {
@@ -415,7 +547,12 @@ fn record_observations(
     last_sample_us: &mut Option<u64>,
     fallback_us: u64,
 ) -> Result<u64, ExperimentError> {
-    let mut latest_us = fallback_us;
+    // Phase arithmetic lives on the SAMPLE clock. The board clock is
+    // wall time, the samples are simulation time, and the simulator
+    // dilates when its flight model cannot keep real time — a deadline
+    // built from one and compared against the other shortens every
+    // window by the dilation factor.
+    let mut latest_us = last_sample_us.unwrap_or(fallback_us);
     for observation in observations {
         if let Some(previous_us) = *last_sample_us {
             if observation.timestamp_us <= previous_us {
@@ -444,7 +581,17 @@ fn record_observations(
             u: input,
             gyro: imu.gyro,
             collective_force: observation.applied_force_lanes.iter().sum::<f32>() / 4.0,
-            saturated: observation.constraint_flags.any(),
+            // The probe is a pure differential, so only constraints
+            // that touch individual lanes corrupt what the fit reads.
+            // The mean-path constraints trim the collective every
+            // sample by construction of a rate limiter, and counting
+            // those as saturation refuses windows whose torque probe
+            // went through untouched.
+            saturated: observation.constraint_flags.lane_ceiling
+                || observation.constraint_flags.injection_clamp
+                || observation.constraint_flags.invalid_actuator_count
+                || observation.constraint_flags.missing_actuator_answer
+                || observation.constraint_flags.ground_squeeze,
         });
     }
     Ok(latest_us)

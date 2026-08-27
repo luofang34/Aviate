@@ -58,7 +58,7 @@ where
                 board.arm().map_err(ExperimentError::Arm)?;
                 armed = true;
                 phase_started = Some(now);
-                stand.engage(120.0).map_err(ExperimentError::Stand)?;
+                let _ = stand.engage().map_err(ExperimentError::Stand)?;
                 log::info!("armed; spooling on the stand");
             }
         } else if let Some(at) = phase_started {

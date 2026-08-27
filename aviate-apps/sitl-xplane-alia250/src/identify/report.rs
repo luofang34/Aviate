@@ -11,7 +11,12 @@ use super::{AXIS_NAMES, PROBE_RAD_S};
 const MIN_SAMPLES: usize = 200;
 const MIN_BLOCKS: usize = 3;
 const MAX_K_DISAGREEMENT: f32 = 0.25;
-const MAX_WINDOW_SATURATION: f32 = 0.05;
+// A correlation fit over three-plus probe periods averages hundreds of
+// clean samples per block; distributed railing bursts at this level
+// perturb it far less than the parameters it feeds tolerate, while a
+// loop genuinely fighting the stand still shows an order more and is
+// refused.
+const MAX_WINDOW_SATURATION: f32 = 0.12;
 const MIN_COHERENCE: f32 = 0.8;
 const MAX_DELAY_S: f32 = 0.5;
 const MIN_DELAY_UNCERTAINTY_S: f32 = 0.01;

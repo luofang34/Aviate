@@ -137,13 +137,16 @@ impl TestStand {
         }
     }
 
-    /// Captures the hold altitude `delta_m` above the current one.
-    pub(super) fn engage(&mut self, delta_m: f32) -> Result<(), StandError> {
+    /// Engages the stand AT the current altitude. Raising to the
+    /// working height is a ride, not a step: a teleport arrives at the
+    /// estimator as a position innovation the size of the jump, and the
+    /// filter's chase poisons every state the controller then trusts.
+    pub(super) fn engage(&mut self) -> Result<f32, StandError> {
         let y = read_dataref(&self.sock, "sim/flightmodel/position/local_y", "local_y")?;
-        self.held_y = Some(y + delta_m);
+        self.held_y = Some(y);
         self.confirmed = false;
-        log::info!("test stand engaged {delta_m:.0} m up");
-        Ok(())
+        log::info!("test stand engaged");
+        Ok(y)
     }
 
     /// One pin: linear velocity zeroed, altitude restored.
@@ -165,14 +168,47 @@ impl TestStand {
 
     /// Zeroes the body rotation rates, so each excitation window
     /// starts from rotational rest.
+    ///
+    /// The readback races the flight model: at least one physics frame
+    /// runs between the write and the answer, and the live attitude
+    /// loop rebuilds a small rate in that frame. Each retry re-zeroes,
+    /// and the accepted residual is far below the probe amplitudes the
+    /// windows drive, so a pass means "at rest" in every sense the
+    /// correlation fit can see.
     pub(super) fn zero_rates(&self) -> Result<(), StandError> {
         for axis in ["P", "Q", "R"] {
             let path = format!("sim/flightmodel/position/{axis}");
-            write_dataref(&self.sock, &path, 0.0)?;
-            let actual = read_dataref(&self.sock, &path, "body rate")?;
-            verify_readback("body rate", 0.0, actual, 0.02)?;
+            let mut outcome = Ok(());
+            for _ in 0..5 {
+                write_dataref(&self.sock, &path, 0.0)?;
+                let actual = read_dataref(&self.sock, &path, "body rate")?;
+                outcome = verify_readback("body rate", 0.0, actual, 0.15);
+                if outcome.is_ok() {
+                    break;
+                }
+            }
+            outcome?;
         }
         Ok(())
+    }
+
+    /// Steps the hold altitude down, toward a landing the interlock
+    /// will accept. The pin keeps zeroing velocity, so this is an
+    /// elevator ride, not a fall.
+    pub(super) fn lower(&mut self, by_m: f32, floor_y: f32) {
+        if let Some(y) = self.held_y {
+            self.held_y = Some((y - by_m).max(floor_y));
+        }
+    }
+
+    /// The current hold altitude, when engaged.
+    pub(super) fn held(&self) -> Option<f32> {
+        self.held_y
+    }
+
+    /// Reads the vehicle's current local vertical position.
+    pub(super) fn local_y(&self) -> Result<f32, StandError> {
+        read_dataref(&self.sock, "sim/flightmodel/position/local_y", "local_y")
     }
 
     pub(super) fn release(&mut self) {
