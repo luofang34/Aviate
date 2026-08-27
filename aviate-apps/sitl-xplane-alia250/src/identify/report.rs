@@ -4,9 +4,9 @@ use aviate_config::airframe_preset::{
     ContentDigest, PlantIdentificationArtifact, PlantSampleClock,
 };
 
+use super::excitation::{AXIS_NAMES, PROBE_RAD_S};
 use super::stand::Sample;
 use super::trace;
-use super::{AXIS_NAMES, PROBE_RAD_S};
 
 const MIN_SAMPLES: usize = 200;
 const MIN_BLOCKS: usize = 3;
