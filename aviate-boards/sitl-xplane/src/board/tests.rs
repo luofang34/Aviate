@@ -13,6 +13,8 @@ use super::{
     BOARD_INFO,
 };
 
+mod backend_session;
+
 const MODEL: &str = include_str!("../../../../presets/alia250-xplane.toml");
 
 #[test]

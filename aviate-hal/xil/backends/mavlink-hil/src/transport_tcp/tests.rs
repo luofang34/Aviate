@@ -10,7 +10,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 
 use super::{HilTcpConfig, HilTcpTransport};
-use crate::messages::{HilActuatorControls, HilMessage, HilSensor};
+use crate::messages::{HilActuatorControls, HilGps, HilMessage, HilSensor, HilStateQuaternion};
 use crate::wire::{parse_frame, serialize_frame};
 
 /// Binds an ephemeral loopback listener, never a fixed port.
@@ -340,5 +340,64 @@ fn the_transport_reports_the_address_it_dials() {
     };
     let transport = transport_for(addr);
     assert_eq!(transport.simulator_addr(), addr);
+    drop(accept(&listener));
+}
+
+#[test]
+fn normal_truth_reads_return_the_newest_buffered_sample() {
+    let Some((listener, addr)) = listener() else {
+        return;
+    };
+    let mut transport = transport_for(addr);
+    transport.state_quaternions.push_back(HilStateQuaternion {
+        time_usec: 10,
+        ..HilStateQuaternion::default()
+    });
+    transport.state_quaternions.push_back(HilStateQuaternion {
+        time_usec: 20,
+        ..HilStateQuaternion::default()
+    });
+    let latest = transport.take_state_quaternion();
+    assert_eq!(latest.map(|sample| sample.time_usec), Some(20));
+    assert!(transport.state_quaternions.is_empty());
+    drop(accept(&listener));
+}
+
+#[test]
+fn reset_group_selection_uses_the_requested_timestamp() {
+    let Some((listener, addr)) = listener() else {
+        return;
+    };
+    let mut transport = transport_for(addr);
+    for timestamp in [10, 20] {
+        transport.gps.push_back(HilGps {
+            time_usec: timestamp,
+            ..HilGps::default()
+        });
+        transport.state_quaternions.push_back(HilStateQuaternion {
+            time_usec: timestamp,
+            ..HilStateQuaternion::default()
+        });
+    }
+    assert_eq!(
+        transport.take_gps_at(20).map(|sample| sample.time_usec),
+        Some(20)
+    );
+    assert_eq!(
+        transport
+            .take_state_quaternion_at(20)
+            .map(|sample| sample.time_usec),
+        Some(20)
+    );
+    assert_eq!(
+        transport.take_gps().map(|sample| sample.time_usec),
+        Some(10)
+    );
+    assert_eq!(
+        transport
+            .take_state_quaternion()
+            .map(|sample| sample.time_usec),
+        Some(10)
+    );
     drop(accept(&listener));
 }

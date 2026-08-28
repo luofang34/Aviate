@@ -3,7 +3,7 @@
 //! Backend-agnostic platform for SITL (Software-In-The-Loop) and HITL (Hardware-In-The-Loop)
 //! simulation. This crate provides:
 //!
-//! - **Backend trait**: Interface for kinematics backends (Gazebo, Unity, Chrono, etc.)
+//! - **Backend trait**: Typed simulator directives, receipts, and frames
 //! - **World state**: Backend-agnostic representation of simulation world
 //! - **Test infrastructure**: Mission framework, test runner, config parsing
 //! - **SITL transport**: Network communication with simulators (MAVLink/UDP)
@@ -13,7 +13,7 @@
 //! ```text
 //! aviate-hal-xil (this crate, no backend deps)
 //!        ↑
-//! aviate-backend-gz (implements KinematicsBackend)
+//! aviate-backend-gz (implements SimulatorBackend)
 //!        ↑ (FFI/IPC)
 //! aviate_gz_plugin (C++, Gazebo)
 //! ```
@@ -46,7 +46,11 @@ pub mod sitl_io;
 pub mod world;
 
 // Core exports
-pub use backend::{BackendConfig, BackendError, KinematicsBackend, LockstepMode, TimingMode};
+pub use backend::{
+    BackendStatus, DirectiveId, DirectiveOutcome, DirectiveReceipt, FrameEvent, ResetGeneration,
+    SimulatorBackend, SimulatorDirective, SimulatorDirectiveKind, SimulatorError, SimulatorFrame,
+    SimulatorLifecycle, SimulatorOperation, VehicleState,
+};
 pub use world::{
     AngularVelocity, Entity, EntityId, EntityState, Position, Quaternion, Velocity, World,
 };
@@ -78,8 +82,7 @@ pub use mission::{
 
 // Runner exports (backend-agnostic mission execution)
 pub use runner::{
-    run_test_config, MavClient, MissionRunner, SimulatorBackend, SimulatorError, TestResult,
-    VehicleState,
+    run_test_config, run_test_config_from_current_state, MavClient, MissionRunner, TestResult,
 };
 
 // Fault injection protocol exports

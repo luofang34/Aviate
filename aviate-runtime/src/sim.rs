@@ -24,6 +24,7 @@
 
 #![cfg(any(feature = "env-sitl", feature = "env-hitl"))]
 
+mod lifecycle;
 mod step;
 
 use log::{error, info, warn};

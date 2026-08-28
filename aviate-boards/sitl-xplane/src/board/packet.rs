@@ -7,10 +7,10 @@ use aviate_hal_io::SystemCommand;
 use aviate_hal_xil::perturbation::{
     ActuatorApplication, ActuatorBypassReason, ActuatorEligibility, SensorApplication,
 };
-use aviate_hal_xil::sim_types::{SimActuatorCmd, SimImuData};
+use aviate_hal_xil::sim_types::{SimActuatorCmd, SimImuData, SimSensorPacket};
 use log::warn;
 
-use super::observation::prepare_actuator_command;
+use super::observation::{prepare_actuator_command, PreparedActuatorCommand};
 use super::{XPlaneBoard, XPlaneControlObservation, XPlaneSendEvidence};
 
 impl<C, M> XPlaneBoard<C, M>
@@ -18,6 +18,81 @@ where
     C: aviate_core::control::VehicleController,
     M: aviate_core::mixer::Mixer,
 {
+    pub(super) fn process_sample(&mut self, mut packet: SimSensorPacket) -> ActuatorCmd {
+        let sample_sequence = self.sample_sequence;
+        self.observe_sample_time(packet.timestamp_us);
+        if let Some(gnss) = packet.gnss {
+            self.last_fix = Some(gnss);
+        }
+        if let Some(imu) = packet.imu {
+            self.last_imu = Some(imu);
+        }
+        let sensor_application = self.apply_sensor_perturbation(sample_sequence, &mut packet);
+        self.runner.transport.feed_sensor_packet(&packet);
+        let arm_authorizer = self.arm_authorizer();
+        let was_armed = self.runner.is_armed();
+        let command = self.runner.step_with_arm_authorizer(&arm_authorizer);
+        if self
+            .artifact_failure
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.terminate();
+        }
+        let is_armed = self.runner.is_armed();
+        if !was_armed && is_armed {
+            self.wire.arm(self.last_fix.map(|fix| fix.alt_m));
+        }
+        self.armed = is_armed;
+        self.answer_sample(
+            sample_sequence,
+            packet.timestamp_us,
+            packet.imu,
+            &command,
+            sensor_application,
+        );
+        command
+    }
+
+    fn observe_sample_time(&mut self, timestamp_us: u64) {
+        if let Err(error) = self.runtime_identity.observe_timestamp(timestamp_us) {
+            warn!("runtime HIL clock rejected: {error}");
+            self.runtime_failure = Some(error);
+            self.terminate();
+        }
+        let now = std::time::Instant::now();
+        if let Some(previous) = self.last_packet_at {
+            let gap = now.duration_since(previous);
+            if gap > std::time::Duration::from_millis(300) {
+                warn!(
+                    "sensor stream resumed after a {:.2}s gap",
+                    gap.as_secs_f32()
+                );
+            }
+        }
+        self.last_packet_at = Some(now);
+        if let Some(previous) = self.last_sample_time_us {
+            self.sample_dt_sec = (timestamp_us.saturating_sub(previous) as f32) / 1_000_000.0;
+        }
+        self.last_sample_time_us = Some(timestamp_us);
+    }
+
+    fn apply_sensor_perturbation(
+        &mut self,
+        sample_sequence: u64,
+        packet: &mut SimSensorPacket,
+    ) -> Option<SensorApplication> {
+        let engine = self.perturbation.as_mut()?;
+        match engine.apply_sensor(sample_sequence, packet) {
+            Ok(application) => Some(application),
+            Err(error) => {
+                warn!("sensor perturbation failed: {error}");
+                self.perturbation_failure = Some(error);
+                self.terminate();
+                None
+            }
+        }
+    }
+
     /// Send and record the command caused by one simulator sample.
     pub(super) fn answer_sample(
         &mut self,
@@ -27,47 +102,8 @@ where
         kernel_command: &ActuatorCmd,
         sensor_application: Option<SensorApplication>,
     ) {
-        let (mut sim_cmd, missing_actuator_answer) =
-            if let Some(command) = self.runner.transport.take_actuator_cmd() {
-                (command, false)
-            } else {
-                warn!("kernel produced no actuator answer; sending safe output");
-                let safe = SimActuatorCmd {
-                    count: self.motor_count,
-                    armed: false,
-                    ..SimActuatorCmd::default()
-                };
-                (safe, true)
-            };
-        let eligibility = actuator_eligibility(
-            &sim_cmd,
-            missing_actuator_answer,
-            self.last_answer_armed,
-            self.motor_count,
-            kernel_command,
-            self.runner.last_effective_command().source,
-            self.runner.last_command_provenance().is_some(),
-        );
-        self.last_answer_armed = Some(sim_cmd.armed);
-        let actuator_application = self.apply_actuator_perturbation(
-            sample_sequence,
-            &mut sim_cmd,
-            eligibility,
-            kernel_command.fallback_mask,
-        );
-        let mut prepared = prepare_actuator_command(
-            &mut sim_cmd,
-            self.lane_injection,
-            &mut self.wire,
-            self.runner.kernel.cfg().actuator_curve,
-            self.lane_order,
-            self.motor_count,
-            self.last_fix.map(|fix| fix.alt_m),
-            self.sample_dt_sec,
-        );
-        if missing_actuator_answer {
-            prepared.constraint_flags.missing_actuator_answer = true;
-        }
+        let (mut sim_cmd, prepared, actuator_application) =
+            self.prepare_answer(sample_sequence, kernel_command);
         if self.tuning_trace_failure().is_some() {
             sim_cmd.outputs.fill(0.0);
             sim_cmd.armed = false;
@@ -117,6 +153,59 @@ where
             self.terminate();
         }
         self.control_observations.push(observation);
+    }
+
+    fn prepare_answer(
+        &mut self,
+        sample_sequence: u64,
+        kernel_command: &ActuatorCmd,
+    ) -> (
+        SimActuatorCmd,
+        PreparedActuatorCommand,
+        Option<ActuatorApplication>,
+    ) {
+        let (mut command, missing_answer) = self.take_actuator_answer();
+        let eligibility = actuator_eligibility(
+            &command,
+            missing_answer,
+            self.last_answer_armed,
+            self.motor_count,
+            kernel_command,
+            self.runner.last_effective_command().source,
+            self.runner.last_command_provenance().is_some(),
+        );
+        self.last_answer_armed = Some(command.armed);
+        let application = self.apply_actuator_perturbation(
+            sample_sequence,
+            &mut command,
+            eligibility,
+            kernel_command.fallback_mask,
+        );
+        let mut prepared = prepare_actuator_command(
+            &mut command,
+            self.lane_injection,
+            &mut self.wire,
+            self.runner.kernel.cfg().actuator_curve,
+            self.lane_order,
+            self.motor_count,
+            self.last_fix.map(|fix| fix.alt_m),
+            self.sample_dt_sec,
+        );
+        prepared.constraint_flags.missing_actuator_answer = missing_answer;
+        (command, prepared, application)
+    }
+
+    fn take_actuator_answer(&mut self) -> (SimActuatorCmd, bool) {
+        if let Some(command) = self.runner.transport.take_actuator_cmd() {
+            return (command, false);
+        }
+        warn!("kernel produced no actuator answer; sending safe output");
+        let safe = SimActuatorCmd {
+            count: self.motor_count,
+            armed: false,
+            ..SimActuatorCmd::default()
+        };
+        (safe, true)
     }
 
     fn apply_actuator_perturbation(

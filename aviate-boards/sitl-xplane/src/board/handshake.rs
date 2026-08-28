@@ -145,6 +145,14 @@ impl RuntimeIdentityGate {
         Ok(())
     }
 
+    pub(crate) fn reset_sample_evidence(&mut self) {
+        self.first_timestamp_us = None;
+        self.last_timestamp_us = None;
+        self.intervals = 0;
+        self.verified = false;
+        self.failed = false;
+    }
+
     fn verify_sample_rate(&mut self) -> Result<(), RuntimeHandshakeError> {
         let Some(first_us) = self.first_timestamp_us else {
             return Ok(());
@@ -319,6 +327,27 @@ mod tests {
             Some(RuntimeHandshakeError::SampleRateMismatch { .. })
         ));
         assert!(!gate.is_verified());
+    }
+
+    #[test]
+    fn reset_requires_fresh_clock_evidence() {
+        let model = XPlaneSimulatorModel::from_toml_str(MODEL).expect("valid model");
+        let mut gate = RuntimeIdentityGate::new(model.clone());
+        gate.accept(handshake(&model)).expect("matching handshake");
+        for index in 0..=SAMPLE_RATE_EVIDENCE_INTERVALS {
+            gate.observe_timestamp(u64::from(index) * 10_000)
+                .expect("valid sample clock");
+        }
+        assert!(gate.is_verified());
+
+        gate.reset_sample_evidence();
+
+        assert!(!gate.is_verified());
+        gate.observe_timestamp(0).expect("reset clock origin");
+        assert!(matches!(
+            gate.observe_timestamp(0),
+            Err(RuntimeHandshakeError::SampleClockRegression { .. })
+        ));
     }
 
     #[test]
