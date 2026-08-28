@@ -79,6 +79,7 @@ fn canonical_hash_distinguishes_each_cascade_gain() {
     probe!(att_p, 1, 0.05);
     probe!(att_max_rate_cmd, 0.5);
     probe!(rate_p, 0, 0.5);
+    probe!(rate_i, 1, 0.5);
     probe!(rate_d, 2, 0.01);
     probe!(rate_d_lpf_alpha, 0.1);
 }
@@ -92,6 +93,26 @@ fn canonical_hash_distinguishes_hover_thrust_norm() {
     let mut cfg = ResolvedKernelConfig::default();
     cfg.hover_thrust_norm = NormalizedThrust(cfg.hover_thrust_norm.0 + 0.1);
     assert_ne!(baseline, cfg.canonical_hash());
+}
+
+#[test]
+fn hover_prefix_reconstructs_the_actual_full_hash() {
+    let cfg = ResolvedKernelConfig {
+        hover_thrust_norm: NormalizedThrust(0.43),
+        mixer_geometry: MixerGeometry::QuadXX500ReversedSpin,
+        actuator_curve: ActuatorCurveKind::QuadraticRotor,
+        ..Default::default()
+    };
+    let prefix = cfg.hover_kernel_prefix_hash();
+    let reconstructed = ResolvedKernelConfig::canonical_hash_from_hover_prefix(
+        prefix,
+        cfg.hover_thrust_norm.0,
+        cfg.mixer_geometry,
+        cfg.actuator_curve,
+    );
+    assert_eq!(reconstructed, cfg.canonical_hash());
+    assert_eq!(prefix, 0x6007_fa96_434b_827d);
+    assert_eq!(reconstructed, 0x7a11_f4f4_689b_e11c);
 }
 
 #[test]
@@ -143,7 +164,13 @@ fn canonical_hash_distinguishes_mixer_geometry() {
         mixer_geometry: MixerGeometry::QuadXX500,
         ..Default::default()
     };
+    let reversed = ResolvedKernelConfig {
+        mixer_geometry: MixerGeometry::QuadXX500ReversedSpin,
+        ..Default::default()
+    };
     assert_ne!(quad_x.canonical_hash(), x500.canonical_hash());
+    assert_ne!(x500.canonical_hash(), reversed.canonical_hash());
+    assert_ne!(quad_x.canonical_hash(), reversed.canonical_hash());
 }
 
 #[test]

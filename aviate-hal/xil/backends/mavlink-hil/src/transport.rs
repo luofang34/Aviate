@@ -111,13 +111,16 @@ impl HilTransport {
                 Ok((frame, consumed)) => {
                     self.handle_frame(frame);
                     offset += consumed;
-                    self.rx_count += 1;
+                    self.rx_count = self.rx_count.wrapping_add(1);
                 }
                 Err(ParseError::Incomplete) => break,
                 Err(ParseError::CrcMismatch) => {
-                    self.crc_errors += 1;
+                    self.crc_errors = self.crc_errors.wrapping_add(1);
                     offset += 1; // Skip bad byte
                 }
+                // A well-formed frame this subset does not decode is
+                // skipped WHOLE; only an unsyncable byte resyncs.
+                Err(ParseError::UnknownMessage { consumed, .. }) => offset += consumed,
                 Err(_) => {
                     offset += 1; // Skip unknown/invalid
                 }
@@ -167,6 +170,15 @@ impl HilTransport {
         self.last_state_quaternion.take()
     }
 
+    /// Discard all input that belongs to the current simulator generation.
+    pub fn clear_generation_state(&mut self) {
+        self.poll();
+        self.rx_len = 0;
+        self.last_sensor = None;
+        self.last_gps = None;
+        self.last_state_quaternion = None;
+    }
+
     /// Send actuator controls to the simulator
     pub fn send_actuator_controls(&mut self, controls: &HilActuatorControls) -> io::Result<()> {
         let msg = HilMessage::ActuatorControls(*controls);
@@ -193,7 +205,7 @@ impl HilTransport {
             self.seq = self.seq.wrapping_add(1);
             self.socket
                 .send_to(&buf[..len], self.config.simulator_addr)?;
-            self.tx_count += 1;
+            self.tx_count = self.tx_count.wrapping_add(1);
         }
 
         Ok(())

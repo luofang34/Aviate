@@ -41,6 +41,8 @@
 //! Sensor/actuator data uses direct Rust API (feed_sensor_packet, take_actuator_cmd)
 //! for lower latency and cleaner architecture.
 
+mod command_link;
+
 use std::io;
 use std::net::UdpSocket;
 
@@ -50,20 +52,14 @@ use aviate_core::hal::SystemHal;
 use aviate_core::time::{TimeSource, Timestamp};
 
 use aviate_hal_io::{
-    CommandHal, CommandOutcome, GnssFix, RawBaroReading, RawGnssReading, RawImuReading,
-    RawMagReading, SystemCommand,
+    GnssFix, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading, SystemCommand,
 };
 
-use aviate_link::mavlink::protocol::{
-    CommandAck, CommandLong, Heartbeat, SetAttitudeTarget, SetPositionTargetLocalNed,
-};
-use aviate_link::mavlink::{
-    mav_cmd, mav_result, parse_mavlink, serialize_mavlink, MavAutopilot, MavMessage, MavModeFlag,
-    MavState, MavType, FORCE_ARM_DISARM_MAGIC,
-};
+use aviate_link::mavlink::MavState;
 
+use crate::command_provenance::{MavlinkCommandProvenance, SourceEpochTracker};
 use crate::sim_types::{SimActuatorCmd, SimGnssFix, SimSensorPacket};
-use crate::{bridge, XilConfig};
+use crate::XilConfig;
 
 /// Raw sensor data from simulator (IMU, baro, mag)
 #[derive(Debug, Clone, Default)]
@@ -77,6 +73,15 @@ pub struct HilSensorData {
 #[derive(Debug, Clone, Default)]
 pub struct HilGpsData {
     pub gnss: RawGnssReading,
+}
+
+/// One received command with exact raw provenance for a MAVLink setpoint.
+#[derive(Clone, Debug)]
+pub struct ReceivedCommand {
+    /// Typed command supplied to the runtime.
+    pub command: SystemCommand,
+    /// Exact raw identity. Discrete commands do not carry this value.
+    pub provenance: Option<MavlinkCommandProvenance>,
 }
 
 /// SITL I/O transport layer
@@ -120,7 +125,8 @@ pub struct SitlIO {
     command: Option<SystemCommand>,
     // High-rate setpoint slot (latest-wins is the correct semantics
     // for a stream — only the newest setpoint matters).
-    flight_cmd: Option<SystemCommand>,
+    flight_cmd: Option<ReceivedCommand>,
+    command_source_epochs: SourceEpochTracker,
 
     // Heartbeat timing
     last_heartbeat_us: u64,
@@ -148,6 +154,7 @@ impl SitlIO {
         info!("SitlIO: Binding MAVLink/GCS port {}", config.sensor_port());
         let socket = UdpSocket::bind(("0.0.0.0", config.sensor_port()))?;
         socket.set_nonblocking(true)?;
+        let command_source_epochs = SourceEpochTracker::new()?;
 
         Ok(Self {
             socket,
@@ -159,6 +166,7 @@ impl SitlIO {
             gps_data: None,
             command: None,
             flight_cmd: None,
+            command_source_epochs,
             last_heartbeat_us: 0,
             gcs_addr: None,
             rx_count: 0,
@@ -237,6 +245,8 @@ impl SitlIO {
                 .baro
                 .map_or_else(RawBaroReading::default, |d| RawBaroReading {
                     pressure_pa: d.pressure_pa,
+                    differential_pressure_pa: d.differential_pressure_pa,
+                    pressure_altitude_m: d.pressure_altitude_m,
                     temperature_c: d.temperature_c,
                 });
 
@@ -291,237 +301,28 @@ impl SitlIO {
         self.actuator_cmd.take()
     }
 
+    /// Clear data that must not cross a reset generation.
+    pub fn clear_generation_state(&mut self) {
+        let mut buffer = [0_u8; 1_024];
+        loop {
+            match self.socket.recv_from(&mut buffer) {
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                Err(_) => break,
+            }
+        }
+        self.sensor_data = None;
+        self.gps_data = None;
+        self.command = None;
+        self.flight_cmd = None;
+        self.actuator_cmd = None;
+        self.armed = false;
+        self.system_status = MavState::Boot as u8;
+    }
+
     /// Check if there's a pending actuator command
     pub fn has_actuator_cmd(&self) -> bool {
         self.actuator_cmd.is_some()
-    }
-
-    /// Process received MAVLink data
-    fn process_mavlink_data(&mut self, data: &[u8], src: std::net::SocketAddr) {
-        match parse_mavlink(data) {
-            Ok((msg, _sig, _consumed)) => {
-                self.rx_count += 1;
-                self.handle_message(msg, src);
-            }
-            Err(e) => {
-                // Log parse errors to help debug GCS communication issues
-                warn!(
-                    "MAVLink parse error from {}: {:?} (len={}, first_bytes={:02x?})",
-                    src,
-                    e,
-                    data.len(),
-                    &data[..data.len().min(10)]
-                );
-            }
-        }
-    }
-
-    /// Handle a parsed MAVLink message
-    ///
-    /// Handles GCS commands (arm/disarm, setpoints). Sensor data is provided
-    /// via the Rust API (feed_sensor_packet) from the simulator backend.
-    fn handle_message(&mut self, msg: MavMessage, src: std::net::SocketAddr) {
-        match msg {
-            MavMessage::SetAttitudeTarget(tgt) => {
-                self.gcs_addr = Some(src);
-                self.handle_set_attitude_target(tgt);
-            }
-            MavMessage::SetPositionTargetLocalNed(tgt) => {
-                self.gcs_addr = Some(src);
-                self.handle_set_position_target(tgt);
-            }
-            MavMessage::CommandLong(cmd) => {
-                self.gcs_addr = Some(src);
-                self.handle_command_long(cmd);
-            }
-            MavMessage::Heartbeat(_) => {
-                self.gcs_addr = Some(src);
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_set_attitude_target(&mut self, tgt: SetAttitudeTarget) {
-        let cmd = bridge::mavlink_to_command(&tgt);
-        self.flight_cmd = Some(SystemCommand::FlightControl(cmd));
-    }
-
-    fn handle_set_position_target(&mut self, tgt: SetPositionTargetLocalNed) {
-        let cmd = bridge::mavlink_position_to_command(&tgt);
-        self.flight_cmd = Some(SystemCommand::FlightControl(cmd));
-    }
-
-    /// Decode a COMMAND_LONG and queue the command it names.
-    ///
-    /// A command the kernel will act on is deliberately NOT acked here.
-    /// Acking at decode time answers "the frame parsed", which the
-    /// operator reads as "the vehicle did it" — an arm the kernel then
-    /// refuses for an unsatisfied pre-arm gate would still have been
-    /// reported ACCEPTED. The ack for those commands is sent from
-    /// `report_outcome`, once the kernel has actually decided.
-    ///
-    /// Commands that never reach the kernel — unsupported, or malformed
-    /// parameters — are answered here, because no later decision is
-    /// coming for them.
-    fn handle_command_long(&mut self, cmd: CommandLong) {
-        info!(
-            "Received COMMAND_LONG: cmd={}, param1={}, target=({},{})",
-            cmd.command, cmd.param1, cmd.target_system, cmd.target_component
-        );
-
-        if cmd.command != mav_cmd::COMPONENT_ARM_DISARM {
-            warn!("Unsupported command: {}", cmd.command);
-            self.send_command_ack(cmd.command, mav_result::UNSUPPORTED, 0);
-            return;
-        }
-
-        // param2 carries the MAV_CMD_COMPONENT_ARM_DISARM force magic
-        // (21196) that QGroundControl and PX4 already use for a
-        // force-disarm. Honouring it routes an explicit operator
-        // override to the terminate path instead of leaving the
-        // ordinary disarm as the only way to cut power.
-        let forced = cmd.param2 == FORCE_ARM_DISARM_MAGIC;
-
-        if cmd.param1 == 1.0 {
-            info!("Processing ARM command");
-            self.command = Some(SystemCommand::Arm);
-        } else if cmd.param1 == 0.0 {
-            if forced {
-                warn!("Processing FORCED DISARM (emergency terminate)");
-                self.command = Some(SystemCommand::EmergencyTerminate);
-            } else {
-                info!("Processing DISARM command");
-                self.command = Some(SystemCommand::Disarm);
-            }
-        } else {
-            warn!("Invalid ARM param1: {}", cmd.param1);
-            self.send_command_ack(cmd.command, mav_result::DENIED, 0);
-        }
-    }
-
-    /// Send COMMAND_ACK response to GCS.
-    ///
-    /// `result_param2` carries machine-readable detail for a refusal —
-    /// for an arm, the bits of `PreArmFlags` still outstanding — so the
-    /// station can name what is missing rather than showing a bare
-    /// rejection.
-    fn send_command_ack(&mut self, command: u16, result: u8, result_param2: i32) {
-        let ack = CommandAck {
-            command,
-            result,
-            progress: 0,
-            result_param2,
-            target_system: 255, // Broadcast
-            target_component: 0,
-        };
-
-        if let Some(gcs_addr) = self.gcs_addr {
-            info!(
-                "Sending COMMAND_ACK to {}: cmd={}, result={}, detail=0x{:08x}",
-                gcs_addr, command, result, result_param2
-            );
-            self.send_message_to(&MavMessage::CommandAck(ack), gcs_addr);
-        } else {
-            warn!("Cannot send COMMAND_ACK - no GCS address known");
-        }
-    }
-
-    /// Send heartbeat message to GCS
-    ///
-    /// For Gazebo, sensor/actuator data flows via FFI bridge - no MAVLink to simulator.
-    /// Heartbeat is only sent to GCS so it learns our port and can send commands back.
-    fn send_heartbeat(&mut self) {
-        let hb = Heartbeat {
-            mav_type: MavType::Quadrotor as u8,
-            autopilot: MavAutopilot::Aviate as u8,
-            base_mode: if self.armed {
-                MavModeFlag::SAFETY_ARMED.0 | MavModeFlag::HIL_ENABLED.0
-            } else {
-                MavModeFlag::HIL_ENABLED.0
-            },
-            custom_mode: 0,
-            system_status: self.system_status,
-            mavlink_version: 3,
-        };
-
-        // Send heartbeat to GCS so it can discover our port
-        self.send_message_to(&MavMessage::Heartbeat(hb), self.config.gcs_addr);
-
-        // Also send to learned GCS address (if active/different)
-        if let Some(gcs_addr) = self.gcs_addr {
-            if gcs_addr != self.config.gcs_addr {
-                self.send_message_to(&MavMessage::Heartbeat(hb), gcs_addr);
-            }
-        }
-    }
-
-    /// Send a MAVLink message to a specific address via GCS socket
-    ///
-    /// Uses the MAVLink socket (port 20000+...) so responses come from the same port
-    /// that we're listening on for commands.
-    fn send_message_to(&mut self, msg: &MavMessage, addr: std::net::SocketAddr) {
-        let mut buf = [0u8; 300];
-        // System ID = instance + 1, Component ID = 1 (Autopilot)
-        if let Some(len) = serialize_mavlink(msg, self.seq, self.config.instance + 1, 1, &mut buf) {
-            self.seq = self.seq.wrapping_add(1);
-            let _ = self.socket.send_to(&buf[..len], addr);
-            self.tx_count += 1;
-        }
-    }
-
-    /// Set armed state (for MAVLink mode flags)
-    pub fn set_armed(&mut self, armed: bool) {
-        self.armed = armed;
-        if armed {
-            info!("MAVLink armed");
-        } else {
-            info!("MAVLink disarmed");
-        }
-    }
-
-    /// Set system status for heartbeat
-    ///
-    /// Maps FC init states to MAV_STATE:
-    /// - `MavState::Boot` (1): PowerOn, ConfigLoading
-    /// - `MavState::Calibrating` (2): SensorInit, EstimatorConverging
-    /// - `MavState::Standby` (3): Ready (disarmed, can be armed)
-    /// - `MavState::Active` (4): Armed
-    ///
-    /// Called by runtime when init state changes.
-    pub fn set_system_status(&mut self, status: MavState) {
-        self.system_status = status as u8;
-    }
-
-    /// Check if armed
-    pub fn is_armed(&self) -> bool {
-        self.armed
-    }
-
-    /// Get statistics
-    pub fn stats(&self) -> (u64, u64) {
-        (self.rx_count, self.tx_count)
-    }
-
-    /// Get the address actuator commands are sent to
-    pub fn simulator_addr(&self) -> std::net::SocketAddr {
-        self.config.simulator_addr()
-    }
-
-    /// Get the sensor port we're listening on
-    pub fn sensor_port(&self) -> u16 {
-        self.config.sensor_port()
-    }
-
-    /// Get the connected GCS address (if any)
-    pub fn gcs_addr(&self) -> Option<std::net::SocketAddr> {
-        self.gcs_addr
-    }
-
-    /// Borrow the underlying network/instance configuration. Used by
-    /// the SitlRunner to spin up auxiliary listeners (fault command,
-    /// etc.) on the same instance number.
-    pub fn config(&self) -> &XilConfig {
-        &self.config
     }
 }
 
@@ -552,144 +353,5 @@ impl SystemHal for SitlIO {
     fn enter_bootloader(&mut self) -> ! {
         warn!("Bootloader not supported in SITL");
         std::process::exit(1);
-    }
-}
-
-// Implement CommandHal - receives commands from GCS
-impl CommandHal for SitlIO {
-    fn recv_command(&mut self) -> Option<SystemCommand> {
-        self.poll();
-        // Discrete commands (arm/disarm) first: they must never be
-        // starved or dropped by the setpoint stream.
-        self.command.take().or_else(|| self.flight_cmd.take())
-    }
-
-    /// Answer the station with what the kernel actually did.
-    ///
-    /// A refusal maps to TEMPORARILY_REJECTED when asking again could
-    /// succeed and DENIED when it could not, so the station can tell
-    /// "wait" from "use a different control". The outstanding pre-arm
-    /// bits ride in `result_param2`; MAV_RESULT alone cannot say *which*
-    /// gate is unsatisfied, and that is precisely the diagnosis the
-    /// operator needs.
-    fn report_outcome(&mut self, command: &SystemCommand, outcome: CommandOutcome) {
-        let mav_command = match command {
-            SystemCommand::Arm | SystemCommand::Disarm | SystemCommand::EmergencyTerminate => {
-                mav_cmd::COMPONENT_ARM_DISARM
-            }
-            // Setpoints are not COMMAND_LONG and are never acked.
-            SystemCommand::FlightControl(_) => return,
-        };
-
-        let (result, detail) = match outcome {
-            CommandOutcome::Accepted => (mav_result::ACCEPTED, 0),
-            CommandOutcome::ArmRejected { missing, .. } if outcome.is_retryable() => {
-                (mav_result::TEMPORARILY_REJECTED, missing.bits() as i32)
-            }
-            CommandOutcome::ArmRejected { missing, .. } => {
-                (mav_result::DENIED, missing.bits() as i32)
-            }
-            CommandOutcome::DisarmRejected(_) => (mav_result::DENIED, 0),
-        };
-
-        self.send_command_ack(mav_command, result, detail);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::expect_used, clippy::panic)]
-
-    use super::*;
-    use crate::XilNetConfig;
-
-    /// Ephemeral-port config so tests never collide on a fixed port
-    /// (base_port 0 + SensorIn slot 0 → OS-assigned bind).
-    fn test_io() -> SitlIO {
-        let net = XilNetConfig {
-            base_port: 0,
-            stride: 16,
-        };
-        SitlIO::new(XilConfig::for_instance_with_net(0, net)).expect("bind ephemeral UDP")
-    }
-
-    fn arm_msg() -> CommandLong {
-        CommandLong {
-            param1: 1.0,
-            param2: 0.0,
-            param3: 0.0,
-            param4: 0.0,
-            param5: 0.0,
-            param6: 0.0,
-            param7: 0.0,
-            command: mav_cmd::COMPONENT_ARM_DISARM,
-            target_system: 1,
-            target_component: 1,
-            confirmation: 0,
-        }
-    }
-
-    fn attitude_msg(thrust: f32) -> SetAttitudeTarget {
-        SetAttitudeTarget {
-            time_boot_ms: 0,
-            target_system: 1,
-            target_component: 1,
-            type_mask: 0,
-            q: [1.0, 0.0, 0.0, 0.0],
-            body_roll_rate: 0.0,
-            body_pitch_rate: 0.0,
-            body_yaw_rate: 0.0,
-            thrust,
-            thrust_body: [0.0, 0.0, 0.0],
-        }
-    }
-
-    /// A setpoint parsed in the same poll batch after an Arm must not
-    /// clobber it: both survive, discrete command first.
-    #[test]
-    fn setpoint_in_same_batch_does_not_clobber_arm() {
-        let mut io = test_io();
-        io.handle_command_long(arm_msg());
-        io.handle_set_attitude_target(attitude_msg(0.4));
-
-        assert!(matches!(io.recv_command(), Some(SystemCommand::Arm)));
-        match io.recv_command() {
-            Some(SystemCommand::FlightControl(cmd)) => {
-                assert!((cmd.setpoint.collective_thrust.0 - 0.4).abs() < 1e-6);
-            }
-            other => panic!("expected buffered FlightControl, got {other:?}"),
-        }
-    }
-
-    /// Arm parsed after a setpoint in the same batch: discrete command
-    /// still drains first, the setpoint is preserved behind it.
-    #[test]
-    fn arm_after_setpoint_in_same_batch_preserves_both() {
-        let mut io = test_io();
-        io.handle_set_attitude_target(attitude_msg(0.7));
-        io.handle_command_long(arm_msg());
-
-        assert!(matches!(io.recv_command(), Some(SystemCommand::Arm)));
-        assert!(matches!(
-            io.recv_command(),
-            Some(SystemCommand::FlightControl(_))
-        ));
-        assert!(io.recv_command().is_none());
-    }
-
-    /// Setpoints remain latest-wins: only the newest survives a batch.
-    #[test]
-    fn setpoint_slot_is_latest_wins() {
-        let mut io = test_io();
-        io.handle_set_attitude_target(attitude_msg(0.2));
-        io.handle_set_attitude_target(attitude_msg(0.9));
-
-        match io.recv_command() {
-            Some(SystemCommand::FlightControl(cmd)) => {
-                assert!((cmd.setpoint.collective_thrust.0 - 0.9).abs() < 1e-6);
-            }
-            other => panic!("expected latest setpoint, got {other:?}"),
-        }
-        assert!(io.recv_command().is_none());
     }
 }

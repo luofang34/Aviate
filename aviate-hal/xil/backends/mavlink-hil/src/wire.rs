@@ -86,8 +86,18 @@ pub enum ParseError {
     InvalidStartByte,
     /// CRC mismatch
     CrcMismatch,
-    /// Unknown message ID
-    UnknownMessageId(u8),
+    /// A well-formed frame carrying a message this dialect subset does
+    /// not decode. The frame's total length travels with the error so a
+    /// caller skips the WHOLE frame: advancing a single byte instead
+    /// would rescan the frame's own payload as if it were a new frame,
+    /// turning every unmodelled message on the link into a burst of
+    /// spurious CRC failures.
+    UnknownMessage {
+        /// The undecoded message id.
+        msg_id: u8,
+        /// Bytes to advance to reach the next frame.
+        consumed: usize,
+    },
     /// Invalid payload
     InvalidPayload,
 }
@@ -148,8 +158,12 @@ fn parse_frame_v2(data: &[u8], start_pos: usize) -> Result<(MavFrame, usize), Pa
         return Err(ParseError::Incomplete);
     }
 
-    // Get CRC extra for this message
-    let extra = crc_extra(msg_id).ok_or(ParseError::UnknownMessageId(msg_id))?;
+    // Get CRC extra for this message. An unmodelled message is still a
+    // COMPLETE frame whose length the header already gave us.
+    let extra = crc_extra(msg_id).ok_or(ParseError::UnknownMessage {
+        msg_id,
+        consumed: start_pos + frame_len,
+    })?;
 
     // Verify CRC (over header[1..10] + payload)
     let crc_data = &data[1..HEADER_SIZE + len];
@@ -193,8 +207,12 @@ fn parse_frame_v1(data: &[u8], start_pos: usize) -> Result<(MavFrame, usize), Pa
         return Err(ParseError::Incomplete);
     }
 
-    // Get CRC extra for this message
-    let extra = crc_extra(msg_id).ok_or(ParseError::UnknownMessageId(msg_id))?;
+    // Get CRC extra for this message. An unmodelled message is still a
+    // COMPLETE frame whose length the header already gave us.
+    let extra = crc_extra(msg_id).ok_or(ParseError::UnknownMessage {
+        msg_id,
+        consumed: start_pos + frame_len,
+    })?;
 
     // Verify CRC (over header[1..6] + payload for v1)
     let crc_data = &data[1..HEADER_SIZE_V1 + len];
@@ -222,29 +240,54 @@ fn parse_frame_v1(data: &[u8], start_pos: usize) -> Result<(MavFrame, usize), Pa
 }
 
 /// Parse message payload
+/// Restores a MAVLink 2 payload to its full message length.
+///
+/// A v2 sender TRUNCATES trailing zero bytes, so a payload arrives
+/// shorter than the message whenever its last fields are zero — a
+/// stationary vehicle's sensor id, an unset extension. The truncated
+/// bytes ARE zeros by definition, so the decoder is handed a
+/// zero-extended copy. Refusing the short payload instead would reject
+/// most of a real link's traffic and, worse, resync byte by byte
+/// through frames that were never corrupt.
+fn zero_extended<const N: usize>(payload: &[u8]) -> [u8; N] {
+    let mut full = [0u8; N];
+    let len = payload.len().min(N);
+    full[..len].copy_from_slice(&payload[..len]);
+    full
+}
+
 fn parse_message(msg_id: u8, payload: &[u8]) -> Result<HilMessage, ParseError> {
     match msg_id {
         HEARTBEAT_ID => {
-            let msg = Heartbeat::from_bytes(payload).ok_or(ParseError::InvalidPayload)?;
+            let full = zero_extended::<{ Heartbeat::SIZE }>(payload);
+            let msg = Heartbeat::from_bytes(&full).ok_or(ParseError::InvalidPayload)?;
             Ok(HilMessage::Heartbeat(msg))
         }
         HIL_SENSOR_ID => {
-            let msg = HilSensor::from_bytes(payload).ok_or(ParseError::InvalidPayload)?;
+            let full = zero_extended::<{ HilSensor::SIZE }>(payload);
+            let msg = HilSensor::from_bytes(&full).ok_or(ParseError::InvalidPayload)?;
             Ok(HilMessage::Sensor(msg))
         }
         HIL_GPS_ID => {
+            // The GNSS message's own extension fields are already
+            // length-gated inside its decoder, so it takes the payload
+            // as received.
             let msg = HilGps::from_bytes(payload).ok_or(ParseError::InvalidPayload)?;
             Ok(HilMessage::Gps(msg))
         }
         HIL_STATE_QUATERNION_ID => {
-            let msg = HilStateQuaternion::from_bytes(payload).ok_or(ParseError::InvalidPayload)?;
+            let full = zero_extended::<{ HilStateQuaternion::SIZE }>(payload);
+            let msg = HilStateQuaternion::from_bytes(&full).ok_or(ParseError::InvalidPayload)?;
             Ok(HilMessage::StateQuaternion(msg))
         }
         HIL_ACTUATOR_CONTROLS_ID => {
-            let msg = HilActuatorControls::from_bytes(payload).ok_or(ParseError::InvalidPayload)?;
+            let full = zero_extended::<{ HilActuatorControls::SIZE }>(payload);
+            let msg = HilActuatorControls::from_bytes(&full).ok_or(ParseError::InvalidPayload)?;
             Ok(HilMessage::ActuatorControls(msg))
         }
-        _ => Err(ParseError::UnknownMessageId(msg_id)),
+        // Reached only when a crc_extra entry exists without a decoder;
+        // the caller cannot know the frame length here, so it resyncs.
+        _ => Err(ParseError::InvalidPayload),
     }
 }
 
@@ -530,5 +573,120 @@ mod tests {
             return;
         };
         assert_eq!(parsed.mav_type, heartbeat.mav_type);
+    }
+}
+
+#[cfg(test)]
+mod unknown_message_tests {
+    use super::{parse_frame, serialize_frame, HilMessage, HilSensor, ParseError};
+
+    /// Builds a well-formed v2 frame for a message id this subset does
+    /// not decode, using a CRC extra the parser will never resolve.
+    fn undecodable_frame() -> Vec<u8> {
+        // HIL_RC_INPUTS_RAW (92) is on the wire of real HIL bridges and
+        // is deliberately not in this subset.
+        let payload = [0u8; 33];
+        let mut frame = vec![0xFD, payload.len() as u8, 0, 0, 0, 1, 1, 92, 0, 0];
+        frame.extend_from_slice(&payload);
+        frame.extend_from_slice(&[0, 0]); // CRC; never checked for an unknown id
+        frame
+    }
+
+    #[test]
+    fn an_undecodable_frame_reports_its_whole_length() {
+        let frame = undecodable_frame();
+        let parsed = parse_frame(&frame);
+        assert!(matches!(
+            parsed,
+            Err(ParseError::UnknownMessage { msg_id: 92, .. })
+        ));
+        let Err(ParseError::UnknownMessage { consumed, .. }) = parsed else {
+            return;
+        };
+        assert_eq!(
+            consumed,
+            frame.len(),
+            "the caller must be able to skip the frame, not rescan its payload"
+        );
+    }
+
+    #[test]
+    fn a_known_frame_after_an_unknown_one_still_decodes() {
+        // This is the failure the length matters for: a link carrying an
+        // unmodelled message between sensor samples must not shred the
+        // samples that follow it.
+        let sensor = HilSensor {
+            time_usec: 4_242,
+            fields_updated: 0xFFFF_FFFF,
+            ..HilSensor::default()
+        };
+        let mut buf = [0u8; 512];
+        let len = serialize_frame(&HilMessage::Sensor(sensor), 0, 1, 1, &mut buf);
+        assert!(len.is_some());
+        let Some(len) = len else {
+            return;
+        };
+
+        let mut stream = undecodable_frame();
+        let skip = stream.len();
+        stream.extend_from_slice(&buf[..len]);
+
+        let parsed = parse_frame(&stream[skip..]);
+        assert!(parsed.is_ok());
+        let Ok((frame, _)) = parsed else {
+            return;
+        };
+        assert!(matches!(frame.message, HilMessage::Sensor(_)));
+    }
+}
+
+#[cfg(test)]
+mod truncation_tests {
+    use super::{parse_frame, serialize_frame, HilMessage, HilSensor};
+
+    #[test]
+    fn a_v2_truncated_payload_still_decodes() {
+        // A v2 sender drops trailing zero bytes. A stationary vehicle's
+        // sensor id is zero, so most real sensor frames arrive short —
+        // and refusing them would reject most of the link's traffic.
+        let sensor = HilSensor {
+            time_usec: 1_234_567,
+            zacc: -9.81,
+            fields_updated: 0x0000_003F,
+            id: 0,
+            ..HilSensor::default()
+        };
+        let mut buf = [0u8; 512];
+        let len = serialize_frame(&HilMessage::Sensor(sensor), 0, 1, 1, &mut buf);
+        assert!(len.is_some());
+        let Some(len) = len else {
+            return;
+        };
+
+        // Rebuild the frame with the payload's trailing zero byte (the
+        // sensor id) removed, exactly as a v2 sender would emit it.
+        let mut truncated = buf[..len].to_vec();
+        let payload_len = usize::from(truncated[1]);
+        let crc_start = 10 + payload_len;
+        let crc = crc_start + 2;
+        assert_eq!(truncated.len(), crc);
+        truncated.remove(crc_start - 1);
+        truncated[1] = u8::try_from(payload_len - 1).unwrap_or(0);
+        // Recompute the CRC over the shortened payload.
+        let recomputed = super::crc_calculate(&truncated[1..10 + payload_len - 1], 108);
+        let tail = truncated.len() - 2;
+        truncated[tail..].copy_from_slice(&recomputed.to_le_bytes());
+
+        let parsed = parse_frame(&truncated);
+        assert!(parsed.is_ok(), "a truncated frame must decode: {parsed:?}");
+        let Ok((frame, _)) = parsed else {
+            return;
+        };
+        let HilMessage::Sensor(decoded) = frame.message else {
+            return;
+        };
+        assert_eq!(decoded.time_usec, 1_234_567);
+        assert!((decoded.zacc - (-9.81)).abs() < 1e-6);
+        assert_eq!(decoded.id, 0, "the truncated byte reads back as zero");
     }
 }

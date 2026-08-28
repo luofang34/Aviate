@@ -45,7 +45,7 @@ pub fn validate(config: &AppConfig) -> Result<(), ConfigError> {
     // Validate simulator config if present
     if let Some(ref sim) = config.simulator {
         match sim.backend.as_str() {
-            "gazebo" | "jmavsim" => {}
+            "gazebo" | "jmavsim" | "xplane" => {}
             _ => return Err(ConfigError::ValidationError),
         }
     }

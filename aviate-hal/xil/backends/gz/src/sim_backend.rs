@@ -1,42 +1,213 @@
-//! SimulatorBackend implementation for Gazebo
-//!
-//! This module provides the `GazeboSimBackend` which implements the
-//! `SimulatorBackend` trait from aviate-hal-xil, enabling backend-agnostic
-//! mission execution with Gazebo.
+//! Typed simulator backend for Gazebo.
+
+use std::time::Duration;
+
+use aviate_hal_xil::{
+    BackendStatus, DirectiveReceipt, FrameEvent, SimulatorBackend, SimulatorDirective,
+    SimulatorError, SimulatorOperation,
+};
+#[cfg(feature = "gz-plugin")]
+use aviate_hal_xil::{
+    DirectiveOutcome, MavClient, ResetGeneration, SimulatorDirectiveKind, SimulatorFrame,
+    SimulatorLifecycle, VehicleState,
+};
 
 #[cfg(feature = "gz-plugin")]
 use crate::plugin::{
     enu_quat_to_ned_f32, enu_to_ned_f32, flu_to_frd_f32, GzPluginBridge, GzPluginError,
 };
 
-#[cfg(feature = "gz-plugin")]
-use aviate_hal_xil::{SimulatorBackend, SimulatorError, VehicleState};
-
-/// Gazebo simulator backend
-///
-/// Wraps `GzPluginBridge` to implement the `SimulatorBackend` trait.
-/// This enables using the generic `MissionRunner` with Gazebo.
-#[cfg(feature = "gz-plugin")]
+/// Gazebo backend for the XIL directive contract.
 pub struct GazeboSimBackend {
+    #[cfg(feature = "gz-plugin")]
     bridge: Option<GzPluginBridge>,
+    #[cfg(feature = "gz-plugin")]
+    mav: Option<MavClient>,
     instance: u8,
+    status: BackendStatus,
+}
+
+impl GazeboSimBackend {
+    /// Create a disconnected backend.
+    #[must_use]
+    pub fn new(instance: u8) -> Self {
+        Self {
+            #[cfg(feature = "gz-plugin")]
+            bridge: None,
+            #[cfg(feature = "gz-plugin")]
+            mav: None,
+            instance,
+            status: BackendStatus::default(),
+        }
+    }
+
+    /// Create and connect a backend.
+    pub fn connect_new(instance: u8, timeout_ms: u64) -> Result<Self, SimulatorError> {
+        let mut backend = Self::new(instance);
+        backend.connect(instance, Duration::from_millis(timeout_ms))?;
+        Ok(backend)
+    }
+
+    #[cfg(feature = "gz-plugin")]
+    fn receipt(
+        &self,
+        directive: &SimulatorDirective,
+        outcome: DirectiveOutcome,
+    ) -> DirectiveReceipt {
+        DirectiveReceipt {
+            id: directive.id,
+            generation: self.status.generation,
+            step: self.status.step,
+            simulation_time: self.status.simulation_time,
+            outcome,
+        }
+    }
+
+    #[cfg(feature = "gz-plugin")]
+    fn check_generation(&self, directive: &SimulatorDirective) -> Result<(), SimulatorError> {
+        if directive.generation == self.status.generation {
+            Ok(())
+        } else {
+            Err(SimulatorError::StaleGeneration {
+                expected: self.status.generation,
+                received: directive.generation,
+            })
+        }
+    }
+
+    #[cfg(feature = "gz-plugin")]
+    fn mav_mut(&mut self, operation: SimulatorOperation) -> Result<&mut MavClient, SimulatorError> {
+        self.mav
+            .as_mut()
+            .ok_or_else(|| SimulatorError::NotAvailable {
+                operation,
+                detail: "the command link is not connected".to_owned(),
+            })
+    }
+
+    #[cfg(feature = "gz-plugin")]
+    fn send_setpoint(&mut self, command: &aviate_core::control::Command) -> bool {
+        use aviate_core::control::ControlMode;
+
+        let Some(mav) = self.mav.as_mut() else {
+            return false;
+        };
+        if command.mode == ControlMode::PositionHold {
+            let Some(position) = command.setpoint.position else {
+                return false;
+            };
+            mav.send_position_target(
+                position[0].0,
+                position[1].0,
+                position[2].0,
+                command.setpoint.heading.map_or(0.0, |value| value.0),
+            )
+        } else {
+            let attitude = command
+                .setpoint
+                .attitude
+                .unwrap_or(aviate_core::math::Quaternion::IDENTITY);
+            mav.send_attitude_target(
+                [attitude.w, attitude.x, attitude.y, attitude.z],
+                command.setpoint.collective_thrust.0,
+            )
+        }
+    }
+}
+
+impl Default for GazeboSimBackend {
+    fn default() -> Self {
+        Self::new(0)
+    }
 }
 
 #[cfg(feature = "gz-plugin")]
 impl GazeboSimBackend {
-    /// Create a new Gazebo backend (not yet connected)
-    pub fn new(instance: u8) -> Self {
-        Self {
-            bridge: None,
-            instance,
-        }
+    fn start(
+        &mut self,
+        directive: &SimulatorDirective,
+    ) -> Result<DirectiveReceipt, SimulatorError> {
+        let bridge = self
+            .bridge
+            .as_ref()
+            .ok_or_else(|| SimulatorError::NotAvailable {
+                operation: SimulatorOperation::Start,
+                detail: "the Gazebo bridge is not connected".to_owned(),
+            })?;
+        bridge
+            .set_lockstep(true)
+            .map_err(|error| SimulatorError::ConnectionFailed {
+                backend: self.name().to_owned(),
+                detail: error.to_string(),
+            })?;
+        self.status.lifecycle = SimulatorLifecycle::Converging;
+        Ok(self.receipt(directive, DirectiveOutcome::Started))
     }
 
-    /// Create and connect to Gazebo in one step
-    pub fn connect_new(instance: u8, timeout_ms: u64) -> Result<Self, SimulatorError> {
-        let mut backend = Self::new(instance);
-        backend.connect(instance, timeout_ms)?;
-        Ok(backend)
+    fn stop(&mut self, directive: &SimulatorDirective) -> Result<DirectiveReceipt, SimulatorError> {
+        if let Some(bridge) = self.bridge.as_ref() {
+            bridge
+                .set_lockstep(false)
+                .map_err(|error| SimulatorError::ConnectionFailed {
+                    backend: self.name().to_owned(),
+                    detail: error.to_string(),
+                })?;
+        }
+        self.status.lifecycle = SimulatorLifecycle::Stopped;
+        self.status.armed = false;
+        Ok(self.receipt(directive, DirectiveOutcome::Stopped))
+    }
+
+    fn arm_ready(
+        &self,
+        directive: &SimulatorDirective,
+    ) -> Result<DirectiveReceipt, SimulatorError> {
+        if self.status.lifecycle != SimulatorLifecycle::Ready {
+            return Err(SimulatorError::ReadinessFailed {
+                generation: self.status.generation,
+                detail: "the Gazebo model is not ready".to_owned(),
+            });
+        }
+        Ok(self.receipt(directive, DirectiveOutcome::ArmReady))
+    }
+
+    fn arm(&mut self, directive: &SimulatorDirective) -> Result<DirectiveReceipt, SimulatorError> {
+        if !self.mav_mut(SimulatorOperation::Arm)?.send_arm() {
+            return Err(SimulatorError::ArmRefused {
+                generation: self.status.generation,
+                detail: "the command link did not send the arm request".to_owned(),
+            });
+        }
+        self.status.armed = true;
+        Ok(self.receipt(directive, DirectiveOutcome::Armed))
+    }
+
+    fn setpoint(
+        &mut self,
+        directive: &SimulatorDirective,
+        command: &aviate_core::control::Command,
+    ) -> Result<DirectiveReceipt, SimulatorError> {
+        if !self.send_setpoint(command) {
+            return Err(SimulatorError::NotAvailable {
+                operation: SimulatorOperation::Setpoint,
+                detail: "the command link did not send the setpoint".to_owned(),
+            });
+        }
+        Ok(self.receipt(directive, DirectiveOutcome::SetpointAccepted))
+    }
+
+    fn disarm(
+        &mut self,
+        directive: &SimulatorDirective,
+    ) -> Result<DirectiveReceipt, SimulatorError> {
+        if !self.mav_mut(SimulatorOperation::Disarm)?.send_disarm() {
+            return Err(SimulatorError::NotAvailable {
+                operation: SimulatorOperation::Disarm,
+                detail: "the command link did not send the disarm request".to_owned(),
+            });
+        }
+        self.status.armed = false;
+        Ok(self.receipt(directive, DirectiveOutcome::Disarmed))
     }
 }
 
@@ -46,82 +217,99 @@ impl SimulatorBackend for GazeboSimBackend {
         "gazebo"
     }
 
-    fn connect(&mut self, instance: u8, timeout_ms: u64) -> Result<(), SimulatorError> {
-        let max_attempts = (timeout_ms / 500).max(1) as u32;
+    fn connect(
+        &mut self,
+        instance: u8,
+        timeout: Duration,
+    ) -> Result<BackendStatus, SimulatorError> {
+        let interval_ms = 500_u64;
+        let attempts =
+            u32::try_from((timeout.as_millis() as u64 / interval_ms).max(1)).unwrap_or(u32::MAX);
+        let bridge = GzPluginBridge::connect_instance_with_retry(instance, attempts, interval_ms)
+            .map_err(|error| match error {
+            GzPluginError::PluginNotRunning => SimulatorError::NotAvailable {
+                operation: SimulatorOperation::Connect,
+                detail: "the Gazebo plugin is not running".to_owned(),
+            },
+            _ => SimulatorError::ConnectionFailed {
+                backend: self.name().to_owned(),
+                detail: error.to_string(),
+            },
+        })?;
+        self.status.generation = ResetGeneration::new(bridge.reset_generation());
+        self.status.lifecycle = SimulatorLifecycle::Converging;
+        self.bridge = Some(bridge);
+        self.mav = Some(MavClient::new(instance)?);
+        self.instance = instance;
+        Ok(self.status)
+    }
 
-        match GzPluginBridge::connect_instance_with_retry(instance, max_attempts, 500) {
-            Ok(bridge) => {
-                self.bridge = Some(bridge);
-                self.instance = instance;
-                Ok(())
-            }
-            Err(GzPluginError::PluginNotRunning) => Err(SimulatorError::NotAvailable(
-                "Gazebo plugin not running".to_string(),
-            )),
-            Err(e) => Err(SimulatorError::ConnectionFailed(e.to_string())),
+    fn status(&self) -> BackendStatus {
+        self.status
+    }
+
+    fn execute(
+        &mut self,
+        directive: SimulatorDirective,
+        _timeout: Duration,
+    ) -> Result<DirectiveReceipt, SimulatorError> {
+        self.check_generation(&directive)?;
+        match &directive.kind {
+            SimulatorDirectiveKind::Start => self.start(&directive),
+            SimulatorDirectiveKind::Stop => self.stop(&directive),
+            SimulatorDirectiveKind::Reset => Err(SimulatorError::NotAvailable {
+                operation: SimulatorOperation::Reset,
+                detail: "the Gazebo world-reset acknowledgement is not available".to_owned(),
+            }),
+            SimulatorDirectiveKind::CheckArmReadiness => self.arm_ready(&directive),
+            SimulatorDirectiveKind::Arm => self.arm(&directive),
+            SimulatorDirectiveKind::Setpoint(command) => self.setpoint(&directive, command),
+            SimulatorDirectiveKind::Disarm => self.disarm(&directive),
         }
     }
 
-    fn is_connected(&self) -> bool {
-        self.bridge.as_ref().is_some_and(|b| b.is_connected())
-    }
-
-    fn get_vehicle_state(&self) -> Option<VehicleState> {
-        let bridge = self.bridge.as_ref()?;
-        let state = bridge.get_model_state()?;
-
-        // Convert from gz's ENU-world / FLU-body convention to
-        // NED-world / FRD-body, the convention every aviate
-        // consumer (FC kernel, test harness criteria, MAVLink
-        // bridge) operates in. Without the orientation conversion
-        // here the vehicle state surfaces gz's raw quaternion —
-        // mixed-frame data that silently breaks attitude
-        // criteria and any post-mortem trace.
-        let ned_pos = enu_to_ned_f32(state.pos);
-        let ned_vel = enu_to_ned_f32(state.vel);
-        let ned_quat = enu_quat_to_ned_f32(state.quat);
-        let body_ang_vel_frd = flu_to_frd_f32(state.ang_vel);
-
-        Some(VehicleState {
-            position: ned_pos,
-            velocity: ned_vel,
-            orientation: ned_quat,
-            angular_velocity: body_ang_vel_frd,
-            time_us: state.time_us,
-            valid: state.valid != 0,
-        })
-    }
-
-    fn set_motor_speeds(&mut self, speeds: &[f64]) -> Result<(), SimulatorError> {
+    fn next_frame(&mut self, timeout: Duration) -> Result<FrameEvent, SimulatorError> {
         let bridge = self
             .bridge
             .as_ref()
-            .ok_or_else(|| SimulatorError::NotAvailable("Not connected".to_string()))?;
-
-        bridge
-            .set_motor_speeds(speeds)
-            .map_err(|e| SimulatorError::ConnectionFailed(e.to_string()))
-    }
-
-    fn set_lockstep(&mut self, enabled: bool) {
-        if let Some(ref bridge) = self.bridge {
-            // The trait cannot report failure, so surface it here:
-            // a run that quietly free-runs when the harness asked to
-            // step is non-reproducible evidence, not a minor warning.
-            if let Err(e) = bridge.set_lockstep(enabled) {
-                log::error!("lockstep {enabled} requested but not armed: {e}");
-            }
+            .ok_or_else(|| SimulatorError::NotAvailable {
+                operation: SimulatorOperation::NextFrame,
+                detail: "the Gazebo bridge is not connected".to_owned(),
+            })?;
+        let Some(model_state) = bridge.wait_for_state(
+            self.status.step,
+            u64::try_from(timeout.as_micros()).unwrap_or(u64::MAX),
+        ) else {
+            return Ok(FrameEvent::TimedOut {
+                generation: self.status.generation,
+                last_step: self.status.step,
+                timeout,
+            });
+        };
+        let reset_generation = ResetGeneration::new(model_state.reset_generation);
+        if reset_generation != self.status.generation {
+            return Err(SimulatorError::StaleGeneration {
+                expected: self.status.generation,
+                received: reset_generation,
+            });
         }
-    }
-
-    fn sim_step(&self) -> u64 {
-        self.bridge.as_ref().map(|b| b.sim_step()).unwrap_or(0)
-    }
-
-    fn ack_step(&mut self, step: u64) {
-        if let Some(ref bridge) = self.bridge {
-            bridge.ack_step(step);
+        let step = model_state.sim_step;
+        let state = vehicle_state(&model_state);
+        let simulation_time = Duration::from_micros(model_state.time_us);
+        bridge.ack_step(step);
+        self.status.step = step;
+        self.status.simulation_time = simulation_time;
+        if state.valid {
+            self.status.lifecycle = SimulatorLifecycle::Ready;
         }
+        Ok(FrameEvent::Frame(SimulatorFrame {
+            generation: self.status.generation,
+            step,
+            simulation_time,
+            lifecycle: self.status.lifecycle,
+            vehicle: state,
+            armed: self.status.armed,
+        }))
     }
 
     fn instance(&self) -> u8 {
@@ -129,30 +317,19 @@ impl SimulatorBackend for GazeboSimBackend {
     }
 }
 
-// Stub implementation when gz-plugin feature is not enabled
-#[cfg(not(feature = "gz-plugin"))]
-pub struct GazeboSimBackend {
-    instance: u8,
-}
-
-#[cfg(not(feature = "gz-plugin"))]
-impl GazeboSimBackend {
-    pub fn new(instance: u8) -> Self {
-        Self { instance }
-    }
-
-    pub fn connect_new(
-        _instance: u8,
-        _timeout_ms: u64,
-    ) -> Result<Self, aviate_hal_xil::SimulatorError> {
-        Err(aviate_hal_xil::SimulatorError::NotAvailable(
-            "gz-plugin feature not enabled".to_string(),
-        ))
+#[cfg(feature = "gz-plugin")]
+fn vehicle_state(state: &crate::plugin::AviateModelState) -> VehicleState {
+    VehicleState {
+        position: enu_to_ned_f32(state.pos),
+        velocity: enu_to_ned_f32(state.vel),
+        orientation: enu_quat_to_ned_f32(state.quat),
+        angular_velocity: flu_to_frd_f32(state.ang_vel),
+        valid: state.valid != 0,
     }
 }
 
 #[cfg(not(feature = "gz-plugin"))]
-impl aviate_hal_xil::SimulatorBackend for GazeboSimBackend {
+impl SimulatorBackend for GazeboSimBackend {
     fn name(&self) -> &str {
         "gazebo"
     }
@@ -160,34 +337,35 @@ impl aviate_hal_xil::SimulatorBackend for GazeboSimBackend {
     fn connect(
         &mut self,
         _instance: u8,
-        _timeout_ms: u64,
-    ) -> Result<(), aviate_hal_xil::SimulatorError> {
-        Err(aviate_hal_xil::SimulatorError::NotAvailable(
-            "gz-plugin feature not enabled".to_string(),
-        ))
+        _timeout: Duration,
+    ) -> Result<BackendStatus, SimulatorError> {
+        Err(SimulatorError::NotAvailable {
+            operation: SimulatorOperation::Connect,
+            detail: "the gz-plugin feature is not enabled".to_owned(),
+        })
     }
 
-    fn is_connected(&self) -> bool {
-        false
+    fn status(&self) -> BackendStatus {
+        self.status
     }
 
-    fn get_vehicle_state(&self) -> Option<aviate_hal_xil::VehicleState> {
-        None
+    fn execute(
+        &mut self,
+        directive: SimulatorDirective,
+        _timeout: Duration,
+    ) -> Result<DirectiveReceipt, SimulatorError> {
+        Err(SimulatorError::NotAvailable {
+            operation: directive.kind.operation(),
+            detail: "the gz-plugin feature is not enabled".to_owned(),
+        })
     }
 
-    fn set_motor_speeds(&mut self, _speeds: &[f64]) -> Result<(), aviate_hal_xil::SimulatorError> {
-        Err(aviate_hal_xil::SimulatorError::NotAvailable(
-            "gz-plugin feature not enabled".to_string(),
-        ))
+    fn next_frame(&mut self, _timeout: Duration) -> Result<FrameEvent, SimulatorError> {
+        Err(SimulatorError::NotAvailable {
+            operation: SimulatorOperation::NextFrame,
+            detail: "the gz-plugin feature is not enabled".to_owned(),
+        })
     }
-
-    fn set_lockstep(&mut self, _enabled: bool) {}
-
-    fn sim_step(&self) -> u64 {
-        0
-    }
-
-    fn ack_step(&mut self, _step: u64) {}
 
     fn instance(&self) -> u8 {
         self.instance
@@ -196,11 +374,39 @@ impl aviate_hal_xil::SimulatorBackend for GazeboSimBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    #![allow(clippy::expect_used)]
+
+    use super::GazeboSimBackend;
+    use aviate_hal_xil::{
+        DirectiveId, ResetGeneration, SimulatorBackend, SimulatorDirective, SimulatorDirectiveKind,
+        SimulatorError, SimulatorOperation,
+    };
+    use std::time::Duration;
 
     #[test]
-    fn test_gazebo_backend_new() {
-        let backend = GazeboSimBackend::new(0);
-        assert_eq!(backend.instance, 0);
+    fn new_backend_has_the_requested_instance() {
+        assert_eq!(GazeboSimBackend::new(3).instance(), 3);
+    }
+
+    #[test]
+    fn reset_fails_without_a_world_acknowledgement() {
+        let mut backend = GazeboSimBackend::new(0);
+        let error = backend
+            .execute(
+                SimulatorDirective {
+                    id: DirectiveId(1),
+                    generation: ResetGeneration::INITIAL,
+                    kind: SimulatorDirectiveKind::Reset,
+                },
+                Duration::from_secs(1),
+            )
+            .expect_err("reset must fail closed");
+        assert!(matches!(
+            error,
+            SimulatorError::NotAvailable {
+                operation: SimulatorOperation::Reset,
+                ..
+            }
+        ));
     }
 }

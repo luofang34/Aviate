@@ -36,8 +36,8 @@ fn multirotor_runtime_state_encodes_full_length_and_is_deterministic() {
     // default clones (same contract as EkfState / KernelState).
     use aviate_core::control::multirotor::MultirotorRuntimeState;
     let len = <MultirotorRuntimeState as Replicable>::ENCODED_LEN;
-    let mut buf_a = [0u8; 64];
-    let mut buf_b = [0u8; 64];
+    let mut buf_a = [0u8; 96];
+    let mut buf_b = [0u8; 96];
     let na = MultirotorRuntimeState::default().encode_canonical(&mut buf_a);
     let nb = MultirotorRuntimeState::default().encode_canonical(&mut buf_b);
     assert_eq!(

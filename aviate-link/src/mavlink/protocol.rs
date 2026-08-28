@@ -254,6 +254,25 @@ impl AttitudeQuaternion {
     pub const PAYLOAD_LEN: usize = 48;
 }
 
+/// SCALED_PRESSURE (MAVLink #29): the static source's absolute pressure,
+/// from which a consumer derives pressure altitude against the datum of
+/// its choice.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct ScaledPressure {
+    pub time_boot_ms: u32,
+    /// Absolute pressure, hectopascals.
+    pub press_abs: f32,
+    /// Differential pressure, hectopascals.
+    pub press_diff: f32,
+    /// Temperature, centidegrees Celsius.
+    pub temperature: i16,
+}
+
+impl ScaledPressure {
+    pub const MSG_ID: u32 = 29;
+    pub const PAYLOAD_LEN: usize = 14;
+}
+
 /// LOCAL_POSITION_NED (MAVLink #32)
 #[derive(Copy, Clone, Debug, Default)]
 pub struct LocalPositionNed {
@@ -496,6 +515,7 @@ pub enum MavMessage {
     SystemTime(SystemTime),
     AttitudeQuaternion(AttitudeQuaternion),
     LocalPositionNed(LocalPositionNed),
+    ScaledPressure(ScaledPressure),
     EstimatorStatus(EstimatorStatus),
     AviateEstimatorStatus(AviateEstimatorStatus),
     SetAttitudeTarget(SetAttitudeTarget),
@@ -518,6 +538,7 @@ impl MavMessage {
             MavMessage::SystemTime(_) => SystemTime::MSG_ID,
             MavMessage::AttitudeQuaternion(_) => AttitudeQuaternion::MSG_ID,
             MavMessage::LocalPositionNed(_) => LocalPositionNed::MSG_ID,
+            MavMessage::ScaledPressure(_) => ScaledPressure::MSG_ID,
             MavMessage::EstimatorStatus(_) => EstimatorStatus::MSG_ID,
             MavMessage::AviateEstimatorStatus(_) => AviateEstimatorStatus::MSG_ID,
             MavMessage::SetAttitudeTarget(_) => SetAttitudeTarget::MSG_ID,
@@ -566,7 +587,7 @@ pub enum ParseError {
 }
 
 /// MAVLink 2.0 frame header
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MavHeader {
     pub payload_len: u8,
     pub incompat_flags: u8,
@@ -575,6 +596,15 @@ pub struct MavHeader {
     pub sysid: u8,
     pub compid: u8,
     pub msgid: u32, // 24-bit in wire format
+}
+
+/// One parsed MAVLink frame with its complete wire header.
+#[derive(Clone, Debug)]
+pub struct ParsedMavlinkFrame {
+    pub message: MavMessage,
+    pub signature: Option<MavSignature>,
+    pub header: MavHeader,
+    pub consumed: usize,
 }
 
 impl MavHeader {
@@ -599,6 +629,12 @@ impl MavHeader {
 /// signature extension after the CRC. This function extracts the signature
 /// metadata but does NOT verify it - verification happens in `aviate-security`.
 pub fn parse_mavlink(buf: &[u8]) -> Result<(MavMessage, Option<MavSignature>, usize), ParseError> {
+    let parsed = parse_mavlink_frame(buf)?;
+    Ok((parsed.message, parsed.signature, parsed.consumed))
+}
+
+/// Parse one MAVLink message and retain its complete wire header.
+pub fn parse_mavlink_frame(buf: &[u8]) -> Result<ParsedMavlinkFrame, ParseError> {
     // Minimum frame: STX(1) + header(9) + payload(0) + checksum(2) = 12
     if buf.len() < 12 {
         return Err(ParseError::BufferTooShort);
@@ -685,7 +721,12 @@ pub fn parse_mavlink(buf: &[u8]) -> Result<(MavMessage, Option<MavSignature>, us
         parse_message_payload(header.msgid, payload)?
     };
 
-    Ok((msg, signature, frame_size))
+    Ok(ParsedMavlinkFrame {
+        message: msg,
+        signature,
+        header,
+        consumed: frame_size,
+    })
 }
 
 /// Parse MAVLink 2.0 signature block (13 bytes)
@@ -734,6 +775,7 @@ fn parse_message_payload(msg_id: u32, payload: &[u8]) -> Result<MavMessage, Pars
         SystemTime::MSG_ID => parse_system_time(payload),
         AttitudeQuaternion::MSG_ID => parse_attitude_quaternion(payload),
         LocalPositionNed::MSG_ID => parse_local_position_ned(payload),
+        ScaledPressure::MSG_ID => parse_scaled_pressure(payload),
         EstimatorStatus::MSG_ID => estimator_status::parse_estimator_status(payload),
         AviateEstimatorStatus::MSG_ID => estimator_status::parse_aviate_estimator_status(payload),
         SetAttitudeTarget::MSG_ID => parse_set_attitude_target(payload),
@@ -814,6 +856,18 @@ fn parse_local_position_ned(payload: &[u8]) -> Result<MavMessage, ParseError> {
         vx: read_f32_le(payload, 16),
         vy: read_f32_le(payload, 20),
         vz: read_f32_le(payload, 24),
+    }))
+}
+
+fn parse_scaled_pressure(payload: &[u8]) -> Result<MavMessage, ParseError> {
+    if payload.len() < ScaledPressure::PAYLOAD_LEN {
+        return Err(ParseError::InvalidPayload);
+    }
+    Ok(MavMessage::ScaledPressure(ScaledPressure {
+        time_boot_ms: read_u32_le(payload, 0),
+        press_abs: read_f32_le(payload, 4),
+        press_diff: read_f32_le(payload, 8),
+        temperature: read_u16_le(payload, 12) as i16,
     }))
 }
 
@@ -1129,6 +1183,7 @@ fn get_crc_extra(msg_id: u32) -> u8 {
         0 => 50,                                    // HEARTBEAT
         1 => 124,                                   // SYS_STATUS
         2 => 137,                                   // SYSTEM_TIME
+        29 => 115,                                  // SCALED_PRESSURE
         31 => 246,                                  // ATTITUDE_QUATERNION
         32 => 185,                                  // LOCAL_POSITION_NED
         69 => 243,                                  // MANUAL_CONTROL
@@ -1155,6 +1210,7 @@ fn declared_payload_len(msg_id: u32) -> Option<usize> {
         SystemTime::MSG_ID => Some(SystemTime::PAYLOAD_LEN),
         AttitudeQuaternion::MSG_ID => Some(AttitudeQuaternion::PAYLOAD_LEN),
         LocalPositionNed::MSG_ID => Some(LocalPositionNed::PAYLOAD_LEN),
+        ScaledPressure::MSG_ID => Some(ScaledPressure::PAYLOAD_LEN),
         EstimatorStatus::MSG_ID => Some(EstimatorStatus::PAYLOAD_LEN),
         AviateEstimatorStatus::MSG_ID => Some(AviateEstimatorStatus::PAYLOAD_LEN),
         ManualControl::MSG_ID => Some(ManualControl::PAYLOAD_LEN),
@@ -1198,6 +1254,7 @@ pub fn serialize_mavlink(
         MavMessage::LocalPositionNed(m) => {
             serialize_local_position_ned(m, seq, sys_id, comp_id, buf)
         }
+        MavMessage::ScaledPressure(m) => serialize_scaled_pressure(m, seq, sys_id, comp_id, buf),
         MavMessage::EstimatorStatus(m) => {
             estimator_status::serialize_estimator_status(m, seq, sys_id, comp_id, buf)
         }
@@ -1359,6 +1416,32 @@ fn serialize_attitude_quaternion(
         offset + AttitudeQuaternion::PAYLOAD_LEN,
         246,
     ))
+}
+
+fn serialize_scaled_pressure(
+    msg: &ScaledPressure,
+    seq: u8,
+    sys_id: u8,
+    comp_id: u8,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let frame_size = MavHeader::SIZE + ScaledPressure::PAYLOAD_LEN + 2;
+    if buf.len() < frame_size {
+        return None;
+    }
+    let offset = write_header(
+        buf,
+        ScaledPressure::PAYLOAD_LEN as u8,
+        seq,
+        sys_id,
+        comp_id,
+        ScaledPressure::MSG_ID,
+    );
+    write_u32_le(buf, offset, msg.time_boot_ms);
+    write_f32_le(buf, offset + 4, msg.press_abs);
+    write_f32_le(buf, offset + 8, msg.press_diff);
+    write_u16_le(buf, offset + 12, msg.temperature as u16);
+    Some(write_crc(buf, offset + ScaledPressure::PAYLOAD_LEN, 115))
 }
 
 fn serialize_local_position_ned(
@@ -1777,6 +1860,35 @@ mod truncation_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parsed_frame_retains_the_complete_wire_header() {
+        let message = MavMessage::Heartbeat(Heartbeat {
+            mav_type: 2,
+            autopilot: 18,
+            base_mode: 0,
+            custom_mode: 0,
+            system_status: 4,
+            mavlink_version: 3,
+        });
+        let mut bytes = [0_u8; 64];
+        let length = serialize_mavlink(&message, 255, 42, 190, &mut bytes);
+        assert!(length.is_some());
+        let Some(length) = length else {
+            return;
+        };
+        let parsed = parse_mavlink_frame(&bytes[..length]);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else {
+            return;
+        };
+
+        assert_eq!(parsed.header.seq, 255);
+        assert_eq!(parsed.header.sysid, 42);
+        assert_eq!(parsed.header.compid, 190);
+        assert_eq!(parsed.header.msgid, Heartbeat::MSG_ID);
+        assert_eq!(parsed.consumed, length);
+    }
 
     /// A frame advertising an incompat feature this parser does not
     /// implement must be discarded even when its CRC is valid — parsing

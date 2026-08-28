@@ -47,7 +47,14 @@
 # 0x4554_494D_454B_4631.
 
 [controller]
-"controller.multirotor.v2"  = 0x4354_4C4D_5552_5632  # MultirotorController
+"controller.multirotor.v4"  = 0x4354_4C4D_5552_5634  # MultirotorController
+# Retired: "controller.multirotor.v3" = 0x4354_4C4D_5552_5633. v3
+# left the controller cycle interval at zero in the production kernel.
+# Its dynamic terms did not use elapsed time. Never reuse the v3 ID.
+# Retired: "controller.multirotor.v2" = 0x4354_4C4D_5552_5632. v2
+# did not define production mode refusal, topology-edge sample
+# hygiene, or automatic fallback output continuity. Never reuse the
+# v2 ID.
 # Retired: "controller.multirotor.v1" = 0x4354_4C4D_5552_5631. v1's
 # velocity loop mapped the NED acceleration command straight to
 # roll/pitch without rotating into the heading frame — correct only
@@ -58,6 +65,7 @@
 [mixer]
 "mixer.quad_x.v2"      = 0x4D49_5851_5541_4432  # QuadXMixer
 "mixer.quad_x_x500.v2" = 0x4D49_5851_5835_5632  # QuadXMixerX500
+"mixer.quad_x_x500_reversed_spin.v1" = 0x4D49_5851_5852_5631  # QuadXMixerReversedSpin
 # Retired: "mixer.quad_x.v1" = 0x4D49_5851_5541_4458 and
 # QuadXMixerX500's pre-registry ID 0x4D49_5851_5435_3030. v1 mixers
 # clamped each motor independently, silently truncating whichever

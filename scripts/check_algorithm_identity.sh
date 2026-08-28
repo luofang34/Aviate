@@ -75,11 +75,12 @@ PROD_SECTIONS='estimator controller mixer sanitizer'
 # Fields: section|registry-key|rust-type|const-file
 IMPL_MAP=(
     'estimator|ekf.basic-15state.v3|Ekf|aviate-core/src/ekf/scalar.rs'
-    'controller|controller.multirotor.v2|MultirotorController|aviate-core/src/control/multirotor.rs'
+    'controller|controller.multirotor.v4|MultirotorController|aviate-core/src/control/multirotor.rs'
     'controller|controller.fixed_wing.v1|FixedWingController|aviate-core/src/control/fixed_wing.rs'
     'controller|controller.vtol.v1|VtolController|aviate-core/src/control/vtol.rs'
     'mixer|mixer.quad_x.v2|QuadXMixer|aviate-core/src/mixer.rs'
     'mixer|mixer.quad_x_x500.v2|QuadXMixerX500|aviate-core/src/mixer.rs'
+    'mixer|mixer.quad_x_x500_reversed_spin.v1|QuadXMixerReversedSpin|aviate-core/src/mixer.rs'
     'sanitizer|sanitizer.group_aware.v1|Sanitizer|aviate-core/src/mixer/sanitizer_impl.rs'
 )
 
@@ -96,15 +97,21 @@ IMPL_MAP=(
 OWNERSHIP=(
     'aviate-core/src/ekf.rs|estimator/ekf.basic-15state.v3'
     'aviate-core/src/ekf/|estimator/ekf.basic-15state.v3'
-    'aviate-core/src/control/multirotor.rs|controller/controller.multirotor.v2'
+    'aviate-core/src/control/multirotor.rs|controller/controller.multirotor.v4'
+    'aviate-core/src/control/multirotor/|controller/controller.multirotor.v4'
+    'aviate-core/src/control/observation.rs|controller/controller.multirotor.v4'
+    'aviate-core/src/control/transfer.rs|controller/controller.multirotor.v4'
+    'aviate-core/src/control/vehicle_control_mode.rs|controller/controller.multirotor.v4'
+    'aviate-core/src/control/rate.rs|controller/controller.multirotor.v4'
+    'aviate-core/src/control/velocity.rs|controller/controller.multirotor.v4'
     'aviate-core/src/control/fixed_wing.rs|controller/controller.fixed_wing.v1'
     'aviate-core/src/control/vtol.rs|controller/controller.vtol.v1'
-    'aviate-core/src/control.rs|controller/controller.multirotor.v2,controller/controller.fixed_wing.v1,controller/controller.vtol.v1'
-    'aviate-core/src/control/|controller/controller.multirotor.v2,controller/controller.fixed_wing.v1,controller/controller.vtol.v1'
+    'aviate-core/src/control.rs|controller/controller.multirotor.v4,controller/controller.fixed_wing.v1,controller/controller.vtol.v1'
+    'aviate-core/src/control/|controller/controller.multirotor.v4,controller/controller.fixed_wing.v1,controller/controller.vtol.v1'
     'aviate-core/src/mixer/sanitizer_impl.rs|sanitizer/sanitizer.group_aware.v1'
-    'aviate-core/src/mixer/desaturate.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2'
-    'aviate-core/src/mixer.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,sanitizer/sanitizer.group_aware.v1'
-    'aviate-core/src/mixer/|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,sanitizer/sanitizer.group_aware.v1'
+    'aviate-core/src/mixer/desaturate.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1'
+    'aviate-core/src/mixer.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,sanitizer/sanitizer.group_aware.v1'
+    'aviate-core/src/mixer/|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,sanitizer/sanitizer.group_aware.v1'
 )
 
 # Pinned production aggregate identity hashes. These are the same
@@ -114,10 +121,10 @@ OWNERSHIP=(
 # drift apart without both pins moving in the same commit.
 # Fold order matches KernelPipeline::algorithm_identity_hash:
 # estimator, controller, mixer, sanitizer.
-GENERIC_QUAD_BUNDLE='ekf.basic-15state.v3 controller.multirotor.v2 mixer.quad_x.v2 sanitizer.group_aware.v1'
-GENERIC_QUAD_AGGREGATE='646b55c0745dab84'
-X500_BUNDLE='ekf.basic-15state.v3 controller.multirotor.v2 mixer.quad_x_x500.v2 sanitizer.group_aware.v1'
-X500_AGGREGATE='20ce8c48728724d5'
+GENERIC_QUAD_BUNDLE='ekf.basic-15state.v3 controller.multirotor.v4 mixer.quad_x.v2 sanitizer.group_aware.v1'
+GENERIC_QUAD_AGGREGATE='4b4667c1ac0e401e'
+X500_BUNDLE='ekf.basic-15state.v3 controller.multirotor.v4 mixer.quad_x_x500.v2 sanitizer.group_aware.v1'
+X500_AGGREGATE='99ae668f493e0e4b'
 
 # ---------------------------------------------------------------- utils
 
@@ -789,7 +796,7 @@ self_test() {
     # The fold must reproduce the Rust-side TST-PIPE-104 pin before
     # anything else is trusted.
     local folded
-    folded="$(fnv_fold 4554494d454b4634 43544c4d55525632 4d49585155414432 53414e4752505631)"
+    folded="$(fnv_fold 4554494d454b4634 43544c4d55525634 4d49585155414432 53414e4752505631)"
     if [[ "$folded" != "$GENERIC_QUAD_AGGREGATE" ]]; then
         echo "SELF-TEST FAIL: bash FNV fold ($folded) disagrees with the TST-PIPE-104 pin ($GENERIC_QUAD_AGGREGATE)" >&2
         return 1
@@ -927,7 +934,7 @@ self_test() {
     replace_in aviate-core/src/control/vtol.rs '544F_4C31' '544F_4C32'
     append_line "$REGISTRY" '# Retired: "controller.vtol.v1" = 0x4354_4C56_544F_4C31.'
     fixture_commit 'shared control change hidden behind a single sibling rotation'
-    expect_msg fail 'attitude.rs (unrotated: .*controller/controller.multirotor.v2' \
+    expect_msg fail 'attitude.rs (unrotated: .*controller/controller.multirotor.v4' \
         'shared-file change requires every owning sibling to rotate'
 
     # Key rename keeping the numeric ID: no lockstep-visible rotation

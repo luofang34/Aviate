@@ -241,6 +241,50 @@ mod tests {
     }
 
     #[test]
+    fn test_quad_mixer_reversed_spin_per_motor_formula() {
+        use aviate_core::mixer::QuadXMixerReversedSpin;
+        // The reversed-spin airframe flips every rotor's turn direction
+        // vs the X500 layout, so the yaw column inverts whole:
+        //   m0 = t - r + p - y,  m1 = t + r - p - y,
+        //   m2 = t + r + p + y,  m3 = t - r - p + y.
+        // A positive yaw command must LOAD the CCW pair (m2, m3) —
+        // driving it through the X500 signs on this airframe turns the
+        // yaw loop into positive feedback.
+        let mixer = QuadXMixerReversedSpin {
+            timestamp_source: dummy_timestamp,
+        };
+        let axis = AxisCommand {
+            roll: NormalizedSigned(0.1),
+            pitch: NormalizedSigned(0.05),
+            yaw: NormalizedSigned(0.02),
+            collective: NormalizedThrust(0.5),
+        };
+        let cmd = mixer.mix(&axis);
+        // t=0.5,r=0.1,p=0.05,y=0.02 → [0.43, 0.53, 0.67, 0.37], all in range.
+        assert!(
+            (cmd.outputs[0].0 - 0.43).abs() < 1e-5,
+            "m0={}",
+            cmd.outputs[0].0
+        );
+        assert!(
+            (cmd.outputs[1].0 - 0.53).abs() < 1e-5,
+            "m1={}",
+            cmd.outputs[1].0
+        );
+        assert!(
+            (cmd.outputs[2].0 - 0.67).abs() < 1e-5,
+            "m2={}",
+            cmd.outputs[2].0
+        );
+        assert!(
+            (cmd.outputs[3].0 - 0.37).abs() < 1e-5,
+            "m3={}",
+            cmd.outputs[3].0
+        );
+        assert_eq!(cmd.active_mask, 0b1111);
+    }
+
+    #[test]
     fn test_quad_mixer_saturation() {
         let mixer = QuadXMixer {
             timestamp_source: dummy_timestamp,

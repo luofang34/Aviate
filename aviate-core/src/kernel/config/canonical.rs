@@ -37,6 +37,15 @@ pub(crate) fn controller_tuning_identity(gains: &CascadeGains, hover_thrust_norm
 }
 
 pub(super) fn canonical_hash(cfg: &ResolvedKernelConfig) -> u64 {
+    canonical_hash_from_hover_prefix(
+        hover_kernel_prefix_hash(cfg),
+        cfg.hover_thrust_norm.0,
+        cfg.mixer_geometry,
+        cfg.actuator_curve,
+    )
+}
+
+pub(super) fn hover_kernel_prefix_hash(cfg: &ResolvedKernelConfig) -> u64 {
     let mut h = Fnv1a64::new();
     feed_limits(&mut h, &cfg.limits);
     h.feed_separator();
@@ -56,11 +65,21 @@ pub(super) fn canonical_hash(cfg: &ResolvedKernelConfig) -> u64 {
     h.feed_separator();
     feed_cascade_gains(&mut h, &cfg.cascade_gains);
     h.feed_separator();
-    h.feed_f32(cfg.hover_thrust_norm.0);
+    h.finish()
+}
+
+pub(super) fn canonical_hash_from_hover_prefix(
+    prefix_hash: u64,
+    hover_thrust_norm: f32,
+    mixer_geometry: MixerGeometry,
+    actuator_curve: ActuatorCurveKind,
+) -> u64 {
+    let mut h = Fnv1a64::from_hash(prefix_hash);
+    h.feed_f32(hover_thrust_norm);
     h.feed_separator();
-    feed_mixer_geometry(&mut h, cfg.mixer_geometry);
+    feed_mixer_geometry(&mut h, mixer_geometry);
     h.feed_separator();
-    feed_actuator_curve(&mut h, cfg.actuator_curve);
+    feed_actuator_curve(&mut h, actuator_curve);
     h.finish()
 }
 
@@ -68,6 +87,7 @@ fn feed_mixer_geometry(h: &mut Fnv1a64, g: MixerGeometry) {
     h.feed_u8(match g {
         MixerGeometry::QuadX => 0,
         MixerGeometry::QuadXX500 => 1,
+        MixerGeometry::QuadXX500ReversedSpin => 2,
     });
 }
 
@@ -88,6 +108,10 @@ impl Fnv1a64 {
 
     fn new() -> Self {
         Self { hash: Self::OFFSET }
+    }
+
+    fn from_hash(hash: u64) -> Self {
+        Self { hash }
     }
 
     fn feed_byte(&mut self, byte: u8) {
@@ -312,7 +336,7 @@ fn feed_cascade_gains(h: &mut Fnv1a64, g: &CascadeGains) {
         h.feed_f32(*v);
     }
     h.feed_f32(g.att_max_rate_cmd);
-    for v in g.rate_p.iter().chain(&g.rate_d) {
+    for v in g.rate_p.iter().chain(&g.rate_d).chain(&g.rate_i) {
         h.feed_f32(*v);
     }
     h.feed_f32(g.rate_d_lpf_alpha);

@@ -20,7 +20,14 @@ xil-fault = ["aviate-hal-io/xil-fault"]
 aviate-core = { path = "../../aviate-core" }
 aviate-link = { path = "../../aviate-link" }
 aviate-hal-io = { path = "../io" }
+getrandom = "0.4"
 log = "0.4"
+libc = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tracing = "0.1"
 
 [lints]
 workspace = true

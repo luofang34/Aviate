@@ -7,7 +7,7 @@
 
 use log::{info, warn};
 
-use super::{init_state_to_mav_state, SitlRunner};
+use super::{init_state_to_mav_state, AllowArm, ArmAuthorizer, SitlRunner};
 use crate::telemetry::TelemetrySnapshot;
 
 use aviate_core::hal::{ActuatorHal, SensorHal, SystemHal};
@@ -42,6 +42,14 @@ where
     /// 11. Forward actuator commands to simulator
     /// 12. Kick watchdog
     pub fn step(&mut self) -> ActuatorCmd {
+        self.step_with_arm_authorizer(&AllowArm)
+    }
+
+    /// Step with a live authorization check for each inbound Arm command.
+    pub fn step_with_arm_authorizer<A>(&mut self, authorizer: &A) -> ActuatorCmd
+    where
+        A: ArmAuthorizer,
+    {
         // 1. Poll transport for incoming messages
         self.transport.poll();
 
@@ -121,9 +129,11 @@ where
         // engages (safe: zero-collective on the ground) and releases
         // on the first real setpoint per LLR-FLT-209. The old "anchor
         // freshness on arm" hack was exactly the #133 defect.
-        if let Some(sys_cmd) = self.transport.recv_command() {
+        if let Some(received) = self.transport.recv_command_with_provenance() {
+            let sys_cmd = received.command;
             let now_ticks = self.transport.now().ticks;
             if let SystemCommand::FlightControl(cmd) = &sys_cmd {
+                self.last_command_provenance = received.provenance;
                 self.kernel
                     .state
                     .checks
@@ -135,7 +145,7 @@ where
                             < aviate_core::kernel_types::THROTTLE_LOW_MAX_COLLECTIVE,
                     );
             }
-            let outcome = self.enact_discrete(&sys_cmd);
+            let outcome = self.enact_discrete(&sys_cmd, authorizer);
             if let Some(outcome) = outcome {
                 // The link answers the operator; the log is for the
                 // maintainer. Both, not either.
@@ -247,6 +257,8 @@ where
             &aviate_core::mixer::ActuatorState::default(),
             None,
         );
+        self.last_effective_command = result.effective_command.clone();
+        self.last_controller_observation = result.controller_observation;
         let actuator_cmd = result.actuator.clone();
 
         // 8. Write outputs via BoardHal (ActuatorHal implementation)
@@ -267,13 +279,25 @@ where
 
         // 10. Update telemetry snapshot (HIGH-DAL: trivial field copies only)
         self.iteration = self.iteration.wrapping_add(1);
-        let time_ms = (self.transport.now_us() / 1000) as u32;
+        // Telemetry's time_boot_ms means what MAVLink says it means:
+        // milliseconds since THIS flight controller booted. The
+        // simulation clock is the wrong stamp here — a HIL bridge's
+        // clock runs continuously across FC restarts, so a restarted
+        // process would resume mid-clock and no consumer could ever
+        // see the reboot (a reset latch keyed on a fresh source epoch
+        // then never clears).
+        let time_ms = u32::try_from(self.process_start.elapsed().as_millis()).unwrap_or(u32::MAX);
         if let Some(ref mut telem) = self.telemetry {
+            let baro = self.sensor_cache.baro.as_ref().map(|sample| sample.value);
             let snapshot = TelemetrySnapshot {
                 time_ms,
                 iteration: self.iteration,
                 status: result.status,
                 state: result.estimate,
+                baro_pressure_pa: baro.and_then(|baro| baro.air.static_pressure).map(|p| p.0),
+                baro_temperature_c: baro
+                    .and_then(|baro| baro.air.temperature)
+                    .map_or(0.0, |t| t.0),
             };
             telem.update_state(snapshot); // Just copies, easy to audit
         }
@@ -296,9 +320,16 @@ where
     /// latest one). Every other arm returns a `Some`, so the link always
     /// has something to answer with — the silence this replaces was the
     /// operator-visible defect, not the refusal itself.
-    fn enact_discrete(&mut self, sys_cmd: &SystemCommand) -> Option<CommandOutcome> {
+    fn enact_discrete<A>(
+        &mut self,
+        sys_cmd: &SystemCommand,
+        authorizer: &A,
+    ) -> Option<CommandOutcome>
+    where
+        A: ArmAuthorizer,
+    {
         match sys_cmd {
-            SystemCommand::Arm => Some(self.enact_arm()),
+            SystemCommand::Arm => Some(self.enact_arm(authorizer)),
             SystemCommand::Disarm => Some(self.enact_disarm()),
             SystemCommand::EmergencyTerminate => {
                 warn!("Emergency terminate: cutting outputs");
@@ -311,8 +342,16 @@ where
         }
     }
 
-    fn enact_arm(&mut self) -> CommandOutcome {
+    fn enact_arm<A>(&mut self, authorizer: &A) -> CommandOutcome
+    where
+        A: ArmAuthorizer,
+    {
         info!("Arm command (state={:?})", self.kernel.state.init_state);
+        if let Err(error) = authorizer.authorize_arm() {
+            let missing = self.kernel.state.checks.pre_arm.missing();
+            warn!("Arming authorization refused: {error:?}");
+            return CommandOutcome::ArmRejected { error, missing };
+        }
         match self.kernel.arm() {
             Ok(()) => {
                 info!("Armed successfully");
@@ -379,66 +418,30 @@ fn triad_init_quat(accel_body: [f32; 3], mag_body: [f32; 3]) -> Quaternion {
         return Quaternion::IDENTITY;
     }
 
-    // Body axes in world (NED) frame, derived from the two
-    // observed vectors:
-    //   z_world_in_body = direction of NED gravity ≈ -accel/|accel|
-    //   n_world_in_body = horizontal component of mag, orthogonal to z
-    let z_body = V3::new(-ax / a_mag, -ay / a_mag, -az / a_mag);
-    let m_body = V3::new(mx / m_mag, my / m_mag, mz / m_mag);
-    // Project mag onto plane perpendicular to z_body (remove
-    // vertical component). What remains is the horizontal mag
-    // direction = NED north in body frame.
-    let dot_mz = m_body.x * z_body.x + m_body.y * z_body.y + m_body.z * z_body.z;
-    let n_body = V3::new(
-        m_body.x - dot_mz * z_body.x,
-        m_body.y - dot_mz * z_body.y,
-        m_body.z - dot_mz * z_body.z,
-    );
-    let n_norm = (n_body.x * n_body.x + n_body.y * n_body.y + n_body.z * n_body.z).sqrt();
-    if !(n_norm.is_finite()) || n_norm < 1e-6 {
-        return Quaternion::IDENTITY;
-    }
-    let n_body = V3::new(n_body.x / n_norm, n_body.y / n_norm, n_body.z / n_norm);
-    // East in body = D × N (right-hand rule for NED: N × E = D ⇒ E = D × N).
-    let e_body = V3::new(
-        z_body.y * n_body.z - z_body.z * n_body.y,
-        z_body.z * n_body.x - z_body.x * n_body.z,
-        z_body.x * n_body.y - z_body.y * n_body.x,
-    );
+    // Roll and pitch from the at-rest specific force (FRD body, NED
+    // world: the accelerometer reads the reaction against gravity).
+    let roll = (-ay).atan2(-az);
+    let pitch = ax.atan2((ay * ay + az * az).sqrt());
 
-    // Rotation matrix R such that v_world = R · v_body. Its
-    // ROWS are the world axes expressed in body frame
-    // (R_ij = projection of e_i_world onto e_j_body).
-    let r00 = n_body.x;
-    let r01 = n_body.y;
-    let r02 = n_body.z;
-    let r10 = e_body.x;
-    let r11 = e_body.y;
-    let r12 = e_body.z;
-    let r20 = z_body.x;
-    let r21 = z_body.y;
-    let r22 = z_body.z;
+    // Yaw uses the SAME tilt-compensated formulation as the in-flight
+    // mag update (`update_mag_state`), by construction: an initializer
+    // with its own north-vector geometry can disagree with the update
+    // path by a large angle in a steep-inclination field, and the
+    // filter then spends its first tens of seconds slowly reconciling
+    // the two — with the cascade closed, that reconciliation is a
+    // physical yaw excursion on the runway.
+    let (sin_r, cos_r) = (roll.sin(), roll.cos());
+    let (sin_p, cos_p) = (pitch.sin(), pitch.cos());
+    let mag_n_level = cos_p * mx + sin_p * sin_r * my + sin_p * cos_r * mz;
+    let mag_e_level = cos_r * my - sin_r * mz;
+    let yaw = (-mag_e_level).atan2(mag_n_level);
 
-    // Shepperd's method: pick the most numerically stable branch
-    // by selecting the largest diagonal magnitude. Avoids the
-    // gimbal-pole singularity that the direct trace formula has.
-    let trace = r00 + r11 + r22;
-    let (w, x, y, z) = if trace > 0.0 {
-        let s = (trace + 1.0).sqrt() * 2.0;
-        (0.25 * s, (r21 - r12) / s, (r02 - r20) / s, (r10 - r01) / s)
-    } else if r00 > r11 && r00 > r22 {
-        let s = (1.0 + r00 - r11 - r22).sqrt() * 2.0;
-        ((r21 - r12) / s, 0.25 * s, (r01 + r10) / s, (r02 + r20) / s)
-    } else if r11 > r22 {
-        let s = (1.0 + r11 - r00 - r22).sqrt() * 2.0;
-        ((r02 - r20) / s, (r01 + r10) / s, 0.25 * s, (r12 + r21) / s)
-    } else {
-        let s = (1.0 + r22 - r00 - r11).sqrt() * 2.0;
-        ((r10 - r01) / s, (r02 + r20) / s, (r12 + r21) / s, 0.25 * s)
-    };
-    let n = (w * w + x * x + y * y + z * z).sqrt();
-    if !(n.is_finite()) || n < 1e-9 {
-        return Quaternion::IDENTITY;
-    }
-    Quaternion::new(w / n, x / n, y / n, z / n)
+    // q = Rz(yaw) · Ry(pitch) · Rx(roll), body FRD → world NED.
+    let qz = Quaternion::from_axis_angle(V3::new(0.0, 0.0, 1.0), yaw);
+    let qy = Quaternion::from_axis_angle(V3::new(0.0, 1.0, 0.0), pitch);
+    let qx = Quaternion::from_axis_angle(V3::new(1.0, 0.0, 0.0), roll);
+    qz.mul(&qy).mul(&qx)
 }
+
+#[cfg(test)]
+mod tests;
