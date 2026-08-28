@@ -393,11 +393,8 @@ pub struct ChannelStatus {
     pub sequence: u32,
     pub protection: ProtectionStatus,
     pub sanitize_report: SanitizeReport,
-    /// Estimator-validity mode-entry gate outcome for this cycle:
-    /// the requested mode, the effective mode (`mode` above), and —
-    /// when they differ — the validity bits the requested mode was
-    /// short of. Lets an OEM mode manager see why a mode was refused
-    /// instead of only observing the substituted behavior.
+    /// Mode-entry gate outcome for this cycle. This value identifies an
+    /// estimator-validity fallback or an unsupported controller mode.
     pub mode_entry: ModeEntryDecision,
 }
 
@@ -425,6 +422,11 @@ impl Default for ChannelStatus {
 /// Full result from kernel update() - spec §20
 #[derive(Clone, Debug)]
 pub struct UpdateResult {
+    /// Exact command that reached the active controller, or the safe
+    /// fallback command when the controller did not run.
+    pub effective_command: crate::control::Command,
+    /// Controller-only diagnostic output for this cycle.
+    pub controller_observation: crate::control::ControllerStepObservation,
     pub actuator: ActuatorCmd,
     pub status: ChannelStatus,
     pub estimate: StateEstimate,

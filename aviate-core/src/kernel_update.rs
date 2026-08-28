@@ -4,9 +4,10 @@
 //! the 500-line per-.rs limit and is easy to locate at review time.
 
 use crate::checks::DegradationReason;
+use crate::control::runtime::ControllerRuntimeState;
 use crate::control::{
-    AuthorityProfile, Command, ControlLawV1, ControlMode, ModeEntryDecision, VehicleControlMode,
-    VehicleController,
+    AuthorityProfile, Command, CommandSource, ControlLawV1, ControlMode, ModeEntryDecision,
+    VehicleControlMode, VehicleController,
 };
 use crate::ekf::Estimator;
 use crate::fault::FaultFlags;
@@ -80,6 +81,8 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         if !command.validate_enums() {
             self.state.faults.insert(FaultFlags::ENUM_INVALID);
             return UpdateResult {
+                effective_command: safe_effective_command(command.sequence),
+                controller_observation: Default::default(),
                 actuator: ActuatorCmd {
                     outputs: self.cfg.safe_output,
                     active_mask: 0,
@@ -147,6 +150,8 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                 );
             }
             return UpdateResult {
+                effective_command: safe_effective_command(command.sequence),
+                controller_observation: Default::default(),
                 actuator: ActuatorCmd {
                     outputs: self.cfg.safe_output,
                     active_mask: 0,
@@ -188,6 +193,8 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         //    telemetry reports the real fault state instead of defaults.
         if self.check_critical_faults() {
             return UpdateResult {
+                effective_command: safe_effective_command(command.sequence),
+                controller_observation: Default::default(),
                 actuator: ActuatorCmd {
                     outputs: self.cfg.safe_output,
                     active_mask: 0b1111,
@@ -340,9 +347,18 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             ControlLawV1::Backup => ModeEntryDecision::Granted(command.mode),
             ControlLawV1::Direct => ModeEntryDecision::Granted(ControlMode::AltitudeHold),
             ControlLawV1::Primary | ControlLawV1::Alternate => {
-                crate::control::gate_mode_entry(constrained_cmd.mode, state.valid_flags)
+                crate::control::gate_controller_mode_entry(
+                    constrained_cmd.mode,
+                    state.valid_flags,
+                    self.pipeline.controller.supports_mode(constrained_cmd.mode),
+                )
             }
         };
+        let capability_refused = matches!(mode_entry, ModeEntryDecision::Unsupported { .. });
+        if capability_refused {
+            self.pipeline.controller.reset(&mut self.state.controller);
+        }
+        let safe_control = self.state.control_law == ControlLawV1::Backup || capability_refused;
 
         // 6b. Control Step
         // `Backup` is the motors-off last resort: reserved for cases
@@ -352,32 +368,39 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // the Descend/Land terminal (`Direct`), which rides a
         // kernel-synthesized level-descent setpoint down instead of
         // cutting thrust mid-air.
-        let mut actuator_cmd = if self.state.control_law == ControlLawV1::Backup {
-            ActuatorCmd {
-                outputs: self.cfg.safe_output,
-                active_mask: 0b1111,
-                sequence: command.sequence,
-                timestamp,
-                fallback_mask: 0xFF,
-                sanitized: true,
-            }
+        let effective_cmd = if safe_control {
+            safe_effective_command(constrained_cmd.sequence)
+        } else if self.state.control_law == ControlLawV1::Direct {
+            crate::kernel::descend::descend_command(
+                &state,
+                &self.cfg.limits,
+                constrained_cmd.sequence,
+            )
+        } else {
+            crate::control::apply_mode_entry(constrained_cmd, mode_entry)
+        };
+        let (mut actuator_cmd, controller_observation) = if safe_control {
+            (
+                ActuatorCmd {
+                    outputs: self.cfg.safe_output,
+                    active_mask: 0b1111,
+                    sequence: command.sequence,
+                    timestamp,
+                    fallback_mask: 0xFF,
+                    sanitized: true,
+                },
+                Default::default(),
+            )
         } else {
             // Terminal descent flies the synthesized level-descent
             // setpoint; all other laws fly the uplinked command,
             // gated to the mode-entry decision above. Loop selection
             // is driven by the control-mode flags derived from the
             // effective command's mode.
-            let effective_cmd = if self.state.control_law == ControlLawV1::Direct {
-                crate::kernel::descend::descend_command(
-                    &state,
-                    &self.cfg.limits,
-                    constrained_cmd.sequence,
-                )
-            } else {
-                crate::control::apply_mode_entry(constrained_cmd, mode_entry)
-            };
-            let control_flags = VehicleControlMode::from_control_mode(effective_cmd.mode);
-            let axis_cmd = self.pipeline.controller.step(
+            let control_flags = VehicleControlMode::from_control_mode(effective_cmd.mode)
+                .with_mode_entry(mode_entry);
+            self.state.controller.set_cycle_interval(time.dt_sec);
+            let controller_step = self.pipeline.controller.step_with_observation(
                 &mut self.state.controller,
                 &state,
                 &effective_cmd,
@@ -385,7 +408,10 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
                 self.state.mode,
                 &self.cfg.limits,
             );
-            self.pipeline.mixer.mix(&axis_cmd)
+            (
+                self.pipeline.mixer.mix(&controller_step.axis_command),
+                controller_step.observation,
+            )
         };
 
         // 7. Snapshot previous-cycle commanded outputs for the slew
@@ -397,7 +423,7 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // 8. Sanitization. Pipeline holds the algorithm (`&self`);
         //    KernelState owns the per-group fallback memory
         //    (`&mut self.state.fallback`).
-        let sanitize_report = if self.state.control_law == ControlLawV1::Backup {
+        let sanitize_report = if safe_control {
             SanitizeReport::default()
         } else {
             self.pipeline.sanitizer.sanitize(
@@ -426,6 +452,8 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
 
         // 11. Construct Result
         UpdateResult {
+            effective_command: effective_cmd,
+            controller_observation,
             actuator: actuator_cmd,
             status: ChannelStatus {
                 mode: mode_entry.effective(),
@@ -450,5 +478,16 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             },
             degradation,
         }
+    }
+}
+
+fn safe_effective_command(sequence: u32) -> Command {
+    Command {
+        mode: ControlMode::Attitude,
+        setpoint: Default::default(),
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence,
+        source: CommandSource::Failsafe,
     }
 }

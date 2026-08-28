@@ -191,6 +191,27 @@ impl ResolvedKernelConfig {
         canonical::canonical_hash(self)
     }
 
+    /// Return the canonical fold state immediately before the hover force.
+    pub fn hover_kernel_prefix_hash(&self) -> u64 {
+        canonical::hover_kernel_prefix_hash(self)
+    }
+
+    /// Complete a canonical hash from one verified pre-hover fold state.
+    #[must_use]
+    pub fn canonical_hash_from_hover_prefix(
+        prefix_hash: u64,
+        hover_thrust_norm: f32,
+        mixer_geometry: MixerGeometry,
+        actuator_curve: ActuatorCurveKind,
+    ) -> u64 {
+        canonical::canonical_hash_from_hover_prefix(
+            prefix_hash,
+            hover_thrust_norm,
+            mixer_geometry,
+            actuator_curve,
+        )
+    }
+
     /// Canonical identity over the slice of this configuration a
     /// multirotor controller copies (`cascade_gains` plus
     /// `hover_thrust_norm`). The builder rejects a kernel whose

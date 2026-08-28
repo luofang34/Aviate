@@ -15,6 +15,15 @@ fn zero_vel() -> Vector3<MetersPerSecond> {
     )
 }
 
+/// Declared by path: this file is itself loaded by one, so a bare `mod`
+/// would be looked for beside a directory nobody creates.
+///
+/// Named `*_tests.rs` because the control-limits gate reads every file under
+/// this tree that is not one, and would refuse the bare float literals a test
+/// is entitled to write.
+#[path = "velocity_tests/heading_tests.rs"]
+mod heading;
+
 #[test]
 fn p_term_alone_matches_old_behaviour_at_zero_integral() {
     // With zero integrator and zero feedforward, the new
@@ -200,114 +209,6 @@ fn yaw_of(q: &Quaternion) -> Scalar {
     (2.0 * (q.w * q.z + q.x * q.y)).atan2(1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 }
 
-#[test]
-fn commanded_heading_steers_the_attitude_setpoint_yaw() {
-    // DRQ: guided modes honor commanded heading. At rest, level,
-    // heading north, a 0.3 rad heading setpoint (inside the
-    // per-step clamp) must appear directly in the attitude
-    // setpoint's yaw.
-    let c = ctrl(0.77);
-    let mut s = VelocityLoopState::default();
-    let out = c.step(
-        &mut s,
-        zero_vel(),
-        zero_vel(),
-        AccelFeedforward::default(),
-        &Quaternion::IDENTITY,
-        Some(Radians(0.3)),
-        0.0,
-    );
-    assert!((yaw_of(&out.attitude) - 0.3).abs() < 1e-4);
-}
-
-#[test]
-fn large_heading_error_is_slew_clamped() {
-    // A 3 rad heading change applies at most `vel_max_yaw_step`
-    // per cycle so the vehicle turns smoothly instead of the
-    // attitude loop being stepped half a revolution.
-    let c = ctrl(0.77);
-    let mut s = VelocityLoopState::default();
-    let out = c.step(
-        &mut s,
-        zero_vel(),
-        zero_vel(),
-        AccelFeedforward::default(),
-        &Quaternion::IDENTITY,
-        Some(Radians(3.0)),
-        0.0,
-    );
-    assert!((yaw_of(&out.attitude) - c.gains.vel_max_yaw_step).abs() < 1e-4);
-}
-
-#[test]
-fn absent_heading_setpoint_holds_current_yaw() {
-    // No heading in the command: today's hold-current behavior
-    // is preserved bit-for-bit in intent (yaw from current
-    // attitude).
-    let c = ctrl(0.77);
-    let mut s = VelocityLoopState::default();
-    let current = Quaternion::from_axis_angle(Vector3::new(0.0, 0.0, 1.0), 0.9);
-    let out = c.step(
-        &mut s,
-        zero_vel(),
-        zero_vel(),
-        AccelFeedforward::default(),
-        &current,
-        None,
-        0.0,
-    );
-    assert!((yaw_of(&out.attitude) - 0.9).abs() < 1e-4);
-}
-
-#[test]
-fn heading_error_wraps_across_pi() {
-    // Current yaw near +178°, command near −178°: the shortest path is
-    // +4° through the ±π seam, not −356° the long way round. Covers the
-    // err < −π wrap branch.
-    let c = ctrl(0.77);
-    let mut s = VelocityLoopState::default();
-    let current = Quaternion::from_axis_angle(Vector3::new(0.0, 0.0, 1.0), 3.1);
-    let out = c.step(
-        &mut s,
-        zero_vel(),
-        zero_vel(),
-        AccelFeedforward::default(),
-        &current,
-        Some(Radians(-3.1)),
-        0.0,
-    );
-    let yaw = yaw_of(&out.attitude);
-    // Applied yaw continues PAST +π (wraps to negative side), i.e. the
-    // vehicle turns the short way: |applied| stays near π, not near 0.
-    assert!(
-        yaw.abs() > 3.0,
-        "short-way wrap expected, got applied yaw {yaw}"
-    );
-}
-
-#[test]
-fn heading_error_wraps_across_minus_pi() {
-    // Mirror case: current −178°, command +178° covers the err > π
-    // wrap branch.
-    let c = ctrl(0.77);
-    let mut s = VelocityLoopState::default();
-    let current = Quaternion::from_axis_angle(Vector3::new(0.0, 0.0, 1.0), -3.1);
-    let out = c.step(
-        &mut s,
-        zero_vel(),
-        zero_vel(),
-        AccelFeedforward::default(),
-        &current,
-        Some(Radians(3.1)),
-        0.0,
-    );
-    let yaw = yaw_of(&out.attitude);
-    assert!(
-        yaw.abs() > 3.0,
-        "short-way wrap expected, got applied yaw {yaw}"
-    );
-}
-
 /// The NED acceleration command must rotate into the heading frame
 /// before becoming roll/pitch: those tilts compose AFTER the yaw
 /// quaternion, so they are body-frame quantities. At yaw = +90°
@@ -483,5 +384,46 @@ fn tilt_compensation_is_floored_past_the_cos_floor() {
     assert!(
         (past_a - past_b).abs() < 1e-6,
         "past the floor the amplification must be capped, got {past_a} vs {past_b}"
+    );
+}
+
+#[test]
+fn a_saturated_tilt_axis_freezes_both_horizontal_integrators() {
+    // Anti-windup. The saturation flags live on the body-frame tilt axes while
+    // the integrators are NED, so a saturated tilt axis is a mix of both NED
+    // axes — the controller freezes both rather than guessing an attribution.
+    //
+    // Without this, a demand the airframe cannot reach winds the integrator up
+    // for as long as it is held, and the wind-down afterwards is an overshoot
+    // nobody commanded.
+    let c = ctrl(0.77);
+    let mut s = VelocityLoopState::default();
+
+    // Far beyond what the tilt limit can deliver, so the pitch/roll setpoints
+    // clamp and both horizontal axes report saturation.
+    let setpoint = Vector3::new(
+        MetersPerSecond(50.0),
+        MetersPerSecond(50.0),
+        MetersPerSecond(0.0),
+    );
+    for _ in 0..20 {
+        let _ = c.step(
+            &mut s,
+            setpoint,
+            zero_vel(),
+            AccelFeedforward::default(),
+            &Quaternion::IDENTITY,
+            None,
+            0.02,
+        );
+    }
+
+    assert_eq!(
+        s.integrator_ned.x.0, 0.0,
+        "the north integrator wound up while the tilt axis was saturated"
+    );
+    assert_eq!(
+        s.integrator_ned.y.0, 0.0,
+        "the east integrator wound up while the tilt axis was saturated"
     );
 }

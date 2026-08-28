@@ -316,6 +316,7 @@ impl BaroDriver for FakeBaro {
                     return Ok(RawBaroReading {
                         pressure_pa: f32::NAN,
                         temperature_c: f32::NAN,
+                        ..RawBaroReading::default()
                     });
                 }
                 SensorFault::Dropout { remaining_cycles } => {
@@ -801,6 +802,7 @@ impl FakeSensorSet {
         self.baro.feed(RawBaroReading {
             pressure_pa: abs_pressure_mbar * 100.0, // mbar to Pa
             temperature_c: temperature,
+            ..RawBaroReading::default()
         });
     }
 
@@ -1145,6 +1147,7 @@ mod tests {
             baro.feed(RawBaroReading {
                 pressure_pa: 101325.0,
                 temperature_c: 25.0,
+                ..RawBaroReading::default()
             });
 
             // Inject bias: add 1000 Pa

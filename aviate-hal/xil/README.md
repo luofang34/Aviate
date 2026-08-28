@@ -26,7 +26,7 @@ XIL encompasses both:
 | Component | Description |
 |-----------|-------------|
 | `XilIO` | Transport layer for XIL (sensor input, actuator output) |
-| `KinematicsBackend` | Trait for simulator backends (Gazebo, Unity, AirSim) |
+| `SimulatorBackend` | Contract for sample-paced simulator backends |
 | `Mission` / `Phase` | Test framework for defining flight scenarios |
 | `TestConfig` | TOML parser for test configuration files |
 | `FlightLog` | Flight data recording and statistics |
@@ -37,7 +37,7 @@ This crate provides **XIL infrastructure** - the integration layer between fligh
 and simulators for both SITL and HITL testing:
 
 - Transport I/O - Communication between FC and simulator
-- Backend trait definition (KinematicsBackend)
+- `SimulatorBackend` contract
 - Test infrastructure (missions, criteria, multi-vehicle)
 - Flight logging
 
@@ -124,7 +124,7 @@ and transport-agnostic.
 ```
 aviate-hal-xil (this crate, no backend deps)
        ↑
-aviate-backend-gz (implements KinematicsBackend)
+aviate-backend-gz (implements SimulatorBackend)
        ↑ (FFI/IPC)
 aviate_gz_plugin (C++, Gazebo)
 ```
@@ -174,19 +174,26 @@ Current transports:
 
 Legacy alias `SitlMavlink` is available for compatibility.
 
-### KinematicsBackend Trait
+### SimulatorBackend trait
 
-Interface for physics/kinematics backends:
+This trait defines the simulator lifecycle and sample interface.
 
 ```rust
-pub trait KinematicsBackend: Send {
+pub trait SimulatorBackend: Send {
     fn name(&self) -> &str;
-    fn start(&mut self, cfg: &BackendConfig) -> Result<(), BackendError>;
-    fn step(&mut self, world: &mut World) -> Result<Duration, BackendError>;
-    fn poll_ready(&self) -> bool;
-    fn sim_time(&self) -> Duration;
-    fn stop(&mut self) -> Result<(), BackendError>;
-    fn reset(&mut self) -> Result<(), BackendError>;
+    fn connect(
+        &mut self,
+        instance: u8,
+        timeout: Duration,
+    ) -> Result<BackendStatus, SimulatorError>;
+    fn status(&self) -> BackendStatus;
+    fn execute(
+        &mut self,
+        directive: SimulatorDirective,
+        timeout: Duration,
+    ) -> Result<DirectiveReceipt, SimulatorError>;
+    fn next_frame(&mut self, timeout: Duration) -> Result<FrameEvent, SimulatorError>;
+    fn instance(&self) -> u8;
 }
 ```
 
