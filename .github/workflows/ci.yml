@@ -5,10 +5,6 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop, "fix/**", "ci/**"]
-  # Merge queue: the queue builds a staged merge of queued PRs and
-  # expects the required checks (the aggregate "CI Success" job) on the
-  # merge_group event.
-  merge_group:
 
 env:
   CARGO_TERM_COLOR: always
@@ -82,10 +78,10 @@ jobs:
       - name: Guard self-test
         run: ./scripts/check_algorithm_identity.sh --self-test
 
-      # Fail-closed for every path to a protected branch: PR ranges,
-      # push ranges (before..sha), and merge-queue ranges alike, so a
-      # direct or admin-bypass push to main is adjudicated exactly like
-      # a PR. Range resolution lives in the script (--push-range) so the
+      # Fail-closed for every path to a protected branch: PR ranges
+      # and push ranges (before..sha) alike, so a direct or
+      # admin-bypass push to main is adjudicated exactly like a PR.
+      # Range resolution lives in the script (--push-range) so the
       # self-test can exercise it: an unreachable before-SHA
       # (force-push / truncated fetch) fails closed rather than
       # degrading to a structural-only check. fetch-depth: 0 above
@@ -98,8 +94,6 @@ jobs:
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BASE: ${{ github.event.before }}
           PUSH_HEAD: ${{ github.sha }}
-          MQ_BASE: ${{ github.event.merge_group.base_sha }}
-          MQ_HEAD: ${{ github.event.merge_group.head_sha }}
         run: |
           case "$EVENT_NAME" in
             pull_request)
@@ -107,13 +101,6 @@ jobs:
               ;;
             push)
               ./scripts/check_algorithm_identity.sh --push-range "$PUSH_BASE" "$PUSH_HEAD" origin/main
-              ;;
-            # The queue's base/head pair is the staged merge's range:
-            # same shape as a PR base/head, so the same adjudication
-            # (including the squash-survivability guard, which matches
-            # the queue's squash merge method) applies.
-            merge_group)
-              ./scripts/check_algorithm_identity.sh --pr-range "$MQ_BASE" "$MQ_HEAD"
               ;;
             *)
               echo "fail-closed: unsupported event '$EVENT_NAME'" >&2
@@ -318,37 +305,22 @@ jobs:
           # the base ref regardless of merge style.
           fetch-depth: 0
 
-      - name: Resolve merged-PR body (push and merge_group events)
-        # On push and merge_group events `github.event.pull_request` is
-        # empty even when the run exists because of a PR. Under plain
-        # merge-commits the head commit is a mechanical "Merge pull
-        # request #N..." subject, so a `Lower-Floor:` line written in
-        # the PR body would be lost. Fetch the PR(s) associated with
-        # the commits via the API; for a direct-to-main push the
-        # endpoint returns empty. On merge_group the queued merge
-        # result's head is not part of any PR, so query each commit in
-        # the base..head range: the queue branch reaches the queued
-        # PRs' head commits, which do resolve to their PRs.
-        if: github.event_name == 'push' || github.event_name == 'merge_group'
+      - name: Resolve merged-PR body (push events only)
+        # On push events `github.event.pull_request` is empty even when
+        # the push was produced by merging a PR. Under plain merge-commits
+        # the head commit is a mechanical "Merge pull request #N..."
+        # subject, so a `Lower-Floor:` line written in the PR body would
+        # be lost. Fetch the PR(s) associated with the pushed commit via
+        # the API; for a direct-to-main push the endpoint returns empty.
+        if: github.event_name == 'push'
         id: merged-pr-body
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          MQ_BASE: ${{ github.event.merge_group.base_sha }}
-          MQ_HEAD: ${{ github.event.merge_group.head_sha }}
         run: |
-          if [ "${GITHUB_EVENT_NAME}" = "merge_group" ]; then
-            shas=$(git log --format=%H "${MQ_BASE}..${MQ_HEAD}")
-          else
-            shas=${GITHUB_SHA}
-          fi
-          bodies=""
-          for sha in $shas; do
-            bodies+=$(gh api \
-              "repos/${GITHUB_REPOSITORY}/commits/${sha}/pulls" \
-              --jq '.[] | .body // ""' 2>/dev/null || echo "")
-            bodies+=$'\n'
-          done
+          bodies=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+            --jq '.[] | .body // ""' 2>/dev/null || echo "")
           {
             echo 'pr_bodies<<_END_OF_PR_BODIES_'
             printf '%s\n' "$bodies"
@@ -366,17 +338,13 @@ jobs:
           #   - push event, merge-commit: the merged PR's body (fetched
           #     above) or one of the branch commits merged in.
           #   - push event, rebase-merge: one of the pushed commits.
-          #   - merge_group event: the queued PRs' bodies (fetched
-          #     above) or one of the range commits (added below).
-          # Plumbing all five haystacks means the gate works the same
+          # Plumbing all four haystacks means the gate works the same
           # regardless of merge style.
           PR_BODY: |
             ${{ github.event.pull_request.body }}
             ${{ steps.merged-pr-body.outputs.pr_bodies }}
             ${{ github.event.head_commit.message }}
           PUSH_COMMITS_MESSAGES: ${{ toJSON(github.event.commits.*.message) }}
-          MQ_BASE: ${{ github.event.merge_group.base_sha }}
-          MQ_HEAD: ${{ github.event.merge_group.head_sha }}
         run: |
           # Concatenate the push-commits messages array (JSON-encoded
           # strings) onto PR_BODY. jq -r preserves per-element internal
@@ -386,24 +354,13 @@ jobs:
             extra=$(printf '%s' "$PUSH_COMMITS_MESSAGES" | jq -r '.[]? // empty' || true)
             PR_BODY=$(printf '%s\n%s' "$PR_BODY" "$extra")
           fi
+          export PR_BODY
           base="origin/main"
           # On push-to-main the checkout IS main; diff against the
           # commit before the push so the lint still sees the change.
           if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
             base="${{ github.event.before }}"
-          elif [ "${GITHUB_EVENT_NAME}" = "merge_group" ]; then
-            # The checkout is the queued merge result. Diff against the
-            # queue's base (the main tip the group was staged on), the
-            # same comparison the post-merge push run repeats. The
-            # range commit messages carry any in-commit `Lower-Floor:`
-            # lines. Both SHAs must resolve with the fetch-depth: 0
-            # checkout; if the range cannot be read, git fails the
-            # step rather than the lint passing unchecked.
-            base="$MQ_BASE"
-            range_msgs=$(git log --format=%B "${MQ_BASE}..${MQ_HEAD}")
-            PR_BODY=$(printf '%s\n%s' "$PR_BODY" "$range_msgs")
           fi
-          export PR_BODY
           ./scripts/floors-lower-lint.sh "$base"
 
   check:
