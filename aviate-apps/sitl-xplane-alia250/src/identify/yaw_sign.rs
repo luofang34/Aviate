@@ -11,7 +11,7 @@ use aviate_core::ekf::Estimator as _;
 use aviate_core::types::NormalizedThrust;
 
 use super::stand::TestStand;
-use super::{collective, SIGNS};
+use super::{ExperimentError, SIGNS};
 
 /// The yaw-sign probe: on the virtual test stand, inject a CONSTANT
 /// yaw differential in each direction and read the initial body-rate
@@ -21,20 +21,18 @@ use super::{collective, SIGNS};
 /// mixer whose yaw column disagrees with the airframe's actual rotor
 /// spin directions turns the yaw loop into positive feedback, which
 /// presents as a slow uncommanded heading walk no gain can fix.
-pub fn run_yaw_sign<C, M>(board: &mut XPlaneBoard<C, M>)
+pub(crate) fn run_yaw_sign<C, M>(board: &mut XPlaneBoard<C, M>) -> Result<(), ExperimentError>
 where
     C: aviate_core::control::VehicleController,
     M: aviate_core::mixer::Mixer,
 {
+    let hover_collective = board.kernel().cfg().hover_thrust_norm.0;
     let mut stand = TestStand::new(match UdpSocket::bind("0.0.0.0:0") {
         Ok(sock) => {
             sock.set_read_timeout(Some(Duration::from_millis(100))).ok();
             sock
         }
-        Err(error) => {
-            log::error!("no UDP socket for the test stand: {error}");
-            return;
-        }
+        Err(error) => return Err(ExperimentError::StandSocket(error)),
     });
     let mut sequence: u32 = 0;
     let started = Instant::now();
@@ -53,14 +51,14 @@ where
             last_heartbeat = now;
         }
         if started.elapsed() > Duration::from_secs(90) {
-            log::error!("yaw-sign probe timed out");
-            return;
+            return Err(ExperimentError::Timeout("yaw-sign probe"));
         }
         if !armed {
-            if board.is_ready() && board.arm().is_ok() {
+            if board.is_ready() {
+                board.arm().map_err(ExperimentError::Arm)?;
                 armed = true;
                 phase_started = Some(now);
-                stand.engage(120.0);
+                let _ = stand.engage().map_err(ExperimentError::Stand)?;
                 log::info!("armed; spooling on the stand");
             }
         } else if let Some(at) = phase_started {
@@ -72,22 +70,24 @@ where
                 _ => true,
             };
             if advance {
-                phase += 1;
+                phase = phase.wrapping_add(1);
                 phase_started = Some(now);
-                stand.zero_rates();
+                stand.zero_rates().map_err(ExperimentError::Stand)?;
                 if phase >= 4 {
-                    let _ = board.disarm();
+                    board.disarm().map_err(ExperimentError::Disarm)?;
                     let plus = sums[0] / counts[0].max(1) as f32;
                     let minus = sums[1] / counts[1].max(1) as f32;
-                    println!("=== yaw sign probe ===");
-                    println!("+0.15 injection -> mean yaw rate {plus:+.3} rad/s");
-                    println!("-0.15 injection -> mean yaw rate {minus:+.3} rad/s");
-                    println!(
-                        "verdict: mixer yaw column is {}",
-                        if plus > minus { "CORRECT" } else { "INVERTED" }
+                    if counts.contains(&0) || plus <= minus {
+                        return Err(ExperimentError::Report {
+                            reason: "yaw response sign does not match the compiled mixer"
+                                .to_owned(),
+                            trace_text: String::new(),
+                        });
+                    }
+                    log::info!(
+                        "yaw-sign result plus={plus:+.3}rad/s minus={minus:+.3}rad/s verdict=correct"
                     );
-                    println!("======================");
-                    return;
+                    return Ok(());
                 }
                 log::info!("yaw-sign phase {phase}");
             }
@@ -117,7 +117,7 @@ where
                 mode: ControlMode::Attitude,
                 setpoint: Setpoint {
                     attitude: Some(hold),
-                    collective_thrust: NormalizedThrust(collective()),
+                    collective_thrust: NormalizedThrust(hover_collective),
                     ..Setpoint::default()
                 },
                 config_mode_request: None,
@@ -129,7 +129,10 @@ where
             board.set_command(cmd);
         }
         board.step();
-        stand.pin();
+        super::check_run_gates(board)?;
+        if armed {
+            stand.pin().map_err(ExperimentError::Stand)?;
+        }
 
         if let (1 | 3, Some(at)) = (phase, phase_started) {
             let age = now.duration_since(at);
@@ -137,7 +140,7 @@ where
                 if let Some(imu) = board.last_imu() {
                     let slot = if phase == 1 { 0 } else { 1 };
                     sums[slot] += imu.gyro[2];
-                    counts[slot] += 1;
+                    counts[slot] = counts[slot].wrapping_add(1);
                 }
             }
         }

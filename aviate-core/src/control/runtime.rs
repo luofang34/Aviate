@@ -61,6 +61,12 @@
 pub trait ControllerRuntimeState:
     Default + Clone + core::fmt::Debug + crate::replicable::Replicable
 {
+    /// Set the interval for the next controller cycle.
+    ///
+    /// The default does not change runtime state. A runtime that uses
+    /// time must validate the interval before it stores the value.
+    fn set_cycle_interval(&mut self, _interval: crate::types::Seconds) {}
+
     /// Return the runtime state to its post-construction baseline.
     /// Equivalent to `*self = Self::default()` for simple cases;
     /// implementors with allocated buffers may zero-fill in place.

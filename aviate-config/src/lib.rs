@@ -33,6 +33,8 @@ pub mod airframe_preset;
 mod parser;
 mod types;
 mod validation;
+pub mod xplane_model;
+pub mod xplane_runtime;
 
 pub use parser::from_toml_str;
 pub use types::*;

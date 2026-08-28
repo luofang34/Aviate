@@ -181,6 +181,9 @@ pub enum Criterion {
     PositionHold { target: [f32; 3], tolerance: f32 },
     /// End-of-phase horizontal drift from `start_position` ≤ `max`
     MaxDrift(f32),
+    /// Published velocity must track the derivative of published
+    /// position while moving — catches a lane nobody writes.
+    VelocityTracksPosition { tolerance: f32 },
     /// Sensor data received at least once
     SensorDataReceived,
     /// Vehicle was within `tolerance` metres of `target` at some

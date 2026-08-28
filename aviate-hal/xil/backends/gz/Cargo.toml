@@ -4,7 +4,7 @@ name = "aviate-backend-gz"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
-description = "Aviate Gazebo backend - implements KinematicsBackend for gz-sim"
+description = "Aviate Gazebo simulator backend"
 
 [lib]
 # rlib only. Nothing links this crate from C: the gz-sim plugin is
@@ -20,6 +20,7 @@ default = []
 gz-plugin = []
 
 [dependencies]
+aviate-core = { path = "../../../../aviate-core" }
 aviate-hal-xil = { path = "../.." }
 aviate-link = { path = "../../../../aviate-link" }
 aviate-xil-contract = { path = "../../contract" }
