@@ -6,7 +6,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+aviate-config = { path = "../../../aviate-config" }
 aviate-core = { path = "../../../aviate-core" }
+aviate-hal-xil = { path = "../../../aviate-hal/xil" }
 aviate-runtime = { path = "../../../aviate-runtime", features = ["env-sitl"] }
 
 [lints]

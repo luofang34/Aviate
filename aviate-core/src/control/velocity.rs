@@ -22,6 +22,7 @@ use crate::control::cascade_gains::CascadeGains;
 use crate::control::law_invariants::{
     MAX_HORIZONTAL_ACCEL_CMD_MPS2, STANDARD_GRAVITY_MPS2, TILT_COMP_COS_FLOOR,
 };
+use crate::control::{ControllerLoopObservation, IntegratorAction};
 use crate::math::{Quaternion, Vector3};
 #[allow(unused_imports)] // FloatExt needed for no_std math methods
 use crate::types::{
@@ -157,6 +158,35 @@ impl VelocityController {
         heading_sp: Option<Radians>,
         dt_sec: Scalar,
     ) -> VelocityCommand {
+        self.step_with_observation(
+            state,
+            setpoint,
+            current,
+            accel_ff,
+            current_att,
+            heading_sp,
+            dt_sec,
+        )
+        .0
+    }
+
+    /// Run one cycle and return terms that do not feed later control.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn step_with_observation(
+        &self,
+        state: &mut VelocityLoopState,
+        setpoint: Vector3<MetersPerSecond>,
+        current: Vector3<MetersPerSecond>,
+        accel_ff: AccelFeedforward,
+        current_att: &Quaternion,
+        heading_sp: Option<Radians>,
+        dt_sec: Scalar,
+    ) -> (VelocityCommand, ControllerLoopObservation) {
+        let integrator_before = [
+            state.integrator_ned.x.0,
+            state.integrator_ned.y.0,
+            state.integrator_ned.z.0,
+        ];
         let error = Vector3 {
             x: setpoint.x.0 - current.x.0,
             y: setpoint.y.0 - current.y.0,
@@ -227,12 +257,14 @@ impl VelocityController {
         // P + I; feedforward in NED-accel sums with the feedback.
         // The tilt cap is the velocity loop's authority limit, set
         // by `vel_max_roll_pitch`.
-        let acc_x_cmd = error.x * self.gains.vel_p[0]
-            + state.integrator_ned.x.0 * self.gains.vel_i[0]
-            + accel_ff.accel_ned.x.0 * self.gains.vel_accel_ff;
-        let acc_y_cmd = error.y * self.gains.vel_p[1]
-            + state.integrator_ned.y.0 * self.gains.vel_i[1]
-            + accel_ff.accel_ned.y.0 * self.gains.vel_accel_ff;
+        let p_x = error.x * self.gains.vel_p[0];
+        let p_y = error.y * self.gains.vel_p[1];
+        let i_x = state.integrator_ned.x.0 * self.gains.vel_i[0];
+        let i_y = state.integrator_ned.y.0 * self.gains.vel_i[1];
+        let ff_x = accel_ff.accel_ned.x.0 * self.gains.vel_accel_ff;
+        let ff_y = accel_ff.accel_ned.y.0 * self.gains.vel_accel_ff;
+        let acc_x_cmd = p_x + i_x + ff_x;
+        let acc_y_cmd = p_y + i_y + ff_y;
         // Model-validity clamp at 1 g per axis: the atan tilt
         // conversion below is only honest to 45° of commanded
         // tilt (see `law_invariants` for the WHY). The tighter
@@ -292,6 +324,8 @@ impl VelocityController {
         // that cannot do more work — without this, the I term
         // would overshoot in the opposite direction once the input
         // returns to authority.
+        let horizontal_saturated = x_saturated || y_saturated;
+        let mut integrator_action = [IntegratorAction::FrozenInactive; 3];
         if dt_sec > 0.0 {
             // The saturation flags live on the body-frame tilt axes
             // while the integrators are NED; a saturated tilt axis is
@@ -302,10 +336,18 @@ impl VelocityController {
                     MetersPerSecond(state.integrator_ned.x.0 + error.x * dt_sec);
                 state.integrator_ned.y =
                     MetersPerSecond(state.integrator_ned.y.0 + error.y * dt_sec);
+                integrator_action[0] = IntegratorAction::Integrated;
+                integrator_action[1] = IntegratorAction::Integrated;
+            } else {
+                integrator_action[0] = IntegratorAction::FrozenSaturation;
+                integrator_action[1] = IntegratorAction::FrozenSaturation;
             }
             if !z_saturated {
                 state.integrator_ned.z =
                     MetersPerSecond(state.integrator_ned.z.0 + error.z * dt_sec);
+                integrator_action[2] = IntegratorAction::Integrated;
+            } else {
+                integrator_action[2] = IntegratorAction::FrozenSaturation;
             }
         }
 
@@ -338,10 +380,25 @@ impl VelocityController {
             );
         let attitude = yaw_quat.mul(&roll_pitch_quat).normalize();
 
-        VelocityCommand {
+        let command = VelocityCommand {
             collective,
             attitude,
-        }
+        };
+        let observation = ControllerLoopObservation {
+            p: [p_x, p_y, p_z],
+            i: [i_x, i_y, i_z],
+            d: [0.0, 0.0, d_z],
+            feedforward: [ff_x, ff_y, ff_z],
+            integrator_before,
+            integrator_after: [
+                state.integrator_ned.x.0,
+                state.integrator_ned.y.0,
+                state.integrator_ned.z.0,
+            ],
+            integrator_action,
+            saturated: [horizontal_saturated, horizontal_saturated, z_saturated],
+        };
+        (command, observation)
     }
 }
 

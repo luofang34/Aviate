@@ -3,7 +3,23 @@
 //! way a flight drives them.
 #![allow(clippy::expect_used, clippy::panic)]
 
+use aviate_config::xplane_model::XPlaneWireModel;
+
 use super::WireConstraints;
+
+fn constraints() -> WireConstraints {
+    WireConstraints::new(XPlaneWireModel {
+        rise_per_s: 0.035,
+        band_boundary: 0.40,
+        low_band_rise_per_s: 0.15,
+        fall_per_s: 0.30,
+        mean_ceiling: 0.55,
+        lane_ceiling: 0.85,
+        airborne_clearance_m: 0.5,
+        ground_squeeze: 0.5,
+        max_sample_dt_s: 0.05,
+    })
+}
 
 fn mean(outputs: &[f32; 16]) -> f32 {
     outputs[..4].iter().sum::<f32>() / 4.0
@@ -18,7 +34,7 @@ fn airborne(wire: &mut WireConstraints) {
 
 #[test]
 fn the_collective_mean_rises_no_faster_than_the_band_allows() {
-    let mut wire = WireConstraints::new();
+    let mut wire = constraints();
     airborne(&mut wire);
     let mut outputs = [0.5f32; 16];
     wire.constrain(&mut outputs, 4, true, Some(20.0), 0.01);
@@ -38,7 +54,7 @@ fn the_collective_mean_rises_no_faster_than_the_band_allows() {
 
 #[test]
 fn the_mean_ceiling_holds_and_the_bookkeeping_is_the_wire() {
-    let mut wire = WireConstraints::new();
+    let mut wire = constraints();
     airborne(&mut wire);
     let mut outputs = [1.0f32; 16];
     for _ in 0..2000 {
@@ -50,7 +66,7 @@ fn the_mean_ceiling_holds_and_the_bookkeeping_is_the_wire() {
 
 #[test]
 fn a_railed_lane_stays_under_the_stall_ceiling_with_its_moment_direction_kept() {
-    let mut wire = WireConstraints::new();
+    let mut wire = constraints();
     airborne(&mut wire);
     // Spool up to hover first so the differential has a real mean.
     for _ in 0..2000 {
@@ -73,7 +89,7 @@ fn a_railed_lane_stays_under_the_stall_ceiling_with_its_moment_direction_kept() 
 
 #[test]
 fn the_gear_squeezes_differentials_until_the_climb_clears_and_then_lets_go() {
-    let mut wire = WireConstraints::new();
+    let mut wire = constraints();
     wire.arm(Some(10.0));
     let mut on_gear = [0.0f32; 16];
     on_gear[..4].copy_from_slice(&[0.2, 0.4, 0.2, 0.4]);
@@ -94,7 +110,7 @@ fn the_gear_squeezes_differentials_until_the_climb_clears_and_then_lets_go() {
 
 #[test]
 fn arming_before_the_first_fix_still_finds_its_ground() {
-    let mut wire = WireConstraints::new();
+    let mut wire = constraints();
     wire.arm(None);
     // First fix after arm becomes the ground reference; spool the
     // collective to the demand so the ramp cannot eat the
@@ -116,7 +132,7 @@ fn arming_before_the_first_fix_still_finds_its_ground() {
 
 #[test]
 fn an_armed_fall_is_paced_and_a_disarm_cuts_instantly() {
-    let mut wire = WireConstraints::new();
+    let mut wire = constraints();
     airborne(&mut wire);
     for _ in 0..2000 {
         let mut warm = [0.5f32; 16];

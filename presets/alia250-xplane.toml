@@ -1,0 +1,74 @@
+schema_version = 1
+model_id = "alia250-xplane-12"
+airframe_id = "alia250"
+airframe_preset_digest = "73e66d145271b45b7ab637333c6c217a339b22e0b15eeed0e9b6256183c9e068"
+aircraft_id = "xplane12-laminar-alia250"
+simulator_id = "xplane-12"
+aircraft_file_digest = "3dd71fafb0f887eec94805d5365ae90c33b67e8a54266f20c79f6a198b5769f1"
+bridge_protocol = "mavlink-hil-tcp-v1"
+mixer_geometry = "quad-x-x500-reversed-spin"
+actuator_curve = "quadratic-rotor"
+motor_count = 4
+# The sample rate the bridge STAMPS on this lane, not the bridge's
+# configured target and not an average of what any one machine
+# delivered. The launcher (Pilotage's build-xplane-plugins.sh) pins the
+# installed bridge's `mavlink_sensor_rate_hz` to 100 when it installs
+# the plugins; editing this field reconfigures nothing. The flight loop
+# is synced to the display, one whole frame clears the 10 ms target,
+# and an adaptive-sync display steps its frame period with machine
+# state — observed stamps span roughly 12.6 ms to 10.7 ms across
+# instances, loads, and warm-up. The declaration centers the observed
+# range so the board's tolerance covers all of it; the experiment's own
+# arithmetic rides measured stamps, and the plant artifact records the
+# rate a run actually delivered. The install is stamp-gated on
+# the launcher's own sources, and nothing checks the setting at launch
+# or at run time, so a lane can still meet a bridge configured
+# otherwise.
+#
+# What the runtime gate observes is not wall-clock delivery. It reads the
+# simulation timestamps the bridge stamps. The bridge carries no phase
+# between captures, so the stamped period is the first whole number of
+# flight-loop frames that clears the target period: it sits at the target
+# only when the flight loop runs at, or just above, an integer multiple
+# of it; between multiples the capture stretches by up to a frame and the
+# stamped rate falls below, and past the resampler's bound the split
+# raises it above. The gate refusing those is the point: a sample clock
+# set by frame timing rather than by this target is not one plant
+# identification can trust.
+#
+# An average of delivered samples taken under load therefore describes the
+# machine during the measurement, not the lane, and a declaration built
+# from one refuses healthy runs while accepting degraded ones.
+sample_rate_hz = 88
+max_samples_per_iteration = 32
+# Mixer lane for each simulator actuator lane, checked against the aircraft
+# file rather than assumed. ALIA-250.acf places its lift rotors at
+# _engn/0 (x +8.5, z -9.98) front-right, _engn/1 (-8.5, -9.98) front-left,
+# _engn/2 (-8.5, +9.98) rear-left, _engn/3 (+8.5, +9.98) rear-right — X-Plane
+# part coordinates being starboard-positive and aft-positive. The mixer emits
+# gz/PX4 order (FR, RL, FL, RR), so this gather delivers FR, FL, RL, RR, which
+# is what those engine indices are.
+#
+# The permutation is self-inverse, so reading it as a scatter gives the same
+# answer here and would not reveal a direction error. It agrees because the
+# positions agree, not because the shape is forgiving.
+#
+# _prop_dir is -1, +1, -1, +1 across those four, putting FR+RL on one sense and
+# FL+RR on the other — the diagonal `quad-x-x500-reversed-spin` declares.
+lane_order = [0, 2, 1, 3]
+
+# These values protect the simulator plant. The tuner cannot change them.
+# The lane ceiling must sit ABOVE the control law's working range: a
+# ceiling inside it shapes ordinary flight instead of protecting the
+# plant, and the identification census then reads the law's own grazing
+# as clipped evidence.
+[wire]
+rise_per_s = 0.5
+band_boundary = 0.40
+low_band_rise_per_s = 0.6
+fall_per_s = 0.30
+mean_ceiling = 0.65
+lane_ceiling = 0.92
+airborne_clearance_m = 0.5
+ground_squeeze = 0.5
+max_sample_dt_s = 0.05

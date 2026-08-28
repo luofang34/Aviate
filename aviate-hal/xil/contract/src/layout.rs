@@ -166,13 +166,19 @@ pub struct ModelStateBlock {
     /// `WorldAngularVelocity` component verbatim, not a body-frame
     /// gyro.
     ///
-    /// Known unreliable: the component reports zero on this setup
-    /// even while the attitude quaternion shows sustained rotation,
-    /// so the X500 FC does not use it — `synthesize.rs` derives body
-    /// rates from successive `quat` samples instead. Treat this lane
-    /// as advisory until a consumer proves the component's fidelity.
+    /// Reads zero: physics maintains these components for LINK
+    /// entities and this one is on the MODEL — not a platform quirk;
+    /// the linear lane was the same defect, fixed. Left there
+    /// deliberately: it holds omega in WORLD coordinates while
+    /// consumers read it as a body rate, so waking it trades a
     pub ang_vel_bits: [u64; 3],
-    /// Non-zero once the first physics step has been published.
+    /// Whether THIS snapshot carries readings — per snapshot, not
+    /// latched for the run.
+    ///
+    /// Non-zero once the first physics step publishes, zero again for
+    /// any step the plugin cannot fully read: missing pose or velocity
+    /// publishes invalid rather than defaults, since origin and
+    /// identity are the most plausible pose a parked vehicle has.
     pub valid: u32,
     /// Padding; zero.
     pub _pad1: u32,

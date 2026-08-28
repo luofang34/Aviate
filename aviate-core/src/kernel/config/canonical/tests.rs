@@ -96,6 +96,26 @@ fn canonical_hash_distinguishes_hover_thrust_norm() {
 }
 
 #[test]
+fn hover_prefix_reconstructs_the_actual_full_hash() {
+    let cfg = ResolvedKernelConfig {
+        hover_thrust_norm: NormalizedThrust(0.43),
+        mixer_geometry: MixerGeometry::QuadXX500ReversedSpin,
+        actuator_curve: ActuatorCurveKind::QuadraticRotor,
+        ..Default::default()
+    };
+    let prefix = cfg.hover_kernel_prefix_hash();
+    let reconstructed = ResolvedKernelConfig::canonical_hash_from_hover_prefix(
+        prefix,
+        cfg.hover_thrust_norm.0,
+        cfg.mixer_geometry,
+        cfg.actuator_curve,
+    );
+    assert_eq!(reconstructed, cfg.canonical_hash());
+    assert_eq!(prefix, 0x6007_fa96_434b_827d);
+    assert_eq!(reconstructed, 0x7a11_f4f4_689b_e11c);
+}
+
+#[test]
 fn canonical_hash_distinguishes_safe_output() {
     let mut cfg = ResolvedKernelConfig::default();
     let baseline = cfg.canonical_hash();

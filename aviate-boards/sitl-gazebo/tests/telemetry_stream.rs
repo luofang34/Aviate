@@ -155,6 +155,7 @@ fn still_packet(t_us: u64) -> SimSensorPacket {
         .with_baro(aviate_hal_xil::SimBaroData {
             pressure_pa: 101_325.0,
             temperature_c: 20.0,
+            ..aviate_hal_xil::SimBaroData::default()
         })
         .with_mag(aviate_hal_xil::SimMagData {
             // Plausible mid-latitude NED field, microtesla.
