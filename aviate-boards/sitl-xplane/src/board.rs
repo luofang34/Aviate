@@ -15,7 +15,9 @@
 
 mod arm_authorization;
 mod config;
+mod construction;
 mod handshake;
+mod lifecycle;
 mod observation;
 mod packet;
 mod tuning_trace;
@@ -25,6 +27,7 @@ pub use config::{
     XPlaneConfig, XPlaneHoverInitialization, XPlanePerturbationBindingError, BOARD_INFO,
 };
 pub use handshake::{RuntimeHandshakeError, XPlaneRuntimeHandshake};
+pub use lifecycle::XPlaneResetError;
 pub use observation::{XPlaneConstraintFlags, XPlaneControlObservation, XPlaneSendEvidence};
 pub use tuning_trace::{
     TuningActuatorApplication, TuningActuatorBypassReason, TuningActuatorEligibility,
@@ -46,13 +49,13 @@ use aviate_core::control::Command;
 use aviate_core::hal::{ActuatorHal, SystemHal};
 use aviate_core::mixer::ActuatorCmd;
 use aviate_core::{ArmError, DefaultAviateKernel, DisarmError, InitState};
-use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
-use aviate_hal_xil::{SitlConfig, SitlIO};
-use aviate_runtime::{SitlRunner, SitlTime};
-use log::{info, warn};
+use aviate_runtime::SitlRunner;
+use log::info;
 
 use config::validate_hover_initialization;
+use construction::build_simulator_io;
 use handshake::{validate_kernel_model, RuntimeIdentityGate};
+use lifecycle::XPlaneSessionState;
 
 /// X-Plane SITL board, generic over the injected controller and mixer.
 pub struct XPlaneBoard<C, M>
@@ -97,6 +100,7 @@ where
     hover_initialization: XPlaneHoverInitialization,
     sample_sequence: u64,
     last_answer_armed: Option<bool>,
+    session: XPlaneSessionState,
 }
 
 impl<C, M> XPlaneBoard<C, M>
@@ -148,21 +152,18 @@ where
             .map(aviate_hal_xil::perturbation::PerturbationEngine::new)
             .transpose()
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        let session = XPlaneSessionState::new(
+            config.model.wire(),
+            config.model.sample_rate_hz(),
+            config.perturbation.clone(),
+        );
         let hil_backend = HilBackend::connect_tcp(HilBackendConfig {
             local_port: 0,
             simulator_addr: config.simulator_addr,
             sys_id: config.sys_id,
             comp_id: config.comp_id,
         });
-        let transport = SitlIO::new(SitlConfig::default())?;
-        let board_hal = BoardHal::new(
-            FakeImu::new(),
-            FakeBaro::new(),
-            FakeMag::new(),
-            FakeGnss::new(),
-            SitlTime::new(),
-            FakeActuator::new(),
-        );
+        let (transport, board_hal) = build_simulator_io()?;
         Ok(Self {
             hil_backend,
             runner: SitlRunner::new(transport, board_hal, kernel),
@@ -192,6 +193,7 @@ where
             hover_initialization,
             sample_sequence: 0,
             last_answer_armed: None,
+            session,
         })
     }
 
@@ -205,88 +207,32 @@ where
     /// on the flight controller, so each sample gets its own kernel step
     /// and its own command.
     pub fn step(&mut self) -> ActuatorCmd {
+        if self.session.is_stopped() {
+            return ActuatorCmd::default();
+        }
         self.control_observations.clear();
         if self.artifact_failure.load(Ordering::Acquire) {
             self.terminate();
         }
         let mut last = ActuatorCmd::default();
         let mut answered = 0_usize;
-        while let Some(mut packet) = self.hil_backend.poll() {
-            let sample_sequence = self.sample_sequence;
-            if let Err(error) = self.runtime_identity.observe_timestamp(packet.timestamp_us) {
-                warn!("runtime HIL clock rejected: {error}");
-                self.runtime_failure = Some(error);
-                self.terminate();
+        while let Some(packet) = self.hil_backend.poll() {
+            if self.session.is_resetting() && self.hil_backend.reset_acknowledged() {
+                self.session.reset_acknowledged();
             }
-            // A gap in the bridge's sample stream is the first half of
-            // every lockstep wedge post-mortem; record it at the
-            // moment it closes, with its width.
-            let now = std::time::Instant::now();
-            if let Some(at) = self.last_packet_at {
-                let gap = now.duration_since(at);
-                if gap > std::time::Duration::from_millis(300) {
-                    warn!(
-                        "sensor stream resumed after a {:.2}s gap",
-                        gap.as_secs_f32()
-                    );
-                }
-            }
-            self.last_packet_at = Some(now);
-            if let Some(prev) = self.last_sample_time_us {
-                self.sample_dt_sec =
-                    (packet.timestamp_us.saturating_sub(prev) as f32) / 1_000_000.0;
-            }
-            self.last_sample_time_us = Some(packet.timestamp_us);
-            if let Some(gnss) = packet.gnss {
-                self.last_fix = Some(gnss);
-            }
-            if let Some(imu) = packet.imu {
-                self.last_imu = Some(imu);
-            }
-            let sensor_application = match self.perturbation.as_mut() {
-                Some(engine) => match engine.apply_sensor(sample_sequence, &mut packet) {
-                    Ok(application) => Some(application),
-                    Err(error) => {
-                        warn!("sensor perturbation failed: {error}");
-                        self.perturbation_failure = Some(error);
-                        self.terminate();
-                        None
-                    }
-                },
-                None => None,
-            };
-            self.runner.transport.feed_sensor_packet(&packet);
-            let arm_authorizer = self.arm_authorizer();
-            let was_armed = self.runner.is_armed();
-            last = self.runner.step_with_arm_authorizer(&arm_authorizer);
-            if self.artifact_failure.load(Ordering::Acquire) {
-                self.terminate();
-            }
-            let is_armed = self.runner.is_armed();
-            if !was_armed && is_armed {
-                self.wire.arm(self.last_fix.map(|fix| fix.alt_m));
-            }
-            self.armed = is_armed;
-            self.answer_sample(
-                sample_sequence,
-                packet.timestamp_us,
-                packet.imu,
-                &last,
-                sensor_application,
-            );
+            last = self.process_sample(packet);
             self.sample_sequence = self.sample_sequence.wrapping_add(1);
             answered = answered.wrapping_add(1);
-            // A bounded drain keeps one iteration from monopolizing the
-            // loop when the link floods.
             if answered >= self.max_samples_per_iteration {
                 break;
             }
         }
-        if answered == 0 {
-            // No sample this iteration: still advance the kernel so
-            // command ingress and timers run.
+        if answered == 0 && !self.session.is_resetting() {
             last = self.runner.step();
         }
+        let ready = self.is_ready();
+        let healthy = self.is_session_healthy();
+        self.session.observe_health(ready, healthy);
         last
     }
 
@@ -399,7 +345,7 @@ where
     /// Returns the kernel's refusal, so a harness sees a refused arm
     /// rather than a silent no-op.
     pub fn arm(&mut self) -> Result<(), ArmError> {
-        aviate_runtime::ArmAuthorizer::authorize_arm(&self.arm_authorizer())?;
+        self.check_arm_readiness()?;
         info!(
             "Arm command (state={:?})",
             self.runner.kernel.state.init_state
@@ -410,6 +356,24 @@ where
         self.armed = true;
         self.wire.arm(self.last_fix.map(|fix| fix.alt_m));
         Ok(())
+    }
+
+    /// Check the live conditions that permit an arm operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the current arm refusal.
+    pub fn check_arm_readiness(&self) -> Result<(), ArmError> {
+        if self.runner.kernel.state.init_state == InitState::Armed {
+            return Err(ArmError::AlreadyArmed);
+        }
+        if !self.runner.kernel.is_ready() {
+            return Err(ArmError::NotReady);
+        }
+        if !self.runner.kernel.state.faults.is_empty() {
+            return Err(ArmError::Faulted);
+        }
+        aviate_runtime::ArmAuthorizer::authorize_arm(&self.arm_authorizer())
     }
 
     /// Disarms the flight controller.
@@ -448,18 +412,28 @@ where
 
     /// Whether the kernel is ready for flight.
     pub fn is_ready(&self) -> bool {
-        self.runtime_identity.is_verified()
-            && self
-                .tuning_trace
-                .as_ref()
-                .is_none_or(tuning_trace::TuningTracePublisher::is_ready)
-            && self.runner.kernel.is_ready()
-            && !self.perturbation_artifact_failed()
+        self.session_surfaces_healthy() && self.runner.kernel.is_ready()
     }
 
     /// Whether the kernel is armed.
     pub fn is_armed(&self) -> bool {
         self.runner.kernel.state.init_state == InitState::Armed
+    }
+
+    fn is_session_healthy(&self) -> bool {
+        self.session_surfaces_healthy() && (self.runner.kernel.is_ready() || self.is_armed())
+    }
+
+    fn session_surfaces_healthy(&self) -> bool {
+        self.runtime_identity.is_verified()
+            && self.runtime_failure.is_none()
+            && self
+                .tuning_trace
+                .as_ref()
+                .is_none_or(tuning_trace::TuningTracePublisher::is_ready)
+            && self.tuning_trace_failure().is_none()
+            && self.perturbation_failure.is_none()
+            && !self.perturbation_artifact_failed()
     }
 
     /// Starts the estimate telemetry stream this app's config declares.
@@ -475,22 +449,6 @@ where
     /// The kernel this board drives.
     pub fn kernel(&self) -> &DefaultAviateKernel<C, M> {
         &self.runner.kernel
-    }
-
-    /// Microseconds on the simulation clock.
-    pub fn now_us(&self) -> u64 {
-        self.runner.now_us()
-    }
-
-    /// Received frames, sent frames, CRC failures, unsent commands, and
-    /// successful connections.
-    pub fn stats(&self) -> (u64, u64, u64, u64, u64) {
-        self.hil_backend.tcp_stats()
-    }
-
-    /// Sends one heartbeat to the bridge.
-    pub fn send_heartbeat(&mut self) {
-        self.hil_backend.send_heartbeat(self.armed).ok();
     }
 }
 

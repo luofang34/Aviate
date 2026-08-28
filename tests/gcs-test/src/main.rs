@@ -31,6 +31,8 @@ use std::process::ExitCode;
 #[cfg(feature = "gazebo")]
 use std::time::Duration;
 
+#[cfg(feature = "gazebo")]
+use aviate_hal_xil::run_test_config_from_current_state;
 use aviate_hal_xil::{parse_test_config, run_test_config, SimulatorBackend, SimulatorError};
 use clap::{Parser, Subcommand};
 use log::{error, info, warn};
@@ -320,7 +322,7 @@ fn run_xil_test(
                 Ok(MavlinkOnlyBackend::new(instance))
             })
         } else {
-            run_test_config(test_config, |instance| {
+            run_test_config_from_current_state(test_config, |instance| {
                 aviate_backend_gz::GazeboSimBackend::connect_new(instance, 10000)
             })
         };
@@ -364,11 +366,7 @@ fn report_results(result: &aviate_hal_xil::TestResult) -> ExitCode {
     }
 }
 
-/// MAVLink-only backend (no ground truth)
-///
-/// Used when no simulator backend is available. The MissionRunner will still
-/// work, but get_vehicle_state() returns None so ground truth comparison
-/// is not possible.
+/// MAVLink-only target without a simulator clock or frame stream.
 struct MavlinkOnlyBackend {
     instance: u8,
 }
@@ -384,32 +382,42 @@ impl SimulatorBackend for MavlinkOnlyBackend {
         "mavlink-only"
     }
 
-    fn connect(&mut self, _instance: u8, _timeout_ms: u64) -> Result<(), SimulatorError> {
-        Ok(())
+    fn connect(
+        &mut self,
+        _instance: u8,
+        _timeout: std::time::Duration,
+    ) -> Result<aviate_hal_xil::BackendStatus, SimulatorError> {
+        Err(unavailable(aviate_hal_xil::SimulatorOperation::Connect))
     }
 
-    fn is_connected(&self) -> bool {
-        true
+    fn status(&self) -> aviate_hal_xil::BackendStatus {
+        aviate_hal_xil::BackendStatus::default()
     }
 
-    fn get_vehicle_state(&self) -> Option<aviate_hal_xil::VehicleState> {
-        None
+    fn execute(
+        &mut self,
+        directive: aviate_hal_xil::SimulatorDirective,
+        _timeout: std::time::Duration,
+    ) -> Result<aviate_hal_xil::DirectiveReceipt, SimulatorError> {
+        Err(unavailable(directive.kind.operation()))
     }
 
-    fn set_motor_speeds(&mut self, _speeds: &[f64]) -> Result<(), SimulatorError> {
-        Ok(())
+    fn next_frame(
+        &mut self,
+        _timeout: std::time::Duration,
+    ) -> Result<aviate_hal_xil::FrameEvent, SimulatorError> {
+        Err(unavailable(aviate_hal_xil::SimulatorOperation::NextFrame))
     }
-
-    fn set_lockstep(&mut self, _enabled: bool) {}
-
-    fn sim_step(&self) -> u64 {
-        0
-    }
-
-    fn ack_step(&mut self, _step: u64) {}
 
     fn instance(&self) -> u8 {
         self.instance
+    }
+}
+
+fn unavailable(operation: aviate_hal_xil::SimulatorOperation) -> SimulatorError {
+    SimulatorError::NotAvailable {
+        operation,
+        detail: "the MAVLink-only target has no simulator frame stream".to_owned(),
     }
 }
 

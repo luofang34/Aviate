@@ -186,6 +186,7 @@ dependencies = [
 name = "aviate-backend-gz"
 version = "0.1.3"
 dependencies = [
+ "aviate-core",
  "aviate-hal-xil",
  "aviate-link",
  "aviate-xil-contract",
@@ -240,6 +241,7 @@ dependencies = [
 name = "aviate-board-sitl-xplane"
 version = "0.1.3"
 dependencies = [
+ "aviate-app-sitl-xplane-alia250-kernel",
  "aviate-backend-mavlink-hil",
  "aviate-config",
  "aviate-core",
@@ -249,6 +251,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "thiserror",
 ]
 
 [[package]]

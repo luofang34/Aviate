@@ -33,10 +33,38 @@ impl Link {
         }
     }
 
+    pub(super) fn take_gps_at(&mut self, timestamp_us: u64) -> Option<HilGps> {
+        match self {
+            Self::Udp(transport) => transport
+                .take_gps()
+                .filter(|sample| sample.time_usec == timestamp_us),
+            Self::Tcp(transport) => transport.take_gps_at(timestamp_us),
+        }
+    }
+
     pub(super) fn take_state_quaternion(&mut self) -> Option<HilStateQuaternion> {
         match self {
             Self::Udp(transport) => transport.take_state_quaternion(),
             Self::Tcp(transport) => transport.take_state_quaternion(),
+        }
+    }
+
+    pub(super) fn take_state_quaternion_at(
+        &mut self,
+        timestamp_us: u64,
+    ) -> Option<HilStateQuaternion> {
+        match self {
+            Self::Udp(transport) => transport
+                .take_state_quaternion()
+                .filter(|sample| sample.time_usec == timestamp_us),
+            Self::Tcp(transport) => transport.take_state_quaternion_at(timestamp_us),
+        }
+    }
+
+    pub(super) fn clear_generation_state(&mut self) {
+        match self {
+            Self::Udp(transport) => transport.clear_generation_state(),
+            Self::Tcp(transport) => transport.clear_generation_state(),
         }
     }
 

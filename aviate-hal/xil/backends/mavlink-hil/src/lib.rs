@@ -17,7 +17,10 @@ pub mod transport;
 pub mod transport_tcp;
 pub mod wire;
 
-pub use backend::{ActuatorSendReceipt, HilBackend, HilBackendConfig, LOCKSTEP_ACTUATOR_FLAG};
+pub use backend::{
+    ActuatorSendReceipt, HilBackend, HilBackendConfig, LOCKSTEP_ACTUATOR_FLAG,
+    RESET_ACK_SENSOR_FLAG, RESET_REQUEST_ACTUATOR_FLAG,
+};
 pub use messages::{
     Heartbeat, HilActuatorControls, HilGps, HilMessage, HilSensor, HilStateQuaternion,
 };

@@ -6,7 +6,10 @@
 //! with the mixer's actuator command. Airframe selection stays with
 //! the application: the board takes the kernel by injection.
 
+mod backend;
 mod board;
+
+pub use backend::XPlaneSimulatorBackend;
 
 pub use board::{
     RuntimeHandshakeError, TuningActuatorApplication, TuningActuatorBypassReason,
@@ -17,6 +20,6 @@ pub use board::{
     TuningPerturbationCapability, TuningReady, TuningSendEvidence, TuningSensorApplication,
     TuningSetpoint, TuningTraceError, XPlaneBoard, XPlaneConfig, XPlaneConstraintFlags,
     XPlaneControlObservation, XPlaneHoverInitialization, XPlanePerturbationBindingError,
-    XPlaneRuntimeHandshake, XPlaneSendEvidence, XPlaneTuningTraceConfig, XPlaneTuningTraceIdentity,
-    BOARD_INFO,
+    XPlaneResetError, XPlaneRuntimeHandshake, XPlaneSendEvidence, XPlaneTuningTraceConfig,
+    XPlaneTuningTraceIdentity, BOARD_INFO,
 };

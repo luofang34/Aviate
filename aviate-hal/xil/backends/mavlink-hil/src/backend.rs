@@ -18,6 +18,12 @@ use crate::transport_tcp::{HilTcpConfig, HilTcpTransport};
 /// Lockstep reply flag in `HIL_ACTUATOR_CONTROLS.flags`.
 pub const LOCKSTEP_ACTUATOR_FLAG: u64 = 1;
 
+/// Aviate reset-request flag in `HIL_ACTUATOR_CONTROLS.flags`.
+pub const RESET_REQUEST_ACTUATOR_FLAG: u64 = 1 << 1;
+
+/// Simulator-reset marker in `HIL_SENSOR.fields_updated`.
+pub const RESET_ACK_SENSOR_FLAG: u32 = 1 << 31;
+
 /// Transport-confirmed fields from one actuator send.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ActuatorSendReceipt {
@@ -56,6 +62,9 @@ pub struct HilBackend {
     link: Link,
     origin: NedOrigin,
     last_sensor_time_us: u64,
+    sample_paced: bool,
+    reset_pending: bool,
+    reset_truth: Option<HilStateQuaternion>,
 }
 
 impl HilBackend {
@@ -71,6 +80,9 @@ impl HilBackend {
             link: Link::Udp(transport),
             origin: NedOrigin::default(),
             last_sensor_time_us: 0,
+            sample_paced: false,
+            reset_pending: false,
+            reset_truth: None,
         })
     }
 
@@ -85,6 +97,9 @@ impl HilBackend {
             })),
             origin: NedOrigin::default(),
             last_sensor_time_us: 0,
+            sample_paced: true,
+            reset_pending: false,
+            reset_truth: None,
         }
     }
 
@@ -92,7 +107,19 @@ impl HilBackend {
     pub fn poll(&mut self) -> Option<SimSensorPacket> {
         self.link.poll();
         let sensor = self.link.take_sensor();
-        let gps = self.link.take_gps();
+        if self.reset_pending {
+            return self.poll_reset_ack(sensor);
+        }
+        if self.sample_paced && sensor.is_none() {
+            return None;
+        }
+        let gps = if self.sample_paced {
+            sensor
+                .as_ref()
+                .and_then(|sample| self.link.take_gps_at(sample.time_usec))
+        } else {
+            self.link.take_gps()
+        };
         if sensor.is_none() && gps.is_none() {
             return None;
         }
@@ -109,7 +136,45 @@ impl HilBackend {
 
     /// Take the newest simulator truth message.
     pub fn take_state_quaternion(&mut self) -> Option<HilStateQuaternion> {
-        self.link.take_state_quaternion()
+        self.reset_truth
+            .take()
+            .or_else(|| self.link.take_state_quaternion())
+    }
+
+    /// Clear samples that cannot cross a reset generation.
+    pub fn clear_generation_state(&mut self) {
+        self.link.clear_generation_state();
+        self.last_sensor_time_us = 0;
+        self.reset_truth = None;
+    }
+
+    /// Request a simulator reset on the active HIL stream.
+    pub fn request_reset(&mut self) -> io::Result<()> {
+        if self.reset_pending {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "a reset request is still pending",
+            ));
+        }
+        self.clear_generation_state();
+        self.reset_pending = true;
+        if let Err(error) = self.send_reset_request() {
+            self.reset_pending = false;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Return true after a reset-marked sample starts the new generation.
+    #[must_use]
+    pub fn reset_acknowledged(&self) -> bool {
+        !self.reset_pending
+    }
+
+    /// Return true while the HIL stream waits for a reset acknowledgment.
+    #[must_use]
+    pub fn reset_request_pending(&self) -> bool {
+        self.reset_pending
     }
 
     /// Send one actuator command.
@@ -185,6 +250,39 @@ impl HilBackend {
             Link::Udp(transport) => transport.local_port(),
             Link::Tcp(_) => 0,
         }
+    }
+
+    fn poll_reset_ack(&mut self, sensor: Option<HilSensor>) -> Option<SimSensorPacket> {
+        let sensor = sensor?;
+        if sensor.fields_updated & RESET_ACK_SENSOR_FLAG == 0 {
+            self.send_reset_request().ok();
+            return None;
+        }
+        let gps = self.link.take_gps_at(sensor.time_usec);
+        let truth = self.link.take_state_quaternion_at(sensor.time_usec);
+        let complete_reset_group = gps.is_some() && truth.is_some();
+        if !complete_reset_group {
+            self.send_reset_request().ok();
+            return None;
+        }
+        self.reset_pending = false;
+        self.reset_truth = truth;
+        self.last_sensor_time_us = sensor.time_usec;
+        let mut packet = SimSensorPacket::default();
+        apply_sensor(&mut packet, sensor);
+        if let Some(gps) = gps {
+            apply_gps(&mut packet, &mut self.origin, gps);
+        }
+        Some(packet)
+    }
+
+    fn send_reset_request(&mut self) -> io::Result<()> {
+        let message = HilActuatorControls {
+            time_usec: self.link.now_us(),
+            flags: LOCKSTEP_ACTUATOR_FLAG | RESET_REQUEST_ACTUATOR_FLAG,
+            ..HilActuatorControls::default()
+        };
+        self.link.send_actuator_controls(&message)
     }
 }
 

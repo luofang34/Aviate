@@ -1,139 +1,362 @@
-//! Backend Trait Definitions
+//! Typed simulator backend contract.
 //!
-//! Defines the interface for kinematics/physics backends (Gazebo, Unity, Chrono, etc.).
-//! The xil core does NOT depend on any specific backend implementation.
+//! A backend accepts one directive at a time. It returns a receipt for
+//! the same directive. Frames contain one reset generation, one
+//! simulation step, and one authoritative simulation time.
 
-use crate::world::World;
 use std::time::Duration;
 
-/// Simulation timing mode
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TimingMode {
-    /// Run as fast as possible (multi-core/GPU accelerated)
-    /// No artificial rate limiting - step as fast as hardware allows
-    Unlimited,
+use aviate_core::control::Command;
+use thiserror::Error;
 
-    /// Cap at real-time (1x speed)
-    /// Simulation time matches wall-clock time
-    RealTime,
+/// A reset generation for one simulator session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResetGeneration(u32);
 
-    /// Fixed multiplier of real-time
-    /// e.g., 2.0 = 2x faster than real-time
-    Scaled(f64),
+impl ResetGeneration {
+    /// The first generation in a new session.
+    pub const INITIAL: Self = Self(1);
+
+    /// Create a generation from a transport value.
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    /// Return the transport value.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// Return the next generation.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self(self.0.wrapping_add(1))
+    }
 }
 
-/// Lockstep synchronization mode
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LockstepMode {
-    /// No synchronization - backend runs independently
-    Async,
+/// The acknowledged state of a simulator session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SimulatorLifecycle {
+    /// The backend does not advance the simulator.
+    Stopped,
+    /// The backend clears state for a new generation.
+    Resetting,
+    /// The flight controller uses fresh samples to converge.
+    Converging,
+    /// The backend can accept flight directives.
+    Ready,
+}
 
-    /// Barrier-based lockstep - backend waits for FC acknowledgment each step
-    /// Provides deterministic, reproducible simulation
-    Lockstep {
-        /// Timeout for FC acknowledgment (microseconds)
-        timeout_us: u64,
+/// One coherent view of the backend lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BackendStatus {
+    /// The current reset generation.
+    pub generation: ResetGeneration,
+    /// The current lifecycle state.
+    pub lifecycle: SimulatorLifecycle,
+    /// The last acknowledged simulation step.
+    pub step: u64,
+    /// The last authoritative simulation time.
+    pub simulation_time: Duration,
+    /// True when the flight controller is armed.
+    pub armed: bool,
+}
+
+impl Default for BackendStatus {
+    fn default() -> Self {
+        Self {
+            generation: ResetGeneration::INITIAL,
+            lifecycle: SimulatorLifecycle::Stopped,
+            step: 0,
+            simulation_time: Duration::ZERO,
+            armed: false,
+        }
+    }
+}
+
+/// A caller-supplied identity for one directive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DirectiveId(pub u64);
+
+/// One command for the simulator session.
+#[derive(Clone, Debug)]
+pub enum SimulatorDirectiveKind {
+    /// Start sample processing.
+    Start,
+    /// Stop sample processing and make outputs safe.
+    Stop,
+    /// Start a new reset generation.
+    Reset,
+    /// Check that the flight controller can arm.
+    CheckArmReadiness,
+    /// Arm the flight controller.
+    Arm,
+    /// Apply one flight setpoint.
+    Setpoint(Command),
+    /// Disarm the flight controller.
+    Disarm,
+}
+
+impl SimulatorDirectiveKind {
+    /// Return a stable operation name for diagnostics.
+    #[must_use]
+    pub const fn operation(&self) -> SimulatorOperation {
+        match self {
+            Self::Start => SimulatorOperation::Start,
+            Self::Stop => SimulatorOperation::Stop,
+            Self::Reset => SimulatorOperation::Reset,
+            Self::CheckArmReadiness => SimulatorOperation::CheckArmReadiness,
+            Self::Arm => SimulatorOperation::Arm,
+            Self::Setpoint(_) => SimulatorOperation::Setpoint,
+            Self::Disarm => SimulatorOperation::Disarm,
+        }
+    }
+}
+
+/// A directive that is valid only for one reset generation.
+#[derive(Clone, Debug)]
+pub struct SimulatorDirective {
+    /// The identity that the receipt must repeat.
+    pub id: DirectiveId,
+    /// The generation that the caller observed.
+    pub generation: ResetGeneration,
+    /// The requested operation.
+    pub kind: SimulatorDirectiveKind,
+}
+
+/// The confirmed effect of a directive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DirectiveOutcome {
+    /// Sample processing started.
+    Started,
+    /// Sample processing stopped.
+    Stopped,
+    /// The backend accepted a reset for a new generation.
+    ResetAccepted,
+    /// The flight controller can arm.
+    ArmReady,
+    /// The flight controller armed.
+    Armed,
+    /// The backend accepted the setpoint for the current generation.
+    SetpointAccepted,
+    /// The flight controller disarmed.
+    Disarmed,
+}
+
+/// An acknowledgement for one directive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DirectiveReceipt {
+    /// The identity from the directive.
+    pub id: DirectiveId,
+    /// The generation that contains the confirmed effect.
+    pub generation: ResetGeneration,
+    /// The step that contains the confirmed effect.
+    pub step: u64,
+    /// The authoritative simulation time for the receipt.
+    pub simulation_time: Duration,
+    /// The confirmed effect.
+    pub outcome: DirectiveOutcome,
+}
+
+/// Backend-neutral vehicle state in the North-East-Down frame.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VehicleState {
+    /// Position in metres.
+    pub position: [f32; 3],
+    /// Velocity in metres per second.
+    pub velocity: [f32; 3],
+    /// Body-to-world quaternion in `[w, x, y, z]` order.
+    pub orientation: [f32; 4],
+    /// Body angular velocity in radians per second.
+    pub angular_velocity: [f32; 3],
+    /// True when all required fields are available.
+    pub valid: bool,
+}
+
+/// One sample-paced simulator frame.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SimulatorFrame {
+    /// The reset generation for all frame fields.
+    pub generation: ResetGeneration,
+    /// The authoritative simulation step.
+    pub step: u64,
+    /// The authoritative simulation time.
+    pub simulation_time: Duration,
+    /// The lifecycle state for this generation.
+    pub lifecycle: SimulatorLifecycle,
+    /// The vehicle state for this step.
+    pub vehicle: VehicleState,
+    /// True when the flight controller is armed.
+    pub armed: bool,
+}
+
+/// The result of one bounded frame request.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FrameEvent {
+    /// The backend supplied one frame.
+    Frame(SimulatorFrame),
+    /// No frame arrived before the wall-clock transport timeout.
+    TimedOut {
+        /// The current generation.
+        generation: ResetGeneration,
+        /// The last acknowledged step.
+        last_step: u64,
+        /// The requested timeout.
+        timeout: Duration,
     },
 }
 
-/// Backend configuration
-#[derive(Debug, Clone)]
-pub struct BackendConfig {
-    /// Physics step size
-    pub dt: Duration,
-
-    /// Timing mode (unlimited, real-time, or scaled)
-    pub timing: TimingMode,
-
-    /// Lockstep synchronization mode
-    pub lockstep: LockstepMode,
-
-    /// Number of vehicle instances
-    pub num_instances: u8,
+/// A backend operation name.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SimulatorOperation {
+    /// Connect the transport.
+    Connect,
+    /// Start sample processing.
+    Start,
+    /// Stop sample processing.
+    Stop,
+    /// Reset the session.
+    Reset,
+    /// Check arm readiness.
+    CheckArmReadiness,
+    /// Arm the flight controller.
+    Arm,
+    /// Apply a setpoint.
+    Setpoint,
+    /// Disarm the flight controller.
+    Disarm,
+    /// Read the next frame.
+    NextFrame,
 }
 
-impl Default for BackendConfig {
-    fn default() -> Self {
-        Self {
-            dt: Duration::from_millis(1), // 1ms = 1kHz physics
-            timing: TimingMode::RealTime,
-            lockstep: LockstepMode::Lockstep { timeout_us: 50000 },
-            num_instances: 1,
-        }
+impl std::fmt::Display for SimulatorOperation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{self:?}")
     }
 }
 
-/// Trait for kinematics/physics backends
-///
-/// Implementations:
-/// - `aviate-backend-gz`: Gazebo Harmonic via shared memory
-/// - Future: Unity, Chrono, custom world kernel
-pub trait KinematicsBackend: Send {
-    /// Backend identifier (e.g., "gazebo", "unity", "chrono")
+/// A typed simulator backend failure.
+#[derive(Debug, Error)]
+pub enum SimulatorError {
+    /// The backend cannot connect to the simulator.
+    #[error("{backend} connection failed: {detail}")]
+    ConnectionFailed {
+        /// Backend name.
+        backend: String,
+        /// Failure detail.
+        detail: String,
+    },
+    /// The backend does not provide an operation.
+    #[error("{operation} is not available: {detail}")]
+    NotAvailable {
+        /// Requested operation.
+        operation: SimulatorOperation,
+        /// Refusal detail.
+        detail: String,
+    },
+    /// A transport operation failed.
+    #[error("{operation} input/output failed: {source}")]
+    Io {
+        /// Failed operation.
+        operation: SimulatorOperation,
+        /// Source error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A directive did not complete before its timeout.
+    #[error("{operation} timed out in generation {generation:?} after {timeout:?}")]
+    Timeout {
+        /// Timed-out operation.
+        operation: SimulatorOperation,
+        /// Active generation.
+        generation: ResetGeneration,
+        /// Requested timeout.
+        timeout: Duration,
+    },
+    /// The sample-paced bridge disconnected.
+    #[error("bridge lost in generation {generation:?} after step {last_step}")]
+    BridgeLost {
+        /// Active generation.
+        generation: ResetGeneration,
+        /// Last acknowledged step.
+        last_step: u64,
+    },
+    /// The backend cannot reset the simulator state.
+    #[error("reset failed in generation {generation:?}: {detail}")]
+    ResetFailed {
+        /// Active generation.
+        generation: ResetGeneration,
+        /// Failure detail.
+        detail: String,
+    },
+    /// The flight controller did not become ready.
+    #[error("readiness failed in generation {generation:?}: {detail}")]
+    ReadinessFailed {
+        /// Active generation.
+        generation: ResetGeneration,
+        /// Failure detail.
+        detail: String,
+    },
+    /// The flight controller refused to arm.
+    #[error("arm refused in generation {generation:?}: {detail}")]
+    ArmRefused {
+        /// Active generation.
+        generation: ResetGeneration,
+        /// Failure detail.
+        detail: String,
+    },
+    /// A directive uses an inactive generation.
+    #[error("directive generation {received:?} does not match {expected:?}")]
+    StaleGeneration {
+        /// Active generation.
+        expected: ResetGeneration,
+        /// Directive generation.
+        received: ResetGeneration,
+    },
+    /// The lifecycle does not permit an operation.
+    #[error("{operation} is invalid while the backend is {lifecycle:?}")]
+    InvalidLifecycle {
+        /// Requested operation.
+        operation: SimulatorOperation,
+        /// Current lifecycle state.
+        lifecycle: SimulatorLifecycle,
+    },
+}
+
+/// A sample-paced simulator backend.
+pub trait SimulatorBackend: Send {
+    /// Return the backend name.
     fn name(&self) -> &str;
 
-    /// Initialize the backend with configuration
-    fn start(&mut self, cfg: &BackendConfig) -> Result<(), BackendError>;
+    /// Connect one simulator instance and return its status.
+    fn connect(&mut self, instance: u8, timeout: Duration)
+        -> Result<BackendStatus, SimulatorError>;
 
-    /// Advance simulation by one step
-    ///
-    /// In lockstep mode, this blocks until:
-    /// 1. Physics step completes
-    /// 2. World state is updated
-    /// 3. (Optional) FC acknowledges the step
-    ///
-    /// Returns the actual time advanced (may differ from dt in async mode)
-    fn step(&mut self, world: &mut World) -> Result<Duration, BackendError>;
+    /// Return one coherent backend status.
+    fn status(&self) -> BackendStatus;
 
-    /// Check if backend is ready for next step (non-blocking)
-    fn poll_ready(&self) -> bool;
+    /// Execute one directive and return its acknowledgement.
+    fn execute(
+        &mut self,
+        directive: SimulatorDirective,
+        timeout: Duration,
+    ) -> Result<DirectiveReceipt, SimulatorError>;
 
-    /// Get current simulation time
-    fn sim_time(&self) -> Duration;
+    /// Request the next sample-paced frame.
+    fn next_frame(&mut self, timeout: Duration) -> Result<FrameEvent, SimulatorError>;
 
-    /// Get current step count
-    fn step_count(&self) -> u64;
-
-    /// Shutdown the backend
-    fn stop(&mut self) -> Result<(), BackendError>;
-
-    /// Reset to initial state (for test reruns)
-    fn reset(&mut self) -> Result<(), BackendError>;
+    /// Return the connected instance.
+    fn instance(&self) -> u8;
 }
 
-/// Backend errors
-#[derive(Debug)]
-pub enum BackendError {
-    /// Backend not initialized
-    NotInitialized,
-    /// Backend feature not available/supported
-    NotSupported(String),
-    /// Connection to external simulator failed
-    ConnectionFailed(String),
-    /// Lockstep timeout - FC didn't acknowledge in time
-    LockstepTimeout { step: u64, timeout_us: u64 },
-    /// Physics step failed
-    StepFailed(String),
-    /// Configuration error
-    ConfigError(String),
-    /// Generic error
-    Other(String),
-}
+#[cfg(test)]
+mod tests {
+    use super::ResetGeneration;
 
-impl std::fmt::Display for BackendError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BackendError::NotInitialized => write!(f, "Backend not initialized"),
-            BackendError::NotSupported(msg) => write!(f, "Not supported: {}", msg),
-            BackendError::ConnectionFailed(msg) => write!(f, "Connection failed: {}", msg),
-            BackendError::LockstepTimeout { step, timeout_us } => {
-                write!(f, "Lockstep timeout at step {} ({}us)", step, timeout_us)
-            }
-            BackendError::StepFailed(msg) => write!(f, "Step failed: {}", msg),
-            BackendError::ConfigError(msg) => write!(f, "Config error: {}", msg),
-            BackendError::Other(msg) => write!(f, "{}", msg),
-        }
+    #[test]
+    fn reset_generation_wraps() {
+        assert_eq!(ResetGeneration::new(u32::MAX).next().get(), 0);
     }
 }
-
-impl std::error::Error for BackendError {}

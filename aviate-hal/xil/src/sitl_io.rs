@@ -301,6 +301,25 @@ impl SitlIO {
         self.actuator_cmd.take()
     }
 
+    /// Clear data that must not cross a reset generation.
+    pub fn clear_generation_state(&mut self) {
+        let mut buffer = [0_u8; 1_024];
+        loop {
+            match self.socket.recv_from(&mut buffer) {
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                Err(_) => break,
+            }
+        }
+        self.sensor_data = None;
+        self.gps_data = None;
+        self.command = None;
+        self.flight_cmd = None;
+        self.actuator_cmd = None;
+        self.armed = false;
+        self.system_status = MavState::Boot as u8;
+    }
+
     /// Check if there's a pending actuator command
     pub fn has_actuator_cmd(&self) -> bool {
         self.actuator_cmd.is_some()
