@@ -587,7 +587,7 @@ pub enum ParseError {
 }
 
 /// MAVLink 2.0 frame header
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MavHeader {
     pub payload_len: u8,
     pub incompat_flags: u8,
@@ -596,6 +596,15 @@ pub struct MavHeader {
     pub sysid: u8,
     pub compid: u8,
     pub msgid: u32, // 24-bit in wire format
+}
+
+/// One parsed MAVLink frame with its complete wire header.
+#[derive(Clone, Debug)]
+pub struct ParsedMavlinkFrame {
+    pub message: MavMessage,
+    pub signature: Option<MavSignature>,
+    pub header: MavHeader,
+    pub consumed: usize,
 }
 
 impl MavHeader {
@@ -620,6 +629,12 @@ impl MavHeader {
 /// signature extension after the CRC. This function extracts the signature
 /// metadata but does NOT verify it - verification happens in `aviate-security`.
 pub fn parse_mavlink(buf: &[u8]) -> Result<(MavMessage, Option<MavSignature>, usize), ParseError> {
+    let parsed = parse_mavlink_frame(buf)?;
+    Ok((parsed.message, parsed.signature, parsed.consumed))
+}
+
+/// Parse one MAVLink message and retain its complete wire header.
+pub fn parse_mavlink_frame(buf: &[u8]) -> Result<ParsedMavlinkFrame, ParseError> {
     // Minimum frame: STX(1) + header(9) + payload(0) + checksum(2) = 12
     if buf.len() < 12 {
         return Err(ParseError::BufferTooShort);
@@ -706,7 +721,12 @@ pub fn parse_mavlink(buf: &[u8]) -> Result<(MavMessage, Option<MavSignature>, us
         parse_message_payload(header.msgid, payload)?
     };
 
-    Ok((msg, signature, frame_size))
+    Ok(ParsedMavlinkFrame {
+        message: msg,
+        signature,
+        header,
+        consumed: frame_size,
+    })
 }
 
 /// Parse MAVLink 2.0 signature block (13 bytes)
@@ -1840,6 +1860,35 @@ mod truncation_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parsed_frame_retains_the_complete_wire_header() {
+        let message = MavMessage::Heartbeat(Heartbeat {
+            mav_type: 2,
+            autopilot: 18,
+            base_mode: 0,
+            custom_mode: 0,
+            system_status: 4,
+            mavlink_version: 3,
+        });
+        let mut bytes = [0_u8; 64];
+        let length = serialize_mavlink(&message, 255, 42, 190, &mut bytes);
+        assert!(length.is_some());
+        let Some(length) = length else {
+            return;
+        };
+        let parsed = parse_mavlink_frame(&bytes[..length]);
+        assert!(parsed.is_ok());
+        let Ok(parsed) = parsed else {
+            return;
+        };
+
+        assert_eq!(parsed.header.seq, 255);
+        assert_eq!(parsed.header.sysid, 42);
+        assert_eq!(parsed.header.compid, 190);
+        assert_eq!(parsed.header.msgid, Heartbeat::MSG_ID);
+        assert_eq!(parsed.consumed, length);
+    }
 
     /// A frame advertising an incompat feature this parser does not
     /// implement must be discarded even when its CRC is valid — parsing

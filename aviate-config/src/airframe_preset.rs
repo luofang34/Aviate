@@ -26,6 +26,15 @@
 use alloc::string::String;
 use serde::Deserialize;
 
+mod candidate;
+
+pub use candidate::{
+    calculate_overlay_lineage_digest, resolve_candidate, CalibrationCandidate, CalibrationOverlay,
+    CalibrationStage, CandidateError, CandidateIdentity, ContentDigest, GainOverrides,
+    InnerLoopDesign, PlantArtifactError, PlantIdentificationArtifact, PlantSampleClock,
+    ResolvedCandidate, MAX_SATURATION_FRACTION, MIN_COHERENCE,
+};
+
 /// Registered mixer geometries a preset may name. The app resolves
 /// the variant to a compiled mixer type; the variant (not the TOML
 /// string) is what must reach the kernel's canonical hash so lockstep
@@ -38,13 +47,15 @@ pub enum MixerKind {
     /// PX4-gazebo-models X500 pattern (CW on FL+RR diagonal) —
     /// opposite yaw signs from [`MixerKind::QuadX`].
     QuadXX500,
+    /// X500 lane order with the two spin diagonals reversed.
+    QuadXX500ReversedSpin,
 }
 
 impl MixerKind {
     /// Motor count this geometry drives.
     pub fn motor_count(self) -> u8 {
         match self {
-            MixerKind::QuadX | MixerKind::QuadXX500 => 4,
+            MixerKind::QuadX | MixerKind::QuadXX500 | MixerKind::QuadXX500ReversedSpin => 4,
         }
     }
 }
@@ -81,12 +92,18 @@ pub struct GainsPreset {
     pub vel_d: [f32; 3],
     /// Max roll/pitch tilt the velocity loop may command \[rad\].
     pub vel_max_roll_pitch: f32,
+    /// Maximum applied yaw error per control cycle \[rad\].
+    pub vel_max_yaw_step: f32,
     /// Acceleration feedforward scale \[0..1\].
     pub vel_accel_ff: f32,
     /// Attitude loop P gains \[1/s\], roll/pitch/yaw.
     pub att_p: [f32; 3],
+    /// Maximum attitude-loop body-rate command \[rad/s\].
+    pub att_max_rate_cmd: f32,
     /// Rate loop P gains, roll/pitch/yaw.
     pub rate_p: [f32; 3],
+    /// Rate loop I gains, roll/pitch/yaw.
+    pub rate_i: [f32; 3],
     /// Rate loop D gains, roll/pitch/yaw.
     pub rate_d: [f32; 3],
     /// Rate D-term LPF coefficient \[0..1\].
@@ -236,7 +253,7 @@ impl AirframePreset {
 
     fn validate_gains(&self) -> Result<(), PresetError> {
         let g = &self.gains;
-        let triples: [(&'static str, &[f32; 3]); 8] = [
+        let triples: [(&'static str, &[f32; 3]); 10] = [
             ("gains.pos_p", &g.pos_p),
             ("gains.pos_accel_limits", &g.pos_accel_limits),
             ("gains.pos_vel_caps", &g.pos_vel_caps),
@@ -245,21 +262,26 @@ impl AirframePreset {
             ("gains.vel_d", &g.vel_d),
             ("gains.att_p", &g.att_p),
             ("gains.rate_p", &g.rate_p),
+            ("gains.rate_i", &g.rate_i),
+            ("gains.rate_d", &g.rate_d),
         ];
         for (name, t) in triples {
             if t.iter().any(|v| !v.is_finite() || *v < 0.0) {
                 return Err(PresetError::FieldOutOfRange { field: name });
             }
         }
-        if g.rate_d.iter().any(|v| !v.is_finite() || *v < 0.0) {
-            return Err(PresetError::FieldOutOfRange {
-                field: "gains.rate_d",
-            });
-        }
         if !g.vel_max_roll_pitch.is_finite() || g.vel_max_roll_pitch <= 0.0 {
             return Err(PresetError::FieldOutOfRange {
                 field: "gains.vel_max_roll_pitch",
             });
+        }
+        for (name, v) in [
+            ("gains.vel_max_yaw_step", g.vel_max_yaw_step),
+            ("gains.att_max_rate_cmd", g.att_max_rate_cmd),
+        ] {
+            if !v.is_finite() || v < 0.0 {
+                return Err(PresetError::FieldOutOfRange { field: name });
+            }
         }
         for (name, v) in [
             ("gains.vel_accel_ff", g.vel_accel_ff),

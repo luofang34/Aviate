@@ -1,0 +1,40 @@
+# AirframePreset schema 2 for the X-Plane Alia 250 model.
+#
+# The hover seed is normalized force. The mixer uses the Alia lane order
+# and spin direction. The gains reproduce the validated app configuration.
+
+schema_version = 2
+name = "alia250"
+mixer = "quad-x-x500-reversed-spin"
+motor_count = 4
+hover_thrust_seed = 0.43
+actuator_curve = "quadratic"
+
+[gains]
+pos_p = [0.5, 0.5, 0.5]
+pos_accel_limits = [2.0, 2.0, 1.0]
+pos_vel_caps = [2.0, 2.0, 1.5]
+vel_p = [1.2, 1.2, 0.4]
+vel_i = [0.3, 0.3, 0.1]
+vel_d = [0.0, 0.0, 0.0]
+vel_max_roll_pitch = 0.45
+vel_max_yaw_step = 0.6
+vel_accel_ff = 0.0
+att_p = [0.8, 0.8, 0.36]
+att_max_rate_cmd = 1.0
+rate_p = [0.9433962, 1.6129032, 2.25]
+rate_i = [0.1, 0.1, 0.3]
+rate_d = [0.05, 0.05, 0.05]
+rate_d_lpf_alpha = 0.5
+
+[limits]
+max_roll = 0.78
+max_pitch = 0.78
+max_roll_rate = 3.0
+max_pitch_rate = 3.0
+max_yaw_rate = 3.0
+max_horizontal_speed = 10.0
+max_climb_rate = 2.0
+max_descent_rate = 2.0
+max_altitude = 100.0
+min_altitude = 0.0

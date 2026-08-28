@@ -435,6 +435,7 @@ where
         Ok(RawBaroReading {
             pressure_pa,
             temperature_c,
+            ..RawBaroReading::default()
         })
     }
 
@@ -466,6 +467,7 @@ mod tests {
         let reading = RawBaroReading {
             pressure_pa: 101325.0,
             temperature_c: 15.0,
+            ..RawBaroReading::default()
         };
         assert!(reading.altitude_m().abs() < 10.0);
 
@@ -473,6 +475,7 @@ mod tests {
         let reading = RawBaroReading {
             pressure_pa: 89875.0,
             temperature_c: 15.0,
+            ..RawBaroReading::default()
         };
         assert!((reading.altitude_m() - 1000.0).abs() < 100.0);
     }

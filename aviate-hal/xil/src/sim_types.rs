@@ -3,19 +3,35 @@
 //! These types are used for direct communication between simulator backends
 //! (like Gazebo) and SitlIO, bypassing MAVLink for sensor/actuator data.
 //!
-//! All types are in NED (North-East-Down) coordinate frame - the standard
-//! for avionics. Backend-specific code (e.g., gazebo_bridge) is responsible
-//! for converting from backend coordinate frames (e.g., ENU for Gazebo).
+//! World position and velocity use NED (North-East-Down). Inertial and
+//! magnetic vectors use the flight-controller body-FRD frame. A backend
+//! converts its native world and body frames before it creates these values.
 
 /// Timestamp in microseconds since simulation start
 pub type SimTimestampUs = u64;
 
+/// Complete sensor-lane presence bits for one simulator sample.
+pub mod sensor_presence {
+    /// Accelerometer X, Y, and Z lanes.
+    pub const ACCELEROMETER: u16 = 0b111;
+    /// Gyroscope X, Y, and Z lanes.
+    pub const GYROSCOPE: u16 = 0b111 << 3;
+    /// Magnetometer X, Y, and Z lanes.
+    pub const MAGNETOMETER: u16 = 0b111 << 6;
+    /// Absolute pressure lane.
+    pub const ABSOLUTE_PRESSURE: u16 = 1 << 9;
+    /// Differential pressure lane.
+    pub const DIFFERENTIAL_PRESSURE: u16 = 1 << 10;
+    /// Pressure altitude lane.
+    pub const PRESSURE_ALTITUDE: u16 = 1 << 11;
+}
+
 /// IMU sensor data (accelerometer + gyroscope)
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SimImuData {
-    /// Accelerometer X, Y, Z in m/s² (NED frame)
+    /// Accelerometer X, Y, Z in m/s² (body-FRD frame)
     pub accel: [f32; 3],
-    /// Gyroscope X, Y, Z in rad/s (body frame)
+    /// Gyroscope X, Y, Z in rad/s (body-FRD frame)
     pub gyro: [f32; 3],
     /// Optional temperature in Celsius
     pub temperature: Option<f32>,
@@ -26,6 +42,10 @@ pub struct SimImuData {
 pub struct SimBaroData {
     /// Static pressure in Pascals
     pub pressure_pa: f32,
+    /// Differential pressure in Pascals when the sample contains it.
+    pub differential_pressure_pa: Option<f32>,
+    /// Explicit pressure altitude in meters when the sample contains it.
+    pub pressure_altitude_m: Option<f32>,
     /// Temperature in Celsius
     pub temperature_c: f32,
 }
@@ -33,7 +53,7 @@ pub struct SimBaroData {
 /// Magnetometer sensor data
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SimMagData {
-    /// Magnetic field X, Y, Z in microtesla (NED frame)
+    /// Magnetic field X, Y, Z in microtesla (body-FRD frame)
     pub field_ut: [f32; 3],
 }
 
@@ -83,6 +103,8 @@ pub struct SimGnssData {
 pub struct SimSensorPacket {
     /// Timestamp in microseconds since simulation start
     pub timestamp_us: SimTimestampUs,
+    /// Raw lane presence bitmap after backend protocol decoding.
+    pub presence_mask: u16,
     /// IMU data (accel + gyro)
     pub imu: Option<SimImuData>,
     /// Barometer data
@@ -98,6 +120,7 @@ impl SimSensorPacket {
     pub const fn new(timestamp_us: SimTimestampUs) -> Self {
         Self {
             timestamp_us,
+            presence_mask: 0,
             imu: None,
             baro: None,
             mag: None,
@@ -108,11 +131,19 @@ impl SimSensorPacket {
     /// Builder: set IMU data
     pub const fn with_imu(mut self, imu: SimImuData) -> Self {
         self.imu = Some(imu);
+        self.presence_mask |= sensor_presence::ACCELEROMETER | sensor_presence::GYROSCOPE;
         self
     }
 
     /// Builder: set barometer data
     pub const fn with_baro(mut self, baro: SimBaroData) -> Self {
+        self.presence_mask |= sensor_presence::ABSOLUTE_PRESSURE;
+        if baro.differential_pressure_pa.is_some() {
+            self.presence_mask |= sensor_presence::DIFFERENTIAL_PRESSURE;
+        }
+        if baro.pressure_altitude_m.is_some() {
+            self.presence_mask |= sensor_presence::PRESSURE_ALTITUDE;
+        }
         self.baro = Some(baro);
         self
     }
@@ -120,6 +151,7 @@ impl SimSensorPacket {
     /// Builder: set magnetometer data
     pub const fn with_mag(mut self, mag: SimMagData) -> Self {
         self.mag = Some(mag);
+        self.presence_mask |= sensor_presence::MAGNETOMETER;
         self
     }
 

@@ -202,12 +202,13 @@ mod tests {
         // This value reflects the Ekf identity `ETIMEKF4`
         // ("ekf.basic-15state.v3", no timeout adoption of rejected
         // aiding, sustained rejection surfaces as lost validity), the
-        // controller identity `CTLMURV2` ("controller.multirotor.v2",
-        // heading-frame tilt mapping), and the mixer identity
+        // controller identity `CTLMURV4` ("controller.multirotor.v4",
+        // kernel-owned cycle interval and explicit transfer guardrails),
+        // and the mixer identity
         // `MIXQUAD2` ("mixer.quad_x.v2", priority desaturation): each
         // moved deliberately off its retired predecessor because its
         // observable behavior changed while its state shape did not.
-        const EXPECTED: u64 = 0x646b_55c0_745d_ab84;
+        const EXPECTED: u64 = 0x4b46_67c1_ac0e_401e;
         let actual = make_pipeline().algorithm_identity_hash();
         assert_eq!(
             actual, EXPECTED,
@@ -228,7 +229,7 @@ mod tests {
         // cert/algorithm_id_registry.toml — rotate a bundle member
         // and both pins must move in the same commit.
         use crate::mixer::QuadXMixerX500;
-        const EXPECTED: u64 = 0x20ce_8c48_7287_24d5;
+        const EXPECTED: u64 = 0x99ae_668f_493e_0e4b;
         let actual = KernelPipeline::new(
             Ekf::default(),
             MultirotorController::default(),
