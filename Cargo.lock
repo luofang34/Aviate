@@ -261,7 +261,7 @@ dependencies = [
  "aviate-core",
  "libm",
  "serde",
- "sha2",
+ "sha2 0.10.9",
  "toml 1.1.4+spec-1.1.0",
 ]
 
@@ -308,7 +308,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "thiserror",
  "tracing",
 ]
