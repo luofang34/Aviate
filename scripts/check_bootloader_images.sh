@@ -63,6 +63,34 @@ require_section() {
     fi
 }
 
+# Require a section to exist, to be nonempty, and to lie fully inside the
+# given address range. Use this for sections whose exact address is not
+# fixed, for example .start_block inside the Boot ROM scan window.
+require_section_in_range() {
+    local elf=$1
+    local section=$2
+    local range_start=$3
+    local range_end=$4
+    local fields
+    local address
+    local size
+
+    fields="$(section_fields "$elf" "$section")"
+    if [[ -z "$fields" ]]; then
+        echo "FAIL: $elf is missing $section" >&2
+        return 1
+    fi
+
+    read -r address size <<<"$fields"
+    if (( 16#$size == 0 )); then
+        echo "FAIL: $elf has an empty $section" >&2
+        return 1
+    fi
+
+    require_range_within "$elf section $section" "$((16#$address))" \
+        "$((16#$size))" "$range_start" "$range_end"
+}
+
 require_nonempty_section() {
     local elf=$1
     local section=$2
@@ -307,8 +335,16 @@ verify_stm32h743() {
 # Fixed RP2350 flash geometry (Boot ROM contract — not tunable).
 readonly RP2350_FLASH_BASE=0x10000000
 readonly RP2350_RAM_BASE=0x20000000
-readonly RP2350_START_BLOCK=0x10000000
-readonly RP2350_VECTOR_TABLE=0x10000100
+# The vector table sits at the flash base. The Boot ROM reads the initial
+# SP/PC from it.
+readonly RP2350_VECTOR_TABLE=$RP2350_FLASH_BASE
+# The Boot ROM scans the first 4 KiB of flash for the Image Definition
+# (.start_block). It follows the vector table, so it has no fixed address.
+readonly RP2350_IMAGE_DEF_WINDOW=0x1000
+# Decoy boundary for the negative-proof self-tests. It sits just above the
+# flash base, so the real image footprint and the linker region end
+# provably cross it.
+readonly RP2350_DECOY_BOUNDARY=0x10000200
 # Top of the XIP flash window (16 MiB max) — upper bound for the
 # application entry-point range.
 readonly RP2350_FLASH_TOP=0x11000000
@@ -338,13 +374,13 @@ require_rp2350_boundary_agreement() {
 }
 
 # Negative proof (mutation): re-run the footprint guard with the boundary
-# lowered to the vector-table start. The real bootloader's .text and
-# .rodata load above the vector table, so a correct guard MUST reject it.
+# lowered to just above the flash base. The real bootloader's .text and
+# .rodata load past that decoy, so a correct guard MUST reject it.
 # If this lowered check passes, the guard is broken and cannot be trusted
 # to catch a real crossing — fail loudly.
 assert_guard_rejects_crossing() {
     local elf=$1
-    local decoy_boundary=$RP2350_VECTOR_TABLE
+    local decoy_boundary=$RP2350_DECOY_BOUNDARY
 
     if require_flash_loads_in_range "$elf" "$RP2350_FLASH_BASE" \
         "$decoy_boundary" "$RP2350_RAM_BASE" 2>/dev/null; then
@@ -391,7 +427,7 @@ assert_test_app_range_guard_rejects_mutations() {
 # from the image-footprint proof above.
 assert_region_guard_rejects_oversize() {
     local elf=$1
-    local decoy_boundary=$RP2350_VECTOR_TABLE
+    local decoy_boundary=$RP2350_DECOY_BOUNDARY
 
     if require_region_end_within "$elf" "$decoy_boundary" 2>/dev/null; then
         printf 'FAIL: region guard accepted a FLASH region past 0x%08x — guard is not effective\n' \
@@ -415,8 +451,11 @@ verify_rp2350() {
     require_rp2350_boundary_agreement "$boundary" || return 1
 
     require_entry_in_range "$elf" "$RP2350_FLASH_BASE" "$boundary"
-    require_section "$elf" .start_block "$RP2350_START_BLOCK"
     require_section "$elf" .vector_table "$RP2350_VECTOR_TABLE"
+    # .start_block follows the vector table. The Boot ROM scans the first
+    # 4 KiB of flash for it, so its address is not fixed.
+    require_section_in_range "$elf" .start_block "$RP2350_FLASH_BASE" \
+        $((RP2350_FLASH_BASE + RP2350_IMAGE_DEF_WINDOW))
     require_nonempty_section "$elf" .text
     require_flash_loads_in_range "$elf" "$RP2350_FLASH_BASE" "$boundary" "$RP2350_RAM_BASE"
     require_region_end_within "$elf" "$boundary"
