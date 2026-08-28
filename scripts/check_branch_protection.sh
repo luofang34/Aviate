@@ -87,7 +87,6 @@ EXPECTED_REVIEW = {
 EXPECTED_MERGE_METHODS = {"merge", "squash", "rebase"}
 EXPECTED_RULE_TYPES = (
     "deletion",
-    "merge_queue",
     "non_fast_forward",
     "pull_request",
     "required_status_checks",
@@ -253,7 +252,7 @@ def audit(rulesets):
             )
 
     rules = {rule["type"]: rule for rule in ruleset.get("rules", [])}
-    for required in ("deletion", "merge_queue", "non_fast_forward"):
+    for required in ("deletion", "non_fast_forward"):
         if required not in rules:
             failures.append(f"missing rule: {required}")
 
@@ -334,18 +333,6 @@ def baseline():
                         "required_status_checks": [
                             {"context": "CI Success", "integration_id": 15368}
                         ],
-                    },
-                },
-                {
-                    "type": "merge_queue",
-                    "parameters": {
-                        "check_response_timeout_minutes": 60,
-                        "grouping_strategy": "ALLGREEN",
-                        "max_entries_to_build": 5,
-                        "max_entries_to_merge": 5,
-                        "merge_method": "squash",
-                        "min_entries_to_merge": 1,
-                        "min_entries_to_merge_wait_minutes": 5,
                     },
                 },
             ],
@@ -455,9 +442,6 @@ DRIFT_CASES = [
     ("non_fast_forward rule removed",
      lambda rs: drop_rule(rs, "non_fast_forward"),
      "missing rule: non_fast_forward"),
-    ("merge_queue rule removed",
-     lambda rs: drop_rule(rs, "merge_queue"),
-     "missing rule: merge_queue"),
     ("pull_request rule removed",
      lambda rs: drop_rule(rs, "pull_request"),
      "missing rule: pull_request"),

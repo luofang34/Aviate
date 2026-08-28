@@ -31,19 +31,6 @@ Exactly one active branch ruleset, `main-protection`, reaches `main`
 - The branch must be up to date with `main` before merge
   (`strict_required_status_checks_policy`), and required checks also
   apply on branch creation.
-- Merges to `main` go through the merge queue (`merge_queue` rule).
-  The queue stages each entry on top of the current `main`, so the
-  strict up-to-date requirement above stays satisfied without manual
-  rebases. The queue merges with the squash method
-  (`merge_method: squash`). Its grouping strategy is `ALLGREEN`:
-  every entry in a group must pass the required checks before the
-  group merges. The remaining parameters are
-  `check_response_timeout_minutes: 60`, `max_entries_to_build: 5`,
-  `max_entries_to_merge: 5`, `min_entries_to_merge: 1`, and
-  `min_entries_to_merge_wait_minutes: 5`. The CI workflow runs on the
-  `merge_group` event, so each staged merge produces the required
-  `CI Success` check. The audit requires the `merge_queue` rule to be
-  present exactly once; it does not audit the rule's parameters.
 - Force-push and branch deletion are blocked.
 - `bypass_actors` is empty: no actor — including the repository
   admin role — can bypass the rules while they are active. There is
