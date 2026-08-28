@@ -7,15 +7,20 @@ use alloc::{
 use core::fmt;
 
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 
 use super::{preset_from_toml_str, AirframePreset, PresetError};
 
 mod design;
+mod digest;
 mod lineage;
 mod plant;
+use digest::parse_digest;
+pub use digest::ContentDigest;
 pub use lineage::calculate_overlay_lineage_digest;
-pub use plant::{PlantArtifactError, PlantIdentificationArtifact, PlantSampleClock};
+pub use plant::{
+    PlantArtifactError, PlantIdentificationArtifact, PlantSampleClock, MAX_SATURATION_FRACTION,
+    MIN_COHERENCE,
+};
 
 use crate::xplane_model::XPlaneSimulatorModel;
 use lineage::apply_candidate_layers;
@@ -24,51 +29,6 @@ const LEGACY_CANDIDATE_SCHEMA_VERSION: u16 = 1;
 const LINEAGE_CANDIDATE_SCHEMA_VERSION: u16 = 2;
 const MAX_ID_BYTES: usize = 64;
 const MAX_OVERLAYS: usize = 5;
-
-/// SHA-256 identity for one exact artifact.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ContentDigest([u8; 32]);
-
-impl ContentDigest {
-    /// Calculate the identity of an artifact.
-    #[must_use]
-    pub fn calculate(bytes: &[u8]) -> Self {
-        Self(Sha256::digest(bytes).into())
-    }
-
-    /// Parse a lowercase or uppercase hexadecimal identity.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the text is not one SHA-256 value.
-    pub fn from_hex(text: &str) -> Result<Self, CandidateError> {
-        if text.len() != 64 || !text.as_bytes().iter().all(u8::is_ascii_hexdigit) {
-            return Err(CandidateError::InvalidDigest { field: "digest" });
-        }
-        let mut bytes = [0_u8; 32];
-        for (index, byte) in bytes.iter_mut().enumerate() {
-            let offset = index * 2;
-            *byte =
-                (hex_value(text.as_bytes()[offset]) << 4) | hex_value(text.as_bytes()[offset + 1]);
-        }
-        Ok(Self(bytes))
-    }
-
-    /// Return the raw digest bytes.
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-}
-
-impl fmt::Display for ContentDigest {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for byte in self.0 {
-            write!(formatter, "{byte:02x}")?;
-        }
-        Ok(())
-    }
-}
 
 /// Optional gain changes permitted for a calibration candidate.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
@@ -484,17 +444,4 @@ fn validate_candidate_id(value: &str) -> Result<(), CandidateError> {
         return Err(CandidateError::InvalidCandidateId);
     }
     Ok(())
-}
-
-fn hex_value(byte: u8) -> u8 {
-    match byte {
-        b'0'..=b'9' => byte - b'0',
-        b'a'..=b'f' => byte - b'a' + 10,
-        b'A'..=b'F' => byte - b'A' + 10,
-        _ => 0,
-    }
-}
-
-fn parse_digest(text: &str, field: &'static str) -> Result<ContentDigest, CandidateError> {
-    ContentDigest::from_hex(text).map_err(|_| CandidateError::InvalidDigest { field })
 }

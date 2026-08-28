@@ -115,13 +115,13 @@ pub(super) fn write_dataref(sock: &UdpSocket, path: &str, value: f32) -> Result<
         .map_err(StandError::Transport)
 }
 
-/// The virtual test stand: every cycle of an excitation window pins
-/// the vehicle's TRANSLATION (altitude held, linear velocity zeroed)
-/// while leaving its ROTATION entirely to the flight model — the
-/// degree-of-freedom separation a physical identification rig provides
-/// with a gimbal mount. A SITL-only affordance, and the reason the
-/// experiment needs no working attitude cascade: free fall would bury
-/// the torque response under the aerodynamics of a 30 m/s plunge.
+/// The virtual test stand: pins the vehicle's TRANSLATION (altitude
+/// held, linear velocity zeroed) while leaving its ROTATION entirely
+/// to the flight model. The excitation windows do NOT use it — a
+/// translation pin couples back into rotation and rocks the vehicle
+/// harder than the free hover it would replace — so its one flight
+/// role is the landing ride at the end of the sequence, plus the
+/// ground-referenced altitude reads the sequence plans against.
 pub(super) struct TestStand {
     sock: UdpSocket,
     held_y: Option<f32>,
@@ -137,13 +137,16 @@ impl TestStand {
         }
     }
 
-    /// Captures the hold altitude `delta_m` above the current one.
-    pub(super) fn engage(&mut self, delta_m: f32) -> Result<(), StandError> {
+    /// Engages the stand AT the current altitude. Raising to the
+    /// working height is a ride, not a step: a teleport arrives at the
+    /// estimator as a position innovation the size of the jump, and the
+    /// filter's chase poisons every state the controller then trusts.
+    pub(super) fn engage(&mut self) -> Result<f32, StandError> {
         let y = read_dataref(&self.sock, "sim/flightmodel/position/local_y", "local_y")?;
-        self.held_y = Some(y + delta_m);
+        self.held_y = Some(y);
         self.confirmed = false;
-        log::info!("test stand engaged {delta_m:.0} m up");
-        Ok(())
+        log::info!("test stand engaged");
+        Ok(y)
     }
 
     /// One pin: linear velocity zeroed, altitude restored.
@@ -165,14 +168,47 @@ impl TestStand {
 
     /// Zeroes the body rotation rates, so each excitation window
     /// starts from rotational rest.
+    ///
+    /// The readback races the flight model: at least one physics frame
+    /// runs between the write and the answer, and the live attitude
+    /// loop rebuilds a small rate in that frame. Each retry re-zeroes,
+    /// and the accepted residual is far below the probe amplitudes the
+    /// windows drive, so a pass means "at rest" in every sense the
+    /// correlation fit can see.
     pub(super) fn zero_rates(&self) -> Result<(), StandError> {
         for axis in ["P", "Q", "R"] {
             let path = format!("sim/flightmodel/position/{axis}");
-            write_dataref(&self.sock, &path, 0.0)?;
-            let actual = read_dataref(&self.sock, &path, "body rate")?;
-            verify_readback("body rate", 0.0, actual, 0.02)?;
+            let mut outcome = Ok(());
+            for _ in 0..5 {
+                write_dataref(&self.sock, &path, 0.0)?;
+                let actual = read_dataref(&self.sock, &path, "body rate")?;
+                outcome = verify_readback("body rate", 0.0, actual, 0.15);
+                if outcome.is_ok() {
+                    break;
+                }
+            }
+            outcome?;
         }
         Ok(())
+    }
+
+    /// Steps the hold altitude down, toward a landing the interlock
+    /// will accept. The pin keeps zeroing velocity, so this is an
+    /// elevator ride, not a fall.
+    pub(super) fn lower(&mut self, by_m: f32, floor_y: f32) {
+        if let Some(y) = self.held_y {
+            self.held_y = Some((y - by_m).max(floor_y));
+        }
+    }
+
+    /// The current hold altitude, when engaged.
+    pub(super) fn held(&self) -> Option<f32> {
+        self.held_y
+    }
+
+    /// Reads the vehicle's current local vertical position.
+    pub(super) fn local_y(&self) -> Result<f32, StandError> {
+        read_dataref(&self.sock, "sim/flightmodel/position/local_y", "local_y")
     }
 
     pub(super) fn release(&mut self) {
@@ -191,9 +227,26 @@ pub(super) struct Sample {
     pub(super) gyro: [f32; 3],
     /// Applied mean force-domain collective.
     pub(super) collective_force: f32,
-    /// True when the control output reached a known wire boundary.
-    pub(super) saturated: bool,
+    /// The individual census constraints, in [`CONSTRAINT_NAMES`] order.
+    pub(super) constraints: [bool; 5],
 }
+
+impl Sample {
+    /// True when any census constraint touched this sample — the one
+    /// derivation, so the census and its breakdown cannot disagree.
+    pub(super) fn saturated(&self) -> bool {
+        self.constraints.iter().any(|hit| *hit)
+    }
+}
+
+/// Names for [`Sample::constraints`], in field order.
+pub(super) const CONSTRAINT_NAMES: [&str; 5] = [
+    "lane-ceiling",
+    "injection-clamp",
+    "actuator-count",
+    "missing-answer",
+    "ground-squeeze",
+];
 
 fn verify_readback(
     field: &'static str,

@@ -20,7 +20,7 @@ fn synthetic_trace(authority: [f32; 3]) -> (Vec<Sample>, [[(usize, usize); 2]; 3
                     u,
                     gyro,
                     collective_force: 0.43,
-                    saturated: false,
+                    constraints: [false; 5],
                 });
             }
             windows[axis][frequency] = (start, samples.len());
@@ -59,14 +59,22 @@ fn frequency_inconsistent_authority_is_rejected() {
     for sample in &mut samples[start..end] {
         sample.gyro[0] *= 0.5;
     }
-    assert!(report(&samples, &windows, context()).is_err());
+    let refusal = report(&samples, &windows, context()).expect_err("must refuse");
+    // The cross-frequency agreement gate must be the refusing authority:
+    // a loosened disagreement bar would let this trace fail elsewhere
+    // for the wrong reason, or pass outright.
+    assert!(
+        refusal.reason.contains("differs by") && refusal.reason.contains("between frequencies"),
+        "{}",
+        refusal.reason
+    );
 }
 
 #[test]
 fn clipped_evidence_is_rejected() {
     let (mut samples, windows) = synthetic_trace([5.3, 3.1, 1.0]);
-    for sample in samples.iter_mut().take(300) {
-        sample.saturated = true;
+    for sample in samples.iter_mut().take(600) {
+        sample.constraints[0] = true;
     }
     assert!(report(&samples, &windows, context()).is_err());
 }
@@ -75,11 +83,19 @@ fn clipped_evidence_is_rejected() {
 fn one_clipped_frequency_is_rejected_before_aggregation() {
     let (mut samples, windows) = synthetic_trace([5.3, 3.1, 1.0]);
     let (start, end) = windows[0][1];
-    let clipped = ((end - start) as f32 * 0.08) as usize;
+    let clipped = ((end - start) as f32 * 0.25) as usize;
     for sample in &mut samples[start..start + clipped] {
-        sample.saturated = true;
+        sample.constraints[0] = true;
     }
-    assert!(report(&samples, &windows, context()).is_err());
+    let refusal = report(&samples, &windows, context()).expect_err("must refuse");
+    // The per-window gate must be the refusing authority, not the
+    // artifact validator after aggregation — and the refusal names the
+    // constraint behind the count.
+    assert!(
+        refusal.reason.contains("constrained samples") && refusal.reason.contains("lane-ceiling"),
+        "{}",
+        refusal.reason
+    );
 }
 
 #[test]

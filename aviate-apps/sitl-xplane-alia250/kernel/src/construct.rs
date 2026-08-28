@@ -143,7 +143,14 @@ impl From<CandidateError> for AliaKernelBuildError {
     }
 }
 
-/// Build the identification kernel with conservative gains.
+/// Build the identification kernel: the airframe's own preset gains.
+///
+/// The fit reads the TOTAL applied input downstream of the loop, so the
+/// closed loop only shapes the probe's spectrum and the fit does not
+/// depend on which law hosts it. The law that demonstrably flies the
+/// vehicle is therefore also the right one to carry the experiment — a
+/// borrowed "conservative" law from another airframe cannot hold the
+/// liftoff, and no fit survives a tumble.
 ///
 /// # Errors
 ///
@@ -164,7 +171,27 @@ pub fn build_alia250_identification_kernel_with_hover_scale(
     scale_basis_points: u16,
 ) -> Result<InitializedAliaKernel, AliaKernelBuildError> {
     let preset = load_preset()?;
-    build_with(preset, CascadeGains::x500_defaults(), scale_basis_points)
+    let mut gains = gains_from_preset(preset.gains);
+    // The host law needs only to KEEP a hover while the probe rides the
+    // lanes. The flight law's full authority answers the probe's rocking
+    // with corrections that ride the wire's lane ceiling, and the fit's
+    // census rightly refuses clipped windows — so the host runs the same
+    // law at reduced authority, commanding well inside the lanes. The
+    // rate integrator is off: it would wind against the probe's
+    // persistent oscillation and unwind as a trend across the window.
+    // Yaw is softened hardest: its lane pattern loads every rotor with
+    // the full correction, and the flight law's yaw authority alone
+    // rides the wire's lane ceiling on a duty cycle the census counts.
+    // A wandering heading costs the experiment nothing.
+    const RATE_SCALE: [f32; 3] = [0.5, 0.5, 0.2];
+    const ATT_SCALE: [f32; 3] = [0.7, 0.7, 0.3];
+    for axis in 0..3 {
+        gains.rate_p[axis] *= RATE_SCALE[axis];
+        gains.rate_d[axis] *= RATE_SCALE[axis];
+        gains.rate_i[axis] = 0.0;
+        gains.att_p[axis] *= ATT_SCALE[axis];
+    }
+    build_with(preset, gains, scale_basis_points)
 }
 
 /// Build the normal Alia 250 kernel from the embedded preset.

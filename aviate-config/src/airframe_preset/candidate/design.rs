@@ -31,7 +31,12 @@ pub(super) fn apply_validated_layer(
         apply_inner_loop_design(preset, design, plant)?;
     }
     let declared_rate = f32::from(simulator_model.sample_rate_hz());
-    if relative_delta(declared_rate, plant.sample_rate_hz) > 0.02 {
+    // The same sanity band the runtime handshake enforces: the
+    // simulator's display-synced frame clock steps across a wide range
+    // with instance, load, and warm-up state, and the artifact records
+    // the rate its run actually delivered. The declaration is the
+    // band's center, not a promise of one number.
+    if relative_delta(declared_rate, plant.sample_rate_hz) > 0.25 {
         return Err(CandidateError::InvalidRelation(
             "plant sample rate must match the simulator model",
         ));

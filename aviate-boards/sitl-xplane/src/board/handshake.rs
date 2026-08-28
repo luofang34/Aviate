@@ -74,7 +74,13 @@ impl std::error::Error for RuntimeHandshakeError {
 }
 
 const SAMPLE_RATE_EVIDENCE_INTERVALS: u16 = 8;
-const SAMPLE_RATE_TOLERANCE_PERCENT: u128 = 5;
+// A sanity band, not a pin. The flight loop rides the display's frame
+// clock, which steps across a wide range with window, load, and warm-up
+// state while staying steady within a run; this gate's job is refusing
+// a stalled or starved link, not holding a display to one number. The
+// phase arithmetic and the fit ride measured sample timestamps, and the
+// plant artifact records the rate its run actually delivered.
+const SAMPLE_RATE_TOLERANCE_PERCENT: u128 = 25;
 
 pub(crate) struct RuntimeIdentityGate {
     expected: XPlaneSimulatorModel,

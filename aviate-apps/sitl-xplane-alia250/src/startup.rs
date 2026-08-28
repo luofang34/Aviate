@@ -255,8 +255,25 @@ fn run_identification(
         "dialing the X-Plane bridge at {} (identification flight)",
         cli.bridge
     );
-    let (plant, trace_text) = crate::identify::run(board, manifest_digest.to_string())
-        .map_err(|error| format!("identification failed: {error}"))?;
+    let (plant, trace_text) = match crate::identify::run(board, manifest_digest.to_string()) {
+        Ok(published) => published,
+        Err(error) => {
+            if let crate::identify::ExperimentError::Report { trace_text, .. }
+            | crate::identify::ExperimentError::GroundContact { trace_text, .. } = &error
+            {
+                match crate::artifact::publish_optional(cli.trace_output.as_deref(), trace_text) {
+                    Ok(()) if cli.trace_output.is_some() => {
+                        log::info!("refused experiment's trace preserved");
+                    }
+                    Ok(()) => {}
+                    Err(publish_error) => {
+                        log::warn!("refused experiment's trace was not preserved: {publish_error}");
+                    }
+                }
+            }
+            return Err(format!("identification failed: {error}"));
+        }
+    };
     let plant_text = plant
         .to_toml()
         .map_err(|error| format!("plant artifact encoding failed: {error}"))?;

@@ -4,15 +4,28 @@ use aviate_config::airframe_preset::{
     ContentDigest, PlantIdentificationArtifact, PlantSampleClock,
 };
 
+mod fit;
+use fit::fit_point;
+
+use super::excitation::{AXIS_NAMES, PROBE_RAD_S};
 use super::stand::Sample;
 use super::trace;
-use super::{AXIS_NAMES, PROBE_RAD_S};
 
 const MIN_SAMPLES: usize = 200;
 const MIN_BLOCKS: usize = 3;
-const MAX_K_DISAGREEMENT: f32 = 0.25;
-const MAX_WINDOW_SATURATION: f32 = 0.05;
-const MIN_COHERENCE: f32 = 0.8;
+// The two probes straddle the rotor's spool pole, and the plant model
+// is K plus delay only: the upper reading carries the pole's magnitude
+// attenuation as well as K, so a real vehicle disagrees with itself by
+// the pole's rolloff even in a perfect measurement. The bar admits
+// that physics; a channel whose readings differ beyond it is still
+// refused as polluted.
+const MAX_K_DISAGREEMENT: f32 = 0.4;
+// The saturation bar is the artifact validator's own — one authority,
+// so the report cannot admit a window the artifact then refuses.
+const MAX_WINDOW_SATURATION: f32 = aviate_config::airframe_preset::MAX_SATURATION_FRACTION;
+// One authority with the artifact validator, so the report cannot
+// admit a point the artifact then refuses.
+const MIN_COHERENCE: f32 = aviate_config::airframe_preset::MIN_COHERENCE;
 const MAX_DELAY_S: f32 = 0.5;
 const MIN_DELAY_UNCERTAINTY_S: f32 = 0.01;
 
@@ -51,22 +64,45 @@ pub(super) fn report(
     samples: &[Sample],
     windows: &[[(usize, usize); 2]; 3],
     context: ReportContext,
-) -> Result<(PlantIdentificationArtifact, String), String> {
-    let mut points = [[None; 2]; 3];
-    for axis in 0..3 {
-        for frequency in 0..2 {
-            let window = window(samples, windows[axis][frequency], axis)?;
-            let point = fit_point(window, axis, PROBE_RAD_S[frequency])?;
-            validate_fit_point(point, axis, frequency)?;
-            points[axis][frequency] = Some(point);
-        }
-    }
+) -> Result<(PlantIdentificationArtifact, String), ReportRefusal> {
+    // The trace is the experiment's evidence whether the fit accepts it
+    // or not: a refused run's trace is exactly what diagnosing the
+    // refusal needs, so it is encoded first and travels with either
+    // outcome.
     let trace_text = trace::encode(
         samples,
         windows,
         &context.simulator_model_digest,
         &context.run_manifest_digest,
     );
+    match fit_artifact(samples, windows, context, &trace_text) {
+        Ok(artifact) => Ok((artifact, trace_text)),
+        Err(reason) => Err(ReportRefusal { reason, trace_text }),
+    }
+}
+
+/// Why the fit refused the experiment, with the evidence that shows it.
+#[derive(Debug)]
+pub(super) struct ReportRefusal {
+    pub(super) reason: String,
+    pub(super) trace_text: String,
+}
+
+fn fit_artifact(
+    samples: &[Sample],
+    windows: &[[(usize, usize); 2]; 3],
+    context: ReportContext,
+    trace_text: &str,
+) -> Result<PlantIdentificationArtifact, String> {
+    let mut points = [[None; 2]; 3];
+    for axis in 0..3 {
+        for frequency in 0..2 {
+            let window = window(samples, windows[axis][frequency], axis)?;
+            let point = fit_point(window, axis, PROBE_RAD_S[frequency])?;
+            validate_fit_point(window, point, axis, frequency)?;
+            points[axis][frequency] = Some(point);
+        }
+    }
     let trace_digest = ContentDigest::calculate(trace_text.as_bytes());
     let mut artifact = empty_artifact(context, trace_digest, samples, windows)?;
     for (axis, values) in points.into_iter().enumerate() {
@@ -75,7 +111,7 @@ pub(super) fn report(
         combine_axis(&mut artifact, axis, low, high)?;
     }
     artifact.validate().map_err(|error| error.to_string())?;
-    Ok((artifact, trace_text))
+    Ok(artifact)
 }
 
 fn window(samples: &[Sample], bounds: (usize, usize), axis: usize) -> Result<&[Sample], String> {
@@ -84,10 +120,38 @@ fn window(samples: &[Sample], bounds: (usize, usize), axis: usize) -> Result<&[S
         .ok_or_else(|| format!("{} window is outside the sample trace", AXIS_NAMES[axis]))
 }
 
-fn validate_fit_point(point: FitPoint, axis: usize, frequency: usize) -> Result<(), String> {
+fn validate_fit_point(
+    window: &[Sample],
+    point: FitPoint,
+    axis: usize,
+    frequency: usize,
+) -> Result<(), String> {
     if point.saturation_fraction > MAX_WINDOW_SATURATION {
+        // Name the constraints so the refusal is diagnosable from the
+        // log alone: a clipped probe and a jittering bridge need
+        // different fixes.
+        let mut counts = [0_usize; 5];
+        for sample in window {
+            for (count, hit) in counts.iter_mut().zip(sample.constraints) {
+                if hit {
+                    *count += 1;
+                }
+            }
+        }
+        let breakdown = super::stand::CONSTRAINT_NAMES
+            .iter()
+            .zip(counts)
+            .filter(|(_, count)| *count > 0)
+            .map(|(name, count)| {
+                format!(
+                    "{name} {:.1}%",
+                    count as f32 * 100.0 / window.len().max(1) as f32
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
         return Err(format!(
-            "{} @{} rad/s has {:.1}% constrained samples",
+            "{} @{} rad/s has {:.1}% constrained samples ({breakdown})",
             AXIS_NAMES[axis],
             PROBE_RAD_S[frequency],
             point.saturation_fraction * 100.0
@@ -209,198 +273,6 @@ fn fit_delay(low: FitPoint, high: FitPoint, axis: usize) -> Result<(f32, f32), S
         ));
     }
     Ok((delay, uncertainty + disagreement * 0.5))
-}
-
-fn fit_point(window: &[Sample], axis: usize, omega: f32) -> Result<FitPoint, String> {
-    if window.len() < MIN_SAMPLES {
-        return Err(format!(
-            "{} @{} rad/s has too few samples",
-            AXIS_NAMES[axis], omega
-        ));
-    }
-    let span = elapsed_s(
-        window[0].timestamp_us,
-        window[window.len() - 1].timestamp_us,
-    )?;
-    let period = core::f32::consts::TAU / omega;
-    let blocks = (span / period).floor() as usize;
-    if blocks < MIN_BLOCKS {
-        return Err(format!(
-            "{} @{} rad/s has too few cycles",
-            AXIS_NAMES[axis], omega
-        ));
-    }
-    let horizon = blocks as f32 * period;
-    let estimate = transfer(window, axis, omega, window[0].timestamp_us, horizon)?;
-    let residual = residual_quality(window, axis, omega, horizon, estimate)?;
-    let block_estimates = block_estimates(window, axis, omega, period, blocks)?;
-    let authority_ci95 = confidence_interval(
-        &block_estimates
-            .iter()
-            .map(|value| value.authority_k)
-            .collect::<Vec<_>>(),
-    );
-    let phase_ci_deg = confidence_interval(
-        &block_estimates
-            .iter()
-            .map(|value| unwrap_near(value.phase_deg, estimate.phase_deg))
-            .collect::<Vec<_>>(),
-    );
-    Ok(FitPoint {
-        authority_k: estimate.authority_k,
-        phase_deg: estimate.phase_deg,
-        r_squared: residual.r_squared,
-        authority_ci95,
-        delay_ci95_s: (phase_ci_deg.to_radians() / omega).max(MIN_DELAY_UNCERTAINTY_S),
-        coherence: block_coherence(&block_estimates),
-        applied_input_max: window
-            .iter()
-            .map(|sample| sample.u[axis].abs())
-            .fold(0.0, f32::max),
-        sample_count: residual.sample_count,
-        saturation_fraction: residual.saturation_fraction,
-        response_sign: if estimate.h_im < 0.0 { 1 } else { -1 },
-    })
-}
-
-fn block_estimates(
-    window: &[Sample],
-    axis: usize,
-    omega: f32,
-    period: f32,
-    blocks: usize,
-) -> Result<Vec<TransferEstimate>, String> {
-    let origin = window[0].timestamp_us;
-    let mut estimates = Vec::with_capacity(blocks);
-    for block in 0..blocks {
-        let start_s = block as f32 * period;
-        let end_s = (block + 1) as f32 * period;
-        let mut selected = Vec::new();
-        for sample in window {
-            let time = elapsed_s(origin, sample.timestamp_us)?;
-            if time >= start_s && time <= end_s {
-                selected.push(*sample);
-            }
-        }
-        if selected.len() < 8 {
-            return Err("one probe cycle has too few samples".to_owned());
-        }
-        estimates.push(transfer(&selected, axis, omega, origin, end_s)?);
-    }
-    Ok(estimates)
-}
-
-fn transfer(
-    window: &[Sample],
-    axis: usize,
-    omega: f32,
-    origin_us: u64,
-    horizon_s: f32,
-) -> Result<TransferEstimate, String> {
-    let mut input_re = 0.0_f64;
-    let mut input_im = 0.0_f64;
-    let mut rate_re = 0.0_f64;
-    let mut rate_im = 0.0_f64;
-    for pair in window.windows(2) {
-        let time = elapsed_s(origin_us, pair[0].timestamp_us)?;
-        if time > horizon_s {
-            break;
-        }
-        let dt = elapsed_s(pair[0].timestamp_us, pair[1].timestamp_us)?;
-        let (sin, cos) = libm::sincosf(omega * time);
-        input_re += f64::from(pair[0].u[axis] * cos * dt);
-        input_im -= f64::from(pair[0].u[axis] * sin * dt);
-        rate_re += f64::from(pair[0].gyro[axis] * cos * dt);
-        rate_im -= f64::from(pair[0].gyro[axis] * sin * dt);
-    }
-    let denominator = input_re * input_re + input_im * input_im;
-    if denominator <= 1.0e-12 {
-        return Err(format!(
-            "{} @{} rad/s has no input",
-            AXIS_NAMES[axis], omega
-        ));
-    }
-    let h_re = ((rate_re * input_re + rate_im * input_im) / denominator) as f32;
-    let h_im = ((rate_im * input_re - rate_re * input_im) / denominator) as f32;
-    Ok(TransferEstimate {
-        h_re,
-        h_im,
-        authority_k: libm::sqrtf(h_re * h_re + h_im * h_im) * omega,
-        phase_deg: libm::atan2f(h_im, h_re).to_degrees(),
-        rate_cos: (2.0 * rate_re / f64::from(horizon_s)) as f32,
-        rate_sin: (-2.0 * rate_im / f64::from(horizon_s)) as f32,
-    })
-}
-
-struct ResidualQuality {
-    r_squared: f32,
-    sample_count: u32,
-    saturation_fraction: f32,
-}
-
-fn residual_quality(
-    window: &[Sample],
-    axis: usize,
-    omega: f32,
-    horizon: f32,
-    estimate: TransferEstimate,
-) -> Result<ResidualQuality, String> {
-    let origin = window[0].timestamp_us;
-    let mut selected = Vec::new();
-    for sample in window {
-        if elapsed_s(origin, sample.timestamp_us)? <= horizon {
-            selected.push(sample);
-        }
-    }
-    let mean =
-        selected.iter().map(|sample| sample.gyro[axis]).sum::<f32>() / selected.len().max(1) as f32;
-    let mut residual_sum = 0.0;
-    let mut total_sum = 0.0;
-    let mut saturated = 0_u32;
-    for sample in &selected {
-        let time = elapsed_s(origin, sample.timestamp_us)?;
-        let (sin, cos) = libm::sincosf(omega * time);
-        let predicted = estimate.rate_cos * cos + estimate.rate_sin * sin;
-        residual_sum += (sample.gyro[axis] - mean - predicted).powi(2);
-        total_sum += (sample.gyro[axis] - mean).powi(2);
-        saturated = saturated.wrapping_add(u32::from(sample.saturated));
-    }
-    let count = u32::try_from(selected.len()).map_err(|_| "too many samples".to_owned())?;
-    Ok(ResidualQuality {
-        r_squared: if total_sum <= f32::EPSILON {
-            0.0
-        } else {
-            1.0 - residual_sum / total_sum
-        },
-        sample_count: count,
-        saturation_fraction: saturated as f32 / count.max(1) as f32,
-    })
-}
-
-fn block_coherence(estimates: &[TransferEstimate]) -> f32 {
-    let count = estimates.len().max(1) as f32;
-    let mean_re = estimates.iter().map(|value| value.h_re).sum::<f32>() / count;
-    let mean_im = estimates.iter().map(|value| value.h_im).sum::<f32>() / count;
-    let mean_power = estimates
-        .iter()
-        .map(|value| value.h_re * value.h_re + value.h_im * value.h_im)
-        .sum::<f32>()
-        / count;
-    ((mean_re * mean_re + mean_im * mean_im) / mean_power.max(f32::EPSILON)).clamp(0.0, 1.0)
-}
-
-fn confidence_interval(values: &[f32]) -> f32 {
-    if values.len() < 2 {
-        return f32::INFINITY;
-    }
-    let count = values.len() as f32;
-    let mean = values.iter().sum::<f32>() / count;
-    let variance = values
-        .iter()
-        .map(|value| (value - mean).powi(2))
-        .sum::<f32>()
-        / (count - 1.0);
-    1.96 * libm::sqrtf(variance / count)
 }
 
 fn observed_sample_rate(

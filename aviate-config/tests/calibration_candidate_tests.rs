@@ -158,15 +158,55 @@ fn candidate_rejects_a_bandwidth_that_the_delay_cannot_support() {
 }
 
 #[test]
+fn coherence_floor_admits_the_bar_and_refuses_just_under_it() {
+    let at_bar = plant("").replace(
+        "coherence = [0.96, 0.95, 0.94]",
+        "coherence = [0.65, 0.65, 0.65]",
+    );
+    let text = candidate(&at_bar, "");
+    assert!(resolve_candidate(ALIA250, &text, &at_bar, &model()).is_ok());
+
+    let under_bar = plant("").replace(
+        "coherence = [0.96, 0.95, 0.94]",
+        "coherence = [0.649, 0.95, 0.94]",
+    );
+    let text = candidate(&under_bar, "");
+    assert!(matches!(
+        resolve_candidate(ALIA250, &text, &under_bar, &model()),
+        Err(CandidateError::PlantArtifact(_))
+    ));
+}
+
+#[test]
+fn saturation_bar_admits_the_census_bound_and_refuses_just_past_it() {
+    let at_bar = plant("").replace(
+        "saturation_fraction = [0.0, 0.0, 0.0]",
+        "saturation_fraction = [0.18, 0.18, 0.18]",
+    );
+    let text = candidate(&at_bar, "");
+    assert!(resolve_candidate(ALIA250, &text, &at_bar, &model()).is_ok());
+
+    let past_bar = plant("").replace(
+        "saturation_fraction = [0.0, 0.0, 0.0]",
+        "saturation_fraction = [0.181, 0.0, 0.0]",
+    );
+    let text = candidate(&past_bar, "");
+    assert!(matches!(
+        resolve_candidate(ALIA250, &text, &past_bar, &model()),
+        Err(CandidateError::PlantArtifact(_))
+    ));
+}
+
+#[test]
 fn candidate_rejects_weak_or_clipped_plant_evidence() {
     for replacement in [
         (
             "r_squared = [0.96, 0.95, 0.94]",
-            "r_squared = [0.79, 0.95, 0.94]",
+            "r_squared = [0.24, 0.95, 0.94]",
         ),
         (
             "saturation_fraction = [0.0, 0.0, 0.0]",
-            "saturation_fraction = [0.06, 0.0, 0.0]",
+            "saturation_fraction = [0.19, 0.0, 0.0]",
         ),
         (
             "sample_count = [500, 500, 500]",
@@ -219,7 +259,7 @@ fn each_stage_requires_one_owned_change_and_freezes_other_fields() {
 #[test]
 fn hover_requires_wire_headroom() {
     let plant = plant("");
-    let text = staged_candidate(&plant, "hover", "hover_thrust_seed = 0.51\n");
+    let text = staged_candidate(&plant, "hover", "hover_thrust_seed = 0.61\n");
     assert_eq!(
         resolve_candidate(ALIA250, &text, &plant, &model()),
         Err(CandidateError::InvalidRelation(
@@ -259,7 +299,7 @@ fn gain_steps_must_be_adjacent_to_the_champion() {
 fn plant_sample_clock_rate_must_match_the_model() {
     // Names its own disagreement rather than editing the text of a fixture,
     // so it stays a disagreement whatever the model comes to declare.
-    let plant = plant_at(model_sample_rate_hz() - 20.0, "");
+    let plant = plant_at(model_sample_rate_hz() - 30.0, "");
     let text = candidate(&plant, "");
     assert_eq!(
         resolve_candidate(ALIA250, &text, &plant, &model()),

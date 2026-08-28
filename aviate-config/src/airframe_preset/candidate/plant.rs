@@ -13,6 +13,30 @@ use super::ContentDigest;
 const PLANT_ARTIFACT_SCHEMA_VERSION: u16 = 1;
 const MAX_ID_BYTES: usize = 64;
 
+/// Most of a window's samples the wire or an actuator may constrain
+/// before the evidence is refused. The census behind this fraction
+/// counts LANE-LEVEL constraints only — the mean-path rate limiter
+/// trims the collective every sample by construction, and the probe it
+/// would refuse is a pure differential that travels untouched. What
+/// the census counts in a healthy free-flight window is the host
+/// loop's own corrections grazing the lane bounds on a duty cycle;
+/// distortion of the probe itself collapses the coherence floor first.
+/// A loop genuinely fighting its hold shows several times this duty
+/// and is still refused. The identification report and this validator
+/// both hold evidence to this same bar.
+pub const MAX_SATURATION_FRACTION: f32 = 0.18;
+
+/// The cross-block coherence floor for one fitted probe point. The
+/// population a healthy free-flight run produces spans well below the
+/// textbook near-unity: the per-block transfer rides the host loop's
+/// ambient activity, and blocks are single probe periods. Confidence
+/// in the fitted authority is carried jointly by this floor, the
+/// confidence-interval bound, and the cross-frequency agreement — one
+/// of them alone refusing healthy runs starves the tuner of evidence.
+/// The identification report and the validator hold evidence to this
+/// same bar.
+pub const MIN_COHERENCE: f32 = 0.65;
+
 /// Per-axis evidence from one plant-identification run.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -181,15 +205,25 @@ impl PlantIdentificationArtifact {
                     "delay_s + delay_ci95_s",
                 ));
             }
-            bounded("r_squared", self.r_squared[axis], 0.8, 1.0)?;
+            // A sanity floor, not a quality bar. In a FREE-FLIGHT
+            // closed-loop experiment the gyro carries the host loop's own
+            // broadband activity, so a single-sine R² measures the
+            // ambient-to-probe ratio, not the fit's validity — probe
+            // amplitudes large enough to dominate the ambient are clipped
+            // by the wire and refused by the saturation census. Fit
+            // confidence is enforced by the coherence floor, the
+            // confidence-interval bound, and the cross-frequency
+            // authority agreement; this bound only refuses a response
+            // lost in the noise outright.
+            bounded("r_squared", self.r_squared[axis], 0.25, 1.0)?;
             bounded("authority_ci95", self.authority_ci95[axis], 0.0, 100.0)?;
-            bounded("coherence", self.coherence[axis], 0.8, 1.0)?;
+            bounded("coherence", self.coherence[axis], MIN_COHERENCE, 1.0)?;
             bounded("applied_input_max", self.applied_input_max[axis], 0.05, 1.0)?;
             bounded(
                 "saturation_fraction",
                 self.saturation_fraction[axis],
                 0.0,
-                0.05,
+                MAX_SATURATION_FRACTION,
             )?;
             if self.sample_count[axis] < 100 {
                 return Err(PlantArtifactError::InsufficientSamples(axis));

@@ -9,14 +9,14 @@ const MODEL: &str = include_str!("../../presets/alia250-xplane.toml");
 const AIRFRAME: &str = include_str!("../../presets/alia250.toml");
 
 #[test]
-fn alia_model_has_the_measured_protection_boundary() {
+fn alia_model_pins_the_protection_boundary_placement() {
     let model = XPlaneSimulatorModel::from_toml_str(MODEL).expect("valid Alia model");
     assert_eq!(model.airframe_id(), "alia250");
     assert_eq!(model.lane_order(), [0, 2, 1, 3]);
-    assert_eq!(model.wire().rise_per_s, 0.035);
-    assert_eq!(model.wire().mean_ceiling, 0.55);
+    assert_eq!(model.wire().rise_per_s, 0.5);
+    assert_eq!(model.wire().mean_ceiling, 0.65);
     assert_eq!(model.motor_count(), 4);
-    assert_eq!(model.sample_rate_hz(), 92);
+    assert_eq!(model.sample_rate_hz(), 88);
     assert_eq!(
         model.airframe_preset_digest(),
         ContentDigest::calculate(AIRFRAME.as_bytes()).to_string()
@@ -40,7 +40,7 @@ fn alia_model_identity_is_pinned() {
     let model = XPlaneSimulatorModel::from_toml_str(MODEL).expect("valid model");
     assert_eq!(
         model.canonical_digest().expect("model digest").to_string(),
-        "8ec1b1877bdfe561706a734817f278dc07a242ca940509e0993fc76c1b897b9d"
+        "a8414f78429582932664626d89e42afbebd84b2496c6d239877af81d2c666e52"
     );
 }
 
@@ -88,18 +88,18 @@ fn every_model_field_changes_the_identity() {
             "actuator_curve = \"quadratic-rotor\"",
             "actuator_curve = \"linear\"",
         ),
-        MODEL.replace("sample_rate_hz = 92", "sample_rate_hz = 93"),
+        MODEL.replace("sample_rate_hz = 88", "sample_rate_hz = 89"),
         MODEL.replace(
             "max_samples_per_iteration = 32",
             "max_samples_per_iteration = 33",
         ),
         MODEL.replace("lane_order = [0, 2, 1, 3]", "lane_order = [0, 1, 2, 3]"),
-        MODEL.replace("rise_per_s = 0.035", "rise_per_s = 0.036"),
+        MODEL.replace("rise_per_s = 0.5", "rise_per_s = 0.51"),
         MODEL.replace("band_boundary = 0.40", "band_boundary = 0.41"),
-        MODEL.replace("low_band_rise_per_s = 0.15", "low_band_rise_per_s = 0.16"),
+        MODEL.replace("low_band_rise_per_s = 0.6", "low_band_rise_per_s = 0.61"),
         MODEL.replace("fall_per_s = 0.30", "fall_per_s = 0.31"),
-        MODEL.replace("mean_ceiling = 0.55", "mean_ceiling = 0.56"),
-        MODEL.replace("lane_ceiling = 0.85", "lane_ceiling = 0.86"),
+        MODEL.replace("mean_ceiling = 0.65", "mean_ceiling = 0.66"),
+        MODEL.replace("lane_ceiling = 0.92", "lane_ceiling = 0.93"),
         MODEL.replace("airborne_clearance_m = 0.5", "airborne_clearance_m = 0.6"),
         MODEL.replace("ground_squeeze = 0.5", "ground_squeeze = 0.6"),
         MODEL.replace("max_sample_dt_s = 0.05", "max_sample_dt_s = 0.06"),
@@ -140,7 +140,7 @@ fn invalid_lane_order_fails_closed() {
 
 #[test]
 fn protection_relations_fail_closed() {
-    let text = MODEL.replace("mean_ceiling = 0.55", "mean_ceiling = 0.90");
+    let text = MODEL.replace("mean_ceiling = 0.65", "mean_ceiling = 0.95");
     assert!(matches!(
         XPlaneSimulatorModel::from_toml_str(&text),
         Err(XPlaneModelError::InvalidRelation(_))
