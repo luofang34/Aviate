@@ -6,6 +6,9 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
+use crate::calibration::{
+    CalibrationAction, ExcitationWaveform, InjectionAxis, LaneInjection, TestStandCommand,
+};
 use crate::mission::{Action, Criterion, FaultSpec, Mission, Phase, SensorTarget, VehicleConfig};
 
 /// Parsed test configuration
@@ -28,6 +31,10 @@ pub struct VehicleTestConfig {
     pub spawn_position: [f32; 3],
     pub spawn_heading: f32,
     pub mission: Mission,
+    /// Calibration actions from `[[vehicles.mission.calibration]]`
+    /// sections. Simulator-only primitives; the mission runner does
+    /// not dispatch them as phase actions.
+    pub calibration: Vec<CalibrationAction>,
 }
 
 /// Global verification criteria (checked after all vehicles complete)
@@ -69,6 +76,8 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
     let mut current_vehicle: Option<VehicleTestConfig> = None;
     let mut current_phases: Vec<Phase> = Vec::new();
     let mut current_phase: Option<PhaseBuilder> = None;
+    let mut current_calibrations: Vec<CalibrationAction> = Vec::new();
+    let mut current_calibration: Option<String> = None;
 
     for line in content.lines() {
         let line = line.trim();
@@ -88,10 +97,16 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
                 current_phases.push(phase.build());
             }
 
+            // Save any pending calibration action
+            if let Some(action_str) = current_calibration.take() {
+                current_calibrations.push(parse_calibration_action(&action_str)?);
+            }
+
             if section == "vehicles" {
                 // Save previous vehicle
                 if let Some(mut vehicle) = current_vehicle.take() {
                     vehicle.mission.phases = std::mem::take(&mut current_phases);
+                    vehicle.calibration = std::mem::take(&mut current_calibrations);
                     config.vehicles.push(vehicle);
                 }
 
@@ -110,9 +125,12 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
                         phases: Vec::new(),
                         reset_between_runs: true,
                     },
+                    calibration: Vec::new(),
                 });
             } else if section == "vehicles.mission.phases" {
                 current_phase = Some(PhaseBuilder::new());
+            } else if section == "vehicles.mission.calibration" {
+                current_calibration = Some(String::new());
             }
 
             current_section = section.to_string();
@@ -126,6 +144,11 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
             // Save any pending phase
             if let Some(phase) = current_phase.take() {
                 current_phases.push(phase.build());
+            }
+
+            // Save any pending calibration action
+            if let Some(action_str) = current_calibration.take() {
+                current_calibrations.push(parse_calibration_action(&action_str)?);
             }
 
             current_section = section.to_string();
@@ -174,6 +197,13 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
                         }
                     }
                 }
+                "vehicles.mission.calibration" => {
+                    if let Some(ref mut calibration) = current_calibration {
+                        if key == "action" {
+                            *calibration = value;
+                        }
+                    }
+                }
                 "verification" => {
                     let verif = config
                         .global_verification
@@ -194,10 +224,16 @@ pub fn parse_test_config_str(content: &str) -> Result<TestConfig, String> {
         current_phases.push(phase.build());
     }
 
+    // Save final calibration action
+    if let Some(action_str) = current_calibration.take() {
+        current_calibrations.push(parse_calibration_action(&action_str)?);
+    }
+
     // Save final vehicle
     if let Some(mut vehicle) = current_vehicle.take() {
         vehicle.mission.phases = current_phases;
         vehicle.mission.lockstep = config.lockstep;
+        vehicle.calibration = current_calibrations;
         config.vehicles.push(vehicle);
     }
 
@@ -428,6 +464,106 @@ fn parse_action(s: &str) -> Action {
         }
         "clear_faults" => Action::ClearFaults,
         _ => Action::Wait,
+    }
+}
+
+/// Parse a calibration action from TOML inline table format.
+///
+/// Unlike `parse_action`, which degrades an unknown type to
+/// `Action::Wait`, an unknown calibration action is an error: a
+/// simulator-only primitive must not silently become a no-op.
+fn parse_calibration_action(s: &str) -> Result<CalibrationAction, String> {
+    // { type = "lane_injection", axis = "roll", waveform = "sine", ... }
+    // { type = "test_stand", command = "engage" }
+    // { type = "hold_current_attitude" }
+    let s = s.trim().trim_start_matches('{').trim_end_matches('}');
+    let mut type_str = String::new();
+    let mut axis_str = String::new();
+    let mut waveform_str = String::new();
+    let mut command_str = String::new();
+    let mut amplitude: Option<f32> = None;
+    let mut frequency_rad_s: Option<f32> = None;
+    let mut window_ms: Option<u64> = None;
+
+    for part in split_top_level_commas(s) {
+        if let Some((k, v)) = parse_kv(part) {
+            match k.as_str() {
+                "type" => type_str = v,
+                "axis" => axis_str = v,
+                "waveform" => waveform_str = v,
+                "command" => command_str = v,
+                "amplitude" => {
+                    amplitude = Some(
+                        v.parse()
+                            .map_err(|_| format!("lane_injection: bad amplitude \"{v}\""))?,
+                    );
+                }
+                "frequency_rad_s" => {
+                    frequency_rad_s = Some(
+                        v.parse()
+                            .map_err(|_| format!("lane_injection: bad frequency_rad_s \"{v}\""))?,
+                    );
+                }
+                "window_ms" => {
+                    window_ms = Some(
+                        v.parse()
+                            .map_err(|_| format!("lane_injection: bad window_ms \"{v}\""))?,
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    match type_str.as_str() {
+        "lane_injection" => {
+            let axis = match axis_str.as_str() {
+                "roll" => InjectionAxis::Roll,
+                "pitch" => InjectionAxis::Pitch,
+                "yaw" => InjectionAxis::Yaw,
+                other => {
+                    return Err(format!("lane_injection: unknown axis \"{other}\""));
+                }
+            };
+            let (Some(amplitude), Some(frequency_rad_s), Some(window_ms)) =
+                (amplitude, frequency_rad_s, window_ms)
+            else {
+                return Err(
+                    "lane_injection: amplitude, frequency_rad_s, and window_ms are required"
+                        .to_owned(),
+                );
+            };
+            let waveform = match waveform_str.as_str() {
+                "sine" => ExcitationWaveform::Sine {
+                    amplitude,
+                    frequency_rad_s,
+                },
+                other => {
+                    return Err(format!("lane_injection: unknown waveform \"{other}\""));
+                }
+            };
+            let injection = LaneInjection {
+                axis,
+                waveform,
+                window: Duration::from_millis(window_ms),
+            };
+            injection.validate().map_err(|error| error.to_string())?;
+            Ok(CalibrationAction::LaneInjection(injection))
+        }
+        "test_stand" => {
+            let command = match command_str.as_str() {
+                "engage" => TestStandCommand::Engage,
+                "pin" => TestStandCommand::Pin,
+                "zero_rates" => TestStandCommand::ZeroRates,
+                "release" => TestStandCommand::Release,
+                other => {
+                    return Err(format!("test_stand: unknown command \"{other}\""));
+                }
+            };
+            Ok(CalibrationAction::TestStand(command))
+        }
+        "hold_current_attitude" => Ok(CalibrationAction::HoldCurrentAttitude),
+        other => Err(format!("unknown calibration action type \"{other}\"")),
     }
 }
 
@@ -751,6 +887,165 @@ min_separation = 4.0
             return;
         };
         assert_eq!(global_verification.min_separation, Some(4.0));
+    }
+
+    #[test]
+    fn test_parse_calibration_actions() {
+        let config_str = r#"
+[test]
+name = "calibration_test"
+description = "Calibration actions parse from the mission configuration"
+lockstep = true
+
+[world]
+file = "test.sdf"
+
+[[vehicles]]
+id = "alia_0"
+model = "alia250"
+instance = 0
+
+[vehicles.mission]
+name = "calibration"
+
+[[vehicles.mission.calibration]]
+action = { type = "lane_injection", axis = "roll", waveform = "sine", amplitude = 0.06, frequency_rad_s = 2.5, window_ms = 16000 }
+
+[[vehicles.mission.calibration]]
+action = { type = "test_stand", command = "engage" }
+
+[[vehicles.mission.calibration]]
+action = { type = "hold_current_attitude" }
+"#;
+
+        let config = parse_test_config_str(config_str);
+        assert!(config.is_ok());
+        let Ok(config) = config else {
+            return;
+        };
+        assert_eq!(config.vehicles.len(), 1);
+        let calibration = &config.vehicles[0].calibration;
+        assert_eq!(calibration.len(), 3);
+
+        let expected_injection = CalibrationAction::LaneInjection(LaneInjection {
+            axis: InjectionAxis::Roll,
+            waveform: ExcitationWaveform::Sine {
+                amplitude: 0.06,
+                frequency_rad_s: 2.5,
+            },
+            window: Duration::from_millis(16000),
+        });
+        assert_eq!(calibration[0], expected_injection);
+        assert!(calibration[0].simulator_only());
+        assert_eq!(
+            calibration[1],
+            CalibrationAction::TestStand(TestStandCommand::Engage)
+        );
+        assert_eq!(calibration[2], CalibrationAction::HoldCurrentAttitude);
+    }
+
+    #[test]
+    fn test_unknown_calibration_action_is_an_error() {
+        let config_str = r#"
+[test]
+name = "bad_calibration"
+lockstep = true
+
+[[vehicles]]
+id = "alia_0"
+
+[[vehicles.mission.calibration]]
+action = { type = "teleport" }
+"#;
+
+        assert!(parse_test_config_str(config_str).is_err());
+    }
+
+    #[test]
+    fn test_malformed_lane_injection_number_is_an_error() {
+        let config_str = r#"
+[test]
+name = "bad_number"
+lockstep = true
+
+[[vehicles]]
+id = "alia_0"
+
+[[vehicles.mission.calibration]]
+action = { type = "lane_injection", axis = "roll", waveform = "sine", amplitude = 0.o6, frequency_rad_s = 2.5, window_ms = 16000 }
+"#;
+
+        assert!(parse_test_config_str(config_str).is_err());
+    }
+
+    #[test]
+    fn test_missing_lane_injection_key_is_an_error() {
+        let config_str = r#"
+[test]
+name = "missing_key"
+lockstep = true
+
+[[vehicles]]
+id = "alia_0"
+
+[[vehicles.mission.calibration]]
+action = { type = "lane_injection", axis = "roll", waveform = "sine" }
+"#;
+
+        assert!(parse_test_config_str(config_str).is_err());
+    }
+
+    #[test]
+    fn test_zero_amplitude_lane_injection_is_an_error() {
+        let config_str = r#"
+[test]
+name = "zero_amplitude"
+lockstep = true
+
+[[vehicles]]
+id = "alia_0"
+
+[[vehicles.mission.calibration]]
+action = { type = "lane_injection", axis = "roll", waveform = "sine", amplitude = 0.0, frequency_rad_s = 2.5, window_ms = 16000 }
+"#;
+
+        assert!(parse_test_config_str(config_str).is_err());
+    }
+
+    #[test]
+    fn test_calibration_actions_attach_to_their_own_vehicle() {
+        let config_str = r#"
+[test]
+name = "two_vehicle_calibration"
+lockstep = true
+
+[[vehicles]]
+id = "sim_0"
+
+[[vehicles.mission.calibration]]
+action = { type = "hold_current_attitude" }
+
+[[vehicles]]
+id = "sim_1"
+
+[[vehicles.mission.calibration]]
+action = { type = "test_stand", command = "release" }
+"#;
+
+        let config = parse_test_config_str(config_str);
+        assert!(config.is_ok());
+        let Ok(config) = config else {
+            return;
+        };
+        assert_eq!(config.vehicles.len(), 2);
+        assert_eq!(
+            config.vehicles[0].calibration,
+            [CalibrationAction::HoldCurrentAttitude]
+        );
+        assert_eq!(
+            config.vehicles[1].calibration,
+            [CalibrationAction::TestStand(TestStandCommand::Release)]
+        );
     }
 }
 

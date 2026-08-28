@@ -31,6 +31,7 @@
 
 pub mod backend;
 pub mod bridge;
+pub mod calibration;
 pub mod command_provenance;
 pub mod config;
 pub mod fault_ctrl;
@@ -74,6 +75,11 @@ pub use SitlIO as SitlMavlink;
 pub use flight_log::{FlightLog, FlightLogConfig, FlightSample, FlightStats};
 
 // Test infrastructure exports
+pub use calibration::{
+    AttitudeHoldReceipt, CalibrationAction, CalibrationActionKind, CalibrationError,
+    CalibrationReceipt, ExcitationWaveform, ExcitationWindowReceipt, InjectionAxis, LaneInjection,
+    LaneInjectionReceipt, TargetKind, TestStandCommand, TestStandReceipt,
+};
 pub use config::{parse_test_config, parse_test_config_str, TestConfig, VehicleTestConfig};
 pub use mission::{
     Action, Criterion, CriterionResult, FaultSpec, Mission, MissionResult, MultiVehicleCriterion,
