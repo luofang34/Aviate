@@ -10,4 +10,4 @@ description = "MAVLink 2 sha256_48 signing primitive, shared by the boards that 
 workspace = true
 
 [dependencies]
-sha2 = { version = "0.10", default-features = false }
+sha2 = { version = "0.11", default-features = false }
