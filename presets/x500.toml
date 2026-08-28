@@ -27,9 +27,12 @@ vel_p = [1.2, 1.2, 0.4]
 vel_i = [0.05, 0.05, 0.05]
 vel_d = [0.0, 0.0, 0.0]
 vel_max_roll_pitch = 0.35
+vel_max_yaw_step = 0.6
 vel_accel_ff = 0.0
 att_p = [3.5, 3.5, 2.5]
+att_max_rate_cmd = 3.0
 rate_p = [0.30, 0.30, 0.60]
+rate_i = [0.0, 0.0, 0.0]
 rate_d = [0.0, 0.0, 0.05]
 rate_d_lpf_alpha = 0.5
 

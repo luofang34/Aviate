@@ -79,6 +79,11 @@ pub enum ModeEntryDecision {
         requested: ControlMode,
         missing: StateValidFlags,
     },
+    /// The active controller does not implement the requested mode.
+    Unsupported {
+        /// Mode that the command requested.
+        requested: ControlMode,
+    },
 }
 
 impl ModeEntryDecision {
@@ -92,9 +97,23 @@ impl ModeEntryDecision {
         match self {
             ModeEntryDecision::Granted(m) => m,
             ModeEntryDecision::FallenBack { effective, .. } => effective,
-            ModeEntryDecision::Refused { .. } => ControlMode::Attitude,
+            ModeEntryDecision::Refused { .. } | ModeEntryDecision::Unsupported { .. } => {
+                ControlMode::Attitude
+            }
         }
     }
+}
+
+/// Gate a mode against controller capability and estimator validity.
+pub fn gate_controller_mode_entry(
+    requested: ControlMode,
+    valid: StateValidFlags,
+    supported: bool,
+) -> ModeEntryDecision {
+    if !supported {
+        return ModeEntryDecision::Unsupported { requested };
+    }
+    gate_mode_entry(requested, valid)
 }
 
 /// Gate a commanded mode's entry against current estimator validity.
@@ -310,6 +329,13 @@ mod tests {
             ModeEntryDecision::Refused {
                 requested: ControlMode::PositionHold,
                 missing: ATT_VEL_POS,
+            }
+            .effective(),
+            ControlMode::Attitude
+        );
+        assert_eq!(
+            ModeEntryDecision::Unsupported {
+                requested: ControlMode::Rate,
             }
             .effective(),
             ControlMode::Attitude

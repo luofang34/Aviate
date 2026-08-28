@@ -76,8 +76,8 @@ pub struct HilTcpTransport {
     connects: u64,
     sensors: VecDeque<HilSensor>,
     dropped_sensors: u64,
-    last_gps: Option<HilGps>,
-    last_state_quaternion: Option<HilStateQuaternion>,
+    gps: VecDeque<HilGps>,
+    state_quaternions: VecDeque<HilStateQuaternion>,
 }
 
 impl HilTcpTransport {
@@ -101,8 +101,8 @@ impl HilTcpTransport {
             connects: 0,
             sensors: VecDeque::with_capacity(SENSOR_QUEUE_DEPTH),
             dropped_sensors: 0,
-            last_gps: None,
-            last_state_quaternion: None,
+            gps: VecDeque::with_capacity(SENSOR_QUEUE_DEPTH),
+            state_quaternions: VecDeque::with_capacity(SENSOR_QUEUE_DEPTH),
         };
         transport.try_connect();
         transport
@@ -130,8 +130,8 @@ impl HilTcpTransport {
         // frame, nor replay its last sample as if it were fresh.
         self.rx_len = 0;
         self.sensors.clear();
-        self.last_gps = None;
-        self.last_state_quaternion = None;
+        self.gps.clear();
+        self.state_quaternions.clear();
         self.stream = Some(stream);
         self.connects = self.connects.wrapping_add(1);
         log::info!(
@@ -235,8 +235,10 @@ impl HilTcpTransport {
                 }
                 self.sensors.push_back(sensor);
             }
-            HilMessage::Gps(gps) => self.last_gps = Some(gps),
-            HilMessage::StateQuaternion(state) => self.last_state_quaternion = Some(state),
+            HilMessage::Gps(gps) => push_bounded(&mut self.gps, gps),
+            HilMessage::StateQuaternion(state) => {
+                push_bounded(&mut self.state_quaternions, state);
+            }
             // Heartbeats and actuator controls travel the other way.
             HilMessage::Heartbeat(_) | HilMessage::ActuatorControls(_) => {}
         }
@@ -254,14 +256,43 @@ impl HilTcpTransport {
         self.dropped_sensors
     }
 
-    /// Takes the last received GNSS sample.
+    /// Take the oldest GNSS sample that has not joined a sensor group.
     pub fn take_gps(&mut self) -> Option<HilGps> {
-        self.last_gps.take()
+        self.gps.pop_front()
     }
 
-    /// Takes the last received ground-truth state.
+    /// Take the GNSS sample with the specified simulator timestamp.
+    pub fn take_gps_at(&mut self, timestamp_us: u64) -> Option<HilGps> {
+        let index = self
+            .gps
+            .iter()
+            .position(|sample| sample.time_usec == timestamp_us)?;
+        self.gps.remove(index)
+    }
+
+    /// Take the newest truth sample and discard older truth samples.
     pub fn take_state_quaternion(&mut self) -> Option<HilStateQuaternion> {
-        self.last_state_quaternion.take()
+        let latest = self.state_quaternions.pop_back();
+        self.state_quaternions.clear();
+        latest
+    }
+
+    /// Take the truth sample with the specified simulator timestamp.
+    pub fn take_state_quaternion_at(&mut self, timestamp_us: u64) -> Option<HilStateQuaternion> {
+        let index = self
+            .state_quaternions
+            .iter()
+            .position(|sample| sample.time_usec == timestamp_us)?;
+        self.state_quaternions.remove(index)
+    }
+
+    /// Discard all input that belongs to the current simulator generation.
+    pub fn clear_generation_state(&mut self) {
+        self.poll();
+        self.rx_len = 0;
+        self.sensors.clear();
+        self.gps.clear();
+        self.state_quaternions.clear();
     }
 
     /// Sends actuator controls to the simulator.
@@ -343,6 +374,9 @@ impl HilTcpTransport {
     /// must be paced by the ARRIVAL of a sample instead. Peeking leaves
     /// the byte for `poll` to read normally.
     pub fn wait_readable(&mut self, timeout: Duration) -> bool {
+        if !self.sensors.is_empty() {
+            return true;
+        }
         let Some(stream) = self.stream.as_ref() else {
             return false;
         };
@@ -352,7 +386,7 @@ impl HilTcpTransport {
             return false;
         }
         let mut probe = [0u8; 1];
-        let readable = matches!(stream.peek(&mut probe), Ok(1));
+        let result = stream.peek(&mut probe);
         // Every other path in this transport assumes nonblocking reads,
         // so a link that cannot be restored is dropped rather than left
         // able to stall the control loop.
@@ -360,7 +394,26 @@ impl HilTcpTransport {
             self.disconnect("the link could not be restored to nonblocking mode");
             return false;
         }
-        readable
+        match result {
+            Ok(1) => true,
+            Ok(0) => {
+                self.disconnect("the simulator closed the connection");
+                false
+            }
+            Ok(_) => false,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
+            {
+                false
+            }
+            Err(error) => {
+                self.disconnect(&format!("read probe failed: {error}"));
+                false
+            }
+        }
     }
 
     /// Microseconds since the transport was created.
@@ -387,6 +440,13 @@ impl HilTcpTransport {
     pub fn simulator_addr(&self) -> SocketAddr {
         self.config.simulator_addr
     }
+}
+
+fn push_bounded<T>(queue: &mut VecDeque<T>, value: T) {
+    if queue.len() == SENSOR_QUEUE_DEPTH {
+        queue.pop_front();
+    }
+    queue.push_back(value);
 }
 
 #[cfg(test)]

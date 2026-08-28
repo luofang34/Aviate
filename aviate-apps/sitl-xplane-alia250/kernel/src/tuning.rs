@@ -1,110 +1,101 @@
-//! The airframe's measured identity and the cascade derived from
-//! it: hover trim, per-axis plant authority, and the gains the
-//! LLR-CTL-202/205 formulation yields for a heavy payload vehicle.
+//! Conversion from validated airframe data to kernel types.
 
+use aviate_config::airframe_preset::{GainsPreset, LimitsPreset};
 use aviate_core::control::cascade_gains::CascadeGains;
+use aviate_core::control::Limits;
+use aviate_core::types::{Meters, MetersPerSecond, Radians, RadiansPerSecond};
 
-/// Force-domain hover trim, MEASURED by the grounded collective sweep
-/// (`--sweep`) against the simulator's own prop-force dataref in the
-/// HEALTHY spool regime: thrust crosses the vehicle's weight near
-/// force 0.43 and the vehicle lifts by 0.5. An earlier 0.78 reading
-/// was taken with the rotors in the latched-stall state the ceiling in
-/// the board now guards against — a trim measured there drives every
-/// takeoff back INTO the stall. The trim drifts with battery state
-/// (the airframe lightens as it discharges); the vertical loop's
-/// integrator absorbs the drift.
-const HOVER_TRIM: f32 = 0.43;
-
-/// Reads one plant number from the environment, so a tuning session on
-/// a different simulator aircraft can override the baked identity
-/// without a rebuild. Flight builds carry no environment plumbing —
-/// this app is SITL by definition.
-fn env_f32(name: &str, fallback: f32) -> f32 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(fallback)
-}
-
-pub(crate) fn hover_trim() -> f32 {
-    env_f32("AVIATE_HOVER_TRIM", HOVER_TRIM)
-}
-
-fn plant_k() -> [f32; 3] {
-    [
-        env_f32("AVIATE_PLANT_K_ROLL", PLANT_K[0]),
-        env_f32("AVIATE_PLANT_K_PITCH", PLANT_K[1]),
-        env_f32("AVIATE_PLANT_K_YAW", PLANT_K[2]),
-    ]
-}
-
-/// Measured plant authority per axis, rad/s^2 per unit normalized
-/// force-domain torque: the `--identify` flight's output (correlation
-/// at the 2.5 rad/s probe, virtual-test-stand run). Roll and yaw are
-/// read in the HEALTHY spool regime (hover collective 0.43), where the
-/// two probe frequencies agree on each axis's magnitude. These
-/// are the ONLY
-/// airframe-specific inputs to the attitude cascade; re-run the
-/// experiment and update them when the airframe (or the simulator's
-/// model of it) changes.
-const PLANT_K: [f32; 3] = [5.3, 3.1, 1.0];
-
-/// Attitude-cascade gains derived from the measured plant.
-///
-/// Design targets, per the LLR-CTL-202/205 formulation the X500
-/// derivation uses (closed-loop wn = sqrt(att_p * K * rate_p), zeta =
-/// 0.5 * sqrt(K * rate_p / att_p), separation S = K * rate_p / att_p):
-///
-/// - zeta = 1.25 (overdamped, no overshoot), hence S = 4 * zeta^2 =
-///   6.25 — above the 5x separation floor with margin.
-/// - wn = 2 rad/s roll/pitch, 1.2 rad/s yaw: a heavy payload vehicle's
-///   response (settle ~1.2 s / ~2 s). Deliberately below the probe
-///   frequency where the measured phase already shows the rotors'
-///   spool lag — crossing over into that lag is what a hotter target
-///   would do, and what the first hand-scaled guess died of.
-///
-/// Which gives, per axis: att_p = wn / sqrt(S), rate_p = S * att_p / K.
-/// The rate command cap keeps a six-ton vehicle from being asked to
-/// servo fighter rates; the tilt cap bounds horizontal acceleration to
-/// what a payload flight needs.
-pub(crate) fn alia250_gains() -> CascadeGains {
-    const ZETA: f32 = 1.25;
-    const SEPARATION: f32 = 4.0 * ZETA * ZETA;
-    // Yaw runs far slower than roll/pitch on purpose: its actuator is
-    // rotor drag, whose measured lag is already -63 degrees beyond the
-    // integrator at 2.5 rad/s — a yaw crossover anywhere near that
-    // frequency has no phase margin left. A slow yaw loop also cannot
-    // chase the mag heading's tilt-compensation wobble fast enough to
-    // destabilize the frame.
-    const WN: [f32; 3] = [2.0, 2.0, 0.9];
-    let k = plant_k();
-    let mut att_p = [0.0_f32; 3];
-    let mut rate_p = [0.0_f32; 3];
-    for axis in 0..3 {
-        att_p[axis] = WN[axis] / SEPARATION.sqrt();
-        rate_p[axis] = SEPARATION * att_p[axis] / k[axis];
-    }
+/// Convert all preset gain fields to the immutable kernel configuration.
+pub(crate) fn gains_from_preset(gains: GainsPreset) -> CascadeGains {
     CascadeGains {
-        att_p,
-        att_max_rate_cmd: 1.0,
-        rate_p,
-        // This airframe hovers TILTED: its center of mass sits well off
-        // the rotor centroid (measured as a sustained ~0.2-normalized
-        // pitch torque in level hover), and the velocity loop's
-        // integrator is what finds that trim attitude. At the X500's
-        // 0.05 it takes tens of seconds, during which the vehicle
-        // drifts at whatever velocity error the un-trimmed attitude
-        // sustains; the conditional anti-windup makes the faster
-        // integrator safe.
-        vel_i: [0.3, 0.3, 0.1],
-        // Damping the long arms would ring with; kept small relative
-        // to P so derivative noise cannot dominate the torque demand.
-        rate_d: [0.05, 0.05, 0.05],
-        // The measured standing yaw torque (rotor reaction imbalance)
-        // walks the heading without an integrator; roll and pitch get
-        // gentler trims for their own steady asymmetries.
-        rate_i: [0.1, 0.1, 0.3],
-        vel_max_roll_pitch: 0.45,
-        ..CascadeGains::x500_defaults()
+        pos_p: gains.pos_p,
+        pos_accel_limits: gains.pos_accel_limits,
+        pos_vel_caps: gains.pos_vel_caps,
+        vel_p: gains.vel_p,
+        vel_i: gains.vel_i,
+        vel_max_roll_pitch: gains.vel_max_roll_pitch,
+        vel_max_yaw_step: gains.vel_max_yaw_step,
+        vel_accel_ff: gains.vel_accel_ff,
+        vel_d: gains.vel_d,
+        att_p: gains.att_p,
+        att_max_rate_cmd: gains.att_max_rate_cmd,
+        rate_p: gains.rate_p,
+        rate_i: gains.rate_i,
+        rate_d: gains.rate_d,
+        rate_d_lpf_alpha: gains.rate_d_lpf_alpha,
+    }
+}
+
+/// Convert an immutable kernel gain set to its preset representation.
+pub(crate) fn gains_to_preset(gains: CascadeGains) -> GainsPreset {
+    GainsPreset {
+        pos_p: gains.pos_p,
+        pos_accel_limits: gains.pos_accel_limits,
+        pos_vel_caps: gains.pos_vel_caps,
+        vel_p: gains.vel_p,
+        vel_i: gains.vel_i,
+        vel_d: gains.vel_d,
+        vel_max_roll_pitch: gains.vel_max_roll_pitch,
+        vel_max_yaw_step: gains.vel_max_yaw_step,
+        vel_accel_ff: gains.vel_accel_ff,
+        att_p: gains.att_p,
+        att_max_rate_cmd: gains.att_max_rate_cmd,
+        rate_p: gains.rate_p,
+        rate_i: gains.rate_i,
+        rate_d: gains.rate_d,
+        rate_d_lpf_alpha: gains.rate_d_lpf_alpha,
+    }
+}
+
+/// Convert all preset envelope fields to the kernel limit types.
+pub(crate) fn limits_from_preset(limits: LimitsPreset) -> Limits {
+    Limits {
+        max_roll: Radians(limits.max_roll),
+        max_pitch: Radians(limits.max_pitch),
+        max_roll_rate: RadiansPerSecond(limits.max_roll_rate),
+        max_pitch_rate: RadiansPerSecond(limits.max_pitch_rate),
+        max_yaw_rate: RadiansPerSecond(limits.max_yaw_rate),
+        max_horizontal_speed: MetersPerSecond(limits.max_horizontal_speed),
+        max_climb_rate: MetersPerSecond(limits.max_climb_rate),
+        max_descent_rate: MetersPerSecond(limits.max_descent_rate),
+        max_altitude: Meters(limits.max_altitude),
+        min_altitude: Meters(limits.min_altitude),
+        min_airspeed: None,
+        max_airspeed: None,
+        max_load_factor: 2.0,
+        min_load_factor: 0.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use aviate_config::airframe_preset::preset_from_toml_str;
+
+    use super::*;
+
+    const ALIA250: &str = include_str!("../../../../presets/alia250.toml");
+
+    #[test]
+    fn preset_mapping_consumes_all_gain_fields() {
+        let preset = preset_from_toml_str(ALIA250).expect("valid Alia 250 preset");
+        let mapped = gains_from_preset(preset.gains);
+        assert_eq!(mapped.pos_p, preset.gains.pos_p);
+        assert_eq!(mapped.pos_accel_limits, preset.gains.pos_accel_limits);
+        assert_eq!(mapped.pos_vel_caps, preset.gains.pos_vel_caps);
+        assert_eq!(mapped.vel_p, preset.gains.vel_p);
+        assert_eq!(mapped.vel_i, preset.gains.vel_i);
+        assert_eq!(mapped.vel_d, preset.gains.vel_d);
+        assert_eq!(mapped.vel_max_roll_pitch, preset.gains.vel_max_roll_pitch);
+        assert_eq!(mapped.vel_max_yaw_step, preset.gains.vel_max_yaw_step);
+        assert_eq!(mapped.vel_accel_ff, preset.gains.vel_accel_ff);
+        assert_eq!(mapped.att_p, preset.gains.att_p);
+        assert_eq!(mapped.att_max_rate_cmd, preset.gains.att_max_rate_cmd);
+        assert_eq!(mapped.rate_p, preset.gains.rate_p);
+        assert_eq!(mapped.rate_i, preset.gains.rate_i);
+        assert_eq!(mapped.rate_d, preset.gains.rate_d);
+        assert_eq!(mapped.rate_d_lpf_alpha, preset.gains.rate_d_lpf_alpha);
+        assert_eq!(gains_to_preset(mapped), preset.gains);
     }
 }

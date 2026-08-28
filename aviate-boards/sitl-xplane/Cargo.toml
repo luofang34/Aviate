@@ -14,6 +14,12 @@ aviate-hal-xil = { path = "../../aviate-hal/xil" }
 aviate-backend-mavlink-hil = { path = "../../aviate-hal/xil/backends/mavlink-hil" }
 aviate-runtime = { path = "../../aviate-runtime", features = ["env-sitl"] }
 log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+aviate-app-sitl-xplane-alia250-kernel = { path = "../../aviate-apps/sitl-xplane-alia250/kernel" }
 
 [package.metadata.aviate-board]
 chip = "xil"           # Special: simulator, no flashing

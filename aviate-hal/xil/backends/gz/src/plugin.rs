@@ -271,28 +271,18 @@ impl GzPluginBridge {
         self.session.lockstep_enabled()
     }
 
-    /// Wait for a new simulation step and process it: waits for
-    /// `sim_step > last_step`, hands the coherent state to
-    /// `processor`, acks the step. Returns `None` on timeout.
-    pub fn wait_and_process<F, R>(
-        &self,
-        last_step: u64,
-        timeout_us: u64,
-        processor: F,
-    ) -> Option<(u64, R)>
-    where
-        F: FnOnce(&AviateModelState) -> R,
-    {
+    /// Wait for a new model state.
+    ///
+    /// This function does not acknowledge the step. It returns `None`
+    /// when the wait time expires.
+    pub fn wait_for_state(&self, last_step: u64, timeout_us: u64) -> Option<AviateModelState> {
         let start = std::time::Instant::now();
         let timeout = std::time::Duration::from_micros(timeout_us);
 
         loop {
             if let Some(state) = self.get_model_state() {
                 if state.sim_step > last_step {
-                    let step = state.sim_step;
-                    let result = processor(&state);
-                    self.ack_step(step);
-                    return Some((step, result));
+                    return Some(state);
                 }
             }
 
@@ -302,6 +292,23 @@ impl GzPluginBridge {
 
             std::thread::sleep(std::time::Duration::from_micros(10));
         }
+    }
+
+    /// Wait for a new model state, process it, and acknowledge its step.
+    pub fn wait_and_process<F, R>(
+        &self,
+        last_step: u64,
+        timeout_us: u64,
+        processor: F,
+    ) -> Option<(u64, R)>
+    where
+        F: FnOnce(&AviateModelState) -> R,
+    {
+        let state = self.wait_for_state(last_step, timeout_us)?;
+        let step = state.sim_step;
+        let result = processor(&state);
+        self.ack_step(step);
+        Some((step, result))
     }
 }
 
@@ -348,6 +355,7 @@ pub fn enu_vel_to_ned_f32(enu_vel: [f64; 3]) -> [f32; 3] {
 /// For the same physical attitude:
 /// `q_NED_FRD = q_ENU→NED · q_ENU_FLU · q_FRD→FLU`
 #[inline]
+#[cfg(feature = "gz-plugin")]
 pub fn enu_quat_to_ned_f32(q_enu_flu: [f64; 4]) -> [f32; 4] {
     let s = core::f32::consts::FRAC_1_SQRT_2;
     let w = q_enu_flu[0] as f32;
@@ -362,6 +370,7 @@ pub fn enu_quat_to_ned_f32(q_enu_flu: [f64; 4]) -> [f32; 4] {
 /// FLU body = (forward, left, up); FRD body = (forward, right,
 /// down). Flip Y and Z; X is forward in both.
 #[inline]
+#[cfg(feature = "gz-plugin")]
 pub fn flu_to_frd_f32(v_flu: [f64; 3]) -> [f32; 3] {
     [v_flu[0] as f32, -v_flu[1] as f32, -v_flu[2] as f32]
 }

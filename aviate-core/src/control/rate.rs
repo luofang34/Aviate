@@ -23,6 +23,7 @@
 //! pristine signal into a slightly-quantized state.
 
 use crate::control::cascade_gains::CascadeGains;
+use crate::control::{ControllerLoopObservation, IntegratorAction};
 use crate::math::Vector3;
 use crate::types::{NormalizedSigned, RadiansPerSecond, Scalar};
 
@@ -94,6 +95,19 @@ impl RateController {
         current: [RadiansPerSecond; 3],
         dt_sec: Scalar,
     ) -> [NormalizedSigned; 3] {
+        self.step_with_observation(state, setpoint, current, dt_sec)
+            .0
+    }
+
+    /// Run one cycle and return terms that do not feed later control.
+    pub(crate) fn step_with_observation(
+        &self,
+        state: &mut RateLoopState,
+        setpoint: [RadiansPerSecond; 3],
+        current: [RadiansPerSecond; 3],
+        dt_sec: Scalar,
+    ) -> ([NormalizedSigned; 3], ControllerLoopObservation) {
+        let integrator_before = state.integral;
         // Update the filtered measurement (single-pole LPF).
         let alpha = self.gains.rate_d_lpf_alpha;
         let mut meas_filtered = state.meas_filtered_prev;
@@ -103,9 +117,14 @@ impl RateController {
         }
 
         let mut out = [NormalizedSigned(0.0); 3];
+        let mut p = [0.0; 3];
+        let mut d = [0.0; 3];
+        let mut action = [IntegratorAction::FrozenInactive; 3];
+        let mut saturated = [false; 3];
         for i in 0..3 {
             let p_error = setpoint[i].0 - current[i].0;
             let p_term = p_error * self.gains.rate_p[i];
+            p[i] = p_term;
 
             // Derivative-on-measurement, sign flipped so a positive
             // measurement-derivative damps the loop (positive
@@ -119,6 +138,7 @@ impl RateController {
             } else {
                 0.0
             };
+            d[i] = d_term;
 
             // Conditional anti-windup: the integral advances while
             // the un-clamped command has authority left, so a
@@ -134,14 +154,31 @@ impl RateController {
             if i_gain > 0.0 && dt_sec > 0.0 && (unsat.abs() < 1.0 || shrinks) {
                 state.integral[i] =
                     (state.integral[i] + increment).clamp(-RATE_I_LIMIT, RATE_I_LIMIT);
+                action[i] = IntegratorAction::Integrated;
+            } else if i_gain > 0.0 && dt_sec > 0.0 {
+                action[i] = IntegratorAction::FrozenSaturation;
             }
-            let cmd = (p_term + d_term + state.integral[i]).clamp(-1.0, 1.0);
+            let command_unclamped = p_term + d_term + state.integral[i];
+            saturated[i] = command_unclamped.abs() > 1.0;
+            let cmd = command_unclamped.clamp(-1.0, 1.0);
             out[i] = NormalizedSigned(cmd);
         }
 
         state.meas_filtered_prev = meas_filtered;
         state.primed = true;
-        out
+        (
+            out,
+            ControllerLoopObservation {
+                p,
+                i: state.integral,
+                d,
+                feedforward: [0.0; 3],
+                integrator_before,
+                integrator_after: state.integral,
+                integrator_action: action,
+                saturated,
+            },
+        )
     }
 }
 

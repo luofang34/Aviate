@@ -21,12 +21,10 @@
 //! shared-memory access goes through `aviate-xil-shm` — the one
 //! crate in the SITL data plane that contains unsafe code.
 
-mod backend;
 mod bridge;
 mod plugin;
 mod sim_backend;
 
-pub use backend::GazeboBackend;
 pub use bridge::{GzBridge, GzBridgeConfig, GzBridgeError};
 pub use plugin::{enu_to_ned, enu_to_ned_f32, enu_vel_to_ned, enu_vel_to_ned_f32};
 pub use plugin::{AviateModelState, AviateMotorCommand, GzPluginBridge, GzPluginError};

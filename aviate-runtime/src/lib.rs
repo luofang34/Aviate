@@ -89,6 +89,7 @@ pub use sim::{
     run_control_loop,
     sitl_timestamp,
     AppRuntime,
+    ArmAuthorizer,
     SitlBoardHal,
     // Shared types
     SitlBoardInfo,

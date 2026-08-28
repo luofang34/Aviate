@@ -88,7 +88,7 @@ Platform-agnostic I/O device framework:
 
 X-In-Loop (SITL/HITL) simulation infrastructure:
 - `SitlMavlink`: MAVLink I/O (receives HIL_SENSOR, sends HIL_ACTUATOR)
-- `KinematicsBackend` trait: Interface for simulators (Gazebo, future: AirSim, Unity)
+- `SimulatorBackend` trait: Interface for sample-paced simulators
 - Test framework: Mission definitions, success criteria, multi-vehicle support
 - Flight logging and statistics
 

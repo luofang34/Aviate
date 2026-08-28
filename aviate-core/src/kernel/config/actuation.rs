@@ -39,6 +39,20 @@ impl MixerGeometry {
             | MixerGeometry::QuadXX500ReversedSpin => 4,
         }
     }
+
+    /// The name a preset declares this geometry by.
+    ///
+    /// So a record naming what it flew reads that name off the thing rather
+    /// than restating it. A literal at the writing site states what somebody
+    /// expected, and goes on stating it after that stops being true.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            MixerGeometry::QuadX => "quad-x",
+            MixerGeometry::QuadXX500 => "quad-x-x500",
+            MixerGeometry::QuadXX500ReversedSpin => "quad-x-x500-reversed-spin",
+        }
+    }
 }
 
 /// Plant curve between the cascade's force-domain collective
@@ -73,6 +87,15 @@ impl ActuatorCurveKind {
         match self {
             ActuatorCurveKind::Linear => Normalized(t),
             ActuatorCurveKind::QuadraticRotor => Normalized(t.sqrt()),
+        }
+    }
+
+    /// The name a preset declares this curve by.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ActuatorCurveKind::Linear => "linear",
+            ActuatorCurveKind::QuadraticRotor => "quadratic-rotor",
         }
     }
 }
@@ -129,5 +152,24 @@ mod tests {
         assert_eq!(MixerGeometry::QuadX.motor_count(), 4);
         assert_eq!(MixerGeometry::QuadXX500.motor_count(), 4);
         assert_eq!(MixerGeometry::QuadXX500ReversedSpin.motor_count(), 4);
+    }
+
+    #[test]
+    fn every_geometry_and_curve_names_itself_as_a_preset_declares_it() {
+        // Each arm, not just the one this airframe happens to use. These names
+        // go into a run manifest that says which vehicle flew, so a wrong one
+        // is a wrong record — and an arm no test reaches is an arm nobody has
+        // read against the preset vocabulary it is supposed to match.
+        assert_eq!(MixerGeometry::QuadX.as_str(), "quad-x");
+        assert_eq!(MixerGeometry::QuadXX500.as_str(), "quad-x-x500");
+        assert_eq!(
+            MixerGeometry::QuadXX500ReversedSpin.as_str(),
+            "quad-x-x500-reversed-spin"
+        );
+        assert_eq!(ActuatorCurveKind::Linear.as_str(), "linear");
+        assert_eq!(
+            ActuatorCurveKind::QuadraticRotor.as_str(),
+            "quadratic-rotor"
+        );
     }
 }

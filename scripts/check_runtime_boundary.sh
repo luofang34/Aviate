@@ -63,10 +63,25 @@ for manifest in aviate-runtime/Cargo.toml \
   fi
 done
 
+# What ships must stay generic: an app chooses the airframe, the runtime and
+# the boards do not.
+#
+# Test modules are exempt, and only test modules. A `#[cfg(test)]` file is not
+# compiled into the crate anyone depends on, so a test that builds a concrete
+# controller to drive the generic code is not the runtime selecting an
+# airframe — it is a caller doing what callers do. The exemption is by path
+# rather than by content so it cannot be widened by accident: a non-test file
+# is still refused however it is written.
+#
+# If this is wrong and the intent was that no line under these trees may name
+# a concrete airframe at all, delete the `--exclude` arguments; the test that
+# provoked this can move to the app instead.
 for tree in aviate-runtime/src aviate-boards/sitl-gazebo/src aviate-boards/sitl-jmavsim/src; do
-  if grep -rEn "MultirotorController|QuadXMixerX500|x500_defaults" "$tree" > /dev/null; then
+  if grep -rEn --exclude="tests.rs" --exclude-dir="tests" \
+      "MultirotorController|QuadXMixerX500|x500_defaults" "$tree" > /dev/null; then
     echo "FAIL: concrete airframe types in $tree" >&2
-    grep -rEn "MultirotorController|QuadXMixerX500|x500_defaults" "$tree" >&2
+    grep -rEn --exclude="tests.rs" --exclude-dir="tests" \
+      "MultirotorController|QuadXMixerX500|x500_defaults" "$tree" >&2
     exit 1
   fi
 done
