@@ -47,6 +47,7 @@ enum BridgeCommand {
 
 #[test]
 fn scripted_session_uses_the_sample_paced_transport() {
+    let _port = super::board_port_guard();
     let (address, bridge, bridge_thread) = start_bridge();
     let mut backend = make_backend(address);
     let connected = backend

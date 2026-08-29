@@ -13,6 +13,40 @@ use log::warn;
 use super::observation::{prepare_actuator_command, PreparedActuatorCommand};
 use super::{XPlaneBoard, XPlaneControlObservation, XPlaneSendEvidence};
 
+/// What the sensor seam decided about one converted sample.
+struct SensorOutcome {
+    /// The recorded application, when the seam produced one.
+    application: Option<SensorApplication>,
+    /// Whether the flight controller may consume the sample.
+    accepted: bool,
+}
+
+impl SensorOutcome {
+    /// No condition artifact is loaded, so the sample passes unchanged.
+    const fn unperturbed() -> Self {
+        Self {
+            application: None,
+            accepted: true,
+        }
+    }
+
+    /// The sample carries the recorded perturbation.
+    const fn applied(application: SensorApplication) -> Self {
+        Self {
+            application: Some(application),
+            accepted: true,
+        }
+    }
+
+    /// The sample failed the sensor contract and never reaches the controller.
+    const fn refused() -> Self {
+        Self {
+            application: None,
+            accepted: false,
+        }
+    }
+}
+
 impl<C, M> XPlaneBoard<C, M>
 where
     C: aviate_core::control::VehicleController,
@@ -27,8 +61,11 @@ where
         if let Some(imu) = packet.imu {
             self.last_imu = Some(imu);
         }
-        let sensor_application = self.apply_sensor_perturbation(sample_sequence, &mut packet);
-        self.runner.transport.feed_sensor_packet(&packet);
+        let sensor_outcome = self.apply_sensor_perturbation(sample_sequence, &mut packet);
+        if sensor_outcome.accepted {
+            self.runner.transport.feed_sensor_packet(&packet);
+        }
+        let sensor_application = sensor_outcome.application;
         let arm_authorizer = self.arm_authorizer();
         let was_armed = self.runner.is_armed();
         let command = self.runner.step_with_arm_authorizer(&arm_authorizer);
@@ -80,15 +117,17 @@ where
         &mut self,
         sample_sequence: u64,
         packet: &mut SimSensorPacket,
-    ) -> Option<SensorApplication> {
-        let engine = self.perturbation.as_mut()?;
+    ) -> SensorOutcome {
+        let Some(engine) = self.perturbation.as_mut() else {
+            return SensorOutcome::unperturbed();
+        };
         match engine.apply_sensor(sample_sequence, packet) {
-            Ok(application) => Some(application),
+            Ok(application) => SensorOutcome::applied(application),
             Err(error) => {
                 warn!("sensor perturbation failed: {error}");
                 self.perturbation_failure = Some(error);
                 self.terminate();
-                None
+                SensorOutcome::refused()
             }
         }
     }

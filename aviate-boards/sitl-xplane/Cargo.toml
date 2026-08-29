@@ -20,6 +20,7 @@ thiserror = "2"
 
 [dev-dependencies]
 aviate-app-sitl-xplane-alia250-kernel = { path = "../../aviate-apps/sitl-xplane-alia250/kernel" }
+sha2 = "0.10"
 
 [package.metadata.aviate-board]
 chip = "xil"           # Special: simulator, no flashing

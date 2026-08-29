@@ -45,6 +45,25 @@ where
         self.step_with_arm_authorizer(&AllowArm)
     }
 
+    /// Feed each buffered sensor section that the sample actually carried.
+    ///
+    /// A section the sample left out keeps the driver's current reading, so a
+    /// partial sample cannot present a substitute value as a fresh reading.
+    fn feed_buffered_sensors(&mut self) {
+        let Some(sensor_data) = self.transport.take_sensor_data() else {
+            return;
+        };
+        if let Some(imu) = sensor_data.imu {
+            self.board_hal.imu_mut().feed(imu);
+        }
+        if let Some(baro) = sensor_data.baro {
+            self.board_hal.baro_mut().feed(baro);
+        }
+        if let Some(mag) = sensor_data.mag {
+            self.board_hal.mag_mut().feed(mag);
+        }
+    }
+
     /// Step with a live authorization check for each inbound Arm command.
     pub fn step_with_arm_authorizer<A>(&mut self, authorizer: &A) -> ActuatorCmd
     where
@@ -71,14 +90,7 @@ where
 
         // 2. Feed fake sensors with HIL data (via BoardHal accessors)
         //    This is the key integration point - same pattern as real HW feeding real sensors
-        if let Some(sensor_data) = self.transport.take_sensor_data() {
-            // Feed IMU
-            self.board_hal.imu_mut().feed(sensor_data.imu);
-            // Feed Baro
-            self.board_hal.baro_mut().feed(sensor_data.baro);
-            // Feed Mag
-            self.board_hal.mag_mut().feed(sensor_data.mag);
-        }
+        self.feed_buffered_sensors();
 
         if let Some(gps_data) = self.transport.take_gps_data() {
             // Feed GNSS

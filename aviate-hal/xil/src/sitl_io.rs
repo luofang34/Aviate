@@ -42,6 +42,8 @@
 //! for lower latency and cleaner architecture.
 
 mod command_link;
+#[cfg(test)]
+mod tests;
 
 use std::io;
 use std::net::UdpSocket;
@@ -62,11 +64,15 @@ use crate::sim_types::{SimActuatorCmd, SimGnssFix, SimSensorPacket};
 use crate::XilConfig;
 
 /// Raw sensor data from simulator (IMU, baro, mag)
+///
+/// Each section is present only when the sample carried that lane. An absent
+/// section leaves the matching sensor untouched, so a partial sample cannot
+/// present a substitute value to the flight controller as a fresh reading.
 #[derive(Debug, Clone, Default)]
 pub struct HilSensorData {
-    pub imu: RawImuReading,
-    pub baro: RawBaroReading,
-    pub mag: RawMagReading,
+    pub imu: Option<RawImuReading>,
+    pub baro: Option<RawBaroReading>,
+    pub mag: Option<RawMagReading>,
 }
 
 /// Raw GPS data from simulator
@@ -233,28 +239,22 @@ impl SitlIO {
     pub fn feed_sensor_packet(&mut self, packet: &SimSensorPacket) {
         // Convert IMU/Baro/Mag to HilSensorData
         if packet.imu.is_some() || packet.baro.is_some() || packet.mag.is_some() {
-            let imu = packet
-                .imu
-                .map_or_else(RawImuReading::default, |d| RawImuReading {
-                    accel: d.accel,
-                    gyro: d.gyro,
-                    temperature: d.temperature,
-                });
+            let imu = packet.imu.map(|d| RawImuReading {
+                accel: d.accel,
+                gyro: d.gyro,
+                temperature: d.temperature,
+            });
 
-            let baro = packet
-                .baro
-                .map_or_else(RawBaroReading::default, |d| RawBaroReading {
-                    pressure_pa: d.pressure_pa,
-                    differential_pressure_pa: d.differential_pressure_pa,
-                    pressure_altitude_m: d.pressure_altitude_m,
-                    temperature_c: d.temperature_c,
-                });
+            let baro = packet.baro.map(|d| RawBaroReading {
+                pressure_pa: d.pressure_pa,
+                differential_pressure_pa: d.differential_pressure_pa,
+                pressure_altitude_m: d.pressure_altitude_m,
+                temperature_c: d.temperature_c,
+            });
 
-            let mag = packet
-                .mag
-                .map_or_else(RawMagReading::default, |d| RawMagReading {
-                    field_ut: d.field_ut,
-                });
+            let mag = packet.mag.map(|d| RawMagReading {
+                field_ut: d.field_ut,
+            });
 
             self.sensor_data = Some(HilSensorData { imu, baro, mag });
         }

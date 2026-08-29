@@ -17,6 +17,7 @@ pub use sensor::{SensorApplication, SensorLane, SensorNoise};
 use core::fmt;
 
 use crate::sim_types::{SimActuatorCmd, SimSensorPacket};
+use actuator::NOMINAL_BASIS_POINTS;
 
 /// Stable inputs that separate one perturbation run from all other runs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,6 +37,35 @@ pub struct PerturbationConfig {
     pub sensor_noise: Vec<SensorNoise>,
     /// Actuator authority and hold requests.
     pub actuator: ActuatorPerturbation,
+}
+
+impl PerturbationConfig {
+    /// The exact capability set this run executes.
+    ///
+    /// The hover-force scale is applied at kernel construction, so the caller
+    /// supplies the value the kernel was built with. The order matches the
+    /// condition capability order, so the result compares directly with the
+    /// required set in an artifact identity.
+    #[must_use]
+    pub fn executed_capabilities(
+        &self,
+        hover_scale_basis_points: u16,
+    ) -> Vec<PerturbationCapability> {
+        let mut executed = Vec::new();
+        if !self.sensor_noise.is_empty() {
+            executed.push(PerturbationCapability::SensorPerturbation);
+        }
+        if self.actuator.authority_scale_basis_points != NOMINAL_BASIS_POINTS {
+            executed.push(PerturbationCapability::ActuatorAuthority);
+        }
+        if self.actuator.command_hold.is_some() {
+            executed.push(PerturbationCapability::CommandHold);
+        }
+        if hover_scale_basis_points != NOMINAL_BASIS_POINTS {
+            executed.push(PerturbationCapability::HoverTrimUncertainty);
+        }
+        executed
+    }
 }
 
 /// A deterministic perturbation refusal.
