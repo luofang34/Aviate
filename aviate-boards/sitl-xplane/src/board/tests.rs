@@ -15,7 +15,20 @@ use super::{
 
 mod backend_session;
 
+mod sensor_rejection;
+
 const MODEL: &str = include_str!("../../../../presets/alia250-xplane.toml");
+
+/// The simulator transport binds one fixed port, so at most one board can
+/// exist at a time in this test binary. Every case that builds a board
+/// holds this guard for as long as its board lives.
+static BOARD_PORT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn board_port_guard() -> std::sync::MutexGuard<'static, ()> {
+    BOARD_PORT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 #[test]
 fn the_quadratic_curve_applies_per_active_lane_only() {

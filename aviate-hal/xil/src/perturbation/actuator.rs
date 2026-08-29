@@ -6,7 +6,7 @@ use crate::sim_types::SimActuatorCmd;
 
 use super::{PerturbationError, PerturbationIdentity};
 
-const NOMINAL_BASIS_POINTS: u16 = 10_000;
+pub(super) const NOMINAL_BASIS_POINTS: u16 = 10_000;
 const COMMAND_HOLD_DOMAIN: &[u8] = b"pilotage-command-hold-v1";
 
 /// One exact command-hold request.
@@ -328,7 +328,7 @@ pub(super) fn schedule(
     Ok(decisions)
 }
 
-fn permutation_value(
+pub(super) fn permutation_value(
     identity: PerturbationIdentity,
     epoch: u64,
     index: u64,
@@ -343,7 +343,7 @@ fn permutation_value(
     ])
 }
 
-fn interval_digest(
+pub(super) fn interval_digest(
     identity: PerturbationIdentity,
     epoch: u64,
     index: u64,

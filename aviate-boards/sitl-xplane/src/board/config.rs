@@ -26,8 +26,20 @@ pub struct XPlaneConfig {
     pub(super) tuning_trace: Option<XPlaneTuningTraceConfig>,
     pub(super) perturbation: Option<PerturbationConfig>,
     pub(super) perturbation_guard: Option<LiveArtifactGuard>,
-    pub(super) perturbation_identity_bound: bool,
+    pub(super) perturbation_binding: Option<PerturbationBinding>,
     pub(super) hover_initialization: Option<XPlaneHoverInitialization>,
+}
+
+/// The identities that bind one loaded artifact to one run.
+///
+/// The board keeps both identities so the arm authorization compares them
+/// again for each request, rather than trusting a decision made once at
+/// board construction.
+#[derive(Debug, Clone)]
+pub(super) struct PerturbationBinding {
+    pub(super) artifact: PerturbationArtifactIdentity,
+    pub(super) manifest: PerturbationArtifactIdentity,
+    pub(super) config: PerturbationConfig,
 }
 
 impl XPlaneConfig {
@@ -42,7 +54,7 @@ impl XPlaneConfig {
             tuning_trace: None,
             perturbation: None,
             perturbation_guard: None,
-            perturbation_identity_bound: true,
+            perturbation_binding: None,
             hover_initialization: None,
         }
     }
@@ -58,7 +70,7 @@ impl XPlaneConfig {
     #[must_use]
     pub fn with_perturbation(mut self, config: PerturbationConfig) -> Self {
         self.perturbation = Some(config);
-        self.perturbation_identity_bound = false;
+        self.perturbation_binding = None;
         self
     }
 
@@ -77,7 +89,11 @@ impl XPlaneConfig {
         }
         self.perturbation = Some(artifact.config().clone());
         self.perturbation_guard = Some(artifact.live_guard());
-        self.perturbation_identity_bound = true;
+        self.perturbation_binding = Some(PerturbationBinding {
+            artifact: artifact.identity().clone(),
+            manifest: manifest_identity.clone(),
+            config: artifact.config().clone(),
+        });
         Ok(self)
     }
 

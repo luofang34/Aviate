@@ -4,6 +4,7 @@ use super::actuator::schedule;
 use super::*;
 use crate::sim_types::{SimBaroData, SimImuData, SimMagData, SimSensorPacket};
 
+mod cross_repository;
 mod exhaustion;
 mod validation;
 
