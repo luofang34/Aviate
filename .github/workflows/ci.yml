@@ -271,7 +271,7 @@ jobs:
           submodules: recursive
 
       - name: Install release toolchain (pinned to match the release workflow)
-        uses: dtolnay/rust-toolchain@1.95.0
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Verify committed lockfiles are up to date (--locked)
         run: ./scripts/check_release_lockfiles.sh
