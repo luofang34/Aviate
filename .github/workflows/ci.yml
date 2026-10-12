@@ -271,7 +271,7 @@ jobs:
           submodules: recursive
 
       - name: Install release toolchain (pinned to match the release workflow)
-        uses: dtolnay/rust-toolchain@1.95.0
+        uses: dtolnay/rust-toolchain@1.120.0
 
       - name: Verify committed lockfiles are up to date (--locked)
         run: ./scripts/check_release_lockfiles.sh
@@ -529,7 +529,7 @@ jobs:
           COVERAGE_MODE=branch ./scripts/check_coverage.sh
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: coverage-report
@@ -739,7 +739,7 @@ jobs:
             aviate-hal/xil/backends/gz/plugin/build/libMotorFailurePlugin.so
 
       - name: Upload shared SITL artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sitl-linux-x64
           path: sitl-artifact.tar
@@ -775,7 +775,7 @@ jobs:
         run: ./scripts/install_gazebo_harmonic.sh runtime
 
       - name: Download shared SITL artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: sitl-linux-x64
 
@@ -825,7 +825,7 @@ jobs:
         run: ./scripts/install_gazebo_harmonic.sh runtime
 
       - name: Download shared SITL artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: sitl-linux-x64
 
