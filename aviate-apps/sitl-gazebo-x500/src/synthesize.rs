@@ -72,13 +72,84 @@ pub fn apply_packet_noise(packet: &mut SimSensorPacket, tier: NoiseTier, rng: &m
     }
 }
 
-/// Build a `SimSensorPacket` from the latest ground-truth model state.
+/// One sensor sample for one new simulator step.
+#[derive(Debug, Clone)]
+pub struct StepSample {
+    /// The synthesized sensor packet, stamped with simulation time.
+    pub packet: SimSensorPacket,
+    /// Simulation time since the previous state, in microseconds.
+    /// Always non-zero.
+    pub delta_us: u64,
+    /// The physics step the packet belongs to.
+    pub sim_step: u64,
+}
+
+/// Turns successive model-state reads into one sensor sample per new
+/// simulator step.
+///
+/// The FC reads shared memory on its own clock, and the simulator
+/// does not run at exactly real time. A read can therefore see the
+/// same state again, or skip a state. A repeated state has no motion
+/// to difference: a sample made from it reports zero velocity and
+/// zero body rate, and the acceleration then swings by the full clamp
+/// in one direction and back on the next fresh state. The kernel
+/// treats each such pair as a real jolt. So [`Self::next`] gives a
+/// sample only when simulation time advanced, and the sample period
+/// is the simulation time between the two states.
+#[derive(Debug, Default)]
+pub struct StepSynthesizer {
+    prev: Option<AviateModelState>,
+    /// Derived NED velocity of `prev`. `None` until two states of the
+    /// same world epoch exist, because acceleration needs two
+    /// velocities.
+    prev_ned_vel: Option<[f32; 3]>,
+}
+
+impl StepSynthesizer {
+    /// Forget all history, for a new simulator attachment.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// The sample for `state`, or `None` when `state` does not start a
+    /// new step: the first state, a state from a new world epoch (a
+    /// world reset rewinds the clock), or a repeated state.
+    pub fn next(&mut self, state: &AviateModelState) -> Option<StepSample> {
+        let prev = match self.prev {
+            Some(prev)
+                if prev.reset_generation == state.reset_generation
+                    && state.time_us >= prev.time_us =>
+            {
+                prev
+            }
+            _ => {
+                self.prev = Some(*state);
+                self.prev_ned_vel = None;
+                return None;
+            }
+        };
+        let delta_us = state.time_us - prev.time_us;
+        if delta_us == 0 {
+            return None;
+        }
+        let (packet, ned_vel) = synthesize_packet(state, &prev, delta_us, self.prev_ned_vel);
+        self.prev = Some(*state);
+        self.prev_ned_vel = Some(ned_vel);
+        Some(StepSample {
+            packet,
+            delta_us,
+            sim_step: state.sim_step,
+        })
+    }
+}
+
+/// Build a `SimSensorPacket` from two successive ground-truth model
+/// states `delta_us` of simulation time apart (`delta_us > 0`).
 /// Coordinate conventions match the rest of aviate-core: NED for
 /// position / velocity / accel; body frame for gyro.
 ///
 /// `prev_ned_vel` is the NED-frame velocity this function returned
-/// on its previous call (so the caller — typically the FC main
-/// loop — passes its own state forward).
+/// for `prev`, or `None` when `prev` has no derived velocity.
 ///
 /// Deriving velocity from a position difference, and acceleration
 /// from a velocity difference, is what keeps the controllers
@@ -98,35 +169,26 @@ pub fn apply_packet_noise(packet: &mut SimSensorPacket, tier: NoiseTier, rng: &m
 /// model origin, so switching to it is not the free simplification
 /// it looks like.
 ///
-/// Returns `(packet, current_ned_vel)`; the caller threads the
-/// velocity through to the next call.
-pub fn synthesize_packet(
+/// Returns `(packet, current_ned_vel)`.
+fn synthesize_packet(
     state: &AviateModelState,
-    prev: Option<&AviateModelState>,
-    prev_t_us: u64,
-    prev_ned_vel: [f32; 3],
+    prev: &AviateModelState,
+    delta_us: u64,
+    prev_ned_vel: Option<[f32; 3]>,
 ) -> (SimSensorPacket, [f32; 3]) {
     let now_ned_pos = enu_to_ned_f32(state.pos);
     let now_us = state.time_us;
-    let dt = match prev {
-        Some(_) if now_us > prev_t_us => (now_us - prev_t_us) as f32 * 1e-6,
-        _ => 0.001,
-    };
+    let dt = delta_us as f32 * 1e-6;
 
     // Velocity from a finite difference of position: the shape a real
     // IMU and GNSS pair would deliver, independent of what the
     // simulator publishes — see the doc-comment above.
-    let now_ned_vel = match prev {
-        Some(p) if now_us > prev_t_us && dt > 1e-6 => {
-            let prev_ned_pos = enu_to_ned_f32(p.pos);
-            [
-                (now_ned_pos[0] - prev_ned_pos[0]) / dt,
-                (now_ned_pos[1] - prev_ned_pos[1]) / dt,
-                (now_ned_pos[2] - prev_ned_pos[2]) / dt,
-            ]
-        }
-        _ => [0.0, 0.0, 0.0],
-    };
+    let prev_ned_pos = enu_to_ned_f32(prev.pos);
+    let now_ned_vel = [
+        (now_ned_pos[0] - prev_ned_pos[0]) / dt,
+        (now_ned_pos[1] - prev_ned_pos[1]) / dt,
+        (now_ned_pos[2] - prev_ned_pos[2]) / dt,
+    ];
 
     // gz's `WorldAngularVelocity` component reports 0 in our tests
     // even when the model is actually rotating (visible in the
@@ -150,40 +212,35 @@ pub fn synthesize_packet(
         state.quat[3] as f32,
     ];
     let q_ned = enu_quat_to_ned(q_enu);
-    let gyro = match prev {
-        Some(p) if now_us > prev_t_us => {
-            let q_enu_prev = [
-                p.quat[0] as f32,
-                p.quat[1] as f32,
-                p.quat[2] as f32,
-                p.quat[3] as f32,
-            ];
-            let q_ned_prev = enu_quat_to_ned(q_enu_prev);
-            // q_delta = q_ned * q_ned_prev.conjugate
-            let qd_w = q_ned[0] * q_ned_prev[0]
-                + q_ned[1] * q_ned_prev[1]
-                + q_ned[2] * q_ned_prev[2]
-                + q_ned[3] * q_ned_prev[3];
-            let qd_x = -q_ned[0] * q_ned_prev[1] + q_ned[1] * q_ned_prev[0]
-                - q_ned[2] * q_ned_prev[3]
-                + q_ned[3] * q_ned_prev[2];
-            let qd_y =
-                -q_ned[0] * q_ned_prev[2] + q_ned[1] * q_ned_prev[3] + q_ned[2] * q_ned_prev[0]
-                    - q_ned[3] * q_ned_prev[1];
-            let qd_z = -q_ned[0] * q_ned_prev[3] - q_ned[1] * q_ned_prev[2]
-                + q_ned[2] * q_ned_prev[1]
-                + q_ned[3] * q_ned_prev[0];
-            // Force shortest-arc (qd and -qd are the same rotation;
-            // we want the imaginary part in the +w hemisphere).
-            let sign = if qd_w >= 0.0 { 1.0 } else { -1.0 };
-            let omega_world_ned = [
-                2.0 * sign * qd_x / dt,
-                2.0 * sign * qd_y / dt,
-                2.0 * sign * qd_z / dt,
-            ];
-            rotate_world_to_body(q_ned, omega_world_ned)
-        }
-        _ => [0.0; 3],
+    let gyro = {
+        let q_enu_prev = [
+            prev.quat[0] as f32,
+            prev.quat[1] as f32,
+            prev.quat[2] as f32,
+            prev.quat[3] as f32,
+        ];
+        let q_ned_prev = enu_quat_to_ned(q_enu_prev);
+        // q_delta = q_ned * q_ned_prev.conjugate
+        let qd_w = q_ned[0] * q_ned_prev[0]
+            + q_ned[1] * q_ned_prev[1]
+            + q_ned[2] * q_ned_prev[2]
+            + q_ned[3] * q_ned_prev[3];
+        let qd_x = -q_ned[0] * q_ned_prev[1] + q_ned[1] * q_ned_prev[0] - q_ned[2] * q_ned_prev[3]
+            + q_ned[3] * q_ned_prev[2];
+        let qd_y = -q_ned[0] * q_ned_prev[2] + q_ned[1] * q_ned_prev[3] + q_ned[2] * q_ned_prev[0]
+            - q_ned[3] * q_ned_prev[1];
+        let qd_z = -q_ned[0] * q_ned_prev[3] - q_ned[1] * q_ned_prev[2]
+            + q_ned[2] * q_ned_prev[1]
+            + q_ned[3] * q_ned_prev[0];
+        // Force shortest-arc (qd and -qd are the same rotation;
+        // we want the imaginary part in the +w hemisphere).
+        let sign = if qd_w >= 0.0 { 1.0 } else { -1.0 };
+        let omega_world_ned = [
+            2.0 * sign * qd_x / dt,
+            2.0 * sign * qd_y / dt,
+            2.0 * sign * qd_z / dt,
+        ];
+        rotate_world_to_body(q_ned, omega_world_ned)
     };
 
     // Inertial acceleration from the velocity finite difference —
@@ -196,8 +253,8 @@ pub fn synthesize_packet(
     // only at the GNSS fusion gain, lags hard braking by seconds,
     // and a braked climb descends into the ground while the filter
     // still believes it is climbing.
-    let accel_inertial_ned = match prev {
-        Some(_) if dt > 1e-6 => {
+    let accel_inertial_ned = match prev_ned_vel {
+        Some(prev_ned_vel) => {
             let lim = 3.0 * GRAVITY;
             [
                 ((now_ned_vel[0] - prev_ned_vel[0]) / dt).clamp(-lim, lim),
@@ -205,7 +262,7 @@ pub fn synthesize_packet(
                 ((now_ned_vel[2] - prev_ned_vel[2]) / dt).clamp(-lim, lim),
             ]
         }
-        _ => [0.0, 0.0, 0.0],
+        None => [0.0, 0.0, 0.0],
     };
     // q_ned was computed above for the gyro conversion; re-use it.
     let accel_ned = [

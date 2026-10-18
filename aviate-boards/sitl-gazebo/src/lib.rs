@@ -161,6 +161,12 @@ where
         self.runner.step()
     }
 
+    /// Run one iteration for one simulator step that advanced
+    /// simulation time by `sim_delta_us` (see [`SitlRunner::step_sim`]).
+    pub fn step_sim(&mut self, sim_delta_us: u64) -> ActuatorCmd {
+        self.runner.step_sim(sim_delta_us)
+    }
+
     /// Run the main control loop indefinitely
     ///
     /// Uses the shared control loop from aviate-runtime with Gazebo's 1kHz rate.

@@ -236,3 +236,110 @@ fn rotate_world_to_body_matches_brute_force_dcm() {
         );
     }
 }
+
+/// East speed (ENU x, m/s) and yaw rate (about ENU up, rad/s) of the
+/// steady motion the step-sequence tests replay.
+const EAST_SPEED: f64 = 2.0;
+const YAW_RATE: f64 = 0.5;
+
+/// The model state of the steady motion at simulation time `t_us`.
+fn steady_state(t_us: u64, reset_generation: u32) -> AviateModelState {
+    let t = t_us as f64 * 1e-6;
+    let half_yaw = 0.5 * YAW_RATE * t;
+    AviateModelState {
+        pos: [EAST_SPEED * t, 0.0, 5.0],
+        quat: [half_yaw.cos(), 0.0, 0.0, half_yaw.sin()],
+        time_us: t_us,
+        sim_step: t_us / 1_000,
+        reset_generation,
+        valid: 1,
+        ..AviateModelState::default()
+    }
+}
+
+/// Every sample the synthesizer gives for `times` (one world epoch).
+fn replay(synth: &mut StepSynthesizer, times: &[u64]) -> Vec<StepSample> {
+    times
+        .iter()
+        .filter_map(|&t| synth.next(&steady_state(t, 1)))
+        .collect()
+}
+
+/// The FC reads shared memory on its own clock, so it sees some
+/// states twice and misses others. Each new step must give exactly
+/// one sample whose period is the simulation time since the previous
+/// state, and steady motion must read as steady: no zero-velocity
+/// sample and no acceleration swing around a repeated state.
+#[test]
+fn repeated_and_skipped_states_give_one_steady_sample_per_new_step() {
+    let mut synth = StepSynthesizer::default();
+    let times = [
+        1_000, 2_000, 3_000, 3_000, 3_000, 4_000, 6_000, 6_000, 7_000,
+    ];
+    let samples = replay(&mut synth, &times);
+
+    let deltas: Vec<u64> = samples.iter().map(|s| s.delta_us).collect();
+    assert_eq!(deltas, [1_000, 1_000, 1_000, 2_000, 1_000]);
+    let steps: Vec<u64> = samples.iter().map(|s| s.sim_step).collect();
+    assert_eq!(steps, [2, 3, 4, 6, 7]);
+
+    for sample in &samples {
+        let t = sample.packet.timestamp_us;
+        let gnss = sample.packet.gnss.expect("gnss lane");
+        let imu = sample.packet.imu.expect("imu lane");
+        assert!(
+            vec_close_within(gnss.vel_ned, [0.0, EAST_SPEED as f32, 0.0], 1e-3),
+            "t={t}: velocity {:?} is not the steady east speed",
+            gnss.vel_ned
+        );
+        assert!(
+            vec_close_within(imu.accel, [0.0, 0.0, -GRAVITY], 0.05),
+            "t={t}: specific force {:?} is not gravity alone",
+            imu.accel
+        );
+        assert!(
+            vec_close_within(imu.gyro, [0.0, 0.0, -YAW_RATE as f32], 1e-3),
+            "t={t}: body rate {:?} is not the steady yaw rate",
+            imu.gyro
+        );
+    }
+}
+
+#[test]
+fn the_first_state_and_a_repeat_of_it_give_no_sample() {
+    let mut synth = StepSynthesizer::default();
+    assert!(replay(&mut synth, &[5_000, 5_000]).is_empty());
+}
+
+/// A world reset rewinds simulation time and starts a new epoch. The
+/// synthesizer must start over from the new epoch rather than treat
+/// every later state as older than the last one and stop for good.
+#[test]
+fn a_world_reset_reseeds_the_step_sequence() {
+    let mut synth = StepSynthesizer::default();
+    assert_eq!(replay(&mut synth, &[1_000, 2_000]).len(), 1);
+
+    assert!(synth.next(&steady_state(0, 2)).is_none());
+    let sample = synth
+        .next(&steady_state(1_000, 2))
+        .expect("the second state of the new epoch is a new step");
+    assert_eq!(sample.delta_us, 1_000);
+    let imu = sample.packet.imu.expect("imu lane");
+    assert!(
+        vec_close_within(imu.accel, [0.0, 0.0, -GRAVITY], 0.05),
+        "the first step of a new epoch has no velocity history: {:?}",
+        imu.accel
+    );
+}
+
+#[test]
+fn reset_forgets_the_previous_attachment() {
+    let mut synth = StepSynthesizer::default();
+    assert_eq!(replay(&mut synth, &[1_000, 2_000]).len(), 1);
+    synth.reset();
+    assert!(synth.next(&steady_state(3_000, 1)).is_none());
+}
+
+fn vec_close_within(a: [f32; 3], b: [f32; 3], tol: f32) -> bool {
+    (0..3).all(|i| (a[i] - b[i]).abs() <= tol)
+}
