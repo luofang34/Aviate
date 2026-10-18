@@ -19,6 +19,9 @@ pub struct MavClient {
     seq: u8,
     target_system: u8,
     target_component: u8,
+    /// The latest `system_status` the target flight controller
+    /// reported in a heartbeat.
+    fc_status: Option<u8>,
 }
 
 impl MavClient {
@@ -49,6 +52,7 @@ impl MavClient {
             seq: 0,
             target_system: instance.wrapping_add(1),
             target_component: 1,
+            fc_status: None,
         })
     }
 
@@ -181,6 +185,23 @@ impl MavClient {
             yaw_rate: 0.0,
         };
         self.send(&MavMessage::SetPositionTargetLocalNed(tgt))
+    }
+
+    /// The latest `system_status` the target flight controller has
+    /// reported, or `None` before its first heartbeat.
+    ///
+    /// Sends one heartbeat first: the flight controller sends its
+    /// heartbeats to the ground station it last heard from.
+    pub fn fc_system_status(&mut self) -> Option<u8> {
+        self.send_heartbeat();
+        while let Some((header, message)) = self.recv() {
+            if let MavMessage::Heartbeat(heartbeat) = message {
+                if header.sysid == self.target_system {
+                    self.fc_status = Some(heartbeat.system_status);
+                }
+            }
+        }
+        self.fc_status
     }
 
     /// Connect when the target flight controller sends a heartbeat.

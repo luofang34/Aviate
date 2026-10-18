@@ -32,6 +32,9 @@ struct ScriptBackend {
     status: BackendStatus,
     observations: Arc<Mutex<Vec<Observation>>>,
     fail_after_arm: bool,
+    /// Readiness checks to refuse before the vehicle can arm, like a
+    /// flight controller that is still initializing.
+    unready_checks: u32,
 }
 
 impl ScriptBackend {
@@ -40,6 +43,14 @@ impl ScriptBackend {
             status: BackendStatus::default(),
             observations,
             fail_after_arm: false,
+            unready_checks: 0,
+        }
+    }
+
+    fn with_unready_checks(observations: Arc<Mutex<Vec<Observation>>>, checks: u32) -> Self {
+        Self {
+            unready_checks: checks,
+            ..Self::new(observations)
         }
     }
 
@@ -116,6 +127,14 @@ impl SimulatorBackend for ScriptBackend {
                     ..BackendStatus::default()
                 };
                 (DirectiveTag::Reset, DirectiveOutcome::ResetAccepted)
+            }
+            SimulatorDirectiveKind::CheckArmReadiness if self.unready_checks > 0 => {
+                self.unready_checks -= 1;
+                self.observe(self.status.generation, DirectiveTag::CheckArmReadiness);
+                return Err(SimulatorError::ReadinessFailed {
+                    generation: self.status.generation,
+                    detail: "still initializing".to_owned(),
+                });
             }
             SimulatorDirectiveKind::CheckArmReadiness => {
                 (DirectiveTag::CheckArmReadiness, DirectiveOutcome::ArmReady)
@@ -220,6 +239,42 @@ fn current_state_session_does_not_claim_a_reset() {
         .iter()
         .any(|item| item.tag == DirectiveTag::Reset));
     assert_generation_sequence_without_reset(&observations, ResetGeneration::INITIAL);
+}
+
+/// A vehicle that initializes over simulation steps cannot arm on
+/// the first readiness check. The runner must keep the simulation
+/// stepping and arm once the backend confirms readiness, not fail the
+/// mission or send an arm request that the vehicle refuses.
+#[test]
+fn arming_waits_while_the_simulation_steps_until_the_vehicle_is_ready() {
+    let observations = Arc::new(Mutex::new(Vec::new()));
+    let backend = ScriptBackend::with_unready_checks(Arc::clone(&observations), 3);
+    let mut runner = MissionRunner::new(backend, "alia").expect("runner must be valid");
+
+    let result = runner.run_from_current_state(&scripted_mission());
+
+    assert!(result.passed, "{result:?}");
+    let tags: Vec<_> = observations
+        .lock()
+        .expect("observation lock must be available")
+        .iter()
+        .map(|item| item.tag)
+        .take_while(|tag| *tag != DirectiveTag::Arm)
+        .collect();
+    assert_eq!(
+        tags,
+        [
+            DirectiveTag::Start,
+            DirectiveTag::CheckArmReadiness,
+            DirectiveTag::CheckArmReadiness,
+            DirectiveTag::CheckArmReadiness,
+            DirectiveTag::CheckArmReadiness,
+        ]
+    );
+    assert!(
+        runner.backend.status().step >= 3,
+        "each refused check must step the simulation"
+    );
 }
 
 fn assert_generation_sequence(observations: &[Observation], generation: ResetGeneration) {
