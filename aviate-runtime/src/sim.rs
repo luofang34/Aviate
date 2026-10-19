@@ -24,6 +24,7 @@
 
 #![cfg(any(feature = "env-sitl", feature = "env-hitl"))]
 
+mod geodetic;
 mod lifecycle;
 mod step;
 
@@ -206,6 +207,9 @@ where
     /// bridge's simulation clock runs across restarts and would hide
     /// every reboot from consumers keyed on the boot clock.
     pub(crate) process_start: std::time::Instant,
+
+    /// What telemetry needs to state the estimate globally.
+    pub(crate) geodetic: geodetic::GeodeticContext,
 }
 
 impl<C, M> SitlRunner<C, M>
@@ -241,6 +245,7 @@ where
             telemetry: None,
             iteration: 0,
             process_start: std::time::Instant::now(),
+            geodetic: geodetic::GeodeticContext::default(),
         }
     }
 

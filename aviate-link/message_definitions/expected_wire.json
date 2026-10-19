@@ -14,6 +14,11 @@
     "crc_extra": 137,
     "payload_len": 12
   },
+  "GPS_RAW_INT": {
+    "id": 24,
+    "crc_extra": 24,
+    "payload_len": 52
+  },
   "ATTITUDE_QUATERNION": {
     "id": 31,
     "crc_extra": 246,
@@ -22,6 +27,11 @@
   "LOCAL_POSITION_NED": {
     "id": 32,
     "crc_extra": 185,
+    "payload_len": 28
+  },
+  "GLOBAL_POSITION_INT": {
+    "id": 33,
+    "crc_extra": 104,
     "payload_len": 28
   },
   "MANUAL_CONTROL": {
