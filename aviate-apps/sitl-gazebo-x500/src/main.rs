@@ -25,16 +25,21 @@
 //! The sensor synthesis, frame conversion math, and noise model live
 //! in `synthesize.rs` and `noise.rs`; main.rs owns only the FC loop.
 mod noise;
+mod origin;
 mod synthesize;
 
 use std::time::{Duration, Instant};
 
-use aviate_backend_gz::{AviateModelState, GzPluginBridge};
+use aviate_backend_gz::GzPluginBridge;
 use aviate_board_sitl_gazebo::GazeboSitlBoard;
+use aviate_core::control::VehicleController;
+use aviate_core::kernel::config::ActuatorCurveKind;
+use aviate_core::mixer::Mixer;
 use aviate_xil_contract::WriterState;
 
 use crate::noise::{NoiseRng, NoiseTier};
-use crate::synthesize::{apply_packet_noise, cmd_to_omega, synthesize_packet};
+use crate::origin::GeoOrigin;
+use crate::synthesize::{apply_packet_noise, cmd_to_omega, StepSample, StepSynthesizer};
 
 /// Cycle period for the FC loop (1 kHz, matching loop_periods::GAZEBO_US).
 const CYCLE_PERIOD_US: u64 = 1_000;
@@ -81,12 +86,27 @@ fn main() -> std::io::Result<()> {
 
     let app_config = load_app_config()?;
 
+    // A malformed origin refuses startup: GNSS readings around a
+    // silently substituted origin put the vehicle somewhere else.
+    let origin = GeoOrigin::from_env().map_err(std::io::Error::other)?;
+    log::info!(
+        "GNSS origin: {:.7}, {:.7}, {} m",
+        origin.latitude_deg,
+        origin.longitude_deg,
+        origin.elevation_m
+    );
+
     let mut board = GazeboSitlBoard::new_with_retry(
         aviate_app_sitl_gazebo_x500_kernel::build_x500_kernel,
         10,
         200,
     )?;
     log::info!("board constructed");
+    board.set_geodetic_origin(aviate_board_sitl_gazebo::GeodeticOrigin {
+        latitude_deg: origin.latitude_deg,
+        longitude_deg: origin.longitude_deg,
+        altitude_msl_m: origin.elevation_m,
+    });
 
     // Estimate/telemetry stream (heartbeat, attitude, position,
     // estimator status) to the configured fixed endpoint. Refusals
@@ -112,17 +132,7 @@ fn main() -> std::io::Result<()> {
         .map_err(|e| std::io::Error::other(format!("gz plugin: {e:?}")))?;
     log::info!("connected to AviateGzPlugin");
 
-    let mut last_state: Option<AviateModelState> = None;
-    let mut last_t_us: u64 = 0;
-    // Position-derived NED velocity from the previous synth call.
-    // gz's `WorldLinearVelocity` is broken on macOS (returns
-    // zero), so the synth pipeline derives velocity from
-    // `Δposition / Δt` and acceleration from
-    // `Δ(derived velocity) / Δt`. The previous derived value
-    // lives here so the next call has a consistent source for
-    // the second finite difference; reading `prev.vel` (zero)
-    // would inject a delta spike on every cycle.
-    let mut last_ned_vel: [f32; 3] = [0.0; 3];
+    let mut synth = StepSynthesizer::new(origin);
 
     let noise_tier = NoiseTier::from_env();
     let mut noise_rng = NoiseRng::new(0xA17_C0DE);
@@ -147,9 +157,6 @@ fn main() -> std::io::Result<()> {
     // memory the live simulator never reads (or worse, in a
     // half-initialized successor block).
     let mut sim_io_healthy = true;
-    // Highest sim_step this FC has consumed, so each step is
-    // heartbeat-acknowledged at most once.
-    let mut last_consumed_step: Option<u64> = None;
 
     loop {
         // 0. Has the simulator we are bound to been replaced?
@@ -169,10 +176,7 @@ fn main() -> std::io::Result<()> {
                     match GzPluginBridge::connect_with_retry(240, 250) {
                         Ok(fresh) => {
                             plugin = fresh;
-                            last_state = None;
-                            last_t_us = 0;
-                            last_ned_vel = [0.0; 3];
-                            last_consumed_step = None;
+                            synth.reset();
                             sim_io_healthy = true;
                             log::info!("re-attached to AviateGzPlugin");
                         }
@@ -195,90 +199,85 @@ fn main() -> std::io::Result<()> {
             }
         }
 
-        // 1. Read the latest ground-truth model state from the
-        //    plugin — but only from a healthy attachment.
-        let mut consumed_step: Option<u64> = None;
+        // 1. One kernel cycle per NEW simulator step, clocked by
+        //    simulation time — and only from a healthy attachment.
+        //    A read that sees no new step runs no kernel cycle: the
+        //    kernel has no new sensor data to act on, and its clock
+        //    must not advance while simulation time does not.
         if sim_io_healthy {
-            if let Some(state) = plugin.get_model_state() {
-                // 2. Synthesize a sensor packet from ground truth.
-                //    The `noise_tier` controls additive Gaussian
-                //    noise on each channel — `Off` reproduces the
-                //    perfect-IMU baseline used by the existing SITL
-                //    missions; `Mems` / `Tactical` add
-                //    representative noise so the kernel's estimator
-                //    + controller are exercised against realistic
-                //    inputs.
-                //
-                // Capture `time_us` BEFORE `last_state =
-                // Some(state)` so the sequence does not silently
-                // break if a future `AviateModelState` field
-                // becomes non-Copy.
-                let (mut packet, ned_vel) =
-                    synthesize_packet(&state, last_state.as_ref(), last_t_us, last_ned_vel);
-                apply_packet_noise(&mut packet, noise_tier, &mut noise_rng);
-                let state_time_us = state.time_us;
-                if last_consumed_step != Some(state.sim_step) {
-                    consumed_step = Some(state.sim_step);
-                }
-                last_state = Some(state);
-                last_t_us = state_time_us;
-                last_ned_vel = ned_vel;
-
-                board.transport_mut().feed_sensor_packet(&packet);
+            if let Some(sample) = plugin.get_model_state().and_then(|s| synth.next(&s)) {
+                fly_sim_step(
+                    &mut board,
+                    &plugin,
+                    actuator_curve,
+                    sample,
+                    noise_tier,
+                    &mut noise_rng,
+                    &origin,
+                );
             }
         }
 
-        // 3. Run one kernel cycle. The kernel keeps its own clock
-        //    even while sim I/O is paused; its outputs are simply
-        //    not forwarded anywhere.
-        let cmd = board.step();
-
-        // 4. Forward actuator outputs to gz-sim as rotor velocities,
-        //    then heartbeat the consumed step AFTER the motor write,
-        //    so the step's commands are in shared memory before its
-        //    consumption is announced.
-        //
-        // Mixer outputs are normalized per-motor THRUST (force
-        // domain). The resolved actuator curve — quadratic for the
-        // gz rotor, `thrust = motorConstant · ω²` — is applied
-        // here, exactly once, mapping force to rotor speed as
-        // `ω = MAX · √thrust`.
-        if sim_io_healthy {
-            let motor_speeds = [
-                cmd_to_omega(actuator_curve, cmd.outputs[0].0),
-                cmd_to_omega(actuator_curve, cmd.outputs[1].0),
-                cmd_to_omega(actuator_curve, cmd.outputs[2].0),
-                cmd_to_omega(actuator_curve, cmd.outputs[3].0),
-            ];
-            if let Err(e) = plugin.set_motor_speeds(&motor_speeds) {
-                log::warn!("set_motor_speeds failed: {e:?}");
-            }
-            if let Some(step) = consumed_step {
-                // One gate, one acker. Under lockstep, fc_step_ack
-                // is the word the simulator BLOCKS on, and it is
-                // owned by whichever session driver armed lockstep
-                // (the mission harness gates each physics step on
-                // its own read-act-ack cycle). A second acker races
-                // the owner: the gate opens whenever EITHER party
-                // runs, which on a starved host is exactly when the
-                // other — the actual controller — has fallen
-                // behind. In free-run the word gates nothing, so
-                // the FC heartbeats it as its per-step liveness
-                // signal.
-                if !plugin.lockstep_enabled() {
-                    plugin.ack_step(step);
-                }
-                last_consumed_step = Some(step);
-            }
-        }
-
-        // 5. Pace the loop. We do not lock to gz sim_step here — the
-        //    plugin's `lockstep` setting (off by default in our smoke
-        //    world) decides whether gz advances independently.
+        // 2. Pace the loop. The poll rate only bounds how soon a new
+        //    step is seen; the plugin's `lockstep` setting decides
+        //    whether gz advances independently of this FC.
         let now = Instant::now();
         if now < next_tick {
             std::thread::sleep(next_tick - now);
         }
         next_tick += cycle;
+    }
+}
+
+/// Run one kernel cycle for one new simulator step and forward its
+/// outputs to gz-sim.
+fn fly_sim_step<C, M>(
+    board: &mut GazeboSitlBoard<C, M>,
+    plugin: &GzPluginBridge,
+    actuator_curve: ActuatorCurveKind,
+    mut sample: StepSample,
+    noise_tier: NoiseTier,
+    noise_rng: &mut NoiseRng,
+    origin: &GeoOrigin,
+) where
+    C: VehicleController,
+    M: Mixer,
+{
+    // `noise_tier` controls additive Gaussian noise on each channel:
+    // `Off` reproduces the perfect-IMU baseline of the SITL missions;
+    // `Mems` / `Tactical` exercise the estimator and controller
+    // against representative inputs.
+    apply_packet_noise(&mut sample.packet, noise_tier, noise_rng, origin);
+    board.transport_mut().feed_sensor_packet(&sample.packet);
+    let cmd = board.step_sim(sample.delta_us);
+
+    // Forward actuator outputs to gz-sim as rotor velocities, then
+    // heartbeat the consumed step AFTER the motor write, so the
+    // step's commands are in shared memory before its consumption is
+    // announced.
+    //
+    // Mixer outputs are normalized per-motor THRUST (force domain).
+    // The resolved actuator curve — quadratic for the gz rotor,
+    // `thrust = motorConstant · ω²` — is applied here, exactly once,
+    // mapping force to rotor speed as `ω = MAX · √thrust`.
+    let motor_speeds = [
+        cmd_to_omega(actuator_curve, cmd.outputs[0].0),
+        cmd_to_omega(actuator_curve, cmd.outputs[1].0),
+        cmd_to_omega(actuator_curve, cmd.outputs[2].0),
+        cmd_to_omega(actuator_curve, cmd.outputs[3].0),
+    ];
+    if let Err(e) = plugin.set_motor_speeds(&motor_speeds) {
+        log::warn!("set_motor_speeds failed: {e:?}");
+    }
+    // One gate, one acker. Under lockstep, fc_step_ack is the word
+    // the simulator BLOCKS on, and it is owned by whichever session
+    // driver armed lockstep (the mission harness gates each physics
+    // step on its own read-act-ack cycle). A second acker races the
+    // owner: the gate opens whenever EITHER party runs, which on a
+    // starved host is exactly when the other — the actual controller
+    // — has fallen behind. In free-run the word gates nothing, so the
+    // FC heartbeats it as its per-step liveness signal.
+    if !plugin.lockstep_enabled() {
+        plugin.ack_step(sample.sim_step);
     }
 }

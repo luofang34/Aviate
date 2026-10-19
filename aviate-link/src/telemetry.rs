@@ -36,6 +36,7 @@
 use aviate_core::mixer::ActuatorCmd;
 use aviate_core::state::StateEstimate;
 use aviate_core::ChannelStatus;
+use aviate_hal_io::RawGnssReading;
 
 use crate::errors::TelemetryResult;
 use crate::queue::DefaultTelemetryQueue;
@@ -72,6 +73,24 @@ pub struct TelemetrySnapshot {
     /// The declination the estimator applies, `None` when it applies
     /// none and the estimated heading is magnetic.
     pub geomagnetic: Option<aviate_core::sensor::GeomagneticReference>,
+    /// The geodetic point the estimate's local NED frame is measured
+    /// from, `None` when the vehicle has not been told one. Without it no
+    /// global position estimate can be stated.
+    pub geodetic_origin: Option<GeodeticOrigin>,
+    /// The latest fix the GNSS receiver reported, `None` before the first.
+    pub gnss_fix: Option<RawGnssReading>,
+}
+
+/// A geodetic point: WGS-84 latitude and longitude in degrees, altitude
+/// above mean sea level in meters.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GeodeticOrigin {
+    /// Latitude, degrees north.
+    pub latitude_deg: f64,
+    /// Longitude, degrees east.
+    pub longitude_deg: f64,
+    /// Altitude above mean sea level, meters.
+    pub altitude_msl_m: f32,
 }
 
 // ============================================================================

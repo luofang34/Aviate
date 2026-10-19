@@ -31,7 +31,8 @@ use crate::telemetry::{TelemetryCycleFormatter, TelemetrySnapshot};
 /// Message rates are configured via `TelemetryConfig`:
 /// - `heartbeat_hz`: HEARTBEAT rate (default 1 Hz)
 /// - `attitude_hz`: ATTITUDE_QUATERNION rate (default 10 Hz)
-/// - `position_hz`: LOCAL_POSITION_NED rate (default 4 Hz)
+/// - `position_hz`: LOCAL_POSITION_NED rate (default 4 Hz); GLOBAL_POSITION_INT
+///   and GPS_RAW_INT follow it when an origin or a receiver fix is known
 /// - `estimator_status_hz`: minimum estimator-status rate (default 4 Hz)
 ///
 /// Valid rates are 1..=255 Hz; a zero rate is a configuration error and
@@ -161,5 +162,20 @@ impl TelemetryCycleFormatter for MavlinkCycleFormatter {
             &mut self.seq,
             queue,
         );
+
+        // GPS_RAW_INT at the position rate. It is a sensor report, not an
+        // estimate, so it needs no paired status and is not part of the
+        // all-or-nothing estimate group.
+        if let (true, Some(fix)) = (emit_position, snapshot.gnss_fix.as_ref()) {
+            if let Ok(len) = super::geodetic::format_gps_raw(
+                fix,
+                snapshot.time_ms,
+                (self.sys_id, self.comp_id),
+                &mut self.seq,
+                &mut buf,
+            ) {
+                queue.push(&buf[..len]).ok();
+            }
+        }
     }
 }

@@ -39,7 +39,8 @@
 
 // Re-export types from aviate-link for convenience
 pub use aviate_link::{
-    DefaultTelemetryQueue, TelemetryCycleFormatter, TelemetrySnapshot, TELEMETRY_MAX_FRAME,
+    DefaultTelemetryQueue, GeodeticOrigin, TelemetryCycleFormatter, TelemetrySnapshot,
+    TELEMETRY_MAX_FRAME,
 };
 
 /// Frame transmission trait (transport-agnostic)
@@ -174,6 +175,8 @@ mod tests {
             baro_pressure_pa: None,
             baro_temperature_c: 0.0,
             geomagnetic: None,
+            geodetic_origin: None,
+            gnss_fix: None,
             time_ms: 1000,
             iteration: 1,
             status: ChannelStatus::default(),
@@ -201,6 +204,8 @@ mod tests {
                 baro_pressure_pa: None,
                 baro_temperature_c: 0.0,
                 geomagnetic: None,
+                geodetic_origin: None,
+                gnss_fix: None,
                 time_ms: i * 100,
                 iteration: i,
                 status: ChannelStatus::default(),

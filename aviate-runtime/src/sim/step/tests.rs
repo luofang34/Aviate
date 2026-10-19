@@ -147,3 +147,28 @@ fn a_sample_without_a_pressure_lane_presents_no_pressure_reading() {
         "the lane the sample carried must still reach the flight controller"
     );
 }
+
+fn still_sample(t_us: u64) -> SimSensorPacket {
+    SimSensorPacket::new(t_us)
+        .with_imu(imu_sample())
+        .with_mag(SimMagData {
+            field_ut: [20.0, 0.0, 45.0],
+        })
+}
+
+/// A simulator that runs slower or faster than real time must still
+/// give the kernel a cycle period equal to the simulation step, not
+/// the host time between two calls.
+#[test]
+fn a_sim_clocked_step_runs_the_kernel_on_the_simulation_period() {
+    let mut runner = runner();
+    for (t_us, delta_us) in [(1_000, 1_000), (3_500, 2_500), (4_500, 1_000)] {
+        runner.transport.feed_sensor_packet(&still_sample(t_us));
+        runner.step_sim(delta_us);
+        assert_eq!(
+            u64::from(runner.kernel.state.timing_stats.last_cycle_us),
+            delta_us,
+            "the kernel period at t={t_us} us must be the simulation step"
+        );
+    }
+}

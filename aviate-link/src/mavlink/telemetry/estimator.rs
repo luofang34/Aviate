@@ -164,8 +164,13 @@ pub(super) fn enqueue_estimate_group(
     queue: &mut DefaultTelemetryQueue,
 ) {
     let emit_pressure = emit_position && snapshot.baro_pressure_pa.is_some();
-    let numeric_count =
-        usize::from(emit_attitude) + usize::from(emit_position) + usize::from(emit_pressure);
+    // The global position is the local estimate placed at the origin, so
+    // it rides the same status and timestamp as LOCAL_POSITION_NED.
+    let global_origin = snapshot.geodetic_origin.filter(|_| emit_position);
+    let numeric_count = usize::from(emit_attitude)
+        + usize::from(emit_position)
+        + usize::from(emit_pressure)
+        + usize::from(global_origin.is_some());
     if numeric_count == 0 && !emit_periodic_status {
         return;
     }
@@ -184,6 +189,18 @@ pub(super) fn enqueue_estimate_group(
     }
     if emit_position {
         enqueue_position(snapshot, ids, seq, queue, &mut buf);
+    }
+    if let Some(origin) = global_origin {
+        if let Ok(len) = super::geodetic::format_global_position(
+            &snapshot.state,
+            &origin,
+            snapshot.time_ms,
+            ids,
+            seq,
+            &mut buf,
+        ) {
+            queue.push(&buf[..len]).ok();
+        }
     }
     if let (true, Some(pressure)) = (emit_pressure, snapshot.baro_pressure_pa) {
         if let Ok(len) = super::format_scaled_pressure(
