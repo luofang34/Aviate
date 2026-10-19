@@ -629,6 +629,26 @@ verification_methods = ["test"]
 traces_to = ["af89dde4-4c9a-4e6d-a7a9-5bb2447a58d1"]
 
 [[requirements]]
+uid = "c3f236b1-ea09-43ea-95e6-b98734433c10"
+id = "HLR-EST-206"
+title = "Estimated heading is referenced to true north"
+owner = "aviate-core@aviate"
+description = """
+When the estimator receives a geomagnetic reference (the local
+declination, from a geomagnetic model at the vehicle's position or
+from configuration), the estimated yaw SHALL be the heading from true
+north: on a stationary, level vehicle it SHALL converge to the true
+heading within 0.5°, at a declination of 12°. Without a reference the
+yaw SHALL be the magnetic heading.
+
+The attitude the estimator is seeded with SHALL use the same reference
+as the heading update, so the seed does not start the filter one
+declination away from its own measurement.
+"""
+verification_methods = ["test"]
+traces_to = ["af89dde4-4c9a-4e6d-a7a9-5bb2447a58d1"]
+
+[[requirements]]
 uid = "363a9170-26ab-425e-b074-126b63a90cea"
 id = "HLR-CTL-201"
 title = "Rate controller tracks rate setpoint with bounded steady-state error"

@@ -285,6 +285,7 @@ mod tests {
             baros: [valid_baro, SensorReading::default()],
             airspeeds: [SensorReading::default(), SensorReading::default()],
             geometry: None,
+            geomagnetic: None,
         }
     }
 
@@ -806,7 +807,7 @@ mod tests {
             health: SensorHealth::Good,
         };
 
-        ekf.update_mag_state(&mut state, &mag_reading);
+        ekf.update_mag_state(&mut state, &mag_reading, 0.0);
     }
 
     #[test]

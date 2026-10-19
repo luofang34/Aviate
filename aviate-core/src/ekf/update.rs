@@ -196,10 +196,16 @@ impl Ekf {
     /// # Frame Convention
     ///
     /// - Magnetometer data is in body frame
-    /// - Heading is magnetic (no declination correction)
-    /// - Positive yaw = clockwise from magnetic north when viewed from above
+    /// - `declination` (radians, positive east) turns the measured
+    ///   magnetic heading into a true heading; with 0 the yaw is magnetic
+    /// - Positive yaw = clockwise from north when viewed from above
     // COV:EXCL_STOP
-    pub fn update_mag_state(&self, state: &mut EkfState, mag_reading: &SensorReading<MagData>) {
+    pub fn update_mag_state(
+        &self,
+        state: &mut EkfState,
+        mag_reading: &SensorReading<MagData>,
+        declination: Scalar,
+    ) {
         // Step 1: Health & Validity Gating
         if !state.initialized || mag_reading.health != SensorHealth::Good {
             return;
@@ -276,9 +282,12 @@ impl Ekf {
         // so the heading that reproduces the true yaw from a
         // north-pointing field is atan2(-east, north).
         let heading_mag = (-mag_e_level).atan2(mag_n_level);
+        // Magnetic north lies `declination` east of true north, so the
+        // true heading is the magnetic heading plus the declination.
+        let heading_true = heading_mag + declination;
 
         // Step 5: Innovation Gating & Yaw Update
-        let mut innov = heading_mag - yaw_est;
+        let mut innov = heading_true - yaw_est;
         // COV:EXCL_START(DEFENSIVE: atan2/euler outputs bounded to [-π,π], wrapping is safety guard)
         while innov > PI {
             innov -= 2.0 * PI;

@@ -38,6 +38,7 @@ abbreviate the HLR rows. `scripts/check_test_plan_sync.py`
 | `HLR-EST-203` | Position tracking under healthy GNSS+baro | LLR-EST-203 | TST-EST-203; `position_hold` mission adds real-physics confirmation |
 | `HLR-EST-204` | NUMERIC_ERROR latch on non-finite input | LLR-EST-204, LLR-EST-205 | TST-EST-204, TST-EST-205 |
 | `HLR-EST-205` | Bounded GNSS-dropout dead reckoning | LLR-EST-206, LLR-EST-207 | TST-EST-206, TST-EST-207; `gnss_dropout` mission exercises the injected-dropout path |
+| `HLR-EST-206` | True-north heading reference | LLR-EST-208, LLR-EST-209 | TST-EST-210, TST-EST-211, TST-EST-212, TST-EST-213, TST-EST-214 |
 | `HLR-CTL-201` | Rate-loop setpoint tracking | LLR-CTL-201 | TST-CTL-201 |
 | `HLR-CTL-202` | Attitude step response bounded | LLR-CTL-202, LLR-CTL-205 | TST-CTL-202, TST-CTL-205 |
 | `HLR-CTL-203` | Hover hold within bounds | LLR-CTL-203 | TST-CTL-203; `hover_stability` mission adds real-physics confirmation; cert-grade bounds tracked by DRQ-CTL-002 |

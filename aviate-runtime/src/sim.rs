@@ -24,6 +24,7 @@
 
 #![cfg(any(feature = "env-sitl", feature = "env-hitl"))]
 
+mod geomagnetic;
 mod lifecycle;
 mod step;
 
@@ -206,6 +207,9 @@ where
     /// bridge's simulation clock runs across restarts and would hide
     /// every reboot from consumers keyed on the boot clock.
     pub(crate) process_start: std::time::Instant,
+
+    /// The declination supplied to the estimator.
+    pub(crate) geomagnetic: geomagnetic::GeomagneticContext,
 }
 
 impl<C, M> SitlRunner<C, M>
@@ -241,6 +245,7 @@ where
             telemetry: None,
             iteration: 0,
             process_start: std::time::Instant::now(),
+            geomagnetic: geomagnetic::GeomagneticContext::default(),
         }
     }
 

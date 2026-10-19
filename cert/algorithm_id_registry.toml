@@ -24,7 +24,12 @@
 ## change shipped — review carefully.
 
 [estimator]
-"ekf.basic-15state.v3" = 0x4554_494D_454B_4634  # Ekf
+"ekf.basic-15state.v4" = 0x4554_494D_454B_4635  # Ekf
+# Retired: "ekf.basic-15state.v3" = 0x4554_494D_454B_4634. v3 fused the
+# magnetic heading as yaw, so yaw was referenced to magnetic north. v4
+# adds the supplied magnetic declination, so yaw is referenced to true
+# north. Same 15-state shape, different heading reference, so a v3
+# image must not match a v4 one at the lockstep gate.
 # Retired: "ekf.basic-15state.v2" = 0x4554_494D_454B_4633. v2 allowed
 # an age-triggered reset that adopted a persistently rejected aiding
 # source after a fixed timeout, and its rejection path did not stale

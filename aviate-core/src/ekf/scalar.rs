@@ -265,13 +265,12 @@ impl super::Estimator for Ekf {
     type RuntimeState = EkfState;
 
     // Registered in cert/algorithm_id_registry.toml as
-    // "ekf.basic-15state.v3" — v3 never adopts a persistently rejected
-    // aiding source by timeout and surfaces sustained rejection as
-    // lost validity; v2 carried an age-triggered reset-to-measurement
-    // and kept aiding ages fresh through rejection. Same 15-state
-    // shape, different observable recovery behavior, so a v2 image
-    // must not match a v3 one at the lockstep gate.
-    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4634; // "ETIMEKF4"
+    // "ekf.basic-15state.v4" — the magnetometer heading is turned into a
+    // true heading with the supplied declination, so yaw is referenced
+    // to true north. Same 15-state shape as the magnetic-north v3, so
+    // the identity is what keeps a v3 image from matching a v4 one at
+    // the lockstep gate.
+    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4635; // "ETIMEKF5"
 
     fn observe(
         &self,
@@ -319,7 +318,8 @@ impl super::Estimator for Ekf {
 
         let primary_mag = &sensors.mags[0];
         if primary_mag.valid && primary_mag.health == crate::sensor::SensorHealth::Good {
-            Ekf::update_mag_state(self, state, primary_mag);
+            let declination = sensors.geomagnetic.map_or(0.0, |g| g.declination.0);
+            Ekf::update_mag_state(self, state, primary_mag, declination);
         }
     }
 

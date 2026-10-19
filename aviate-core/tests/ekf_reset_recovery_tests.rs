@@ -72,6 +72,7 @@ fn resting_sensors(vel_d: f32) -> SensorSet {
         baros: [SensorReading::default(), SensorReading::default()],
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
+        geomagnetic: None,
     }
 }
 
