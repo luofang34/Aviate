@@ -1,0 +1,47 @@
+# Aviate Application Configuration
+# App: sitl-jsbsim-x500
+
+[app]
+id = "sitl-jsbsim-x500"
+board = "sitl-jsbsim"
+airframe = "x500"
+env = "sitl"
+
+# Estimate-stream rates. ATTITUDE_QUATERNION and LOCAL_POSITION_NED
+# are emitted from the same estimator-cycle snapshot, so both carry
+# the same time_boot_ms — consumers that budget inter-group
+# acquisition skew (Pilotage: 300 ms) see one clock, not two.
+#
+# This is a co-located loopback consumer driving a glass panel:
+# attitude at 50 Hz and position at 30 Hz keep the PFD/HSI smooth,
+# and bandwidth is a non-issue on loopback. Radio-class rates
+# (single-digit Hz) belong on constrained links only — a panel
+# stepping at those rates reads as broken. estimator_status_hz is
+# only the standalone floor: the status pair also rides with every
+# attitude/position emission.
+[telemetry]
+frame_size = 280
+queue_len = 32
+heartbeat_hz = 1
+attitude_hz = 50
+position_hz = 30
+estimator_status_hz = 10
+
+[security]
+profile = "none"
+
+# Telemetry stream: the FIXED consumer endpoint (Pilotage's estimate
+# link listens here). This address never follows a commander — a
+# gcs-test run commanding the vehicle must not steal the stream.
+# Multi-instance setups override it per process with
+# AVIATE_TELEMETRY_ENDPOINT=host:port.
+[[transports]]
+protocol = "mavlink"
+port = "udp"
+roles = ["telemetry"]
+endpoint = "127.0.0.1:14550"
+
+[simulator]
+backend = "jsbsim"
+headless = true
+lockstep = true
