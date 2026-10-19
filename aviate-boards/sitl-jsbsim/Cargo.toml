@@ -1,0 +1,31 @@
+[package]
+publish = false  # internal crate — not released to crates.io
+name = "aviate-board-sitl-jsbsim"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "JSBSim SITL board: simulator truth over the MAVLink HIL bridge (TCP), sensors synthesized in Aviate"
+
+[dependencies]
+aviate-core = { path = "../../aviate-core" }
+aviate-config = { path = "../../aviate-config" }
+aviate-runtime = { path = "../../aviate-runtime", features = ["env-sitl"] }
+aviate-hal-io = { path = "../../aviate-hal/io" }
+aviate-hal-xil = { path = "../../aviate-hal/xil" }
+aviate-backend-mavlink-hil = { path = "../../aviate-hal/xil/backends/mavlink-hil" }
+# The world origin's local frame, and the date the Earth field is read on.
+world-core.workspace = true
+log = "0.4"
+thiserror = "2"
+
+[dev-dependencies]
+# The board tests fly the X500 production kernel, whose mixer order is
+# the PX4 quad-X order the JSBSim X500 model uses.
+aviate-app-sitl-gazebo-x500-kernel = { path = "../../aviate-apps/sitl-gazebo-x500/kernel" }
+
+[package.metadata.aviate-board]
+chip = "xil"           # Special: simulator, no flashing
+programmer = "none"    # Simulator board, no programming
+
+[lints]
+workspace = true

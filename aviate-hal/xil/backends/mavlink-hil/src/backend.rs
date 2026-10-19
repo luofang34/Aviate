@@ -195,6 +195,41 @@ impl HilBackend {
         })
     }
 
+    /// Poll the link and take the newest simulator truth, for a
+    /// simulator that paces its stream on truth rather than on sensor
+    /// samples: it sends one state per physics step and waits for the
+    /// command that answers it.
+    pub fn poll_truth(&mut self) -> Option<HilStateQuaternion> {
+        self.link.poll();
+        self.link.take_state_quaternion()
+    }
+
+    /// Send one actuator command answering the truth sample stamped
+    /// `time_usec`, which the reply echoes.
+    pub fn send_actuators_at(
+        &mut self,
+        command: &SimActuatorCmd,
+        time_usec: u64,
+    ) -> io::Result<ActuatorSendReceipt> {
+        let message = actuator_message(command, time_usec, time_usec);
+        self.link.send_actuator_controls(&message)?;
+        Ok(ActuatorSendReceipt {
+            echoed_timestamp_us: message.time_usec,
+            lockstep: message.flags & LOCKSTEP_ACTUATOR_FLAG != 0,
+        })
+    }
+
+    /// Simulator sessions this link has opened: TCP connections made. A
+    /// TCP simulator starts a new world with each connection. A UDP link
+    /// is one session.
+    #[must_use]
+    pub fn sessions(&self) -> u64 {
+        match &self.link {
+            Link::Tcp(transport) => transport.stats().4,
+            Link::Udp(_) => 1,
+        }
+    }
+
     /// Send one heartbeat.
     pub fn send_heartbeat(&mut self, armed: bool) -> io::Result<()> {
         self.link
