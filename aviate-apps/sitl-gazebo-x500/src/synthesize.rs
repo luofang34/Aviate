@@ -22,6 +22,7 @@ use crate::noise::{
     apply_baro_noise, apply_gnss_noise, apply_imu_noise, apply_mag_noise, NoiseRng, NoiseTier,
 };
 use crate::origin::GeoOrigin;
+use aviate_hal_xil::world::EarthField;
 
 /// X500 rotor `maxRotVelocity` from the PX4-gazebo-models SDF
 /// (`motorConstant` 8.55e-6 N/(rad/s)² × 1000² × 4 motors ≈ 34 N max
@@ -30,18 +31,6 @@ use crate::origin::GeoOrigin;
 /// output linearly to rotor speed.
 pub const MOTOR_MAX_RPS: f64 = 1000.0;
 
-/// Magnetic field at Zurich, NED in microtesla (approximate).
-/// Reference magnetic field in NED, microtesla.
-///
-/// The east component is zero on purpose: the kernel's mag heading
-/// update doesn't compensate for declination, so any non-zero E
-/// component produces a persistent mag innovation that the EKF
-/// chases indefinitely and the controller perceives as a slow
-/// yaw drift after takeoff. SITL is the wrong place to import a
-/// realistic Earth-field model — there is no GPS-driven IGRF
-/// correction in the loop. Cert work will land that pairing, then
-/// this constant can be replaced by a runtime lookup.
-pub const MAG_NED_UT: [f32; 3] = [21.0, 0.0, 43.0];
 /// ISA sea-level pressure (Pa) and temperature (Celsius).
 pub const ISA_P0_PA: f32 = 101_325.0;
 pub const ISA_T0_C: f32 = 15.0;
@@ -98,10 +87,12 @@ pub struct StepSample {
 /// treats each such pair as a real jolt. So [`Self::next`] gives a
 /// sample only when simulation time advanced, and the sample period
 /// is the simulation time between the two states.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct StepSynthesizer {
     /// The world origin that GNSS and baro readings are made around.
     origin: GeoOrigin,
+    /// The Earth field the magnetometer reading is made from.
+    earth: EarthField,
     prev: Option<AviateModelState>,
     /// Derived NED velocity of `prev`. `None` until two states of the
     /// same world epoch exist, because acceleration needs two
@@ -112,14 +103,16 @@ pub struct StepSynthesizer {
 impl StepSynthesizer {
     /// Forget all history, for a new simulator attachment.
     pub fn reset(&mut self) {
-        *self = Self::new(self.origin);
+        self.prev = None;
+        self.prev_ned_vel = None;
     }
 
-    /// A synthesizer that makes GNSS and baro readings around
-    /// `origin`.
-    pub fn new(origin: GeoOrigin) -> Self {
+    /// A synthesizer that makes GNSS and baro readings around `origin`
+    /// and magnetometer readings from `earth`.
+    pub fn new(origin: GeoOrigin, earth: EarthField) -> Self {
         Self {
             origin,
+            earth,
             prev: None,
             prev_ned_vel: None,
         }
@@ -146,8 +139,14 @@ impl StepSynthesizer {
         if delta_us == 0 {
             return None;
         }
-        let (packet, ned_vel) =
-            synthesize_packet(state, &prev, delta_us, self.prev_ned_vel, &self.origin);
+        self.earth.follow(enu_to_ned_f32(state.pos));
+        let (packet, ned_vel) = synthesize_packet(
+            state,
+            &prev,
+            delta_us,
+            self.prev_ned_vel,
+            (&self.origin, self.earth.ned_ut()),
+        );
         self.prev = Some(*state);
         self.prev_ned_vel = Some(ned_vel);
         Some(StepSample {
@@ -190,7 +189,7 @@ fn synthesize_packet(
     prev: &AviateModelState,
     delta_us: u64,
     prev_ned_vel: Option<[f32; 3]>,
-    origin: &GeoOrigin,
+    (origin, mag_ned_ut): (&GeoOrigin, [f32; 3]),
 ) -> (SimSensorPacket, [f32; 3]) {
     let now_ned_pos = enu_to_ned_f32(state.pos);
     let now_us = state.time_us;
@@ -305,7 +304,7 @@ fn synthesize_packet(
     };
 
     // Magnetometer: constant Earth field rotated into body frame.
-    let mag_body = rotate_world_to_body(q_ned, MAG_NED_UT);
+    let mag_body = rotate_world_to_body(q_ned, mag_ned_ut);
     let mag = SimMagData { field_ut: mag_body };
 
     // GNSS: convert NED offset to lat/lon delta around the world

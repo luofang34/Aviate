@@ -5,6 +5,9 @@
 
 use std::collections::HashMap;
 
+mod earth_field;
+pub use earth_field::EarthField;
+
 /// Unique identifier for entities in the world
 pub type EntityId = u32;
 

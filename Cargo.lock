@@ -123,6 +123,7 @@ dependencies = [
  "aviate-xil-contract",
  "env_logger",
  "log",
+ "world-core",
 ]
 
 [[package]]
@@ -321,6 +322,8 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror",
  "tracing",
+ "world-core",
+ "world-geomag",
 ]
 
 [[package]]

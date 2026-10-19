@@ -40,6 +40,7 @@ use aviate_xil_contract::WriterState;
 use crate::noise::{NoiseRng, NoiseTier};
 use crate::origin::GeoOrigin;
 use crate::synthesize::{apply_packet_noise, cmd_to_omega, StepSample, StepSynthesizer};
+use aviate_hal_xil::world::EarthField;
 
 /// Cycle period for the FC loop (1 kHz, matching loop_periods::GAZEBO_US).
 const CYCLE_PERIOD_US: u64 = 1_000;
@@ -132,7 +133,15 @@ fn main() -> std::io::Result<()> {
         .map_err(|e| std::io::Error::other(format!("gz plugin: {e:?}")))?;
     log::info!("connected to AviateGzPlugin");
 
-    let mut synth = StepSynthesizer::new(origin);
+    // A model refusal (the host date outside the model's validity)
+    // refuses startup: a magnetometer that disagrees with the
+    // controller's declination flies a crooked heading.
+    let earth = EarthField::at_origin(origin.geodetic_position()).map_err(std::io::Error::other)?;
+    log::info!(
+        "simulated Earth field: declination {:.2} deg",
+        earth.declination_deg()
+    );
+    let mut synth = StepSynthesizer::new(origin, earth);
 
     let noise_tier = NoiseTier::from_env();
     let mut noise_rng = NoiseRng::new(0xA17_C0DE);
