@@ -130,7 +130,7 @@ pub struct TransportConfig {
 /// Simulator configuration (SITL only)
 #[derive(Debug, Deserialize)]
 pub struct SimulatorConfig {
-    /// Simulator backend: `gazebo` or `jmavsim`.
+    /// Simulator backend: `gazebo`, `jmavsim`, `jsbsim` or `xplane`.
     pub backend: String,
     /// Run the simulator without a GUI.
     #[serde(default)]
