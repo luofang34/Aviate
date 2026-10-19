@@ -17,9 +17,9 @@ use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::mixer::{ActuatorCmd, QuadXMixerX500};
 use aviate_hal_xil::synthesis::GeoOrigin;
 use aviate_hal_xil::{
-    DirectiveId, DirectiveOutcome, FrameEvent, ResetGeneration, SimActuatorCmd, SimulatorBackend,
-    SimulatorDirective, SimulatorDirectiveKind, SimulatorError, SimulatorFrame, SimulatorLifecycle,
-    SitlConfig, XilNetConfig,
+    Action, Criterion, DirectiveId, DirectiveOutcome, FrameEvent, Mission, MissionRunner, Phase,
+    ResetGeneration, SimActuatorCmd, SimulatorBackend, SimulatorDirective, SimulatorDirectiveKind,
+    SimulatorError, SimulatorFrame, SimulatorLifecycle, SitlConfig, VehicleConfig, XilNetConfig,
 };
 use world_core::DecimalYear;
 
@@ -212,6 +212,35 @@ fn a_reset_starts_a_new_world_through_a_new_session() {
     assert!(after.simulation_time < last.simulation_time);
 }
 
+/// The mission runner resets straight after connecting, before any
+/// state of the first session has been read.
+#[test]
+fn a_reset_before_any_state_still_starts_a_new_world() {
+    let sidecar = Sidecar::start();
+    let mut backend = backend_for(&sidecar);
+    let first = backend.connect(0, TIMEOUT).expect("connects").generation;
+    let receipt = backend
+        .execute(directive(1, first, SimulatorDirectiveKind::Reset), TIMEOUT)
+        .expect("the reset completes");
+    assert_eq!(receipt.generation, first.next());
+    backend
+        .execute(
+            directive(2, receipt.generation, SimulatorDirectiveKind::Start),
+            TIMEOUT,
+        )
+        .expect("start");
+    let mut ready = false;
+    for _ in 0..15_000 {
+        let frame = frame(&mut backend);
+        assert_eq!(frame.generation, receipt.generation);
+        if frame.lifecycle == SimulatorLifecycle::Ready {
+            ready = true;
+            break;
+        }
+    }
+    assert!(ready, "the new world converged");
+}
+
 #[test]
 fn a_stopped_session_gives_no_frames_until_started() {
     let sidecar = Sidecar::start();
@@ -285,4 +314,40 @@ fn arming_waits_for_a_ready_session_and_disarm_follows() {
         )
         .expect("disarms");
     assert!(!frame(&mut backend).armed);
+}
+
+/// The mission runner's own path over the backend: connect, reset,
+/// start, wait for ready, fly phases, stop, and again from a reset.
+#[test]
+fn the_mission_runner_flies_its_phases_and_resets_between_runs() {
+    let sidecar = Sidecar::start();
+    let mut runner = MissionRunner::new(backend_for(&sidecar), "x500").expect("runner");
+    let phase = |name: &str, action, armed| Phase {
+        name: name.to_owned(),
+        duration: Duration::from_millis(40),
+        action,
+        verify: vec![Criterion::Armed(armed)],
+    };
+    let mission = Mission {
+        name: "jsbsim-backend-contract".to_owned(),
+        description: "Run the acknowledged backend directives.".to_owned(),
+        vehicle: VehicleConfig::default(),
+        lockstep: true,
+        phases: vec![
+            phase("arm", Action::Arm, true),
+            phase("idle", Action::Thrust(0.0), true),
+            phase("disarm", Action::Disarm, false),
+        ],
+        reset_between_runs: true,
+    };
+    for run in 0..2 {
+        let result = runner.run(&mission);
+        assert!(result.passed, "run {run}: {result:?}");
+        assert_eq!(result.phases.len(), 3);
+    }
+    assert_eq!(
+        sidecar.sessions.load(Ordering::Acquire),
+        3,
+        "a session per reset"
+    );
 }

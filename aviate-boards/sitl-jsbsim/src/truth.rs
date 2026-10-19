@@ -17,15 +17,19 @@ pub(crate) struct GenerationTracker {
     last_time_us: Option<u64>,
     generation: u32,
     steps: u64,
+    /// A reset was requested: the next state is a new world whatever
+    /// session or time it states.
+    new_world_requested: bool,
 }
 
 impl GenerationTracker {
     /// The generation of a state stamped `time_us` on session `session`,
     /// and its step index within that generation.
     pub(crate) fn observe(&mut self, session: u64, time_us: u64) -> (u32, u64) {
+        let requested = core::mem::take(&mut self.new_world_requested);
         let new_session = self.session.is_some_and(|known| known != session);
         let rewound = self.last_time_us.is_some_and(|last| time_us < last);
-        if new_session || rewound {
+        if requested || new_session || rewound {
             self.generation = self.generation.wrapping_add(1);
             self.steps = 0;
         }
@@ -34,6 +38,13 @@ impl GenerationTracker {
         let step = self.steps;
         self.steps = self.steps.wrapping_add(1);
         (self.generation, step)
+    }
+
+    /// The board ended the session to reset the world: the next state
+    /// starts a new generation, even when no state of the old session
+    /// was seen to compare it with.
+    pub(crate) fn request_new_world(&mut self) {
+        self.new_world_requested = true;
     }
 }
 

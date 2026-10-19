@@ -62,6 +62,7 @@ where
         self.terminate();
         self.vehicle = VehicleState::default();
         self.lifecycle = SimulatorLifecycle::Resetting;
+        self.generations.request_new_world();
         self.backend.restart_session()
     }
 
@@ -134,8 +135,9 @@ where
         );
     }
 
-    /// A state of a new world arrived: the runner ground-resets on its
-    /// first sample, and the session converges again.
+    /// A state of a new world arrived (or the first state of all): the
+    /// runner ground-resets on its first sample, and a resetting or
+    /// running session converges again.
     pub(super) fn enter_new_world(&mut self) {
         if self.lifecycle != SimulatorLifecycle::Stopped {
             self.lifecycle = SimulatorLifecycle::Converging;
