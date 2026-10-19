@@ -14,8 +14,8 @@ env-flight = []                                      # Real hardware (DO-178C cl
 # active. SITL builds with this feature off would still construct the
 # fault controller, but every inbound `FaultCommand` would return
 # `AckStatus::NotEnabled` — useless for fault-injection missions.
-env-sitl = ["dep:aviate-hal-xil", "aviate-hal-xil/xil-fault", "dep:aviate-config", "aviate-link/config", "dep:aviate-geomag"]
-env-hitl = ["dep:aviate-hal-xil", "aviate-hal-xil/xil-fault", "dep:aviate-config", "aviate-link/config", "dep:aviate-geomag"]
+env-sitl = ["dep:aviate-hal-xil", "aviate-hal-xil/xil-fault", "dep:aviate-config", "aviate-link/config", "dep:world-core", "dep:world-geomag"]
+env-hitl = ["dep:aviate-hal-xil", "aviate-hal-xil/xil-fault", "dep:aviate-config", "aviate-link/config", "dep:world-core", "dep:world-geomag"]
 default = []                                         # Force explicit choice
 
 [dependencies]
@@ -31,5 +31,6 @@ aviate-hal-io = { path = "../aviate-hal/io" }
 aviate-hal-xil = { path = "../aviate-hal/xil", optional = true }
 # The simulated vehicle's declination, from its GNSS position (sim
 # environments only; flight boards supply their own reference).
-aviate-geomag = { path = "../aviate-geomag", optional = true }
+world-core = { workspace = true, optional = true }
+world-geomag = { workspace = true, optional = true }
 log = "0.4"

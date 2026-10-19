@@ -62,15 +62,15 @@ impl GeoOrigin {
         })
     }
 
-    /// The origin as a geodetic point. The stated elevation serves as
-    /// the height above the ellipsoid: the few tens of meters between
-    /// them do not move the Earth field.
-    pub fn geodetic_point(&self) -> aviate_geomag::GeodeticPoint {
-        aviate_geomag::GeodeticPoint {
-            latitude_deg: self.latitude_deg,
-            longitude_deg: self.longitude_deg,
-            height_m: f64::from(self.elevation_m),
-        }
+    /// The origin as a WGS-84 geodetic position. The stated elevation
+    /// serves as the height above the ellipsoid: the few tens of meters
+    /// between them do not move the Earth field.
+    pub fn geodetic_position(&self) -> world_core::GeodeticPosition {
+        world_core::GeodeticPosition::wgs84(
+            self.latitude_deg,
+            self.longitude_deg,
+            f64::from(self.elevation_m),
+        )
     }
 
     /// The origin `AVIATE_GNSS_ORIGIN` states, or [`Self::DEFAULT`]

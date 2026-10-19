@@ -8,7 +8,8 @@
 //! truth-driven board (one that synthesizes sensors from simulator
 //! state) can use it.
 
-use aviate_geomag::{decimal_year_from_unix_seconds, wmm2025, GeodeticPoint, GeomagError};
+use world_core::{DecimalYear, GeodeticPosition};
+use world_geomag::{wmm2025, GeomagError};
 
 /// Meters per degree of latitude in the flat-earth projection from the
 /// local frame to geodetic coordinates.
@@ -22,9 +23,9 @@ const REEVALUATE_M: f32 = 1_000.0;
 /// The Earth field near the vehicle, in NED microtesla.
 #[derive(Debug, Clone)]
 pub struct EarthField {
-    /// The geodetic point the local NED frame is measured from.
-    origin: GeodeticPoint,
-    decimal_year: f64,
+    /// The geodetic position the local NED frame is measured from.
+    origin: GeodeticPosition,
+    decimal_year: DecimalYear,
     /// Local north/east position the field was last evaluated at.
     evaluated_at: [f32; 2],
     ned_ut: [f32; 3],
@@ -38,8 +39,8 @@ impl EarthField {
     ///
     /// The model's refusal: today outside its validity window, or the
     /// origin outside its domain.
-    pub fn at_origin(origin: GeodeticPoint) -> Result<Self, GeomagError> {
-        let decimal_year = decimal_year_from_unix_seconds(unix_seconds_now());
+    pub fn at_origin(origin: GeodeticPosition) -> Result<Self, GeomagError> {
+        let decimal_year = DecimalYear::from_unix_seconds(unix_seconds_now());
         let ned_ut = evaluate(&origin, [0.0; 3], decimal_year)?;
         Ok(Self {
             origin,
@@ -75,17 +76,18 @@ impl EarthField {
 }
 
 fn evaluate(
-    origin: &GeodeticPoint,
+    origin: &GeodeticPosition,
     ned: [f32; 3],
-    decimal_year: f64,
+    decimal_year: DecimalYear,
 ) -> Result<[f32; 3], GeomagError> {
     let lat_cos = origin.latitude_deg.to_radians().cos();
-    let point = GeodeticPoint {
+    let position = GeodeticPosition {
         latitude_deg: origin.latitude_deg + f64::from(ned[0]) / METERS_PER_DEGREE,
         longitude_deg: origin.longitude_deg + f64::from(ned[1]) / (METERS_PER_DEGREE * lat_cos),
-        height_m: origin.height_m - f64::from(ned[2]),
+        ellipsoidal_height_m: origin.ellipsoidal_height_m - f64::from(ned[2]),
+        datum: origin.datum,
     };
-    let field = wmm2025(point, decimal_year)?;
+    let field = wmm2025(position, decimal_year)?;
     // The model gives nanotesla.
     Ok([
         (field.north_nt / 1_000.0) as f32,

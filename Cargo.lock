@@ -177,6 +177,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "aviate-app-template-check-app"
+version = "0.1.3"
+dependencies = [
+ "aviate-airframe-multirotor",
+ "aviate-backend-gz",
+ "aviate-board-sitl-gazebo",
+ "aviate-config",
+ "aviate-core",
+ "aviate-hal-xil",
+ "aviate-link",
+ "env_logger",
+ "log",
+]
+
+[[package]]
 name = "aviate-backend-gz"
 version = "0.1.3"
 dependencies = [
@@ -281,13 +296,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aviate-geomag"
-version = "0.1.3"
-dependencies = [
- "libm",
-]
-
-[[package]]
 name = "aviate-hal-io"
 version = "0.1.3"
 dependencies = [
@@ -303,7 +311,6 @@ name = "aviate-hal-xil"
 version = "0.1.3"
 dependencies = [
  "aviate-core",
- "aviate-geomag",
  "aviate-hal-io",
  "aviate-link",
  "getrandom",
@@ -314,6 +321,8 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror",
  "tracing",
+ "world-core",
+ "world-geomag",
 ]
 
 [[package]]
@@ -331,12 +340,13 @@ version = "0.1.3"
 dependencies = [
  "aviate-config",
  "aviate-core",
- "aviate-geomag",
  "aviate-hal-io",
  "aviate-hal-xil",
  "aviate-link",
  "aviate-security",
  "log",
+ "world-core",
+ "world-geomag",
 ]
 
 [[package]]
@@ -2192,6 +2202,20 @@ name = "winnow"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee1708bef14716a11bae175f579062d4554d95be2c6829f518df847b7b3fdd0"
+
+[[package]]
+name = "world-core"
+version = "0.1.0"
+source = "git+https://github.com/luofang34/world?rev=d1bf66d2d7aaaf2f5730a94a18f48e276789ea42#d1bf66d2d7aaaf2f5730a94a18f48e276789ea42"
+
+[[package]]
+name = "world-geomag"
+version = "0.1.0"
+source = "git+https://github.com/luofang34/world?rev=d1bf66d2d7aaaf2f5730a94a18f48e276789ea42#d1bf66d2d7aaaf2f5730a94a18f48e276789ea42"
+dependencies = [
+ "libm",
+ "world-core",
+]
 
 [[package]]
 name = "wyz"

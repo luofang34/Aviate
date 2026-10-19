@@ -2,11 +2,7 @@
 
 use super::*;
 
-const CALGARY: GeodeticPoint = GeodeticPoint {
-    latitude_deg: 51.05,
-    longitude_deg: -114.07,
-    height_m: 1_045.0,
-};
+const CALGARY: GeodeticPosition = GeodeticPosition::wgs84(51.05, -114.07, 1_045.0);
 
 #[test]
 fn the_field_at_the_origin_is_the_model_field_in_microtesla() {

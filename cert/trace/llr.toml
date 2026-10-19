@@ -2219,7 +2219,7 @@ id = "LLR-EST-209"
 title = "The SITL runner supplies the model declination at the GNSS fix"
 owner = "aviate-core@aviate"
 description = """
-The SITL runner SHALL evaluate WMM2025 (`aviate-geomag`) at each 3-D
+The SITL runner SHALL evaluate WMM2025 (`world-geomag`) at each 3-D
 GNSS fix, at the host clock's date, whenever the fix has moved 0.01°
 or more since the last evaluation, and SHALL put the result in
 `SensorSet.geomagnetic` with source Model. It SHALL keep the last model

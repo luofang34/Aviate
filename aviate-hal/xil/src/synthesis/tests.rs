@@ -165,7 +165,7 @@ fn replay(synth: &mut StepSynthesizer, times: &[u64]) -> Vec<StepSample> {
 }
 
 fn synth_at(origin: GeoOrigin) -> StepSynthesizer {
-    let earth = EarthField::at_origin(origin.geodetic_point())
+    let earth = EarthField::at_origin(origin.geodetic_position())
         .expect("today and the origin are inside the model");
     StepSynthesizer::new(origin, earth)
 }
@@ -291,7 +291,7 @@ fn the_magnetometer_reads_the_model_field_at_the_vehicle() {
         longitude_deg: -114.07,
         elevation_m: 1_045.0,
     };
-    let earth = EarthField::at_origin(origin.geodetic_point()).expect("inside the model");
+    let earth = EarthField::at_origin(origin.geodetic_position()).expect("inside the model");
     let declination = earth.declination_deg();
     assert!(
         declination > 10.0,

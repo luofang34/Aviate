@@ -135,7 +135,7 @@ fn main() -> std::io::Result<()> {
     // A model refusal (the host date outside the model's validity)
     // refuses startup: a magnetometer that disagrees with the
     // controller's declination flies a crooked heading.
-    let earth = EarthField::at_origin(origin.geodetic_point()).map_err(std::io::Error::other)?;
+    let earth = EarthField::at_origin(origin.geodetic_position()).map_err(std::io::Error::other)?;
     log::info!(
         "simulated Earth field: declination {:.2} deg",
         earth.declination_deg()
