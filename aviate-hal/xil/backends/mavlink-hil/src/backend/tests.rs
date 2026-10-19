@@ -115,3 +115,22 @@ fn actuator_message_has_exact_lockstep_evidence() {
     let fallback_clock = actuator_message(&command, 0, 7);
     assert_eq!(fallback_clock.time_usec, 7);
 }
+
+#[test]
+fn a_truth_paced_reply_echoes_the_truth_time_with_the_lockstep_flag() {
+    let command = SimActuatorCmd {
+        outputs: [0.25; 16],
+        count: 4,
+        armed: true,
+        ..SimActuatorCmd::default()
+    };
+    let message = actuator_message(&command, 4_000, 4_000);
+    assert_eq!(message.time_usec, 4_000);
+    assert_eq!(
+        message.flags & LOCKSTEP_ACTUATOR_FLAG,
+        LOCKSTEP_ACTUATOR_FLAG
+    );
+    assert_eq!(message.mode, HilActuatorControls::MODE_FLAG_ARMED);
+    assert_eq!(&message.controls[..4], &[0.25; 4]);
+    assert_eq!(&message.controls[4..], &[0.0; 12]);
+}
