@@ -45,6 +45,7 @@ use aviate_core::kernel::builder::KernelBuildError;
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{SitlConfig, SitlIO};
 pub use aviate_runtime::sitl_timestamp;
+pub use aviate_runtime::telemetry::GeodeticOrigin;
 use aviate_runtime::{loop_periods, SitlBoardInfo, SitlRunner};
 
 /// Gazebo SITL board configuration
@@ -165,6 +166,12 @@ where
     /// [`SitlRunner::reset_for_simulator_generation`]).
     pub fn reset_for_simulator_generation(&mut self) {
         self.runner.reset_for_simulator_generation();
+    }
+
+    /// Declare the geodetic point the world's local frame is measured
+    /// from (see [`SitlRunner::set_geodetic_origin`]).
+    pub fn set_geodetic_origin(&mut self, origin: GeodeticOrigin) {
+        self.runner.set_geodetic_origin(origin);
     }
 
     /// Run one iteration for one simulator step that advanced

@@ -499,10 +499,11 @@ jobs:
       - name: Install system libudev
         run: sudo apt-get update && sudo apt-get install -y libudev-dev
 
-      - name: Install Rust nightly + llvm-tools
+      - name: Install the pinned coverage nightly + llvm-tools
         run: |
-          rustup toolchain install nightly --profile minimal
-          rustup component add llvm-tools-preview --toolchain nightly
+          toolchain="$(cat scripts/coverage-toolchain)"
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup component add llvm-tools-preview --toolchain "$toolchain"
 
       - name: Cache grcov binary
         id: cache-grcov
