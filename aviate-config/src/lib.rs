@@ -90,6 +90,22 @@ lockstep = false
     }
 
     #[test]
+    fn each_simulator_backend_validates_and_an_unknown_one_is_refused() {
+        const APP: &str = "[app]\nid = \"t\"\nboard = \"b\"\nairframe = \"a\"\nenv = \"sitl\"\n";
+        for (simulator, valid) in [
+            ("[simulator]\nbackend = \"gazebo\"\n", true),
+            ("[simulator]\nbackend = \"jmavsim\"\n", true),
+            ("[simulator]\nbackend = \"jsbsim\"\n", true),
+            ("[simulator]\nbackend = \"xplane\"\n", true),
+            ("[simulator]\nbackend = \"flightgear\"\n", false),
+        ] {
+            let toml = alloc::format!("{APP}{simulator}");
+            let config = from_toml_str(&toml).expect("parses");
+            assert_eq!(validate(&config).is_ok(), valid, "{simulator}");
+        }
+    }
+
+    #[test]
     fn test_validate_invalid_env() {
         let toml = r#"
 [app]
