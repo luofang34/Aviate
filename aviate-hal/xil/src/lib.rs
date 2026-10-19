@@ -44,6 +44,7 @@ pub mod perturbation;
 pub mod runner;
 pub mod sim_types;
 pub mod sitl_io;
+pub mod synthesis;
 pub mod world;
 
 // Core exports

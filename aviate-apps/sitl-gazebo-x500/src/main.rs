@@ -24,8 +24,6 @@
 //!
 //! The sensor synthesis, frame conversion math, and noise model live
 //! in `synthesize.rs` and `noise.rs`; main.rs owns only the FC loop.
-mod noise;
-mod origin;
 mod synthesize;
 
 use std::time::{Duration, Instant};
@@ -37,9 +35,10 @@ use aviate_core::kernel::config::ActuatorCurveKind;
 use aviate_core::mixer::Mixer;
 use aviate_xil_contract::WriterState;
 
-use crate::noise::{NoiseRng, NoiseTier};
-use crate::origin::GeoOrigin;
-use crate::synthesize::{apply_packet_noise, cmd_to_omega, StepSample, StepSynthesizer};
+use crate::synthesize::{cmd_to_omega, truth};
+use aviate_hal_xil::synthesis::{
+    apply_packet_noise, GeoOrigin, NoiseRng, NoiseTier, StepSample, StepSynthesizer,
+};
 use aviate_hal_xil::world::EarthField;
 
 /// Cycle period for the FC loop (1 kHz, matching loop_periods::GAZEBO_US).
@@ -218,7 +217,10 @@ fn main() -> std::io::Result<()> {
         //    kernel has no new sensor data to act on, and its clock
         //    must not advance while simulation time does not.
         if sim_io_healthy {
-            if let Some(sample) = plugin.get_model_state().and_then(|s| synth.next(&s)) {
+            if let Some(sample) = plugin
+                .get_model_state()
+                .and_then(|s| synth.next(&truth(&s)))
+            {
                 fly_sim_step(
                     &mut board,
                     &plugin,
