@@ -209,11 +209,10 @@ where
     /// every reboot from consumers keyed on the boot clock.
     pub(crate) process_start: std::time::Instant,
 
-    /// What telemetry needs to state the estimate globally.
-    pub(crate) geodetic: geodetic::GeodeticContext,
-
     /// The declination supplied to the estimator.
     pub(crate) geomagnetic: geomagnetic::GeomagneticContext,
+    /// What telemetry needs to state the estimate globally.
+    pub(crate) geodetic: geodetic::GeodeticContext,
 }
 
 impl<C, M> SitlRunner<C, M>
@@ -249,8 +248,8 @@ where
             telemetry: None,
             iteration: 0,
             process_start: std::time::Instant::now(),
-            geodetic: geodetic::GeodeticContext::default(),
             geomagnetic: geomagnetic::GeomagneticContext::default(),
+            geodetic: geodetic::GeodeticContext::default(),
         }
     }
 
