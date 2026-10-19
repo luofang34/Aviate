@@ -174,6 +174,7 @@ mod tests {
         let snapshot = TelemetrySnapshot {
             baro_pressure_pa: None,
             baro_temperature_c: 0.0,
+            geomagnetic: None,
             geodetic_origin: None,
             gnss_fix: None,
             time_ms: 1000,
@@ -202,6 +203,7 @@ mod tests {
             let snapshot = TelemetrySnapshot {
                 baro_pressure_pa: None,
                 baro_temperature_c: 0.0,
+                geomagnetic: None,
                 geodetic_origin: None,
                 gnss_fix: None,
                 time_ms: i * 100,

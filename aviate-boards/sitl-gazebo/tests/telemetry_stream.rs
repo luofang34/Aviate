@@ -16,6 +16,8 @@
 //!   authorized. Nothing is hardcoded valid.
 //! * Invalid telemetry config disables the stream loudly and changes
 //!   nothing else; a subsequent valid config still enables it.
+//! * The stream states the declination the estimator applies: the
+//!   model value at the vehicle's GNSS fix.
 //! * With a declared world origin, the stream states the receiver's fix
 //!   (GPS_RAW_INT) and the estimate's global position
 //!   (GLOBAL_POSITION_INT) where the vehicle is.
@@ -33,8 +35,9 @@ use aviate_board_sitl_gazebo::GazeboSitlBoard;
 use aviate_hal_xil::{SimGnssData, SimGnssFix, SimImuData, SimSensorPacket, SitlConfig};
 use aviate_link::mavlink::protocol::Heartbeat;
 use aviate_link::mavlink::{
-    aviate_estimate_quality, aviate_state_valid_flags, parse_mavlink, serialize_mavlink,
-    AviateEstimatorStatus, GlobalPositionInt, GpsRawInt, MavMessage,
+    aviate_estimate_quality, aviate_geomagnetic_source, aviate_state_valid_flags, parse_mavlink,
+    serialize_mavlink, AviateEstimatorStatus, AviateGeomagneticReference, GlobalPositionInt,
+    GpsRawInt, MavMessage,
 };
 
 /// Pid-derived base port: distinct per test process, clear of the
@@ -103,6 +106,7 @@ struct Drained {
     position: usize,
     aviate_status: Vec<AviateEstimatorStatus>,
     standard_status: usize,
+    geomagnetic: Vec<AviateGeomagneticReference>,
     gps_raw: Vec<GpsRawInt>,
     global: Vec<GlobalPositionInt>,
 }
@@ -117,6 +121,7 @@ fn drain(consumer: &UdpSocket, into: &mut Drained) {
                 Ok((MavMessage::LocalPositionNed(_), _, _)) => into.position += 1,
                 Ok((MavMessage::AviateEstimatorStatus(s), _, _)) => into.aviate_status.push(s),
                 Ok((MavMessage::EstimatorStatus(_), _, _)) => into.standard_status += 1,
+                Ok((MavMessage::AviateGeomagneticReference(r), _, _)) => into.geomagnetic.push(r),
                 Ok((MavMessage::GpsRawInt(r), _, _)) => into.gps_raw.push(r),
                 Ok((MavMessage::GlobalPositionInt(g), _, _)) => into.global.push(g),
                 Ok(_) => {}
@@ -328,8 +333,38 @@ fn invalid_telemetry_config_disables_loudly_and_changes_nothing_else() {
 }
 
 #[test]
-fn a_declared_origin_places_the_fix_and_the_global_estimate_at_the_vehicle() {
+fn the_stream_states_the_model_declination_the_estimator_applies() {
     let mut board = make_board(3);
+    let (consumer, endpoint) = bind_consumer();
+    board.init_telemetry(&app_config_with_endpoint(&endpoint), 1_000);
+    assert!(board.telemetry_enabled());
+
+    let mut seen = Drained::default();
+    for i in 1..=2_000u64 {
+        board
+            .transport_mut()
+            .feed_sensor_packet(&still_packet(i * 1_000));
+        board.step_sim(1_000);
+        if i % 250 == 0 {
+            drain(&consumer, &mut seen);
+        }
+    }
+    let reference = seen
+        .geomagnetic
+        .last()
+        .expect("AVIATE_GEOMAGNETIC_REFERENCE on the stream");
+    assert_eq!(reference.source, aviate_geomagnetic_source::MODEL);
+    // WMM2025 at the packet's 47.4 N, 8.5 E: about 3.5 degrees east.
+    let declination_deg = reference.declination.to_degrees();
+    assert!(
+        (2.5..4.5).contains(&declination_deg),
+        "declination {declination_deg:.2} deg"
+    );
+}
+
+#[test]
+fn a_declared_origin_places_the_fix_and_the_global_estimate_at_the_vehicle() {
+    let mut board = make_board(4);
     let (consumer, endpoint) = bind_consumer();
     board.init_telemetry(&app_config_with_endpoint(&endpoint), 1_000);
     assert!(board.telemetry_enabled());

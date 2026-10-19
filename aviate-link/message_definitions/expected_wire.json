@@ -78,5 +78,10 @@
     "id": 20000,
     "crc_extra": 171,
     "payload_len": 10
+  },
+  "AVIATE_GEOMAGNETIC_REFERENCE": {
+    "id": 20001,
+    "crc_extra": 235,
+    "payload_len": 13
   }
 }

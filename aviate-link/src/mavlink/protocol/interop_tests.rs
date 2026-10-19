@@ -95,6 +95,7 @@ fn test_serialization_is_independent_of_buffer_contents() {
         MavMessage::SystemTime(SystemTime::default()),
         MavMessage::AttitudeQuaternion(AttitudeQuaternion::default()),
         MavMessage::LocalPositionNed(LocalPositionNed::default()),
+        MavMessage::AviateGeomagneticReference(AviateGeomagneticReference::default()),
         MavMessage::GlobalPositionInt(GlobalPositionInt::default()),
         MavMessage::GpsRawInt(GpsRawInt::default()),
         MavMessage::ManualControl(ManualControl::default()),

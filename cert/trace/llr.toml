@@ -2294,3 +2294,19 @@ modules = ["aviate-runtime/src/sim/geomagnetic.rs", "aviate-runtime/src/sim/step
 derived = false
 traces_to = ["c3f236b1-ea09-43ea-95e6-b98734433c10"]
 
+[[requirements]]
+uid = "fdee9a3c-6585-486c-afea-33d1e644118d"
+id = "LLR-EST-210"
+title = "Telemetry states the declination the estimator applies"
+owner = "aviate-core@aviate"
+description = """
+The telemetry cycle formatter SHALL send `AVIATE_GEOMAGNETIC_REFERENCE`
+once per heartbeat with the declination of the cycle's
+`SensorSet.geomagnetic` and its source (MODEL or CONFIGURED), or with a
+NaN declination and source NONE when the estimator applies none.
+"""
+verification_methods = ["test"]
+modules = ["aviate-link/src/mavlink/telemetry/geomagnetic.rs", "aviate-link/src/mavlink/protocol/geomagnetic.rs", "aviate-runtime/src/sim/step.rs"]
+derived = false
+traces_to = ["c3f236b1-ea09-43ea-95e6-b98734433c10"]
+
