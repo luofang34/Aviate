@@ -51,6 +51,12 @@ jobs:
       - name: Every action reference is pinned to a commit SHA
         run: ./scripts/check_action_pins.sh
 
+      - name: Replay git-dependency fixtures through the pin assertions
+        run: ./scripts/check_git_dependency_pins.sh --self-test
+
+      - name: Every git dependency is pinned to a commit rev
+        run: ./scripts/check_git_dependency_pins.sh
+
   dialect-generation:
     name: Dialect (mavgen)
     runs-on: ubuntu-latest
