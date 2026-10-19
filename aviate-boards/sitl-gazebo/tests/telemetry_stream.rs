@@ -16,6 +16,9 @@
 //!   authorized. Nothing is hardcoded valid.
 //! * Invalid telemetry config disables the stream loudly and changes
 //!   nothing else; a subsequent valid config still enables it.
+//! * With a declared world origin, the stream states the receiver's fix
+//!   (GPS_RAW_INT) and the estimate's global position
+//!   (GLOBAL_POSITION_INT) where the vehicle is.
 //!
 //! Tests run concurrently in one process: each takes its own XIL
 //! instance on a pid-derived base port so parallel CI shards and
@@ -31,7 +34,7 @@ use aviate_hal_xil::{SimGnssData, SimGnssFix, SimImuData, SimSensorPacket, SitlC
 use aviate_link::mavlink::protocol::Heartbeat;
 use aviate_link::mavlink::{
     aviate_estimate_quality, aviate_state_valid_flags, parse_mavlink, serialize_mavlink,
-    AviateEstimatorStatus, MavMessage,
+    AviateEstimatorStatus, GlobalPositionInt, GpsRawInt, MavMessage,
 };
 
 /// Pid-derived base port: distinct per test process, clear of the
@@ -100,6 +103,8 @@ struct Drained {
     position: usize,
     aviate_status: Vec<AviateEstimatorStatus>,
     standard_status: usize,
+    gps_raw: Vec<GpsRawInt>,
+    global: Vec<GlobalPositionInt>,
 }
 
 fn drain(consumer: &UdpSocket, into: &mut Drained) {
@@ -112,6 +117,8 @@ fn drain(consumer: &UdpSocket, into: &mut Drained) {
                 Ok((MavMessage::LocalPositionNed(_), _, _)) => into.position += 1,
                 Ok((MavMessage::AviateEstimatorStatus(s), _, _)) => into.aviate_status.push(s),
                 Ok((MavMessage::EstimatorStatus(_), _, _)) => into.standard_status += 1,
+                Ok((MavMessage::GpsRawInt(r), _, _)) => into.gps_raw.push(r),
+                Ok((MavMessage::GlobalPositionInt(g), _, _)) => into.global.push(g),
                 Ok(_) => {}
                 Err(e) => panic!("consumer received an unparseable frame: {e:?}"),
             },
@@ -318,4 +325,45 @@ fn invalid_telemetry_config_disables_loudly_and_changes_nothing_else() {
     let good = app_config_with_endpoint(&endpoint);
     board.init_telemetry(&good, 1_000);
     assert!(board.telemetry_enabled(), "valid config after refusals");
+}
+
+#[test]
+fn a_declared_origin_places_the_fix_and_the_global_estimate_at_the_vehicle() {
+    let mut board = make_board(3);
+    let (consumer, endpoint) = bind_consumer();
+    board.init_telemetry(&app_config_with_endpoint(&endpoint), 1_000);
+    assert!(board.telemetry_enabled());
+    // The still packet's receiver sits at the world origin.
+    board.set_geodetic_origin(aviate_board_sitl_gazebo::GeodeticOrigin {
+        latitude_deg: 47.397742,
+        longitude_deg: 8.545594,
+        altitude_msl_m: 488.0,
+    });
+
+    let mut seen = Drained::default();
+    for i in 1..=2_000u64 {
+        board
+            .transport_mut()
+            .feed_sensor_packet(&still_packet(i * 1_000));
+        board.step_sim(1_000);
+        if i % 250 == 0 {
+            drain(&consumer, &mut seen);
+        }
+    }
+
+    let raw = seen.gps_raw.last().expect("GPS_RAW_INT on the stream");
+    assert_eq!((raw.lat, raw.lon), (473_977_420, 85_455_940));
+    assert_eq!(raw.alt, 488_000);
+    assert_eq!(raw.fix_type, 3);
+    assert_eq!((raw.h_acc, raw.v_acc), (500, 800));
+    assert_eq!(raw.satellites_visible, 12);
+
+    // The estimate of a vehicle at the local origin is stated at the
+    // world origin, to within the estimator's settling error.
+    let global = seen
+        .global
+        .last()
+        .expect("GLOBAL_POSITION_INT on the stream");
+    assert!((global.lat - 473_977_420).abs() <= 100, "{global:?}");
+    assert!((global.lon - 85_455_940).abs() <= 100, "{global:?}");
 }

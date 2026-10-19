@@ -102,6 +102,11 @@ fn main() -> std::io::Result<()> {
         200,
     )?;
     log::info!("board constructed");
+    board.set_geodetic_origin(aviate_board_sitl_gazebo::GeodeticOrigin {
+        latitude_deg: origin.latitude_deg,
+        longitude_deg: origin.longitude_deg,
+        altitude_msl_m: origin.elevation_m,
+    });
 
     // Estimate/telemetry stream (heartbeat, attitude, position,
     // estimator status) to the configured fixed endpoint. Refusals

@@ -27,11 +27,13 @@
 //! Applications should NOT use this module directly - use the link layer instead.
 
 mod estimator_status;
+mod geodetic;
 
 pub use estimator_status::{
     aviate_estimate_quality, aviate_state_valid_flags, estimator_status_flags,
     AviateEstimatorStatus, EstimatorStatus,
 };
+pub use geodetic::{gps_fix_type, GlobalPositionInt, GpsRawInt};
 
 // ============================================================================
 // CONSTANTS
@@ -515,6 +517,8 @@ pub enum MavMessage {
     SystemTime(SystemTime),
     AttitudeQuaternion(AttitudeQuaternion),
     LocalPositionNed(LocalPositionNed),
+    GlobalPositionInt(GlobalPositionInt),
+    GpsRawInt(GpsRawInt),
     ScaledPressure(ScaledPressure),
     EstimatorStatus(EstimatorStatus),
     AviateEstimatorStatus(AviateEstimatorStatus),
@@ -538,6 +542,8 @@ impl MavMessage {
             MavMessage::SystemTime(_) => SystemTime::MSG_ID,
             MavMessage::AttitudeQuaternion(_) => AttitudeQuaternion::MSG_ID,
             MavMessage::LocalPositionNed(_) => LocalPositionNed::MSG_ID,
+            MavMessage::GlobalPositionInt(_) => GlobalPositionInt::MSG_ID,
+            MavMessage::GpsRawInt(_) => GpsRawInt::MSG_ID,
             MavMessage::ScaledPressure(_) => ScaledPressure::MSG_ID,
             MavMessage::EstimatorStatus(_) => EstimatorStatus::MSG_ID,
             MavMessage::AviateEstimatorStatus(_) => AviateEstimatorStatus::MSG_ID,
@@ -775,6 +781,8 @@ fn parse_message_payload(msg_id: u32, payload: &[u8]) -> Result<MavMessage, Pars
         SystemTime::MSG_ID => parse_system_time(payload),
         AttitudeQuaternion::MSG_ID => parse_attitude_quaternion(payload),
         LocalPositionNed::MSG_ID => parse_local_position_ned(payload),
+        GlobalPositionInt::MSG_ID => geodetic::parse_global_position_int(payload),
+        GpsRawInt::MSG_ID => geodetic::parse_gps_raw_int(payload),
         ScaledPressure::MSG_ID => parse_scaled_pressure(payload),
         EstimatorStatus::MSG_ID => estimator_status::parse_estimator_status(payload),
         AviateEstimatorStatus::MSG_ID => estimator_status::parse_aviate_estimator_status(payload),
@@ -1185,7 +1193,9 @@ fn get_crc_extra(msg_id: u32) -> u8 {
         2 => 137,                                   // SYSTEM_TIME
         29 => 115,                                  // SCALED_PRESSURE
         31 => 246,                                  // ATTITUDE_QUATERNION
+        24 => GpsRawInt::CRC_EXTRA,                 // GPS_RAW_INT
         32 => 185,                                  // LOCAL_POSITION_NED
+        33 => GlobalPositionInt::CRC_EXTRA,         // GLOBAL_POSITION_INT
         69 => 243,                                  // MANUAL_CONTROL
         70 => 124,                                  // RC_CHANNELS_OVERRIDE
         76 => 152,                                  // COMMAND_LONG
@@ -1210,6 +1220,8 @@ fn declared_payload_len(msg_id: u32) -> Option<usize> {
         SystemTime::MSG_ID => Some(SystemTime::PAYLOAD_LEN),
         AttitudeQuaternion::MSG_ID => Some(AttitudeQuaternion::PAYLOAD_LEN),
         LocalPositionNed::MSG_ID => Some(LocalPositionNed::PAYLOAD_LEN),
+        GlobalPositionInt::MSG_ID => Some(GlobalPositionInt::PAYLOAD_LEN),
+        GpsRawInt::MSG_ID => Some(GpsRawInt::PAYLOAD_LEN),
         ScaledPressure::MSG_ID => Some(ScaledPressure::PAYLOAD_LEN),
         EstimatorStatus::MSG_ID => Some(EstimatorStatus::PAYLOAD_LEN),
         AviateEstimatorStatus::MSG_ID => Some(AviateEstimatorStatus::PAYLOAD_LEN),
@@ -1254,6 +1266,10 @@ pub fn serialize_mavlink(
         MavMessage::LocalPositionNed(m) => {
             serialize_local_position_ned(m, seq, sys_id, comp_id, buf)
         }
+        MavMessage::GlobalPositionInt(m) => {
+            geodetic::serialize_global_position_int(m, seq, sys_id, comp_id, buf)
+        }
+        MavMessage::GpsRawInt(m) => geodetic::serialize_gps_raw_int(m, seq, sys_id, comp_id, buf),
         MavMessage::ScaledPressure(m) => serialize_scaled_pressure(m, seq, sys_id, comp_id, buf),
         MavMessage::EstimatorStatus(m) => {
             estimator_status::serialize_estimator_status(m, seq, sys_id, comp_id, buf)
