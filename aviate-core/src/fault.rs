@@ -51,6 +51,18 @@ bitflags::bitflags! {
         const MAG_FAILED = 1 << 8;
         const AIRSPEED_FAILED = 1 << 9;
 
+        // In-flight degradations latched for the rest of the power
+        // cycle (see `DegradationReason::latched_fault`). The sensor
+        // bits above follow live sensor health; these record that the
+        // vehicle lost a capability while armed, and clear only via
+        // `ground_reset()`.
+        const ATTITUDE_LOST = 1 << 10;
+        const IMU_DEGRADED = 1 << 11;
+        const POSITION_LOST = 1 << 12;
+        const VELOCITY_LOST = 1 << 13;
+        const BARO_DEGRADED = 1 << 14;
+        const ENVELOPE_VIOLATION = 1 << 15;
+
         const ACTUATOR_FAULT = 1 << 16;
         const ACTUATOR_NUMERIC = 1 << 17;
         const ACTUATOR_FALLBACK = 1 << 18;
@@ -62,6 +74,7 @@ bitflags::bitflags! {
 
         const COMMAND_TIMEOUT = 1 << 32;
         const COMMAND_INVALID = 1 << 33;
+        const RC_LOST = 1 << 34;
         const TIMING_VIOLATION = 1 << 40;
         const TIMING_PERSISTENT = 1 << 41;
         const CONFIG_INVALID = 1 << 48;

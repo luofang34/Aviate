@@ -243,6 +243,9 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         reason: DegradationReason,
         timestamp: Timestamp,
     ) -> Option<DegradationEvent> {
+        if let Some(fault) = reason.latched_fault() {
+            self.state.faults.insert(fault);
+        }
         let from = self.state.control_law;
         let to = match reason {
             // Total loss of attitude: no stable frame to descend in, so

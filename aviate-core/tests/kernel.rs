@@ -1590,11 +1590,12 @@ fn fault_state_prevents_arming() {
     kernel.state.init_state = InitState::Fault;
     kernel.state.faults.insert(FaultFlags::ALL_IMU_FAILED);
 
-    // Arm should fail - Fault state is not Ready, so NotReady is returned
+    // Arm should fail, and name the fault rather than only the
+    // unready state the fault holds the kernel in.
     let result = kernel.arm();
     assert_eq!(
         result,
-        Err(ArmError::NotReady),
+        Err(ArmError::Faulted),
         "Should not arm when in Fault state"
     );
 }

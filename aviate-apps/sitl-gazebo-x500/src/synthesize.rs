@@ -338,6 +338,7 @@ fn synthesize_packet(
         baro: Some(baro),
         mag: Some(mag),
         gnss: Some(gnss),
+        reset_generation: Some(state.reset_generation),
     };
     (packet, now_ned_vel)
 }

@@ -90,3 +90,40 @@ fn a_packet_without_any_sensor_section_buffers_nothing() {
 
     assert!(transport.take_sensor_data().is_none());
 }
+
+/// A sample from a reset world drops what the transport buffered from
+/// the old one, keeps itself, and reports the change exactly once.
+#[test]
+fn a_new_world_generation_is_reported_once_and_keeps_its_sample() {
+    let mut transport = transport();
+    transport.feed_sensor_packet(&SimSensorPacket::new(1).with_reset_generation(1));
+    assert!(
+        !transport.take_generation_change(),
+        "the first world is not a change"
+    );
+
+    transport.feed_sensor_packet(
+        &SimSensorPacket::new(2)
+            .with_gnss(crate::sim_types::SimGnssData::default())
+            .with_reset_generation(1),
+    );
+    transport.feed_sensor_packet(
+        &SimSensorPacket::new(1)
+            .with_imu(imu())
+            .with_reset_generation(2),
+    );
+    assert!(transport.take_generation_change());
+    assert!(!transport.take_generation_change());
+    let data = transport
+        .take_sensor_data()
+        .expect("the new world's sample");
+    assert!(data.imu.is_some());
+    assert!(
+        transport.take_gps_data().is_none(),
+        "the old world's GNSS fix is gone"
+    );
+
+    // A sample that states no epoch never counts as a change.
+    transport.feed_sensor_packet(&SimSensorPacket::new(3).with_imu(imu()));
+    assert!(!transport.take_generation_change());
+}

@@ -113,6 +113,11 @@ pub struct SimSensorPacket {
     pub mag: Option<SimMagData>,
     /// GNSS data (typically at lower rate)
     pub gnss: Option<SimGnssData>,
+    /// The simulated world's epoch: a simulator that resets its world
+    /// in place (time rewinds, the vehicle is respawned) gives the
+    /// samples after the reset a new value. `None` for a simulator that
+    /// states no epoch.
+    pub reset_generation: Option<u32>,
 }
 
 impl SimSensorPacket {
@@ -125,7 +130,14 @@ impl SimSensorPacket {
             baro: None,
             mag: None,
             gnss: None,
+            reset_generation: None,
         }
+    }
+
+    /// Builder: set the simulated world's epoch.
+    pub const fn with_reset_generation(mut self, generation: u32) -> Self {
+        self.reset_generation = Some(generation);
+        self
     }
 
     /// Builder: set IMU data

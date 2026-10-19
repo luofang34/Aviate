@@ -2158,6 +2158,14 @@ cannot drift in what they leave behind.
 the same `Estimator` trait surface the control loop uses, and SHALL
 re-capture it on every arm, so a vehicle that lands somewhere other
 than where it took off measures height from where it actually is.
+
+`arm()` SHALL select `ControlLawV1::Primary` and clear the terminal
+cause for the new flight period. The backup law that the teardown
+leaves is the law of the disarmed state, not a degradation of the next
+flight. A degradation that must outlive the flight period is carried by
+a latched fault (LLR-FLT-214), and `arm()` SHALL refuse with
+`ArmError::Faulted` while any fault is set, before it evaluates
+readiness.
 """
 verification_methods = ["test"]
 modules = ["aviate-core/src/kernel_logic/lifecycle.rs", "aviate-core/src/kernel_update.rs"]
@@ -2224,4 +2232,65 @@ verification_methods = ["test"]
 modules = ["aviate-runtime/src/sim/geomagnetic.rs", "aviate-runtime/src/sim/step.rs"]
 derived = false
 traces_to = ["c3f236b1-ea09-43ea-95e6-b98734433c10"]
+
+[[requirements]]
+uid = "41c98af2-91c7-4047-be2d-8891e726feac"
+id = "LLR-FLT-214"
+title = "A capability lost in flight latches a fault until ground reset"
+owner = "aviate-core@aviate"
+description = """
+When `handle_degradation()` acts on a reason that records a loss of
+capability, it SHALL insert that reason's latched fault into
+`KernelState.faults`: AttitudeLost → ATTITUDE_LOST, ImuDegraded →
+IMU_DEGRADED, PositionLost → POSITION_LOST, VelocityLost →
+VELOCITY_LOST, BaroDegraded → BARO_DEGRADED, EnvelopeViolation →
+ENVELOPE_VIOLATION, RcLost → RC_LOST, TimingViolation →
+TIMING_PERSISTENT. The fault SHALL persist through `disarm()` and
+`terminate()`, SHALL refuse the next `arm()` with `ArmError::Faulted`,
+and SHALL clear only via `ground_reset()`.
+
+CommandTimeout and LandRequested SHALL NOT latch a fault: command
+staleness is recoverable (LLR-FLT-209), and a requested land is an
+instruction, not a loss of capability.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/checks/in_flight.rs", "aviate-core/src/kernel_logic.rs", "aviate-core/src/kernel_logic/lifecycle.rs", "aviate-core/src/fault.rs"]
+derived = false
+traces_to = ["30f749c3-82ee-4ca3-9c0b-91413894c385", "6a9be893-efec-4a80-99c0-885dbe19808e"]
+
+[[requirements]]
+uid = "ee25123f-3a36-4cc2-bbed-46ed2ab75242"
+id = "LLR-FLT-215"
+title = "A simulator world reset ground-resets the SITL flight controller"
+owner = "aviate-core@aviate"
+description = """
+A SITL sensor sample MAY state its simulated world's epoch
+(`SimSensorPacket.reset_generation`). When a sample states an epoch
+different from the last one stated, the transport SHALL drop what it
+buffered from the old world and keep the new sample, and the SITL
+runner SHALL, before its next kernel cycle, terminate any flight
+period and run `ground_reset()`. The first epoch a simulator states,
+and a sample that states none, SHALL NOT count as a change.
+"""
+verification_methods = ["test"]
+modules = ["aviate-hal/xil/src/sitl_io.rs", "aviate-hal/xil/src/sim_types.rs", "aviate-runtime/src/sim/lifecycle.rs", "aviate-runtime/src/sim/step.rs"]
+derived = false
+traces_to = ["6a9be893-efec-4a80-99c0-885dbe19808e", "30f749c3-82ee-4ca3-9c0b-91413894c385"]
+
+[[requirements]]
+uid = "942c42b5-3e17-4b3e-97c3-6a8a29948a63"
+id = "LLR-FLT-216"
+title = "SITL cycle timing is measured on the simulation clock"
+owner = "aviate-core@aviate"
+description = """
+The SITL runner SHALL give the kernel the simulation step as its cycle
+period and SHALL NOT report host-time deadline violations
+(`report_timing_violation`). A host that stalls between simulator steps
+therefore records no timing violation and latches no
+TIMING_PERSISTENT fault.
+"""
+verification_methods = ["test"]
+modules = ["aviate-runtime/src/sim/step.rs"]
+derived = false
+traces_to = ["30f749c3-82ee-4ca3-9c0b-91413894c385"]
 

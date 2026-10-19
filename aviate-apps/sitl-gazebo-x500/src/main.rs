@@ -186,6 +186,10 @@ fn main() -> std::io::Result<()> {
                         Ok(fresh) => {
                             plugin = fresh;
                             synth.reset();
+                            // A different simulator: its world epochs
+                            // restart, so a change cannot be detected
+                            // from them.
+                            board.reset_for_simulator_generation();
                             sim_io_healthy = true;
                             log::info!("re-attached to AviateGzPlugin");
                         }
