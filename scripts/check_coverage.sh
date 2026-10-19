@@ -51,16 +51,25 @@ echo "========================================"
 echo "Mode: ${COVERAGE_MODE} | Floors: region>=${REGION_FLOOR}% branch>=${BRANCH_FLOOR}%"
 echo "========================================"
 
-NIGHTLY_LLVM="$(dirname "$(rustc +nightly --print target-libdir)")/bin"
+# The coverage toolchain is a dated nightly, not the moving channel: LLVM
+# releases change which source lines a region is attributed to, so an
+# unpinned nightly turns the floor red on code nobody touched. Moving the
+# pin is a deliberate change reviewed against its coverage diff.
+COVERAGE_TOOLCHAIN="${COVERAGE_TOOLCHAIN:-$(cat "$(dirname "$0")/coverage-toolchain")}"
+if [[ ! "$COVERAGE_TOOLCHAIN" =~ ^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    echo "Error: coverage toolchain '$COVERAGE_TOOLCHAIN' is not a dated nightly (nightly-YYYY-MM-DD)"
+    exit 1
+fi
+NIGHTLY_LLVM="$(dirname "$(rustc "+$COVERAGE_TOOLCHAIN" --print target-libdir)")/bin"
 
 # Prerequisites
 command -v grcov &>/dev/null || { echo "Error: grcov not found"; exit 1; }
 
 if [[ "$COVERAGE_MODE" == "branch" || "$COVERAGE_MODE" == "condition" ]]; then
-    rustup run nightly rustc --version &>/dev/null || { echo "Error: nightly required"; exit 1; }
-    TOOLCHAIN="+nightly"
-    rustup run nightly rustup component list | grep -q "llvm-tools.*(installed)" || \
-        rustup run nightly rustup component add llvm-tools-preview
+    rustup run "$COVERAGE_TOOLCHAIN" rustc --version &>/dev/null || { echo "Error: $COVERAGE_TOOLCHAIN required"; exit 1; }
+    TOOLCHAIN="+$COVERAGE_TOOLCHAIN"
+    rustup run "$COVERAGE_TOOLCHAIN" rustup component list | grep -q "llvm-tools.*(installed)" || \
+        rustup component add llvm-tools-preview --toolchain "$COVERAGE_TOOLCHAIN"
 else
     TOOLCHAIN=""
 fi
