@@ -4,6 +4,7 @@ members = [
     "aviate-core",
     "aviate-drivers",
     "aviate-config",    # Configuration parsing (TOML, low-DAL only)
+    "aviate-geomag",    # WMM geomagnetic field evaluator (no_std, no Aviate deps)
     "aviate-runtime",   # Control loop, task scheduling, wiring (env-flight/env-sitl/env-hitl)
     "aviate-airframes/multirotor",
     "aviate-airframes/fixed-wing",
