@@ -150,6 +150,11 @@ pub struct SitlIO {
     /// Current system status for heartbeat (MAV_STATE value)
     /// Updated by runtime via set_system_status()
     system_status: u8,
+
+    /// The world epoch of the latest sample that stated one.
+    world_generation: Option<u32>,
+    /// Set when a sample states a new world epoch, until the runner takes it.
+    generation_changed: bool,
 }
 
 impl SitlIO {
@@ -179,6 +184,8 @@ impl SitlIO {
             tx_count: 0,
             actuator_cmd: None,
             system_status: MavState::Boot as u8, // Start in BOOT state
+            world_generation: None,
+            generation_changed: false,
         })
     }
 
@@ -237,6 +244,16 @@ impl SitlIO {
     /// All data must be in NED (North-East-Down) frame. Backend-specific code
     /// is responsible for coordinate conversion (e.g., ENU→NED for Gazebo).
     pub fn feed_sensor_packet(&mut self, packet: &SimSensorPacket) {
+        // A new world epoch: nothing buffered or commanded before the
+        // reset belongs to the world this sample comes from.
+        if let Some(generation) = packet.reset_generation {
+            if self.world_generation.is_some_and(|seen| seen != generation) {
+                self.clear_generation_state();
+                self.generation_changed = true;
+            }
+            self.world_generation = Some(generation);
+        }
+
         // Convert IMU/Baro/Mag to HilSensorData
         if packet.imu.is_some() || packet.baro.is_some() || packet.mag.is_some() {
             let imu = packet.imu.map(|d| RawImuReading {
@@ -283,6 +300,12 @@ impl SitlIO {
                 },
             });
         }
+    }
+
+    /// Whether a sample stated a new world epoch since the last call.
+    /// The first epoch a simulator states is not a change.
+    pub fn take_generation_change(&mut self) -> bool {
+        core::mem::take(&mut self.generation_changed)
     }
 
     /// Set actuator command for Rust API consumers

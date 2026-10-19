@@ -1652,7 +1652,7 @@ fn ekf_mag_update_moves_yaw_toward_measurement() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag_state(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag, 0.0);
 
     let state_after = state.get_estimate();
     let (_, _, yaw_after) = state_after.attitude.to_euler();
@@ -1701,7 +1701,7 @@ fn ekf_mag_regression_nonidentity_yaw_fuses_absolute_heading() {
         ),
         yaw_quat(true_yaw),
     );
-    ekf.update_mag_state(&mut perfect, &mag);
+    ekf.update_mag_state(&mut perfect, &mag, 0.0);
     let (_, _, yaw_perfect) = perfect.get_estimate().attitude.to_euler();
     assert!(
         (yaw_perfect - true_yaw).abs() < 1e-3,
@@ -1722,7 +1722,7 @@ fn ekf_mag_regression_nonidentity_yaw_fuses_absolute_heading() {
         ),
         yaw_quat(est_yaw),
     );
-    ekf.update_mag_state(&mut wrong, &mag);
+    ekf.update_mag_state(&mut wrong, &mag, 0.0);
     let (_, _, yaw_wrong) = wrong.get_estimate().attitude.to_euler();
     assert!(
         yaw_wrong > est_yaw + 0.05,
@@ -1761,7 +1761,7 @@ fn ekf_mag_rejects_degraded_sensor_health() {
         SensorHealth::Degraded,
     );
 
-    ekf.update_mag_state(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag, 0.0);
 
     let state_after = state.get_estimate();
 
@@ -1797,7 +1797,7 @@ fn ekf_mag_rejects_weak_field() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag_state(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag, 0.0);
 
     let state_after = state.get_estimate();
 
@@ -1833,7 +1833,7 @@ fn ekf_mag_rejects_strong_field() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag_state(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag, 0.0);
 
     let state_after = state.get_estimate();
 
@@ -1870,7 +1870,7 @@ fn ekf_mag_weight_decays_with_inclination() {
         [Microtesla(40.0), Microtesla(15.0), Microtesla(10.0)],
         SensorHealth::Good,
     );
-    ekf_low.update_mag_state(&mut state_low, &mag_low_incl);
+    ekf_low.update_mag_state(&mut state_low, &mag_low_incl, 0.0);
     let (_, _, yaw_low) = state_low.get_estimate().attitude.to_euler();
 
     // Second: high inclination (vertical_ratio in decay range 0.8-0.95)
@@ -1894,7 +1894,7 @@ fn ekf_mag_weight_decays_with_inclination() {
         [Microtesla(10.0), Microtesla(15.0), Microtesla(40.0)],
         SensorHealth::Good,
     );
-    ekf_high.update_mag_state(&mut state_high, &mag_high_incl);
+    ekf_high.update_mag_state(&mut state_high, &mag_high_incl, 0.0);
     let (_, _, yaw_high) = state_high.get_estimate().attitude.to_euler();
 
     // High inclination should result in smaller yaw change due to weight decay
@@ -1933,7 +1933,7 @@ fn ekf_mag_stops_fusion_at_high_inclination() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag_state(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag, 0.0);
 
     let state_after = state.get_estimate();
 
@@ -1992,7 +1992,7 @@ fn ekf_mag_innovation_gating_rejects_outlier() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag_state(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag, 0.0);
 
     let state_after = state.get_estimate();
     let (_, _, yaw_before) = state_before.attitude.to_euler();
@@ -2022,7 +2022,7 @@ fn ekf_mag_uninitialized_returns_early() {
     );
 
     // Should return early without panic
-    ekf.update_mag_state(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag, 0.0);
 
     // Should still be uninitialized
     assert!(!state.is_initialized());
@@ -2063,7 +2063,7 @@ fn ekf_mag_innovation_wrapping_above_pi() {
     // This will trigger innovation wrapping: innov = 3.49 - 0 = 3.49 > π
     // Wrapped: innov = 3.49 - 2π ≈ -2.79
     // Then innovation gating may reject, but wrapping is exercised
-    ekf.update_mag_state(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag, 0.0);
 
     // Verify EKF is still operational
     assert!(state.is_initialized());
@@ -2103,7 +2103,7 @@ fn ekf_mag_innovation_wrapping_below_minus_pi() {
         SensorHealth::Good,
     );
 
-    ekf.update_mag_state(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag, 0.0);
 
     assert!(state.is_initialized());
 }
@@ -2360,7 +2360,7 @@ fn ekf_rejects_nan_mag_field_leaves_attitude_unchanged() {
         [Microtesla(f32::NAN), Microtesla(0.0), Microtesla(15.0)],
         SensorHealth::Good,
     );
-    ekf.update_mag_state(&mut state, &mag);
+    ekf.update_mag_state(&mut state, &mag, 0.0);
 
     assert_eq!(state.quat.w, quat_before.w);
     assert_eq!(state.quat.x, quat_before.x);
@@ -2554,6 +2554,7 @@ fn make_valid_sensor_set() -> SensorSet {
         baros: [baro, SensorReading::default()],
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
+        geomagnetic: None,
     }
 }
 

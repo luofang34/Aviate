@@ -38,6 +38,7 @@ abbreviate the HLR rows. `scripts/check_test_plan_sync.py`
 | `HLR-EST-203` | Position tracking under healthy GNSS+baro | LLR-EST-203 | TST-EST-203; `position_hold` mission adds real-physics confirmation |
 | `HLR-EST-204` | NUMERIC_ERROR latch on non-finite input | LLR-EST-204, LLR-EST-205 | TST-EST-204, TST-EST-205 |
 | `HLR-EST-205` | Bounded GNSS-dropout dead reckoning | LLR-EST-206, LLR-EST-207 | TST-EST-206, TST-EST-207; `gnss_dropout` mission exercises the injected-dropout path |
+| `HLR-EST-206` | True-north heading reference | LLR-EST-208, LLR-EST-209, LLR-EST-210 | TST-EST-210, TST-EST-211, TST-EST-212, TST-EST-213, TST-EST-214, TST-EST-215, TST-EST-216, TST-EST-217 |
 | `HLR-CTL-201` | Rate-loop setpoint tracking | LLR-CTL-201 | TST-CTL-201 |
 | `HLR-CTL-202` | Attitude step response bounded | LLR-CTL-202, LLR-CTL-205 | TST-CTL-202, TST-CTL-205 |
 | `HLR-CTL-203` | Hover hold within bounds | LLR-CTL-203 | TST-CTL-203; `hover_stability` mission adds real-physics confirmation; cert-grade bounds tracked by DRQ-CTL-002 |
@@ -46,8 +47,8 @@ abbreviate the HLR rows. `scripts/check_test_plan_sync.py`
 | `HLR-MIX-202` | QuadX zero-command symmetry | LLR-MIX-202 | TST-MIX-202 |
 | `HLR-MIX-203` | Sanitizer safe-pattern fallback | LLR-MIX-203, LLR-MIX-204 | TST-MIX-203, TST-MIX-204 |
 | `HLR-FLT-201` | Disarmed kernel emits safe pattern | LLR-FLT-201, LLR-FLT-202, LLR-FLT-210 | TST-FLT-201, TST-FLT-202, TST-FLT-210, TST-FLT-211 |
-| `HLR-FLT-202` | Pre-arm checks reject with typed ArmError | LLR-FLT-203, LLR-FLT-204, LLR-FLT-214 | TST-FLT-203, TST-FLT-204, TST-FLT-217, TST-FLT-218, TST-FLT-219 |
-| `HLR-FLT-203` | NUMERIC_ERROR inhibits output until ground reset | LLR-FLT-205, LLR-FLT-206, LLR-FLT-214 | TST-FLT-205, TST-FLT-206, TST-FLT-217, TST-FLT-218, TST-FLT-219; `numeric_fault_inject` mission exercises the injected-NaN path |
+| `HLR-FLT-202` | Pre-arm checks reject with typed ArmError | LLR-FLT-203, LLR-FLT-204, LLR-FLT-214, LLR-FLT-215, LLR-FLT-216 | TST-FLT-203, TST-FLT-204, TST-FLT-217, TST-FLT-218, TST-FLT-219, TST-FLT-220, TST-FLT-221, TST-FLT-222, TST-FLT-223 |
+| `HLR-FLT-203` | NUMERIC_ERROR inhibits output until ground reset | LLR-FLT-205, LLR-FLT-206, LLR-FLT-214, LLR-FLT-215 | TST-FLT-205, TST-FLT-206, TST-FLT-217, TST-FLT-218, TST-FLT-219, TST-FLT-220, TST-FLT-221, TST-FLT-222; `numeric_fault_inject` mission exercises the injected-NaN path |
 | `HLR-FLT-204` | Command timeout → safe mode within one cycle | LLR-FLT-207, LLR-FLT-208, LLR-FLT-209 | TST-FLT-207, TST-FLT-208 (slew), TST-FLT-209, TST-FLT-209B; `command_timeout` mission exercises the over-the-wire path |
 | `HLR-FLT-205` | Ordinary disarm refused in flight; distinct terminate | LLR-FLT-211, LLR-FLT-212 | TST-FLT-212, TST-FLT-213, TST-FLT-214, TST-FLT-216 |
 | `HLR-FLT-206` | Discrete command outcomes observable at the link | LLR-FLT-213 | TST-FLT-215 |

@@ -1,27 +1,17 @@
-//! Ground-truth → sensor synthesis for the X500 Gazebo SITL FC.
+//! Gazebo model state → Aviate truth, and motor commands → gz rotor speeds.
 //!
-//! Reads the Gazebo plugin's `AviateModelState` (ENU world, FLU body
-//! pose / velocity / angular velocity), converts to Aviate's NED+FRD
-//! conventions, and builds a `SimSensorPacket` (IMU + baro + mag +
-//! GNSS) for the kernel. Applies tier-matched Gaussian noise on top
-//! when `AVIATE_SENSOR_NOISE` is set.
-//!
-//! Frame conversion math is unit-tested at the bottom of this file —
-//! a sign error here would produce a vehicle that flies but with a
-//! subtly-wrong attitude estimate the kernel can't tell from real
-//! physics.
+//! The `AviateGzPlugin` publishes the model's pose in gz-sim's
+//! conventions (ENU world, FLU body). This module converts it into the
+//! board-independent [`TruthSample`] that
+//! `aviate_hal_xil::synthesis::StepSynthesizer` turns into sensor
+//! samples. A sign error here would produce a vehicle that flies but
+//! with a subtly wrong attitude estimate the kernel cannot tell from
+//! real physics, so the frame conversions are unit-tested.
 
 use aviate_backend_gz::{enu_to_ned_f32, AviateModelState};
 use aviate_core::kernel::config::ActuatorCurveKind;
 use aviate_core::types::NormalizedThrust;
-use aviate_hal_xil::sim_types::{
-    SimBaroData, SimGnssData, SimGnssFix, SimImuData, SimMagData, SimSensorPacket, SimTimestampUs,
-};
-
-use crate::noise::{
-    apply_baro_noise, apply_gnss_noise, apply_imu_noise, apply_mag_noise, NoiseRng, NoiseTier,
-};
-use crate::origin::GeoOrigin;
+use aviate_hal_xil::synthesis::TruthSample;
 
 /// X500 rotor `maxRotVelocity` from the PX4-gazebo-models SDF
 /// (`motorConstant` 8.55e-6 N/(rad/s)² × 1000² × 4 motors ≈ 34 N max
@@ -30,317 +20,20 @@ use crate::origin::GeoOrigin;
 /// output linearly to rotor speed.
 pub const MOTOR_MAX_RPS: f64 = 1000.0;
 
-/// Magnetic field at Zurich, NED in microtesla (approximate).
-/// Reference magnetic field in NED, microtesla.
-///
-/// The east component is zero on purpose: the kernel's mag heading
-/// update doesn't compensate for declination, so any non-zero E
-/// component produces a persistent mag innovation that the EKF
-/// chases indefinitely and the controller perceives as a slow
-/// yaw drift after takeoff. SITL is the wrong place to import a
-/// realistic Earth-field model — there is no GPS-driven IGRF
-/// correction in the loop. Cert work will land that pairing, then
-/// this constant can be replaced by a runtime lookup.
-pub const MAG_NED_UT: [f32; 3] = [21.0, 0.0, 43.0];
-/// ISA sea-level pressure (Pa) and temperature (Celsius).
-pub const ISA_P0_PA: f32 = 101_325.0;
-pub const ISA_T0_C: f32 = 15.0;
-/// Standard gravity (m/s², NED-down convention so accel under hover ≈ -9.81 on z).
-pub const GRAVITY: f32 = 9.81;
-
-/// Apply tier-matched additive Gaussian noise to every populated
-/// sensor channel in `packet` in place. No-op for `NoiseTier::Off`.
-/// Reference latitude for GNSS noise is the SITL world origin.
-pub fn apply_packet_noise(
-    packet: &mut SimSensorPacket,
-    tier: NoiseTier,
-    rng: &mut NoiseRng,
-    origin: &GeoOrigin,
-) {
-    if tier == NoiseTier::Off {
-        return;
+/// The truth the shared synthesizer consumes, from one plugin read.
+pub fn truth(state: &AviateModelState) -> TruthSample {
+    TruthSample {
+        time_us: state.time_us,
+        reset_generation: state.reset_generation,
+        step: state.sim_step,
+        position_ned_m: enu_to_ned_f32(state.pos),
+        attitude: enu_quat_to_ned([
+            state.quat[0] as f32,
+            state.quat[1] as f32,
+            state.quat[2] as f32,
+            state.quat[3] as f32,
+        ]),
     }
-    if let Some(ref mut imu) = packet.imu {
-        apply_imu_noise(imu, tier, rng);
-    }
-    if let Some(ref mut baro) = packet.baro {
-        apply_baro_noise(baro, tier, rng);
-    }
-    if let Some(ref mut mag) = packet.mag {
-        apply_mag_noise(mag, tier, rng);
-    }
-    if let Some(ref mut gnss) = packet.gnss {
-        apply_gnss_noise(gnss, tier, rng, origin.latitude_deg);
-    }
-}
-
-/// One sensor sample for one new simulator step.
-#[derive(Debug, Clone)]
-pub struct StepSample {
-    /// The synthesized sensor packet, stamped with simulation time.
-    pub packet: SimSensorPacket,
-    /// Simulation time since the previous state, in microseconds.
-    /// Always non-zero.
-    pub delta_us: u64,
-    /// The physics step the packet belongs to.
-    pub sim_step: u64,
-}
-
-/// Turns successive model-state reads into one sensor sample per new
-/// simulator step.
-///
-/// The FC reads shared memory on its own clock, and the simulator
-/// does not run at exactly real time. A read can therefore see the
-/// same state again, or skip a state. A repeated state has no motion
-/// to difference: a sample made from it reports zero velocity and
-/// zero body rate, and the acceleration then swings by the full clamp
-/// in one direction and back on the next fresh state. The kernel
-/// treats each such pair as a real jolt. So [`Self::next`] gives a
-/// sample only when simulation time advanced, and the sample period
-/// is the simulation time between the two states.
-#[derive(Debug, Default)]
-pub struct StepSynthesizer {
-    /// The world origin that GNSS and baro readings are made around.
-    origin: GeoOrigin,
-    prev: Option<AviateModelState>,
-    /// Derived NED velocity of `prev`. `None` until two states of the
-    /// same world epoch exist, because acceleration needs two
-    /// velocities.
-    prev_ned_vel: Option<[f32; 3]>,
-}
-
-impl StepSynthesizer {
-    /// Forget all history, for a new simulator attachment.
-    pub fn reset(&mut self) {
-        *self = Self::new(self.origin);
-    }
-
-    /// A synthesizer that makes GNSS and baro readings around
-    /// `origin`.
-    pub fn new(origin: GeoOrigin) -> Self {
-        Self {
-            origin,
-            prev: None,
-            prev_ned_vel: None,
-        }
-    }
-
-    /// The sample for `state`, or `None` when `state` does not start a
-    /// new step: the first state, a state from a new world epoch (a
-    /// world reset rewinds the clock), or a repeated state.
-    pub fn next(&mut self, state: &AviateModelState) -> Option<StepSample> {
-        let prev = match self.prev {
-            Some(prev)
-                if prev.reset_generation == state.reset_generation
-                    && state.time_us >= prev.time_us =>
-            {
-                prev
-            }
-            _ => {
-                self.prev = Some(*state);
-                self.prev_ned_vel = None;
-                return None;
-            }
-        };
-        let delta_us = state.time_us - prev.time_us;
-        if delta_us == 0 {
-            return None;
-        }
-        let (packet, ned_vel) =
-            synthesize_packet(state, &prev, delta_us, self.prev_ned_vel, &self.origin);
-        self.prev = Some(*state);
-        self.prev_ned_vel = Some(ned_vel);
-        Some(StepSample {
-            packet,
-            delta_us,
-            sim_step: state.sim_step,
-        })
-    }
-}
-
-/// Build a `SimSensorPacket` from two successive ground-truth model
-/// states `delta_us` of simulation time apart (`delta_us > 0`).
-/// Coordinate conventions match the rest of aviate-core: NED for
-/// position / velocity / accel; body frame for gyro.
-///
-/// `prev_ned_vel` is the NED-frame velocity this function returned
-/// for `prev`, or `None` when `prev` has no derived velocity.
-///
-/// Deriving velocity from a position difference, and acceleration
-/// from a velocity difference, is what keeps the controllers
-/// sim-agnostic: they receive the same SHAPE of sensor data a real
-/// IMU and GNSS pair would produce, rather than a state vector the
-/// simulator happened to publish. That reason stands on its own and
-/// is why this is not dead code.
-///
-/// It is worth being explicit about what is NOT the reason, because
-/// the earlier text here said it was: `state.vel` is live. It used
-/// to read zero, and that was neither a macOS quirk nor a property
-/// of gz — the plugin enabled the world-velocity component on the
-/// MODEL entity, where the physics engine never writes it. Reading
-/// `state.vel` today would give a real velocity. It would also give
-/// the canonical LINK's velocity, which differs from the model's by
-/// a lever arm on any airframe whose canonical link sits off the
-/// model origin, so switching to it is not the free simplification
-/// it looks like.
-///
-/// Returns `(packet, current_ned_vel)`.
-fn synthesize_packet(
-    state: &AviateModelState,
-    prev: &AviateModelState,
-    delta_us: u64,
-    prev_ned_vel: Option<[f32; 3]>,
-    origin: &GeoOrigin,
-) -> (SimSensorPacket, [f32; 3]) {
-    let now_ned_pos = enu_to_ned_f32(state.pos);
-    let now_us = state.time_us;
-    let dt = delta_us as f32 * 1e-6;
-
-    // Velocity from a finite difference of position: the shape a real
-    // IMU and GNSS pair would deliver, independent of what the
-    // simulator publishes — see the doc-comment above.
-    let prev_ned_pos = enu_to_ned_f32(prev.pos);
-    let now_ned_vel = [
-        (now_ned_pos[0] - prev_ned_pos[0]) / dt,
-        (now_ned_pos[1] - prev_ned_pos[1]) / dt,
-        (now_ned_pos[2] - prev_ned_pos[2]) / dt,
-    ];
-
-    // gz's `WorldAngularVelocity` component reports 0 in our tests
-    // even when the model is actually rotating (visible in the
-    // attitude quaternion changing between cycles). Empirically
-    // the FC reading `state.ang_vel` returned `(0, 0, 0)` while
-    // `state.quat` showed sustained drift in y, so we cannot trust
-    // that component as a gyro source.
-    //
-    // Instead, compute the body-frame angular velocity from
-    // successive attitudes:
-    //
-    //   q_delta = q_new ⊗ q_old.conjugate
-    //   ω_world ≈ 2 · q_delta.imag / dt    (small-angle approx)
-    //
-    // Then rotate ω_world (in NED+FRD world after the ENU→NED
-    // swap) into the body frame via `q_ned^T`.
-    let q_enu = [
-        state.quat[0] as f32,
-        state.quat[1] as f32,
-        state.quat[2] as f32,
-        state.quat[3] as f32,
-    ];
-    let q_ned = enu_quat_to_ned(q_enu);
-    let gyro = {
-        let q_enu_prev = [
-            prev.quat[0] as f32,
-            prev.quat[1] as f32,
-            prev.quat[2] as f32,
-            prev.quat[3] as f32,
-        ];
-        let q_ned_prev = enu_quat_to_ned(q_enu_prev);
-        // q_delta = q_ned * q_ned_prev.conjugate
-        let qd_w = q_ned[0] * q_ned_prev[0]
-            + q_ned[1] * q_ned_prev[1]
-            + q_ned[2] * q_ned_prev[2]
-            + q_ned[3] * q_ned_prev[3];
-        let qd_x = -q_ned[0] * q_ned_prev[1] + q_ned[1] * q_ned_prev[0] - q_ned[2] * q_ned_prev[3]
-            + q_ned[3] * q_ned_prev[2];
-        let qd_y = -q_ned[0] * q_ned_prev[2] + q_ned[1] * q_ned_prev[3] + q_ned[2] * q_ned_prev[0]
-            - q_ned[3] * q_ned_prev[1];
-        let qd_z = -q_ned[0] * q_ned_prev[3] - q_ned[1] * q_ned_prev[2]
-            + q_ned[2] * q_ned_prev[1]
-            + q_ned[3] * q_ned_prev[0];
-        // Force shortest-arc (qd and -qd are the same rotation;
-        // we want the imaginary part in the +w hemisphere).
-        let sign = if qd_w >= 0.0 { 1.0 } else { -1.0 };
-        let omega_world_ned = [
-            2.0 * sign * qd_x / dt,
-            2.0 * sign * qd_y / dt,
-            2.0 * sign * qd_z / dt,
-        ];
-        rotate_world_to_body(q_ned, omega_world_ned)
-    };
-
-    // Inertial acceleration from the velocity finite difference —
-    // the same baseline the velocity above is derived over. gz
-    // positions are exact doubles (no measurement noise), so the
-    // second difference is clean; the ±3 g clamp guards the spikes
-    // a physics-step time hiccup can produce. Feeding zero here
-    // instead (gravity-only IMU) starves the EKF predict step of
-    // every vertical transient: the velocity estimate then moves
-    // only at the GNSS fusion gain, lags hard braking by seconds,
-    // and a braked climb descends into the ground while the filter
-    // still believes it is climbing.
-    let accel_inertial_ned = match prev_ned_vel {
-        Some(prev_ned_vel) => {
-            let lim = 3.0 * GRAVITY;
-            [
-                ((now_ned_vel[0] - prev_ned_vel[0]) / dt).clamp(-lim, lim),
-                ((now_ned_vel[1] - prev_ned_vel[1]) / dt).clamp(-lim, lim),
-                ((now_ned_vel[2] - prev_ned_vel[2]) / dt).clamp(-lim, lim),
-            ]
-        }
-        None => [0.0, 0.0, 0.0],
-    };
-    // q_ned was computed above for the gyro conversion; re-use it.
-    let accel_ned = [
-        accel_inertial_ned[0],
-        accel_inertial_ned[1],
-        accel_inertial_ned[2] - GRAVITY,
-    ];
-    let accel_body = rotate_world_to_body(q_ned, accel_ned);
-
-    let imu = SimImuData {
-        accel: accel_body,
-        gyro,
-        temperature: Some(25.0),
-    };
-
-    // Barometric pressure from NED-Z (down-positive): altitude_msl =
-    // ref_elev - down. Use ISA isothermal approximation; good to
-    // hundreds of meters for SITL purposes.
-    let altitude_msl_m = origin.elevation_m - now_ned_pos[2];
-    let baro = SimBaroData {
-        pressure_pa: isa_pressure(altitude_msl_m),
-        temperature_c: ISA_T0_C,
-        ..SimBaroData::default()
-    };
-
-    // Magnetometer: constant Earth field rotated into body frame.
-    let mag_body = rotate_world_to_body(q_ned, MAG_NED_UT);
-    let mag = SimMagData { field_ut: mag_body };
-
-    // GNSS: convert NED offset to lat/lon delta around the world
-    // origin. Flat-earth approximation, more than accurate enough
-    // for sub-100m XIL flights.
-    let lat_per_m = 1.0 / 111_111.0;
-    let lon_per_m = 1.0 / (111_111.0 * (origin.latitude_deg.to_radians()).cos());
-    let gnss = SimGnssData {
-        lat_deg: origin.latitude_deg + (now_ned_pos[0] as f64) * lat_per_m,
-        lon_deg: origin.longitude_deg + (now_ned_pos[1] as f64) * lon_per_m,
-        alt_m: altitude_msl_m,
-        // Aviate kernel uses local NED — pass ground-truth NED
-        // position directly so the GNSS update agrees with the EKF
-        // frame; the lat/lon/alt fields stay for telemetry parity
-        // with real receivers.
-        position_ned: now_ned_pos,
-        vel_ned: now_ned_vel,
-        fix: SimGnssFix::ThreeD,
-        satellites: 14,
-        h_acc: 0.5,
-        v_acc: 0.8,
-    };
-
-    let packet = SimSensorPacket {
-        timestamp_us: now_us as SimTimestampUs,
-        presence_mask: aviate_hal_xil::sim_types::sensor_presence::ACCELEROMETER
-            | aviate_hal_xil::sim_types::sensor_presence::GYROSCOPE
-            | aviate_hal_xil::sim_types::sensor_presence::MAGNETOMETER
-            | aviate_hal_xil::sim_types::sensor_presence::ABSOLUTE_PRESSURE,
-        imu: Some(imu),
-        baro: Some(baro),
-        mag: Some(mag),
-        gnss: Some(gnss),
-    };
-    (packet, now_ned_vel)
 }
 
 /// Convert an attitude quaternion produced by gz-sim (ENU world,
@@ -393,28 +86,6 @@ pub fn flu_to_frd_body(v_flu: [f32; 3]) -> [f32; 3] {
     [v_flu[0], -v_flu[1], -v_flu[2]]
 }
 
-/// Rotate a world-frame vector into body frame via the inverse of `q`.
-/// `q = [w, x, y, z]` rotates body→world; the conjugate rotates back.
-pub fn rotate_world_to_body(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
-    let [w, x, y, z] = q;
-    // Inverse rotation = conjugate for a unit quaternion. The matrix
-    // form below is the body-from-world DCM.
-    let r00 = 1.0 - 2.0 * (y * y + z * z);
-    let r01 = 2.0 * (x * y + w * z);
-    let r02 = 2.0 * (x * z - w * y);
-    let r10 = 2.0 * (x * y - w * z);
-    let r11 = 1.0 - 2.0 * (x * x + z * z);
-    let r12 = 2.0 * (y * z + w * x);
-    let r20 = 2.0 * (x * z + w * y);
-    let r21 = 2.0 * (y * z - w * x);
-    let r22 = 1.0 - 2.0 * (x * x + y * y);
-    [
-        r00 * v[0] + r01 * v[1] + r02 * v[2],
-        r10 * v[0] + r11 * v[1] + r12 * v[2],
-        r20 * v[0] + r21 * v[1] + r22 * v[2],
-    ]
-}
-
 /// Convert a mixer output — normalized per-motor THRUST, force
 /// domain — into the quad rotor angular-velocity setpoint
 /// (rad/s) for the X500's `MulticopterMotorModelSystem`.
@@ -432,14 +103,6 @@ pub fn rotate_world_to_body(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
 /// at which the X500 model's total thrust equals its weight.
 pub fn cmd_to_omega(curve: ActuatorCurveKind, thrust: f32) -> f64 {
     f64::from(curve.boundary_command(NormalizedThrust(thrust)).0) * MOTOR_MAX_RPS
-}
-
-/// ISA pressure (Pa) at a given altitude MSL (m), troposphere model.
-pub fn isa_pressure(altitude_msl_m: f32) -> f32 {
-    let t0 = 288.15_f32;
-    let l = 0.0065_f32;
-    let exponent = 5.2561_f32;
-    ISA_P0_PA * (1.0 - l * altitude_msl_m / t0).powf(exponent)
 }
 
 #[cfg(test)]

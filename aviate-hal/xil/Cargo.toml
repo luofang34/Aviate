@@ -20,6 +20,11 @@ xil-fault = ["aviate-hal-io/xil-fault"]
 aviate-core = { path = "../../aviate-core" }
 aviate-link = { path = "../../aviate-link" }
 aviate-hal-io = { path = "../io" }
+# The environment synthesized sensors read: position, gravity, air and
+# Earth field from the shared world models.
+world-atmosphere.workspace = true
+world-core.workspace = true
+world-geomag.workspace = true
 getrandom = "0.4"
 log = "0.4"
 libc = "0.2"

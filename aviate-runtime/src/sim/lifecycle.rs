@@ -14,13 +14,31 @@ where
 {
     /// Clear runtime data that must not cross a simulator reset.
     pub fn reset_for_simulator_generation(&mut self) {
+        self.transport.clear_generation_state();
+        self.reset_runner_for_generation();
+    }
+
+    /// Adopt a new world epoch that an incoming sample stated.
+    ///
+    /// The transport has already dropped what it buffered from the old
+    /// world and holds the new world's first sample, so only the runner
+    /// and the kernel are reset here. The kernel's ground reset is what
+    /// clears faults latched in the old world: a simulator respawning
+    /// the vehicle is that vehicle's next power cycle.
+    pub(crate) fn adopt_generation_change(&mut self) {
+        if self.transport.take_generation_change() {
+            log::info!("simulator world reset; ground-resetting the flight controller");
+            self.reset_runner_for_generation();
+        }
+    }
+
+    fn reset_runner_for_generation(&mut self) {
         if self.is_armed() {
             self.kernel.terminate();
         }
         self.kernel.ground_reset();
         self.kernel.state.checks.pre_arm.update_throttle(true);
         self.board_hal.disarm();
-        self.transport.clear_generation_state();
         self.ingress = CommandIngress::<SystemCommand>::default();
         self.last_effective_command = default_command();
         self.last_controller_observation = Default::default();
@@ -29,6 +47,7 @@ where
         self.sensor_cache = SensorCache::new();
         self.ekf_initialized = false;
         self.iteration = 0;
+        self.geomagnetic.forget_model();
         self.geodetic.last_fix = None;
 
         let (imu, baro, mag, gnss) = self.board_hal.sensors_mut();
@@ -42,3 +61,6 @@ where
         gnss.clear_faults();
     }
 }
+
+#[cfg(test)]
+mod tests;

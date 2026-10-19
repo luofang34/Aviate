@@ -162,6 +162,12 @@ where
         self.runner.step()
     }
 
+    /// Reset for a different simulator (see
+    /// [`SitlRunner::reset_for_simulator_generation`]).
+    pub fn reset_for_simulator_generation(&mut self) {
+        self.runner.reset_for_simulator_generation();
+    }
+
     /// Declare the geodetic point the world's local frame is measured
     /// from (see [`SitlRunner::set_geodetic_origin`]).
     pub fn set_geodetic_origin(&mut self, origin: GeodeticOrigin) {

@@ -108,6 +108,9 @@ where
     where
         A: ArmAuthorizer,
     {
+        // 0. A sample from a reset world starts a new power cycle.
+        self.adopt_generation_change();
+
         // 1. Poll transport for incoming messages
         self.transport.poll();
 
@@ -132,6 +135,7 @@ where
         self.feed_buffered_sensors();
 
         if let Some(gps_data) = self.transport.take_gps_data() {
+            self.geomagnetic.observe_fix(&gps_data.gnss);
             self.geodetic.last_fix = Some(gps_data.gnss);
             self.board_hal.gnss_mut().feed(gps_data.gnss);
         }
@@ -235,6 +239,7 @@ where
                 triad_init_quat(
                     [imu.accel[0].0, imu.accel[1].0, imu.accel[2].0],
                     [mag.field_ut[0].0, mag.field_ut[1].0, mag.field_ut[2].0],
+                    self.geomagnetic.declination(),
                 )
             };
             self.kernel.state.estimator.init(
@@ -250,7 +255,8 @@ where
         }
 
         // 6. Run init state machine
-        let sensors = self.sensor_cache.to_sensor_set();
+        let mut sensors = self.sensor_cache.to_sensor_set();
+        sensors.geomagnetic = self.geomagnetic.reference();
         if !self.kernel.is_ready() {
             let ts = self.transport.now();
             let prev_state = self.kernel.state.init_state;
@@ -329,6 +335,7 @@ where
                 baro_temperature_c: baro
                     .and_then(|baro| baro.air.temperature)
                     .map_or(0.0, |t| t.0),
+                geomagnetic: sensors.geomagnetic,
                 geodetic_origin: self.geodetic.origin,
                 gnss_fix: self.geodetic.last_fix,
             };
@@ -434,7 +441,7 @@ where
 /// attitude/gyro-bias covariance block and produces a phantom
 /// gyro bias — which the predict step then integrates into real
 /// vehicle motion once the rate loop is closed.
-fn triad_init_quat(accel_body: [f32; 3], mag_body: [f32; 3]) -> Quaternion {
+fn triad_init_quat(accel_body: [f32; 3], mag_body: [f32; 3], declination: f32) -> Quaternion {
     use aviate_core::math::Vector3 as V3;
     let ax = accel_body[0];
     let ay = accel_body[1];
@@ -467,7 +474,9 @@ fn triad_init_quat(accel_body: [f32; 3], mag_body: [f32; 3]) -> Quaternion {
     let (sin_p, cos_p) = (pitch.sin(), pitch.cos());
     let mag_n_level = cos_p * mx + sin_p * sin_r * my + sin_p * cos_r * mz;
     let mag_e_level = cos_r * my - sin_r * mz;
-    let yaw = (-mag_e_level).atan2(mag_n_level);
+    // The same true-north reference as the update: magnetic heading
+    // plus the declination.
+    let yaw = (-mag_e_level).atan2(mag_n_level) + declination;
 
     // q = Rz(yaw) · Ry(pitch) · Rx(roll), body FRD → world NED.
     let qz = Quaternion::from_axis_angle(V3::new(0.0, 0.0, 1.0), yaw);

@@ -534,6 +534,9 @@ fn run_control_loop(
                     baro: Some(baro),
                     mag: Some(mag),
                     gnss: Some(gnss),
+                    // The world's epoch, so a simulator reset ground-resets
+                    // the flight controller instead of reading as a time jump.
+                    reset_generation: Some(state.reset_generation),
                 };
 
                 board.transport_mut().feed_sensor_packet(&packet);

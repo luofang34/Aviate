@@ -27,6 +27,17 @@
         <description>The local NED velocity estimate is valid.</description>
       </entry>
     </enum>
+    <enum name="AVIATE_GEOMAGNETIC_SOURCE">
+      <entry value="0" name="AVIATE_GEOMAGNETIC_SOURCE_NONE">
+        <description>No declination is applied; the estimated heading is magnetic.</description>
+      </entry>
+      <entry value="1" name="AVIATE_GEOMAGNETIC_SOURCE_MODEL">
+        <description>The declination comes from a geomagnetic model at the vehicle's position and date.</description>
+      </entry>
+      <entry value="2" name="AVIATE_GEOMAGNETIC_SOURCE_CONFIGURED">
+        <description>The declination is a configured value for the operating area.</description>
+      </entry>
+    </enum>
   </enums>
   <messages>
     <message id="20000" name="AVIATE_ESTIMATOR_STATUS">
@@ -34,6 +45,12 @@
       <field type="uint64_t" name="time_usec" units="us">Time since system boot.</field>
       <field type="uint8_t" name="valid_flags" enum="AVIATE_STATE_VALID_FLAGS" display="bitmask">Per-dimension validity as AVIATE_STATE_VALID_FLAGS.</field>
       <field type="uint8_t" name="quality" enum="AVIATE_ESTIMATE_QUALITY">Aviate estimate quality.</field>
+    </message>
+    <message id="20001" name="AVIATE_GEOMAGNETIC_REFERENCE">
+      <description>The magnetic declination the estimator applies to its magnetometer heading, and where it comes from. With a declination applied, the attitude heading in ATTITUDE_QUATERNION is referenced to true north. WIP: this is a private-dialect message and not a stable ABI; see AVIATE_ESTIMATOR_STATUS.</description>
+      <field type="uint64_t" name="time_usec" units="us">Time since system boot.</field>
+      <field type="float" name="declination" units="rad">Declination: angle from true north to magnetic north, positive east. NaN when source is AVIATE_GEOMAGNETIC_SOURCE_NONE.</field>
+      <field type="uint8_t" name="source" enum="AVIATE_GEOMAGNETIC_SOURCE">Where the declination comes from.</field>
     </message>
   </messages>
 </mavlink>

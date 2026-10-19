@@ -150,6 +150,7 @@ fn still_sensors() -> SensorSet {
         ],
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
+        geomagnetic: None,
     }
 }
 

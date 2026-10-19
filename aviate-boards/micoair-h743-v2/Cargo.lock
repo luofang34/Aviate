@@ -103,6 +103,9 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror",
  "tracing",
+ "world-atmosphere",
+ "world-core",
+ "world-geomag",
 ]
 
 [[package]]
@@ -125,6 +128,8 @@ dependencies = [
  "aviate-link",
  "aviate-security",
  "log",
+ "world-core",
+ "world-geomag",
 ]
 
 [[package]]
@@ -907,6 +912,32 @@ name = "winnow"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1"
+
+[[package]]
+name = "world-atmosphere"
+version = "0.1.0"
+source = "git+https://github.com/luofang34/world?rev=8da6f84c0959d13b4554ade6e0fb166dfe8e2236#8da6f84c0959d13b4554ade6e0fb166dfe8e2236"
+dependencies = [
+ "libm",
+ "world-core",
+]
+
+[[package]]
+name = "world-core"
+version = "0.1.0"
+source = "git+https://github.com/luofang34/world?rev=8da6f84c0959d13b4554ade6e0fb166dfe8e2236#8da6f84c0959d13b4554ade6e0fb166dfe8e2236"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "world-geomag"
+version = "0.1.0"
+source = "git+https://github.com/luofang34/world?rev=8da6f84c0959d13b4554ade6e0fb166dfe8e2236#8da6f84c0959d13b4554ade6e0fb166dfe8e2236"
+dependencies = [
+ "libm",
+ "world-core",
+]
 
 [[package]]
 name = "zmij"

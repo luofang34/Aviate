@@ -29,5 +29,7 @@ aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", features = ["gz
 # no_std API; nothing here reads config from disk).
 aviate-config = { path = "../../aviate-config" }
 aviate-hal-xil = { path = "../../aviate-hal/xil" }
+# The date the simulated Earth field is evaluated on.
+world-core.workspace = true
 log = "0.4"
 env_logger = "0.11"

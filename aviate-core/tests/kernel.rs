@@ -217,6 +217,7 @@ fn make_valid_sensors() -> SensorSet {
         baros: [valid_baro, SensorReading::default()],
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
+        geomagnetic: None,
     }
 }
 
@@ -793,6 +794,7 @@ fn make_imu_only_sensors() -> SensorSet {
         baros: [SensorReading::default(), SensorReading::default()],
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
+        geomagnetic: None,
     }
 }
 
@@ -830,6 +832,7 @@ fn make_failed_imu_sensors() -> SensorSet {
         baros: [SensorReading::default(), SensorReading::default()],
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
+        geomagnetic: None,
     }
 }
 
@@ -847,6 +850,7 @@ fn kernel_stays_in_sensor_init_with_no_sensors() {
         baros: [SensorReading::default(), SensorReading::default()],
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
+        geomagnetic: None,
     };
 
     // Run many iterations - should never progress past SensorInit

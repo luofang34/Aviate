@@ -172,6 +172,7 @@ fn sensor_set_healthy() -> SensorSet {
         baros: [SensorReading::default(), SensorReading::default()],
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
+        geomagnetic: None,
     }
 }
 
@@ -458,6 +459,7 @@ fn in_flight_status_update_from_sensors_clears_on_failed() {
         baros: [SensorReading::default(); 2],
         airspeeds: [SensorReading::default(); 2],
         geometry: None,
+        geomagnetic: None,
     };
 
     status.update_from_sensors(&empty_sensors);
