@@ -1,7 +1,7 @@
 //! Mission execution over typed backend directives.
 
 use aviate_core::control::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::mission::{Action, CriterionResult, Mission, MissionResult, Phase, PhaseResult};
 use crate::{
@@ -11,6 +11,10 @@ use crate::{
 
 use super::trace::write_trace_csv;
 use super::{MissionRunner, TraceSample};
+
+/// How long [`MissionRunner`] keeps the simulation stepping while the
+/// backend reports that the vehicle cannot arm yet.
+const ARM_READINESS_TIMEOUT: Duration = Duration::from_secs(15);
 
 impl<B: SimulatorBackend> MissionRunner<B> {
     /// Create a mission runner with one backend.
@@ -380,20 +384,34 @@ impl<B: SimulatorBackend> MissionRunner<B> {
         if self.armed {
             return Ok(());
         }
-        let ready = self.execute_directive(
-            SimulatorDirectiveKind::CheckArmReadiness,
-            Duration::from_secs(1),
-        )?;
-        if ready.outcome != DirectiveOutcome::ArmReady {
-            return Err(SimulatorError::ReadinessFailed {
-                generation: ready.generation,
-                detail: "the arm-readiness receipt does not confirm readiness".to_owned(),
-            });
-        }
+        self.await_arm_readiness()?;
         self.execute_directive(SimulatorDirectiveKind::Arm, Duration::from_secs(1))?;
         self.armed = true;
         self.log("ARM acknowledged");
         Ok(())
+    }
+
+    /// Step the simulation until the backend confirms arm readiness.
+    ///
+    /// A flight controller initializes over simulation steps, and under
+    /// lockstep the steps advance only while this runner takes frames.
+    /// A single readiness check before the first frame therefore finds
+    /// the controller still initializing, and an arm request sent then
+    /// is refused.
+    fn await_arm_readiness(&mut self) -> Result<(), SimulatorError> {
+        let deadline = Instant::now() + ARM_READINESS_TIMEOUT;
+        loop {
+            match self.execute_directive(
+                SimulatorDirectiveKind::CheckArmReadiness,
+                Duration::from_secs(1),
+            ) {
+                Ok(_) => return Ok(()),
+                Err(SimulatorError::ReadinessFailed { .. }) if Instant::now() < deadline => {
+                    self.next_frame(Duration::from_secs(1))?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     fn disarm_if_armed(&mut self) -> Result<(), SimulatorError> {

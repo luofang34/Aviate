@@ -13,6 +13,9 @@ use aviate_hal_xil::{
 };
 
 #[cfg(feature = "gz-plugin")]
+use aviate_link::mavlink::MavState;
+
+#[cfg(feature = "gz-plugin")]
 use crate::plugin::{
     enu_quat_to_ned_f32, enu_to_ned_f32, flu_to_frd_f32, GzPluginBridge, GzPluginError,
 };
@@ -159,13 +162,27 @@ impl GazeboSimBackend {
     }
 
     fn arm_ready(
-        &self,
+        &mut self,
         directive: &SimulatorDirective,
     ) -> Result<DirectiveReceipt, SimulatorError> {
         if self.status.lifecycle != SimulatorLifecycle::Ready {
             return Err(SimulatorError::ReadinessFailed {
                 generation: self.status.generation,
                 detail: "the Gazebo model is not ready".to_owned(),
+            });
+        }
+        // The model being ready says nothing about the flight
+        // controller: it refuses an arm request until its own
+        // initialization reaches Ready, which it reports as standby.
+        let fc_status = self
+            .mav_mut(SimulatorOperation::CheckArmReadiness)?
+            .fc_system_status();
+        if fc_status != Some(MavState::Standby as u8) {
+            return Err(SimulatorError::ReadinessFailed {
+                generation: self.status.generation,
+                detail: format!(
+                    "the flight controller reports system status {fc_status:?}, not standby"
+                ),
             });
         }
         Ok(self.receipt(directive, DirectiveOutcome::ArmReady))
