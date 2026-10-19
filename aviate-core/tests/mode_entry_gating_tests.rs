@@ -272,6 +272,7 @@ fn minimal_sensors() -> SensorSet {
         baros: core::array::from_fn(|_| SensorReading::default()),
         airspeeds: core::array::from_fn(|_| SensorReading::default()),
         geometry: None,
+        geomagnetic: None,
     };
     sensors.imus[0] = SensorReading {
         value: ImuData {

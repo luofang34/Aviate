@@ -25,6 +25,7 @@
 #![cfg(any(feature = "env-sitl", feature = "env-hitl"))]
 
 mod geodetic;
+mod geomagnetic;
 mod lifecycle;
 mod step;
 
@@ -210,6 +211,9 @@ where
 
     /// What telemetry needs to state the estimate globally.
     pub(crate) geodetic: geodetic::GeodeticContext,
+
+    /// The declination supplied to the estimator.
+    pub(crate) geomagnetic: geomagnetic::GeomagneticContext,
 }
 
 impl<C, M> SitlRunner<C, M>
@@ -246,6 +250,7 @@ where
             iteration: 0,
             process_start: std::time::Instant::now(),
             geodetic: geodetic::GeodeticContext::default(),
+            geomagnetic: geomagnetic::GeomagneticContext::default(),
         }
     }
 
