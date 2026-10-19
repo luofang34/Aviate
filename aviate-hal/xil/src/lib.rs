@@ -44,16 +44,13 @@ pub mod perturbation;
 pub mod runner;
 pub mod sim_types;
 pub mod sitl_io;
-pub mod world;
+pub mod synthesis;
 
 // Core exports
 pub use backend::{
     BackendStatus, DirectiveId, DirectiveOutcome, DirectiveReceipt, FrameEvent, ResetGeneration,
     SimulatorBackend, SimulatorDirective, SimulatorDirectiveKind, SimulatorError, SimulatorFrame,
     SimulatorLifecycle, SimulatorOperation, VehicleState,
-};
-pub use world::{
-    AngularVelocity, Entity, EntityId, EntityState, Position, Quaternion, Velocity, World,
 };
 
 // Transport exports

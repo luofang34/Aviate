@@ -7,9 +7,7 @@ fn a_full_origin_parses() {
     assert_eq!(
         GeoOrigin::parse("47.3977420, 8.5459921, 500.5"),
         Ok(GeoOrigin {
-            latitude_deg: 47.397_742,
-            longitude_deg: 8.545_992_1,
-            elevation_m: 500.5,
+            position: world_core::GeodeticPosition::wgs84(47.397_742, 8.545_992_1, 500.5),
         })
     );
 }
