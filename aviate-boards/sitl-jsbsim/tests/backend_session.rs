@@ -198,6 +198,10 @@ fn a_reset_starts_a_new_world_through_a_new_session() {
         .expect("reset");
     assert_eq!(receipt.outcome, DirectiveOutcome::ResetAccepted);
     assert_eq!(receipt.generation, first.next());
+    assert_eq!(
+        receipt.step, 0,
+        "the receipt states the new world's first state"
+    );
     assert_eq!(sidecar.sessions.load(Ordering::Acquire), 2, "a new session");
     assert_ne!(backend.status().lifecycle, SimulatorLifecycle::Resetting);
 
@@ -208,7 +212,10 @@ fn a_reset_starts_a_new_world_through_a_new_session() {
     ));
     let after = frame(&mut backend);
     assert_eq!(after.generation, first.next());
-    assert!(after.step < 10, "the new world's steps start over");
+    assert_eq!(
+        after.step, 1,
+        "the frame after the reset is the new world's next state"
+    );
     assert!(after.simulation_time < last.simulation_time);
 }
 

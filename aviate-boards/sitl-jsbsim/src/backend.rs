@@ -85,7 +85,8 @@ where
         }
     }
 
-    /// Step the board until a state of the new world arrives.
+    /// Step the board until the first state of the new world arrives,
+    /// and no further: the reset's receipt states that state.
     fn await_new_world(&mut self, timeout: Duration) -> Result<(), SimulatorError> {
         let deadline = Instant::now() + timeout;
         while self.board.lifecycle_status().lifecycle == SimulatorLifecycle::Resetting {
@@ -99,7 +100,9 @@ where
             }
             self.board
                 .wait_for_truth(remaining.min(Duration::from_millis(50)));
-            while self.board.step().is_some() {}
+            while self.board.lifecycle_status().lifecycle == SimulatorLifecycle::Resetting
+                && self.board.step().is_some()
+            {}
         }
         Ok(())
     }
