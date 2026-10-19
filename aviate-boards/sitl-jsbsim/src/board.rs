@@ -11,14 +11,16 @@ use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag
 use aviate_hal_xil::synthesis::{
     apply_packet_noise, NoiseRng, NoiseTier, StepSynthesizer, SynthesisError,
 };
-use aviate_hal_xil::{SimActuatorCmd, SitlIO};
+use aviate_hal_xil::{SimActuatorCmd, SimulatorLifecycle, SitlIO, VehicleState};
 use aviate_runtime::telemetry::GeodeticOrigin;
 use aviate_runtime::SitlRunner;
 use log::warn;
 use world_core::{LocalTangentPlane, PositionError};
 
 use crate::config::JsbsimConfig;
-use crate::truth::{truth_sample, GenerationTracker};
+use crate::truth::{truth_sample, vehicle_state, GenerationTracker};
+
+mod session;
 
 /// The airframe's map from the mixer's command to the simulator's
 /// per-engine controls, given whether the vehicle is armed. It owns the
@@ -72,6 +74,14 @@ where
     /// The command last sent, sent again for a state that starts no new
     /// step so the sidecar's lockstep never waits.
     last_reply: SimActuatorCmd,
+    /// Where the session is in its lifecycle.
+    lifecycle: SimulatorLifecycle,
+    /// The vehicle the latest truth state states.
+    vehicle: VehicleState,
+    /// The latest truth state's step index within its generation.
+    step_index: u64,
+    /// The latest truth state's simulation time.
+    time_us: u64,
 }
 
 impl<C, M> JsbsimBoard<C, M>
@@ -125,11 +135,18 @@ where
             noise: config.noise,
             noise_rng: NoiseRng::new(config.noise_seed),
             last_reply: SimActuatorCmd::default(),
+            lifecycle: SimulatorLifecycle::Converging,
+            vehicle: VehicleState::default(),
+            step_index: 0,
+            time_us: 0,
         })
     }
 
     /// Take the newest truth state, run the kernel cycle it starts, and
     /// answer it. `None` when no state has arrived.
+    ///
+    /// While the session is stopped, or waits for a new world, the state
+    /// is answered idle and runs no kernel cycle.
     pub fn step(&mut self) -> Option<TruthStep> {
         let state = self.backend.poll_truth()?;
         let (generation, step) = self
@@ -139,9 +156,21 @@ where
             // A new world starts disarmed; the old world's command must
             // not drive the new vehicle.
             self.last_reply = SimActuatorCmd::default();
+            self.enter_new_world();
             self.generation = Some(generation);
         }
-        let sample = truth_sample(&state, &self.plane, generation, step)
+        self.step_index = step;
+        self.time_us = state.time_usec;
+        let truth = truth_sample(&state, &self.plane, generation, step);
+        if let Some(truth) = truth {
+            self.vehicle = vehicle_state(&state, &truth);
+        }
+        let running = !matches!(
+            self.lifecycle,
+            SimulatorLifecycle::Stopped | SimulatorLifecycle::Resetting
+        );
+        let sample = truth
+            .filter(|_| running)
             .and_then(|truth| self.synthesizer.next(&truth));
         let kernel_delta_us = sample.map(|mut sample| {
             apply_packet_noise(&mut sample.packet, self.noise, &mut self.noise_rng);
@@ -149,9 +178,14 @@ where
                 .transport_mut()
                 .feed_sensor_packet(&sample.packet);
             let command = self.runner.step_sim(sample.delta_us);
-            self.last_reply = (self.actuator_map)(&command, self.runner.is_armed());
+            let armed = self.is_armed();
+            self.last_reply = (self.actuator_map)(&command, armed);
             sample.delta_us
         });
+        if !running {
+            self.last_reply = SimActuatorCmd::default();
+        }
+        self.observe_health();
         let reply = match self
             .backend
             .send_actuators_at(&self.last_reply, state.time_usec)
@@ -190,7 +224,7 @@ where
     /// Whether the kernel is armed.
     #[must_use]
     pub fn is_armed(&self) -> bool {
-        self.runner.is_armed()
+        self.runner.kernel.state.init_state == aviate_core::InitState::Armed
     }
 
     /// The kernel.
