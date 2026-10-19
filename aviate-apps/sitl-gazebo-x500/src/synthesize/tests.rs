@@ -343,3 +343,29 @@ fn reset_forgets_the_previous_attachment() {
 fn vec_close_within(a: [f32; 3], b: [f32; 3], tol: f32) -> bool {
     (0..3).all(|i| (a[i] - b[i]).abs() <= tol)
 }
+
+/// A launcher that moves the world origin moves the GNSS fix with it.
+#[test]
+fn gnss_and_baro_are_made_around_the_stated_origin() {
+    let origin = crate::origin::GeoOrigin {
+        latitude_deg: 47.397_742,
+        longitude_deg: 8.545_992_1,
+        elevation_m: 500.0,
+    };
+    let mut synth = StepSynthesizer::new(origin);
+    let at_rest = |t_us| AviateModelState {
+        quat: [1.0, 0.0, 0.0, 0.0],
+        time_us: t_us,
+        reset_generation: 1,
+        valid: 1,
+        ..AviateModelState::default()
+    };
+    assert!(synth.next(&at_rest(1_000)).is_none());
+    let sample = synth.next(&at_rest(2_000)).expect("a new step");
+    let gnss = sample.packet.gnss.expect("gnss lane");
+    assert_eq!(gnss.lat_deg, origin.latitude_deg);
+    assert_eq!(gnss.lon_deg, origin.longitude_deg);
+    assert_eq!(gnss.alt_m, origin.elevation_m);
+    let baro = sample.packet.baro.expect("baro lane");
+    assert_eq!(baro.pressure_pa, isa_pressure(origin.elevation_m));
+}

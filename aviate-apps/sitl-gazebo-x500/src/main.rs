@@ -25,6 +25,7 @@
 //! The sensor synthesis, frame conversion math, and noise model live
 //! in `synthesize.rs` and `noise.rs`; main.rs owns only the FC loop.
 mod noise;
+mod origin;
 mod synthesize;
 
 use std::time::{Duration, Instant};
@@ -37,6 +38,7 @@ use aviate_core::mixer::Mixer;
 use aviate_xil_contract::WriterState;
 
 use crate::noise::{NoiseRng, NoiseTier};
+use crate::origin::GeoOrigin;
 use crate::synthesize::{apply_packet_noise, cmd_to_omega, StepSample, StepSynthesizer};
 
 /// Cycle period for the FC loop (1 kHz, matching loop_periods::GAZEBO_US).
@@ -84,6 +86,16 @@ fn main() -> std::io::Result<()> {
 
     let app_config = load_app_config()?;
 
+    // A malformed origin refuses startup: GNSS readings around a
+    // silently substituted origin put the vehicle somewhere else.
+    let origin = GeoOrigin::from_env().map_err(std::io::Error::other)?;
+    log::info!(
+        "GNSS origin: {:.7}, {:.7}, {} m",
+        origin.latitude_deg,
+        origin.longitude_deg,
+        origin.elevation_m
+    );
+
     let mut board = GazeboSitlBoard::new_with_retry(
         aviate_app_sitl_gazebo_x500_kernel::build_x500_kernel,
         10,
@@ -115,7 +127,7 @@ fn main() -> std::io::Result<()> {
         .map_err(|e| std::io::Error::other(format!("gz plugin: {e:?}")))?;
     log::info!("connected to AviateGzPlugin");
 
-    let mut synth = StepSynthesizer::default();
+    let mut synth = StepSynthesizer::new(origin);
 
     let noise_tier = NoiseTier::from_env();
     let mut noise_rng = NoiseRng::new(0xA17_C0DE);
@@ -196,6 +208,7 @@ fn main() -> std::io::Result<()> {
                     sample,
                     noise_tier,
                     &mut noise_rng,
+                    &origin,
                 );
             }
         }
@@ -220,6 +233,7 @@ fn fly_sim_step<C, M>(
     mut sample: StepSample,
     noise_tier: NoiseTier,
     noise_rng: &mut NoiseRng,
+    origin: &GeoOrigin,
 ) where
     C: VehicleController,
     M: Mixer,
@@ -228,7 +242,7 @@ fn fly_sim_step<C, M>(
     // `Off` reproduces the perfect-IMU baseline of the SITL missions;
     // `Mems` / `Tactical` exercise the estimator and controller
     // against representative inputs.
-    apply_packet_noise(&mut sample.packet, noise_tier, noise_rng);
+    apply_packet_noise(&mut sample.packet, noise_tier, noise_rng, origin);
     board.transport_mut().feed_sensor_packet(&sample.packet);
     let cmd = board.step_sim(sample.delta_us);
 

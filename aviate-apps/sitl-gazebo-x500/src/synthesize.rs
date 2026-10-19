@@ -21,6 +21,7 @@ use aviate_hal_xil::sim_types::{
 use crate::noise::{
     apply_baro_noise, apply_gnss_noise, apply_imu_noise, apply_mag_noise, NoiseRng, NoiseTier,
 };
+use crate::origin::GeoOrigin;
 
 /// X500 rotor `maxRotVelocity` from the PX4-gazebo-models SDF
 /// (`motorConstant` 8.55e-6 N/(rad/s)² × 1000² × 4 motors ≈ 34 N max
@@ -29,10 +30,6 @@ use crate::noise::{
 /// output linearly to rotor speed.
 pub const MOTOR_MAX_RPS: f64 = 1000.0;
 
-/// Zurich reference for the auto-generated SITL world.
-pub const REF_LATITUDE_DEG: f64 = 47.3977419;
-pub const REF_LONGITUDE_DEG: f64 = 8.5455938;
-pub const REF_ELEVATION_M: f32 = 488.0;
 /// Magnetic field at Zurich, NED in microtesla (approximate).
 /// Reference magnetic field in NED, microtesla.
 ///
@@ -54,7 +51,12 @@ pub const GRAVITY: f32 = 9.81;
 /// Apply tier-matched additive Gaussian noise to every populated
 /// sensor channel in `packet` in place. No-op for `NoiseTier::Off`.
 /// Reference latitude for GNSS noise is the SITL world origin.
-pub fn apply_packet_noise(packet: &mut SimSensorPacket, tier: NoiseTier, rng: &mut NoiseRng) {
+pub fn apply_packet_noise(
+    packet: &mut SimSensorPacket,
+    tier: NoiseTier,
+    rng: &mut NoiseRng,
+    origin: &GeoOrigin,
+) {
     if tier == NoiseTier::Off {
         return;
     }
@@ -68,7 +70,7 @@ pub fn apply_packet_noise(packet: &mut SimSensorPacket, tier: NoiseTier, rng: &m
         apply_mag_noise(mag, tier, rng);
     }
     if let Some(ref mut gnss) = packet.gnss {
-        apply_gnss_noise(gnss, tier, rng, REF_LATITUDE_DEG);
+        apply_gnss_noise(gnss, tier, rng, origin.latitude_deg);
     }
 }
 
@@ -98,6 +100,8 @@ pub struct StepSample {
 /// is the simulation time between the two states.
 #[derive(Debug, Default)]
 pub struct StepSynthesizer {
+    /// The world origin that GNSS and baro readings are made around.
+    origin: GeoOrigin,
     prev: Option<AviateModelState>,
     /// Derived NED velocity of `prev`. `None` until two states of the
     /// same world epoch exist, because acceleration needs two
@@ -108,7 +112,17 @@ pub struct StepSynthesizer {
 impl StepSynthesizer {
     /// Forget all history, for a new simulator attachment.
     pub fn reset(&mut self) {
-        *self = Self::default();
+        *self = Self::new(self.origin);
+    }
+
+    /// A synthesizer that makes GNSS and baro readings around
+    /// `origin`.
+    pub fn new(origin: GeoOrigin) -> Self {
+        Self {
+            origin,
+            prev: None,
+            prev_ned_vel: None,
+        }
     }
 
     /// The sample for `state`, or `None` when `state` does not start a
@@ -132,7 +146,8 @@ impl StepSynthesizer {
         if delta_us == 0 {
             return None;
         }
-        let (packet, ned_vel) = synthesize_packet(state, &prev, delta_us, self.prev_ned_vel);
+        let (packet, ned_vel) =
+            synthesize_packet(state, &prev, delta_us, self.prev_ned_vel, &self.origin);
         self.prev = Some(*state);
         self.prev_ned_vel = Some(ned_vel);
         Some(StepSample {
@@ -175,6 +190,7 @@ fn synthesize_packet(
     prev: &AviateModelState,
     delta_us: u64,
     prev_ned_vel: Option<[f32; 3]>,
+    origin: &GeoOrigin,
 ) -> (SimSensorPacket, [f32; 3]) {
     let now_ned_pos = enu_to_ned_f32(state.pos);
     let now_us = state.time_us;
@@ -281,7 +297,7 @@ fn synthesize_packet(
     // Barometric pressure from NED-Z (down-positive): altitude_msl =
     // ref_elev - down. Use ISA isothermal approximation; good to
     // hundreds of meters for SITL purposes.
-    let altitude_msl_m = REF_ELEVATION_M - now_ned_pos[2];
+    let altitude_msl_m = origin.elevation_m - now_ned_pos[2];
     let baro = SimBaroData {
         pressure_pa: isa_pressure(altitude_msl_m),
         temperature_c: ISA_T0_C,
@@ -292,14 +308,14 @@ fn synthesize_packet(
     let mag_body = rotate_world_to_body(q_ned, MAG_NED_UT);
     let mag = SimMagData { field_ut: mag_body };
 
-    // GNSS: convert NED offset to lat/lon delta around Zurich
-    // reference. Flat-earth approximation, more than accurate enough
+    // GNSS: convert NED offset to lat/lon delta around the world
+    // origin. Flat-earth approximation, more than accurate enough
     // for sub-100m XIL flights.
     let lat_per_m = 1.0 / 111_111.0;
-    let lon_per_m = 1.0 / (111_111.0 * (REF_LATITUDE_DEG.to_radians()).cos());
+    let lon_per_m = 1.0 / (111_111.0 * (origin.latitude_deg.to_radians()).cos());
     let gnss = SimGnssData {
-        lat_deg: REF_LATITUDE_DEG + (now_ned_pos[0] as f64) * lat_per_m,
-        lon_deg: REF_LONGITUDE_DEG + (now_ned_pos[1] as f64) * lon_per_m,
+        lat_deg: origin.latitude_deg + (now_ned_pos[0] as f64) * lat_per_m,
+        lon_deg: origin.longitude_deg + (now_ned_pos[1] as f64) * lon_per_m,
         alt_m: altitude_msl_m,
         // Aviate kernel uses local NED — pass ground-truth NED
         // position directly so the GNSS update agrees with the EKF
