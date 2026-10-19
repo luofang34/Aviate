@@ -18,11 +18,11 @@ use aviate_hal_xil::sim_types::{
     SimBaroData, SimGnssData, SimGnssFix, SimImuData, SimMagData, SimSensorPacket, SimTimestampUs,
 };
 
-use crate::earth_field::EarthField;
 use crate::noise::{
     apply_baro_noise, apply_gnss_noise, apply_imu_noise, apply_mag_noise, NoiseRng, NoiseTier,
 };
 use crate::origin::GeoOrigin;
+use aviate_hal_xil::world::EarthField;
 
 /// X500 rotor `maxRotVelocity` from the PX4-gazebo-models SDF
 /// (`motorConstant` 8.55e-6 N/(rad/s)² × 1000² × 4 motors ≈ 34 N max

@@ -1,16 +1,17 @@
-//! The Earth's magnetic field the simulated magnetometer measures.
+//! The Earth's magnetic field a simulated magnetometer measures.
 //!
 //! The field comes from the same World Magnetic Model the flight
 //! controller uses for its declination, evaluated at the vehicle's
 //! position on the host clock's date, so a simulated vehicle meets the
-//! same field a real one at that place would.
+//! same field a real one at that place would. It needs only the world's
+//! geodetic origin and the vehicle's local NED position, so any
+//! truth-driven board (one that synthesizes sensors from simulator
+//! state) can use it.
 
 use aviate_geomag::{decimal_year_from_unix_seconds, wmm2025, GeodeticPoint, GeomagError};
 
-use crate::origin::GeoOrigin;
-
-/// Meters per degree of latitude in the flat-earth projection the GNSS
-/// synthesis uses.
+/// Meters per degree of latitude in the flat-earth projection from the
+/// local frame to geodetic coordinates.
 const METERS_PER_DEGREE: f64 = 111_111.0;
 
 /// How far, in meters, the vehicle must move before the field is
@@ -21,7 +22,8 @@ const REEVALUATE_M: f32 = 1_000.0;
 /// The Earth field near the vehicle, in NED microtesla.
 #[derive(Debug, Clone)]
 pub struct EarthField {
-    origin: GeoOrigin,
+    /// The geodetic point the local NED frame is measured from.
+    origin: GeodeticPoint,
     decimal_year: f64,
     /// Local north/east position the field was last evaluated at.
     evaluated_at: [f32; 2],
@@ -29,13 +31,14 @@ pub struct EarthField {
 }
 
 impl EarthField {
-    /// The field at the world origin, today.
+    /// The field at the world origin (WGS-84, height above the
+    /// ellipsoid), today.
     ///
     /// # Errors
     ///
     /// The model's refusal: today outside its validity window, or the
     /// origin outside its domain.
-    pub fn at_origin(origin: GeoOrigin) -> Result<Self, GeomagError> {
+    pub fn at_origin(origin: GeodeticPoint) -> Result<Self, GeomagError> {
         let decimal_year = decimal_year_from_unix_seconds(unix_seconds_now());
         let ned_ut = evaluate(&origin, [0.0; 3], decimal_year)?;
         Ok(Self {
@@ -71,12 +74,16 @@ impl EarthField {
     }
 }
 
-fn evaluate(origin: &GeoOrigin, ned: [f32; 3], decimal_year: f64) -> Result<[f32; 3], GeomagError> {
+fn evaluate(
+    origin: &GeodeticPoint,
+    ned: [f32; 3],
+    decimal_year: f64,
+) -> Result<[f32; 3], GeomagError> {
     let lat_cos = origin.latitude_deg.to_radians().cos();
     let point = GeodeticPoint {
         latitude_deg: origin.latitude_deg + f64::from(ned[0]) / METERS_PER_DEGREE,
         longitude_deg: origin.longitude_deg + f64::from(ned[1]) / (METERS_PER_DEGREE * lat_cos),
-        height_m: f64::from(origin.elevation_m - ned[2]),
+        height_m: origin.height_m - f64::from(ned[2]),
     };
     let field = wmm2025(point, decimal_year)?;
     // The model gives nanotesla.

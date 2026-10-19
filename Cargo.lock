@@ -304,6 +304,7 @@ name = "aviate-hal-xil"
 version = "0.1.3"
 dependencies = [
  "aviate-core",
+ "aviate-geomag",
  "aviate-hal-io",
  "aviate-link",
  "getrandom",

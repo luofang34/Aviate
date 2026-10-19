@@ -2,10 +2,10 @@
 
 use super::*;
 
-const CALGARY: GeoOrigin = GeoOrigin {
+const CALGARY: GeodeticPoint = GeodeticPoint {
     latitude_deg: 51.05,
     longitude_deg: -114.07,
-    elevation_m: 1_045.0,
+    height_m: 1_045.0,
 };
 
 #[test]
@@ -13,14 +13,7 @@ fn the_field_at_the_origin_is_the_model_field_in_microtesla() {
     let Ok(earth) = EarthField::at_origin(CALGARY) else {
         panic!("today is inside the model validity");
     };
-    let Ok(model) = wmm2025(
-        GeodeticPoint {
-            latitude_deg: CALGARY.latitude_deg,
-            longitude_deg: CALGARY.longitude_deg,
-            height_m: f64::from(CALGARY.elevation_m),
-        },
-        earth.decimal_year,
-    ) else {
+    let Ok(model) = wmm2025(CALGARY, earth.decimal_year) else {
         panic!("inside the model");
     };
     let [n, e, d] = earth.ned_ut();

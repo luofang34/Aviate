@@ -24,7 +24,6 @@
 //!
 //! The sensor synthesis, frame conversion math, and noise model live
 //! in `synthesize.rs` and `noise.rs`; main.rs owns only the FC loop.
-mod earth_field;
 mod noise;
 mod origin;
 mod synthesize;
@@ -38,10 +37,10 @@ use aviate_core::kernel::config::ActuatorCurveKind;
 use aviate_core::mixer::Mixer;
 use aviate_xil_contract::WriterState;
 
-use crate::earth_field::EarthField;
 use crate::noise::{NoiseRng, NoiseTier};
 use crate::origin::GeoOrigin;
 use crate::synthesize::{apply_packet_noise, cmd_to_omega, StepSample, StepSynthesizer};
+use aviate_hal_xil::world::EarthField;
 
 /// Cycle period for the FC loop (1 kHz, matching loop_periods::GAZEBO_US).
 const CYCLE_PERIOD_US: u64 = 1_000;
@@ -137,7 +136,7 @@ fn main() -> std::io::Result<()> {
     // A model refusal (the host date outside the model's validity)
     // refuses startup: a magnetometer that disagrees with the
     // controller's declination flies a crooked heading.
-    let earth = EarthField::at_origin(origin).map_err(std::io::Error::other)?;
+    let earth = EarthField::at_origin(origin.geodetic_point()).map_err(std::io::Error::other)?;
     log::info!(
         "simulated Earth field: declination {:.2} deg",
         earth.declination_deg()

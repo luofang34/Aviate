@@ -371,7 +371,7 @@ fn gnss_and_baro_are_made_around_the_stated_origin() {
 }
 
 fn synth_at(origin: crate::origin::GeoOrigin) -> StepSynthesizer {
-    let earth = crate::earth_field::EarthField::at_origin(origin)
+    let earth = aviate_hal_xil::world::EarthField::at_origin(origin.geodetic_point())
         .expect("today and the origin are inside the model");
     StepSynthesizer::new(origin, earth)
 }
@@ -386,7 +386,8 @@ fn the_magnetometer_reads_the_model_field_at_the_vehicle() {
         longitude_deg: -114.07,
         elevation_m: 1_045.0,
     };
-    let earth = crate::earth_field::EarthField::at_origin(origin).expect("inside the model");
+    let earth = aviate_hal_xil::world::EarthField::at_origin(origin.geodetic_point())
+        .expect("inside the model");
     let declination = earth.declination_deg();
     assert!(
         declination > 10.0,
