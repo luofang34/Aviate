@@ -9,12 +9,13 @@ use aviate_core::mixer::{QuadXMixer, Sanitizer};
 use aviate_core::sensor::GeomagneticSource;
 use aviate_core::time::{TimeSource, Timestamp};
 use aviate_core::types::Radians;
-use aviate_geomag::{wmm2025, GeodeticPoint};
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{
     SimGnssData, SimGnssFix, SimImuData, SimMagData, SimSensorPacket, SitlIO, XilConfig,
     XilNetConfig,
 };
+use world_core::GeodeticPosition;
+use world_geomag::wmm2025;
 
 use super::super::{SitlRunner, SitlTime};
 use super::decimal_year_now;
@@ -63,11 +64,7 @@ fn runner() -> SitlRunner<MultirotorController, QuadXMixer> {
 /// The model's declination at the test point, radians.
 fn model_declination() -> f32 {
     wmm2025(
-        GeodeticPoint {
-            latitude_deg: LAT,
-            longitude_deg: LON,
-            height_m: f64::from(ALT_M),
-        },
+        GeodeticPosition::wgs84(LAT, LON, f64::from(ALT_M)),
         decimal_year_now(),
     )
     .expect("the test point and today are inside the model")
