@@ -199,6 +199,7 @@ impl SensorCache {
             baros: [self.baro.unwrap_or_default(), SensorReading::default()],
             airspeeds: [SensorReading::default(), SensorReading::default()],
             geometry: None,
+            geomagnetic: None,
         }
     }
 }

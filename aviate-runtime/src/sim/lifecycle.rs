@@ -47,6 +47,7 @@ where
         self.sensor_cache = SensorCache::new();
         self.ekf_initialized = false;
         self.iteration = 0;
+        self.geomagnetic.forget_model();
         self.geodetic.last_fix = None;
 
         let (imu, baro, mag, gnss) = self.board_hal.sensors_mut();

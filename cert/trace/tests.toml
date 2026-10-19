@@ -1700,3 +1700,71 @@ violation, the kernel's longest cycle is the 1 ms simulation step, and
 no latched fault is set. Witnesses LLR-FLT-216.
 """
 traces_to = ["942c42b5-3e17-4b3e-97c3-6a8a29948a63"]
+
+[[tests]]
+uid = "ecf7c1b5-b466-41f4-9887-ada3073373a4"
+id = "TST-EST-210"
+title = "a_supplied_declination_makes_yaw_true_heading"
+test_selector = "a_supplied_declination_makes_yaw_true_heading"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/ekf_true_north_tests.rs` runs `Ekf::observe` for 20 s
+on a stationary, level vehicle at a true heading of 30° under a 51° N
+field (declination 12°, inclination 66°). With a Model or a Configured
+reference of 12°, the converged yaw is 30° ± 0.5°. Removing the
+declination from the update leaves it at 18°. Witnesses LLR-EST-208.
+"""
+traces_to = ["5246ccf1-9767-41c2-bc09-8a92a7fb2fc9"]
+
+[[tests]]
+uid = "f445f5ac-b26e-4300-a384-0c1b30b6a7e8"
+id = "TST-EST-211"
+title = "without_a_reference_yaw_stays_magnetic"
+test_selector = "without_a_reference_yaw_stays_magnetic"
+owner = "aviate-core@aviate"
+description = """
+The same run with no reference converges to the magnetic heading,
+18° ± 0.5°. Witnesses LLR-EST-208.
+"""
+traces_to = ["5246ccf1-9767-41c2-bc09-8a92a7fb2fc9"]
+
+[[tests]]
+uid = "c2695d9d-49fe-4b00-9990-21807009539c"
+id = "TST-EST-212"
+title = "a_fix_supplies_the_model_declination_and_a_dropout_keeps_it"
+test_selector = "a_fix_supplies_the_model_declination_and_a_dropout_keeps_it"
+owner = "aviate-core@aviate"
+description = """
+`aviate-runtime/src/sim/geomagnetic/tests.rs` steps a SITL runner with
+a 3-D fix at 51.05° N, 114.07° W. The reference is the WMM2025
+declination there (above 10°) with source Model, and it is unchanged
+over eight later cycles without GNSS. Witnesses LLR-EST-209.
+"""
+traces_to = ["d2ce2764-4ede-44d5-aba9-a2b6009bc571"]
+
+[[tests]]
+uid = "c63274dd-59f9-416d-8892-950f41b0916b"
+id = "TST-EST-213"
+title = "a_configured_declination_serves_until_a_fix_arrives"
+test_selector = "a_configured_declination_serves_until_a_fix_arrives"
+owner = "aviate-core@aviate"
+description = """
+A configured declination is the reference, with source Configured,
+until the first 3-D fix replaces it with the model value. Witnesses
+LLR-EST-209.
+"""
+traces_to = ["d2ce2764-4ede-44d5-aba9-a2b6009bc571"]
+
+[[tests]]
+uid = "dbba68c8-32a1-44ad-b434-619d9404eac9"
+id = "TST-EST-214"
+title = "the_initial_attitude_is_seeded_at_the_true_heading"
+test_selector = "the_initial_attitude_is_seeded_at_the_true_heading"
+owner = "aviate-core@aviate"
+description = """
+The first sample a SITL runner receives seeds the estimator at the
+true heading, 30° ± 0.5°, under the model declination. Removing the
+declination from the seed leaves it at the magnetic heading. Witnesses
+LLR-EST-209.
+"""
+traces_to = ["d2ce2764-4ede-44d5-aba9-a2b6009bc571"]

@@ -101,8 +101,9 @@ update_mag SHALL be a no-op when (a) is_initialized() == false,
 outside [mag_field_min, mag_field_max], or (d) the vertical-axis
 ratio meets or exceeds mag_inclination_limit. On accept, it SHALL
 compute a tilt-compensated (roll/pitch-only) magnetic heading so the
-measurement is absolute, form the innovation against the estimated
-yaw, gate it to [-π, π], and fuse heading via the heading-specialized
+measurement is absolute, add the supplied declination
+(`SensorSet.geomagnetic`, 0 when absent) to make it a true heading
+(LLR-EST-208), form the innovation against the estimated yaw, gate it to [-π, π], and fuse heading via the heading-specialized
 scalar update with inclination-weighted measurement noise.
 """
 verification_methods = ["test"]
@@ -2255,4 +2256,41 @@ verification_methods = ["test"]
 modules = ["aviate-runtime/src/sim/step.rs"]
 derived = false
 traces_to = ["30f749c3-82ee-4ca3-9c0b-91413894c385"]
+
+[[requirements]]
+uid = "5246ccf1-9767-41c2-bc09-8a92a7fb2fc9"
+id = "LLR-EST-208"
+title = "The magnetometer heading update adds the supplied declination"
+owner = "aviate-core@aviate"
+description = """
+`Ekf::observe` SHALL pass the declination of `SensorSet.geomagnetic`
+to the magnetometer update, or 0 when the set carries no reference.
+The update SHALL add it to the tilt-compensated magnetic heading
+before it forms the yaw innovation, so the fused yaw is the heading
+from true north.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf/update.rs", "aviate-core/src/ekf/scalar.rs", "aviate-core/src/sensor.rs"]
+derived = false
+traces_to = ["c3f236b1-ea09-43ea-95e6-b98734433c10"]
+
+[[requirements]]
+uid = "d2ce2764-4ede-44d5-aba9-a2b6009bc571"
+id = "LLR-EST-209"
+title = "The SITL runner supplies the model declination at the GNSS fix"
+owner = "aviate-core@aviate"
+description = """
+The SITL runner SHALL evaluate WMM2025 (`world-geomag`) at each 3-D
+GNSS fix, at the host clock's date, whenever the fix has moved 0.01°
+or more since the last evaluation, and SHALL put the result in
+`SensorSet.geomagnetic` with source Model. It SHALL keep the last model
+value through a GNSS dropout. While no model value exists it SHALL
+supply the configured declination, if one is set, with source
+Configured. The initial attitude seed SHALL add the same declination to
+its magnetic heading.
+"""
+verification_methods = ["test"]
+modules = ["aviate-runtime/src/sim/geomagnetic.rs", "aviate-runtime/src/sim/step.rs"]
+derived = false
+traces_to = ["c3f236b1-ea09-43ea-95e6-b98734433c10"]
 

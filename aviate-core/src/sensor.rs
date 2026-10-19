@@ -97,6 +97,27 @@ pub struct AirspeedData {
     pub air: AirData,
 }
 
+/// Where a [`GeomagneticReference`] came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GeomagneticSource {
+    /// A geomagnetic model evaluated at the vehicle's position and date.
+    Model,
+    /// A declination configured for the operating area.
+    Configured,
+}
+
+/// The local magnetic declination: the angle from true north to
+/// magnetic north, positive east. The estimator adds it to the
+/// magnetic heading it measures so that yaw is referenced to true
+/// north.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GeomagneticReference {
+    /// Declination, positive east.
+    pub declination: crate::types::Radians,
+    /// Where the declination came from.
+    pub source: GeomagneticSource,
+}
+
 // Stub for geometry state needed by SensorSet
 #[derive(Clone, Debug)]
 pub struct GeometryState {
@@ -112,4 +133,7 @@ pub struct SensorSet {
     pub baros: [SensorReading<BaroData>; MAX_BARO],
     pub airspeeds: [SensorReading<AirspeedData>; MAX_AIRSPEED],
     pub geometry: Option<GeometryState>,
+    /// The local declination, `None` when neither a model nor a
+    /// configured value is available; yaw is then magnetic.
+    pub geomagnetic: Option<GeomagneticReference>,
 }

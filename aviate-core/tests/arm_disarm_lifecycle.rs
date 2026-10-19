@@ -123,6 +123,7 @@ fn valid_sensors() -> SensorSet {
         baros: [valid_baro, SensorReading::default()],
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
+        geomagnetic: None,
     }
 }
 

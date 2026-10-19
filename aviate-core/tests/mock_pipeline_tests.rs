@@ -234,6 +234,7 @@ fn make_sensors() -> SensorSet {
         baros: core::array::from_fn(|_| SensorReading::<BaroData>::default()),
         airspeeds: core::array::from_fn(|_| SensorReading::<AirspeedData>::default()),
         geometry: None,
+        geomagnetic: None,
     }
 }
 

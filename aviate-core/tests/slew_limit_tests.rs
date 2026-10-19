@@ -163,6 +163,7 @@ fn make_valid_sensors() -> SensorSet {
         ],
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
+        geomagnetic: None,
     }
 }
 
