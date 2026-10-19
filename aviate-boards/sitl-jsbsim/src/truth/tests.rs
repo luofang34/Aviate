@@ -93,3 +93,31 @@ fn the_origin_state_is_the_local_origin() {
     let ned = truth.map(|t| t.position_ned_m);
     assert!(ned.is_some_and(|[n, e, d]| n.abs() < 0.01 && e.abs() < 0.01 && d.abs() < 0.001));
 }
+
+#[test]
+fn the_states_own_kinematics_travel_with_the_sample() {
+    let Some(plane) = plane() else {
+        return;
+    };
+    let mut with_kinematics = state(4_000, plane.origin());
+    with_kinematics.vx = 150;
+    with_kinematics.vy = -20;
+    with_kinematics.vz = -35;
+    with_kinematics.rollspeed = 0.1;
+    with_kinematics.pitchspeed = -0.2;
+    with_kinematics.yawspeed = 0.3;
+    with_kinematics.xacc = 12;
+    with_kinematics.yacc = -4;
+    with_kinematics.zacc = -1_000;
+    let measured = truth_sample(&with_kinematics, &plane, 0, 0).and_then(|t| t.measured);
+    assert!(measured.is_some());
+    let Some(measured) = measured else {
+        return;
+    };
+    assert_eq!(measured.velocity_ned_mps, [1.5, -0.2, -0.35]);
+    assert_eq!(measured.body_rates_rps, [0.1, -0.2, 0.3]);
+    // Milli-g: -1000 mG is one standard gravity, upward in FRD.
+    let [fx, fy, fz] = measured.specific_force_body_mps2;
+    assert!((fx - 0.117_68).abs() < 1e-4 && (fy + 0.039_23).abs() < 1e-4);
+    assert!((fz + 9.806_65).abs() < 1e-4);
+}

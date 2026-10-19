@@ -2,9 +2,12 @@
 //! generation it belongs to.
 
 use aviate_backend_mavlink_hil::HilStateQuaternion;
-use aviate_hal_xil::synthesis::TruthSample;
+use aviate_hal_xil::synthesis::{MeasuredKinematics, TruthSample};
 use aviate_hal_xil::VehicleState;
 use world_core::{GeodeticPosition, LocalTangentPlane};
+
+/// One milli-g of specific force, m/s² (standard gravity / 1000).
+const MILLI_G_MPS2: f32 = 9.806_65e-3;
 
 /// Which simulated world the truth stream is in.
 ///
@@ -73,6 +76,23 @@ pub(crate) fn truth_sample(
         step,
         position_ned_m: [ned.north_m as f32, ned.east_m as f32, ned.down_m as f32],
         attitude: state.attitude_quaternion,
+        // The state's own velocity, rates and specific force. Its
+        // position is quantized to about a centimeter, and differencing
+        // that over a 4 ms step would make meters per second of
+        // velocity noise and saturate the derived acceleration.
+        measured: Some(MeasuredKinematics {
+            velocity_ned_mps: [
+                f32::from(state.vx) / 100.0,
+                f32::from(state.vy) / 100.0,
+                f32::from(state.vz) / 100.0,
+            ],
+            body_rates_rps: [state.rollspeed, state.pitchspeed, state.yawspeed],
+            specific_force_body_mps2: [
+                f32::from(state.xacc) * MILLI_G_MPS2,
+                f32::from(state.yacc) * MILLI_G_MPS2,
+                f32::from(state.zacc) * MILLI_G_MPS2,
+            ],
+        }),
     })
 }
 
