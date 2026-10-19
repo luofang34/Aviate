@@ -37,7 +37,7 @@ pub(crate) fn command_for_thrust(thrust: f32) -> f32 {
 
 /// The board's actuator map for the JSBSim X500: rotor commands while
 /// armed, all zero while disarmed.
-pub(crate) fn x500_controls(command: &ActuatorCmd, armed: bool) -> SimActuatorCmd {
+pub fn x500_controls(command: &ActuatorCmd, armed: bool) -> SimActuatorCmd {
     let mut outputs = [0.0; 16];
     if armed {
         for (out, thrust) in outputs.iter_mut().zip(command.outputs.iter().take(ROTORS)) {

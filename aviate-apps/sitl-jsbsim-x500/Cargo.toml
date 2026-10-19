@@ -6,6 +6,9 @@ version.workspace = true
 license.workspace = true
 description = "X500 quadcopter FC binary for the JSBSim SITL board"
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "sitl-jsbsim-x500"
 path = "src/main.rs"

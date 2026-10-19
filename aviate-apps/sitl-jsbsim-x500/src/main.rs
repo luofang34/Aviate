@@ -13,10 +13,9 @@
 //! time. The airframe is the app's: the X500 kernel and its rotor map
 //! are injected into the airframe-neutral board.
 
-mod actuators;
-
 use std::time::Duration;
 
+use aviate_app_sitl_jsbsim_x500::x500_controls;
 use aviate_board_sitl_jsbsim::{JsbsimBoard, JsbsimConfig};
 use aviate_hal_xil::synthesis::{GeoOrigin, NoiseTier};
 use world_core::DecimalYear;
@@ -107,8 +106,8 @@ fn main() -> std::io::Result<()> {
 
     let kernel = aviate_app_sitl_gazebo_x500_kernel::build_x500_kernel()
         .map_err(|e| std::io::Error::other(format!("X500 kernel: {e:?}")))?;
-    let mut board = JsbsimBoard::new(kernel, config, actuators::x500_controls)
-        .map_err(std::io::Error::other)?;
+    let mut board =
+        JsbsimBoard::new(kernel, config, x500_controls).map_err(std::io::Error::other)?;
     board.init_telemetry(&app_config, SIDECAR_STEP_HZ);
     if !board.telemetry_enabled() {
         log::warn!("running without a telemetry stream (see errors above)");
