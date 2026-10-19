@@ -3,9 +3,8 @@
 # Drives the vehicle via `SET_POSITION_TARGET_LOCAL_NED` commands
 # end-to-end. The kernel's cascaded position → velocity →
 # attitude → rate loop converts the position target into per-step
-# motor outputs, the gz physics flies the airframe, and the gz
-# bridge feeds ground-truth state + a quaternion-derived gyro
-# back into the EKF.
+# motor outputs, the simulator flies the airframe, and the board
+# synthesizes the FC's sensors from the simulator's truth.
 #
 # Every criterion is throughout-phase: a single sample outside
 # the bound fails the phase. There is no end-of-phase shortcut —
@@ -76,17 +75,14 @@ verify = [
   { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
 ]
 
-# Land — thrust to zero, vehicle falls. The fall is not closed-
-# loop, so XY drift from the last in-flight position is expected;
-# we just bound it.
+
+# Land under position control: the touchdown is verified, so the
+# disarm that follows is a landed vehicle's.
 [[vehicles.mission.phases]]
 name = "land"
-duration_ms = 4000
-action = { type = "thrust", value = 0.0 }
-verify = [
-  { type = "max_altitude", value = 2.0 },
-  { type = "max_excursion", center = [0.0, 0.0, 0.0], xy_max = 10.0, z_max = 10.0 },
-]
+duration_ms = 12000
+action = { type = "goto", position = [0.0, 0.0, 0.0], heading = 0.0 }
+verify = [{ type = "touchdown_velocity", max_descent_mps = 1.0, ground_tolerance = 0.30 }]
 
 [[vehicles.mission.phases]]
 name = "disarm"

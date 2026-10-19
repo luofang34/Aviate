@@ -66,7 +66,7 @@ verify = [
 
 # Brief loiter so the cascade can absorb any residual climb
 # velocity before the descent leg starts. The horizontal
-# tolerance is set so the gz-side simulation noise (gravity
+# tolerance is set so the simulation noise (gravity
 # perturbations and rotor-thrust randomization) does not
 # trip a false positive during the settling window — the
 # closed-loop horizontal property is exercised more
@@ -86,7 +86,7 @@ verify = [
 # vehicle crosses within 30 cm of ground, vertical speed is
 # ≤ 1 m/s. That is the falsifiable controller property the
 # mission exists to gate; horizontal position-hold under the
-# noise floor of the gz physics during a 12 s open descent
+# noise floor of the simulated physics during a 12 s open descent
 # is a separate workstream and is not asserted here.
 [[vehicles.mission.phases]]
 name = "land"
