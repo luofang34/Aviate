@@ -1,5 +1,5 @@
-//! The X500 flies a takeoff, hover and landing against a live JSBSim
-//! sidecar through the typed simulator backend.
+//! The X500 flies a closed-loop takeoff, hover and landing against a
+//! live JSBSim sidecar through the typed simulator backend.
 //!
 //! Ignored by default: it needs `pilotage-jsbsim-sidecar` listening at
 //! `AVIATE_JSBSIM_SIDECAR` (host:port), spawned at the default SITL
@@ -30,36 +30,78 @@ fn phase(name: &str, duration_ms: u64, action: Action, verify: Vec<Criterion>) -
     }
 }
 
-/// The basic-flight mission the Gazebo shards fly: arm, climb on the
-/// takeoff thrust, hover, cut thrust, disarm.
-fn takeoff_hover_land() -> Mission {
+/// The closed-loop landing mission the Gazebo shards fly: settle on the
+/// ground, take off under position control to 4 m, hover, land under
+/// position control at no more than 1 m/s, disarm.
+fn closed_loop_landing() -> Mission {
+    let goto = |down: f32| Action::GoTo {
+        position: [0.0, 0.0, down],
+        heading: 0.0,
+    };
     Mission {
-        name: "jsbsim_basic_flight".to_owned(),
-        description: "X500 takeoff, hover and landing on JSBSim".to_owned(),
+        name: "jsbsim_closed_loop_landing".to_owned(),
+        description: "X500 closed-loop takeoff, hover and landing on JSBSim".to_owned(),
         vehicle: VehicleConfig::default(),
         lockstep: true,
         phases: vec![
             phase("arm", 500, Action::Arm, vec![Criterion::Armed(true)]),
             phase(
-                "takeoff",
-                6_000,
-                Action::Thrust(0.64),
+                "settle",
+                1_000,
+                Action::Thrust(0.0),
                 vec![
-                    Criterion::MinAltitude(0.1),
-                    Criterion::VelocityTracksPosition { tolerance: 0.25 },
+                    Criterion::Armed(true),
+                    Criterion::StationKeeping {
+                        center_ned: [0.0, 0.0, 0.0],
+                        xy_tolerance: 0.2,
+                        z_tolerance: 0.2,
+                    },
+                    Criterion::AttitudeBounded {
+                        roll_pitch_max_deg: 5.0,
+                    },
                 ],
             ),
             phase(
-                "hover",
-                2_000,
-                Action::Thrust(0.4225),
-                vec![Criterion::MinAltitude(0.1)],
+                "takeoff_closed_loop",
+                10_000,
+                goto(-4.0),
+                vec![
+                    Criterion::Armed(true),
+                    Criterion::MinAltitude(3.0),
+                    Criterion::MaxExcursion {
+                        center_ned: [0.0, 0.0, -2.0],
+                        xy_max: 1.5,
+                        z_max: 4.0,
+                    },
+                    Criterion::AttitudeBounded {
+                        roll_pitch_max_deg: 25.0,
+                    },
+                ],
+            ),
+            phase(
+                "hover_low",
+                3_000,
+                goto(-4.0),
+                vec![
+                    Criterion::Armed(true),
+                    Criterion::MaxExcursion {
+                        center_ned: [0.0, 0.0, -4.0],
+                        xy_max: 3.0,
+                        z_max: 3.0,
+                    },
+                    Criterion::AttitudeBounded {
+                        roll_pitch_max_deg: 25.0,
+                    },
+                ],
             ),
             phase(
                 "land",
-                4_000,
-                Action::Thrust(0.0),
-                vec![Criterion::MaxAltitude(15.0)],
+                12_000,
+                goto(0.0),
+                vec![Criterion::TouchdownVelocity {
+                    max_descent_mps: 1.0,
+                    ground_tolerance: 0.30,
+                }],
             ),
             phase("disarm", 500, Action::Disarm, vec![Criterion::Armed(false)]),
         ],
@@ -69,7 +111,7 @@ fn takeoff_hover_land() -> Mission {
 
 #[test]
 #[ignore = "needs a live JSBSim sidecar at AVIATE_JSBSIM_SIDECAR"]
-fn the_x500_takes_off_hovers_and_lands_on_jsbsim() {
+fn the_x500_flies_the_closed_loop_landing_on_jsbsim() {
     let sidecar: SocketAddr = std::env::var(SIDECAR_ENV)
         .unwrap_or_else(|_| panic!("{SIDECAR_ENV} names the sidecar (host:port)"))
         .parse()
@@ -88,7 +130,7 @@ fn the_x500_takes_off_hovers_and_lands_on_jsbsim() {
     let board = JsbsimBoard::new(kernel, config, x500_controls).expect("board builds");
     let mut runner =
         MissionRunner::new(JsbsimSimulatorBackend::new(board, 0), "x500").expect("runner");
-    let result = runner.run(&takeoff_hover_land());
+    let result = runner.run(&closed_loop_landing());
     for phase in &result.phases {
         for criterion in &phase.criteria_results {
             assert!(
@@ -99,5 +141,5 @@ fn the_x500_takes_off_hovers_and_lands_on_jsbsim() {
         }
     }
     assert!(result.passed, "mission failed: {result:?}");
-    assert!(result.max_altitude > 0.5, "it never left the ground");
+    assert!(result.max_altitude > 3.0, "it never climbed to the hover");
 }

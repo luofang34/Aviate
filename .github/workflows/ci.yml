@@ -813,6 +813,130 @@ jobs:
   # here is truth about the quarantine, not a merge gate. Runs on main
   # pushes to bound per-PR minutes; membership and tracking issues live
   # in tests/missions/manifest.json.
+  # The X500 flies a closed-loop takeoff, hover and landing on JSBSim:
+  # Pilotage's JSBSim sidecar owns the physics and the simulation clock,
+  # and the JSBSim board answers each truth state in lockstep. The
+  # sidecar is built from Pilotage at a pinned full commit, with JSBSim
+  # itself built by Pilotage's xtask at the release it pins. Not yet a
+  # required gate: it joins CI Success once its pin is on Pilotage's
+  # main and it has a record of green runs.
+  sitl_jsbsim:
+    name: SITL Mission (JSBSim X500)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      # Pilotage commit whose sidecar this job flies against. A full
+      # commit, never a branch: the mission must not change under an
+      # unchanged Aviate tree. Moved deliberately, like a git dependency.
+      PILOTAGE_REV: 3db8f1252d2bf1ac2569db9a1f30489582c66442
+      SIDECAR_PORT: "4560"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: The Pilotage pin is a full commit
+        run: '[[ "$PILOTAGE_REV" =~ ^[0-9a-f]{40}$ ]]'
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: luofang34/Pilotage
+          ref: ${{ env.PILOTAGE_REV }}
+          path: pilotage
+
+      # Pilotage's workspace resolves git dependencies on private
+      # repositories even for one package, so the sidecar build needs
+      # their read-only deploy keys, offered through host aliases as in
+      # Pilotage's own CI.
+      - name: Authorize Pilotage's private workspace dependencies
+        env:
+          NAVIGATE_DEPLOY_KEY: ${{ secrets.NAVIGATE_DEPLOY_KEY }}
+          AIRMASS_DEPLOY_KEY: ${{ secrets.AIRMASS_DEPLOY_KEY }}
+          SURVEILLANCE_DEPLOY_KEY: ${{ secrets.SURVEILLANCE_DEPLOY_KEY }}
+        run: |
+          if [ -z "$NAVIGATE_DEPLOY_KEY" ] || [ -z "$AIRMASS_DEPLOY_KEY" ] || [ -z "$SURVEILLANCE_DEPLOY_KEY" ]; then
+            echo "::error::NAVIGATE_DEPLOY_KEY, AIRMASS_DEPLOY_KEY and SURVEILLANCE_DEPLOY_KEY must hold read-only deploy keys." >&2
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          for repo in navigate airmass surveillance; do
+            key_var="$(echo "$repo" | tr '[:lower:]' '[:upper:]')_DEPLOY_KEY"
+            printf '%s\n' "${!key_var}" > ~/.ssh/${repo}_ci
+            chmod 600 ~/.ssh/${repo}_ci
+            printf 'Host github-%s\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/%s_ci\n  IdentitiesOnly yes\n' "$repo" "$repo" >> ~/.ssh/config
+          done
+          git config --global url."ssh://git@github-navigate/luofang34/Navigate".insteadOf "https://github.com/luofang34/Navigate"
+          git config --global url."ssh://git@github-airmass/luofang34/Airmass".insteadOf "https://github.com/luofang34/Airmass"
+          git config --global url."ssh://git@github-surveillance/luofang34/Surveillance".insteadOf "https://github.com/luofang34/Surveillance"
+          git config --global url."ssh://git@github-navigate/luofang34/Navigate.git".insteadOf "https://github.com/luofang34/Navigate.git"
+          git config --global url."ssh://git@github-airmass/luofang34/Airmass.git".insteadOf "https://github.com/luofang34/Airmass.git"
+          git config --global url."ssh://git@github-surveillance/luofang34/Surveillance.git".insteadOf "https://github.com/luofang34/Surveillance.git"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev cmake
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # JSBSim's checkout and static library, built by Pilotage's xtask
+      # at the release it pins; the key follows that pin.
+      - name: Cache the JSBSim build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/jsbsim
+          key: jsbsim-${{ runner.os }}-${{ hashFiles('pilotage/tools/xtask/src/jsbsim.rs') }}
+
+      - name: Cache the sidecar build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            pilotage/target
+          key: jsbsim-sidecar-${{ runner.os }}-${{ env.PILOTAGE_REV }}
+
+      - name: Cache the Aviate build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-sitl-jsbsim-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build JSBSim
+        working-directory: pilotage
+        run: cargo run -p xtask --quiet -- build-jsbsim
+
+      - name: Build the JSBSim sidecar
+        working-directory: pilotage
+        run: cargo build --release --locked -p pilotage-jsbsim-sidecar
+
+      - name: Build the mission
+        run: cargo test --locked -p aviate-app-sitl-jsbsim-x500 --test jsbsim_mission --no-run
+
+      # The sidecar spawns the X500 at the default SITL origin, the
+      # point the board's GeoOrigin::DEFAULT states, and runs unpaced:
+      # the lockstep, not wall time, sets the pace.
+      - name: Fly the closed-loop landing on JSBSim
+        run: |
+          pilotage/target/release/pilotage-jsbsim-sidecar \
+            --port "$SIDECAR_PORT" --aircraft x500 --jsbsim-root ~/jsbsim \
+            --latitude-deg 47.3977419 --longitude-deg 8.5455938 --heading-deg 0 \
+            --site-elevation-m 488 --realtime-factor 0 > sidecar.log 2>&1 &
+          sidecar=$!
+          trap 'kill "$sidecar" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 100); do
+            if (exec 3<>"/dev/tcp/127.0.0.1/$SIDECAR_PORT") 2>/dev/null; then break; fi
+            sleep 0.2
+          done
+          AVIATE_JSBSIM_SIDECAR="127.0.0.1:$SIDECAR_PORT" \
+            cargo test --locked -p aviate-app-sitl-jsbsim-x500 --test jsbsim_mission -- --ignored
+
+      - name: Sidecar log
+        if: always()
+        run: tail -n 200 sidecar.log || true
+
   sitl_quarantine:
     name: SITL Quarantine (non-blocking)
     needs: sitl_build
