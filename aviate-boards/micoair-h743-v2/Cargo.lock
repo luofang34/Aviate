@@ -64,6 +64,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aviate-geomag"
+version = "0.1.3"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "aviate-hal-io"
 version = "0.1.3"
 dependencies = [
@@ -120,6 +127,7 @@ version = "0.1.3"
 dependencies = [
  "aviate-config",
  "aviate-core",
+ "aviate-geomag",
  "aviate-hal-io",
  "aviate-hal-xil",
  "aviate-link",
