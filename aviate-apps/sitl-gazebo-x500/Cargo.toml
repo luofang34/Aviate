@@ -28,6 +28,9 @@ aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", features = ["gz
 # startup from the embedded AviateApp.toml (`from_toml_str` — the
 # no_std API; nothing here reads config from disk).
 aviate-config = { path = "../../aviate-config" }
+# The simulated magnetometer's Earth field: the same model the
+# controller takes its declination from.
+aviate-geomag = { path = "../../aviate-geomag" }
 aviate-hal-xil = { path = "../../aviate-hal/xil" }
 log = "0.4"
 env_logger = "0.11"

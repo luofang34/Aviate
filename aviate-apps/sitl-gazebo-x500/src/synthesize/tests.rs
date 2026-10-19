@@ -272,7 +272,7 @@ fn replay(synth: &mut StepSynthesizer, times: &[u64]) -> Vec<StepSample> {
 /// sample and no acceleration swing around a repeated state.
 #[test]
 fn repeated_and_skipped_states_give_one_steady_sample_per_new_step() {
-    let mut synth = StepSynthesizer::default();
+    let mut synth = synth_at(crate::origin::GeoOrigin::DEFAULT);
     let times = [
         1_000, 2_000, 3_000, 3_000, 3_000, 4_000, 6_000, 6_000, 7_000,
     ];
@@ -307,7 +307,7 @@ fn repeated_and_skipped_states_give_one_steady_sample_per_new_step() {
 
 #[test]
 fn the_first_state_and_a_repeat_of_it_give_no_sample() {
-    let mut synth = StepSynthesizer::default();
+    let mut synth = synth_at(crate::origin::GeoOrigin::DEFAULT);
     assert!(replay(&mut synth, &[5_000, 5_000]).is_empty());
 }
 
@@ -316,7 +316,7 @@ fn the_first_state_and_a_repeat_of_it_give_no_sample() {
 /// every later state as older than the last one and stop for good.
 #[test]
 fn a_world_reset_reseeds_the_step_sequence() {
-    let mut synth = StepSynthesizer::default();
+    let mut synth = synth_at(crate::origin::GeoOrigin::DEFAULT);
     assert_eq!(replay(&mut synth, &[1_000, 2_000]).len(), 1);
 
     assert!(synth.next(&steady_state(0, 2)).is_none());
@@ -334,7 +334,7 @@ fn a_world_reset_reseeds_the_step_sequence() {
 
 #[test]
 fn reset_forgets_the_previous_attachment() {
-    let mut synth = StepSynthesizer::default();
+    let mut synth = synth_at(crate::origin::GeoOrigin::DEFAULT);
     assert_eq!(replay(&mut synth, &[1_000, 2_000]).len(), 1);
     synth.reset();
     assert!(synth.next(&steady_state(3_000, 1)).is_none());
@@ -352,7 +352,7 @@ fn gnss_and_baro_are_made_around_the_stated_origin() {
         longitude_deg: 8.545_992_1,
         elevation_m: 500.0,
     };
-    let mut synth = StepSynthesizer::new(origin);
+    let mut synth = synth_at(origin);
     let at_rest = |t_us| AviateModelState {
         quat: [1.0, 0.0, 0.0, 0.0],
         time_us: t_us,
@@ -368,4 +368,49 @@ fn gnss_and_baro_are_made_around_the_stated_origin() {
     assert_eq!(gnss.alt_m, origin.elevation_m);
     let baro = sample.packet.baro.expect("baro lane");
     assert_eq!(baro.pressure_pa, isa_pressure(origin.elevation_m));
+}
+
+fn synth_at(origin: crate::origin::GeoOrigin) -> StepSynthesizer {
+    let earth = crate::earth_field::EarthField::at_origin(origin)
+        .expect("today and the origin are inside the model");
+    StepSynthesizer::new(origin, earth)
+}
+
+/// The simulated magnetometer and the controller share one Earth field:
+/// at 51° N the magnetic heading of the synthesized reading plus the
+/// model's declination is the vehicle's true heading.
+#[test]
+fn the_magnetometer_reads_the_model_field_at_the_vehicle() {
+    let origin = crate::origin::GeoOrigin {
+        latitude_deg: 51.05,
+        longitude_deg: -114.07,
+        elevation_m: 1_045.0,
+    };
+    let earth = crate::earth_field::EarthField::at_origin(origin).expect("inside the model");
+    let declination = earth.declination_deg();
+    assert!(
+        declination > 10.0,
+        "51.05 N 114.07 W has a large declination"
+    );
+    let mut synth = StepSynthesizer::new(origin, earth);
+
+    // Facing true heading 30°: ENU yaw is measured from east, counter-
+    // clockwise, so a 30° heading is an ENU yaw of 60°.
+    let enu_yaw = 60.0_f64.to_radians();
+    let at = |t_us| AviateModelState {
+        quat: [(enu_yaw / 2.0).cos(), 0.0, 0.0, (enu_yaw / 2.0).sin()],
+        time_us: t_us,
+        reset_generation: 1,
+        valid: 1,
+        ..AviateModelState::default()
+    };
+    assert!(synth.next(&at(1_000)).is_none());
+    let sample = synth.next(&at(2_000)).expect("a new step");
+    let [mx, my, _] = sample.packet.mag.expect("mag lane").field_ut;
+    let magnetic = (-my).atan2(mx).to_degrees();
+    let true_heading = magnetic + declination;
+    assert!(
+        (true_heading - 30.0).abs() < 0.1,
+        "magnetic {magnetic:.2}° + declination {declination:.2}° is not 30°"
+    );
 }

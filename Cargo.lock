@@ -119,6 +119,7 @@ dependencies = [
  "aviate-board-sitl-gazebo",
  "aviate-config",
  "aviate-core",
+ "aviate-geomag",
  "aviate-hal-xil",
  "aviate-xil-contract",
  "env_logger",
