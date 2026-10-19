@@ -1587,3 +1587,63 @@ the bounded path back to armable: refused immediately after disarm,
 accepted once the pre-arm samples re-accumulate. Witnesses LLR-FLT-213.
 """
 traces_to = ["b57b1557-1e66-596f-b766-cfd63cf857ec"]
+
+[[tests]]
+uid = "0397bdeb-2090-431e-9893-0f405af03343"
+id = "TST-FLT-216"
+title = "re_arming_after_a_grounded_disarm_flies_the_primary_law"
+test_selector = "re_arming_after_a_grounded_disarm_flies_the_primary_law"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/arm_disarm_lifecycle/rearm.rs` arms a kernel on the
+ground, disarms it (the teardown leaves the backup law), brings it back
+to Ready, re-arms it, and runs one real `update()` with a climb command.
+It asserts the cycle reports the primary law and that the actuator
+outputs are not the safe pattern. Removing the law selection from
+`arm()` fails it. Witnesses LLR-FLT-212.
+"""
+traces_to = ["8030e81c-d590-569e-b832-b2dd762a07ca"]
+
+[[tests]]
+uid = "27f1bff4-238b-409e-84a2-1bd16f0948ee"
+id = "TST-FLT-217"
+title = "every_capability_loss_latches_a_fault_until_ground_reset"
+test_selector = "every_capability_loss_latches_a_fault_until_ground_reset"
+owner = "aviate-core@aviate"
+description = """
+For each capability-loss `DegradationReason`, the test arms a kernel,
+runs `handle_degradation()`, and asserts the mapped fault is set,
+survives a grounded `disarm()`, makes `arm()` return
+`ArmError::Faulted` after the kernel returns to Ready, and clears only
+when `ground_reset()` runs, after which the kernel arms and flies the
+primary law. Witnesses LLR-FLT-214.
+"""
+traces_to = ["41c98af2-91c7-4047-be2d-8891e726feac"]
+
+[[tests]]
+uid = "3adb15e5-ad1c-4e7b-91e3-80ae7c63fffc"
+id = "TST-FLT-218"
+title = "recoverable_and_commanded_degradations_latch_nothing"
+test_selector = "recoverable_and_commanded_degradations_latch_nothing"
+owner = "aviate-core@aviate"
+description = """
+CommandTimeout and LandRequested engage through `handle_degradation()`
+without setting any fault, and the next flight period arms and flies
+the primary law. Witnesses LLR-FLT-214.
+"""
+traces_to = ["41c98af2-91c7-4047-be2d-8891e726feac"]
+
+[[tests]]
+uid = "953140ee-758c-4305-add2-4086cc58fc1b"
+id = "TST-FLT-219"
+title = "persistent_timing_violations_latch_through_the_update_cycle"
+test_selector = "persistent_timing_violations_latch_through_the_update_cycle"
+owner = "aviate-core@aviate"
+description = """
+The test reports `TIMING_VIOLATION_THRESHOLD` consecutive deadline
+misses and runs one real `update()`. It asserts the kernel degrades to
+the alternate law and that TIMING_PERSISTENT latches, survives disarm,
+refuses the next arm and clears only via `ground_reset()`. Witnesses
+LLR-FLT-214 through the production update path.
+"""
+traces_to = ["41c98af2-91c7-4047-be2d-8891e726feac"]
