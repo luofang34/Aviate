@@ -18,6 +18,8 @@ config = ["aviate-config"]
 aviate-core = { path = "../aviate-core" }
 aviate-config = { path = "../aviate-config", optional = true }
 aviate-hal-io = { path = "../aviate-hal/io" }
+# The local frame's geodetic projection (no_std, libm only).
+world-core.workspace = true
 # Note: MAVLink protocol is now integrated in src/mavlink/protocol.rs (no external dependency)
 
 [dev-dependencies]

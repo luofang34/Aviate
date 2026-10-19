@@ -21,6 +21,12 @@ ALLOWED=(
   aviate-runtime aviate-security
   # External DAL-D base crates approved for the flight build
   log bitflags embedded-hal libm
+  # luofang34/world's base tier, for aviate-link's WGS-84 tangent-plane
+  # projection: no_std, its only dependency is libm, pinned to a full
+  # commit rev (check_git_dependency_pins.sh), and its conversions are
+  # tested against published WGS-84 reference values. The model crates
+  # (world-geomag, world-atmosphere) stay out of the flight closure.
+  world-core
 )
 
 DEPS=$(cargo tree -p aviate-runtime --no-default-features --features env-flight \
