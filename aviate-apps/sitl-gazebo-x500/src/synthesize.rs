@@ -33,6 +33,10 @@ pub fn truth(state: &AviateModelState) -> TruthSample {
             state.quat[2] as f32,
             state.quat[3] as f32,
         ]),
+        // The gz plugin states velocity and angular velocity, but the
+        // synthesizer derives both from successive poses so the IMU has
+        // the shape of a real one whatever the plugin publishes.
+        measured: None,
     }
 }
 
