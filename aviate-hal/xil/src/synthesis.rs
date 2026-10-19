@@ -41,6 +41,23 @@ pub struct TruthSample {
     pub position_ned_m: [f32; 3],
     /// Attitude as the body FRD → world NED rotation `[w, x, y, z]`.
     pub attitude: [f32; 4],
+    /// The simulator's own velocity, body rates and specific force, when
+    /// it states them. Without them they are derived from successive
+    /// positions and attitudes, which is only as good as the positions'
+    /// resolution allows.
+    pub measured: Option<MeasuredKinematics>,
+}
+
+/// Kinematics a simulator states directly, alongside its pose.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeasuredKinematics {
+    /// Velocity, NED, m/s.
+    pub velocity_ned_mps: [f32; 3],
+    /// Body angular rates, FRD, rad/s.
+    pub body_rates_rps: [f32; 3],
+    /// Specific force on the body, FRD, m/s²: what an ideal
+    /// accelerometer reads (about `[0, 0, -g]` at rest).
+    pub specific_force_body_mps2: [f32; 3],
 }
 
 /// Apply tier-matched additive Gaussian noise to every populated
@@ -221,41 +238,15 @@ fn synthesize_packet(
     let now_ned_pos = truth.position_ned_m;
     let dt = delta_us as f32 * 1e-6;
 
-    let prev_ned_pos = prev.position_ned_m;
-    let now_ned_vel = [
-        (now_ned_pos[0] - prev_ned_pos[0]) / dt,
-        (now_ned_pos[1] - prev_ned_pos[1]) / dt,
-        (now_ned_pos[2] - prev_ned_pos[2]) / dt,
-    ];
-
     let q_ned = truth.attitude;
-    let gyro = body_rate(q_ned, prev.attitude, dt);
-
-    // Inertial acceleration from the velocity finite difference — the
-    // same baseline the velocity above is derived over. The ±3 g clamp
-    // guards the spikes a physics-step time hiccup can produce. Feeding
-    // zero here instead (gravity-only IMU) starves the EKF predict step
-    // of every vertical transient: the velocity estimate then moves
-    // only at the GNSS fusion gain, lags hard braking by seconds, and a
-    // braked climb descends into the ground while the filter still
-    // believes it is climbing.
-    let accel_inertial_ned = match prev_ned_vel {
-        Some(prev_ned_vel) => {
-            let lim = 3.0 * gravity;
-            [
-                ((now_ned_vel[0] - prev_ned_vel[0]) / dt).clamp(-lim, lim),
-                ((now_ned_vel[1] - prev_ned_vel[1]) / dt).clamp(-lim, lim),
-                ((now_ned_vel[2] - prev_ned_vel[2]) / dt).clamp(-lim, lim),
-            ]
-        }
-        None => [0.0, 0.0, 0.0],
+    let (now_ned_vel, gyro, accel_body) = match truth.measured {
+        Some(measured) => (
+            measured.velocity_ned_mps,
+            measured.body_rates_rps,
+            measured.specific_force_body_mps2,
+        ),
+        None => derived_kinematics(truth, prev, dt, prev_ned_vel, gravity),
     };
-    let accel_ned = [
-        accel_inertial_ned[0],
-        accel_inertial_ned[1],
-        accel_inertial_ned[2] - gravity,
-    ];
-    let accel_body = rotate_world_to_body(q_ned, accel_ned);
 
     let imu = SimImuData {
         accel: accel_body,
@@ -302,6 +293,56 @@ fn synthesize_packet(
         reset_generation: Some(truth.reset_generation),
     };
     (packet, now_ned_vel)
+}
+
+/// Velocity, body rate and specific force derived from two successive
+/// truth states `dt` seconds apart, for a simulator that states only
+/// its pose.
+fn derived_kinematics(
+    truth: &TruthSample,
+    prev: &TruthSample,
+    dt: f32,
+    prev_ned_vel: Option<[f32; 3]>,
+    gravity: f32,
+) -> ([f32; 3], [f32; 3], [f32; 3]) {
+    let now_ned_pos = truth.position_ned_m;
+    let prev_ned_pos = prev.position_ned_m;
+    let now_ned_vel = [
+        (now_ned_pos[0] - prev_ned_pos[0]) / dt,
+        (now_ned_pos[1] - prev_ned_pos[1]) / dt,
+        (now_ned_pos[2] - prev_ned_pos[2]) / dt,
+    ];
+    let gyro = body_rate(truth.attitude, prev.attitude, dt);
+
+    // Inertial acceleration from the velocity finite difference — the
+    // same baseline the velocity above is derived over. The ±3 g clamp
+    // guards the spikes a physics-step time hiccup can produce. Feeding
+    // zero here instead (gravity-only IMU) starves the EKF predict step
+    // of every vertical transient: the velocity estimate then moves
+    // only at the GNSS fusion gain, lags hard braking by seconds, and a
+    // braked climb descends into the ground while the filter still
+    // believes it is climbing.
+    let accel_inertial_ned = match prev_ned_vel {
+        Some(prev_ned_vel) => {
+            let lim = 3.0 * gravity;
+            [
+                ((now_ned_vel[0] - prev_ned_vel[0]) / dt).clamp(-lim, lim),
+                ((now_ned_vel[1] - prev_ned_vel[1]) / dt).clamp(-lim, lim),
+                ((now_ned_vel[2] - prev_ned_vel[2]) / dt).clamp(-lim, lim),
+            ]
+        }
+        None => [0.0, 0.0, 0.0],
+    };
+    let accel_ned = [
+        accel_inertial_ned[0],
+        accel_inertial_ned[1],
+        accel_inertial_ned[2] - gravity,
+    ];
+    (
+        now_ned_vel,
+        gyro,
+        rotate_world_to_body(truth.attitude, accel_ned),
+    )
 }
 
 /// Rotate a world-frame vector into body frame via the inverse of `q`.
