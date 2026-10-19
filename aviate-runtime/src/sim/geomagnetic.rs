@@ -7,9 +7,10 @@
 
 use aviate_core::sensor::{GeomagneticReference, GeomagneticSource};
 use aviate_core::types::Radians;
-use aviate_geomag::{decimal_year_from_unix_seconds, wmm2025, GeodeticPoint};
 use aviate_hal_io::{GnssFix, RawGnssReading};
 use log::{info, warn};
+use world_core::{DecimalYear, GeodeticPosition};
+use world_geomag::wmm2025;
 
 use super::SitlRunner;
 
@@ -52,19 +53,18 @@ impl GeomagneticContext {
         if near_last {
             return;
         }
-        let point = GeodeticPoint {
-            latitude_deg: fix.lat_deg,
-            longitude_deg: fix.lon_deg,
-            // The receiver reports one height; the few tens of meters
-            // between sea level and the ellipsoid do not move the field.
-            height_m: f64::from(fix.alt_m),
-        };
-        match wmm2025(point, decimal_year_now()) {
+        // The receiver reports one height; the few tens of meters between
+        // sea level and the ellipsoid do not move the field.
+        let position = GeodeticPosition::wgs84(fix.lat_deg, fix.lon_deg, f64::from(fix.alt_m));
+        match wmm2025(position, decimal_year_now()) {
             Ok(field) => {
                 if self.model.is_none() {
                     info!(
                         "declination {:.2} deg from {} at {:.5}, {:.5}",
-                        field.declination_deg, field.model.name, fix.lat_deg, fix.lon_deg
+                        field.declination_deg,
+                        field.model.dataset.edition,
+                        fix.lat_deg,
+                        fix.lon_deg
                     );
                 }
                 self.model = Some(ModelReference {
@@ -108,11 +108,11 @@ impl GeomagneticContext {
 }
 
 /// Today's date as a decimal year, from the host clock.
-fn decimal_year_now() -> f64 {
+fn decimal_year_now() -> DecimalYear {
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
-    decimal_year_from_unix_seconds(seconds)
+    DecimalYear::from_unix_seconds(seconds)
 }
 
 impl<C, M> SitlRunner<C, M>
