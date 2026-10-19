@@ -40,7 +40,7 @@ mod geomagnetic;
 pub use estimator::{format_aviate_estimator_status, format_estimator_status};
 pub use geomagnetic::format_geomagnetic_reference;
 mod geodetic;
-pub use geodetic::{format_global_position, format_gps_raw, ned_to_lat_lon};
+pub use geodetic::{format_global_position, format_gps_raw, ned_to_geodetic};
 // Conditionally use aviate_config for runtime config, or use local defaults
 #[cfg(feature = "config")]
 pub use aviate_config::TelemetryConfig;
