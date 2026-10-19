@@ -157,6 +157,7 @@ fn steady_state(t_us: u64, reset_generation: u32) -> TruthSample {
         step: t_us / 1_000,
         position_ned_m: [0.0, EAST_SPEED * t, -5.0],
         attitude: [half_yaw.cos(), 0.0, 0.0, half_yaw.sin()],
+        measured: None,
     }
 }
 
@@ -266,6 +267,7 @@ fn at_rest(t_us: u64, attitude: [f32; 4]) -> TruthSample {
         step: t_us / 1_000,
         position_ned_m: [0.0; 3],
         attitude,
+        measured: None,
     }
 }
 
@@ -381,4 +383,33 @@ fn an_origin_outside_the_models_is_refused() {
         StepSynthesizer::new(GeoOrigin::DEFAULT, DecimalYear(2031.0)),
         Err(SynthesisError::EarthField(_))
     ));
+}
+
+/// A simulator that states its kinematics is read as stated: a position
+/// that jitters by a centimeter between 4 ms steps, which differencing
+/// would turn into meters per second and a saturated accelerometer,
+/// leaves the velocity, gyro and accelerometer exactly as stated.
+#[test]
+fn stated_kinematics_are_used_instead_of_differenced_positions() {
+    let mut synth = synth_at(GeoOrigin::DEFAULT);
+    let measured = MeasuredKinematics {
+        velocity_ned_mps: [1.0, -0.5, 0.2],
+        body_rates_rps: [0.01, -0.02, 0.3],
+        specific_force_body_mps2: [0.1, 0.0, -9.7],
+    };
+    let state = |t_us: u64, north_m: f32| TruthSample {
+        position_ned_m: [north_m, 0.0, -5.0],
+        measured: Some(measured),
+        ..at_rest(t_us, [1.0, 0.0, 0.0, 0.0])
+    };
+    assert!(synth.next(&state(4_000, 0.0)).is_none());
+    for (i, north_m) in [0.01, 0.0, 0.01, 0.0].into_iter().enumerate() {
+        let t_us = 8_000 + 4_000 * i as u64;
+        let sample = synth.next(&state(t_us, north_m)).expect("a new step");
+        let imu = sample.packet.imu.expect("imu lane");
+        assert_eq!(imu.accel, measured.specific_force_body_mps2);
+        assert_eq!(imu.gyro, measured.body_rates_rps);
+        let gnss = sample.packet.gnss.expect("gnss lane");
+        assert_eq!(gnss.vel_ned, measured.velocity_ned_mps);
+    }
 }
