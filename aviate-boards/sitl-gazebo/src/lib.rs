@@ -45,6 +45,7 @@ use aviate_core::kernel::builder::KernelBuildError;
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{SitlConfig, SitlIO};
 pub use aviate_runtime::sitl_timestamp;
+pub use aviate_runtime::telemetry::GeodeticOrigin;
 use aviate_runtime::{loop_periods, SitlBoardInfo, SitlRunner};
 
 /// Gazebo SITL board configuration
@@ -159,6 +160,18 @@ where
     /// Returns the actuator command that was sent.
     pub fn step(&mut self) -> ActuatorCmd {
         self.runner.step()
+    }
+
+    /// Declare the geodetic point the world's local frame is measured
+    /// from (see [`SitlRunner::set_geodetic_origin`]).
+    pub fn set_geodetic_origin(&mut self, origin: GeodeticOrigin) {
+        self.runner.set_geodetic_origin(origin);
+    }
+
+    /// Run one iteration for one simulator step that advanced
+    /// simulation time by `sim_delta_us` (see [`SitlRunner::step_sim`]).
+    pub fn step_sim(&mut self, sim_delta_us: u64) -> ActuatorCmd {
+        self.runner.step_sim(sim_delta_us)
     }
 
     /// Run the main control loop indefinitely

@@ -45,6 +45,17 @@ where
         self.step_with_arm_authorizer(&AllowArm)
     }
 
+    /// Step once for one simulator step that advanced simulation time
+    /// by `sim_delta_us`.
+    ///
+    /// The kernel dt is then simulation time, not host time. A
+    /// simulator that runs slower or faster than real time otherwise
+    /// gives the estimator a dt that does not agree with the motion in
+    /// the sensor data, and the error grows with the real-time factor.
+    pub fn step_sim(&mut self, sim_delta_us: u64) -> ActuatorCmd {
+        self.step_clocked(&AllowArm, Some(sim_delta_us))
+    }
+
     /// Feed each buffered sensor section that the sample actually carried.
     ///
     /// A section the sample left out keeps the driver's current reading, so a
@@ -66,6 +77,34 @@ where
 
     /// Step with a live authorization check for each inbound Arm command.
     pub fn step_with_arm_authorizer<A>(&mut self, authorizer: &A) -> ActuatorCmd
+    where
+        A: ArmAuthorizer,
+    {
+        self.step_clocked(authorizer, None)
+    }
+
+    /// The kernel cycle period: the simulator's step when the caller
+    /// supplies one, else the host-time gap between IMU samples.
+    fn cycle_delta(&mut self, sim_delta_us: Option<u64>) -> TimeDelta {
+        let mut delta_us = 1000u64;
+        if let Some(imu) = self.board_hal.read_imu() {
+            let current_time = imu.timestamp.ticks;
+            if let Some(last) = self.last_imu_time {
+                delta_us = current_time.saturating_sub(last);
+            }
+            self.last_imu_time = Some(current_time);
+            self.sensor_cache.imu = Some(imu);
+        }
+        if let Some(sim_delta_us) = sim_delta_us {
+            delta_us = sim_delta_us;
+        }
+        TimeDelta {
+            dt_sec: Seconds(((delta_us as f32) * 1e-6).clamp(0.0001, 0.1)),
+            tick_delta: delta_us,
+        }
+    }
+
+    fn step_clocked<A>(&mut self, authorizer: &A, sim_delta_us: Option<u64>) -> ActuatorCmd
     where
         A: ArmAuthorizer,
     {
@@ -93,28 +132,13 @@ where
         self.feed_buffered_sensors();
 
         if let Some(gps_data) = self.transport.take_gps_data() {
-            // Feed GNSS
+            self.geodetic.last_fix = Some(gps_data.gnss);
             self.board_hal.gnss_mut().feed(gps_data.gnss);
         }
 
         // 3. Read sensors via BoardHal's SensorHal implementation
         //    This is the SAME code path that real hardware uses!
-        let mut current_dt = 0.001;
-        let mut current_delta_us = 1000u64;
-
-        if let Some(imu) = self.board_hal.read_imu() {
-            let current_time = imu.timestamp.ticks;
-            let delta_us_val = if let Some(last) = self.last_imu_time {
-                current_time.saturating_sub(last)
-            } else {
-                1000
-            };
-            current_dt = (delta_us_val as f32) * 1e-6;
-            current_delta_us = delta_us_val;
-            self.last_imu_time = Some(current_time);
-            current_dt = current_dt.clamp(0.0001, 0.1);
-            self.sensor_cache.imu = Some(imu);
-        }
+        let time_delta = self.cycle_delta(sim_delta_us);
 
         if let Some(gnss) = self.board_hal.read_gnss() {
             self.sensor_cache.gnss = Some(gnss);
@@ -127,11 +151,6 @@ where
         if let Some(mag) = self.board_hal.read_mag() {
             self.sensor_cache.mag = Some(mag);
         }
-
-        let time_delta = TimeDelta {
-            dt_sec: Seconds(current_dt),
-            tick_delta: current_delta_us,
-        };
 
         // 4. Receive commands via transport, routed through the same
         // ingress state machine the hardware runner uses (#133).
@@ -310,6 +329,8 @@ where
                 baro_temperature_c: baro
                     .and_then(|baro| baro.air.temperature)
                     .map_or(0.0, |t| t.0),
+                geodetic_origin: self.geodetic.origin,
+                gnss_fix: self.geodetic.last_fix,
             };
             telem.update_state(snapshot); // Just copies, easy to audit
         }
