@@ -1647,3 +1647,56 @@ refuses the next arm and clears only via `ground_reset()`. Witnesses
 LLR-FLT-214 through the production update path.
 """
 traces_to = ["41c98af2-91c7-4047-be2d-8891e726feac"]
+
+[[tests]]
+uid = "4a2daafc-2dad-4a0f-ac03-70e4f4a64e16"
+id = "TST-FLT-220"
+title = "a_new_world_generation_clears_a_latched_fault"
+test_selector = "a_new_world_generation_clears_a_latched_fault"
+owner = "aviate-core@aviate"
+description = """
+`aviate-runtime/src/sim/lifecycle/tests.rs` steps a SITL runner on
+samples of world epoch 1, latches ATTITUDE_LOST, and shows that more
+epoch-1 samples keep it. The first epoch-2 sample clears it, restarts
+init, and is itself used. Witnesses LLR-FLT-215.
+"""
+traces_to = ["ee25123f-3a36-4cc2-bbed-46ed2ab75242"]
+
+[[tests]]
+uid = "e407cda9-afa0-4fd3-a201-96cef66491c0"
+id = "TST-FLT-221"
+title = "the_first_world_a_simulator_states_is_not_a_reset"
+test_selector = "the_first_world_a_simulator_states_is_not_a_reset"
+owner = "aviate-core@aviate"
+description = """
+The first epoch a simulator states does not ground-reset the runner:
+a fault latched after it survives the next sample of the same epoch.
+Witnesses LLR-FLT-215.
+"""
+traces_to = ["ee25123f-3a36-4cc2-bbed-46ed2ab75242"]
+
+[[tests]]
+uid = "a430e77b-d2ac-40e5-9e07-d23b230c8405"
+id = "TST-FLT-222"
+title = "a_new_world_generation_is_reported_once_and_keeps_its_sample"
+test_selector = "a_new_world_generation_is_reported_once_and_keeps_its_sample"
+owner = "aviate-core@aviate"
+description = """
+`aviate-hal/xil/src/sitl_io/tests.rs`: a new epoch drops the old
+world's buffered GNSS fix, keeps the new sample, and is reported once;
+a sample with no epoch is never a change. Witnesses LLR-FLT-215.
+"""
+traces_to = ["ee25123f-3a36-4cc2-bbed-46ed2ab75242"]
+
+[[tests]]
+uid = "fe1e7b8f-50fa-4100-933f-9f287048aa80"
+id = "TST-FLT-223"
+title = "a_stalled_host_with_steady_sim_steps_latches_nothing"
+test_selector = "a_stalled_host_with_steady_sim_steps_latches_nothing"
+owner = "aviate-core@aviate"
+description = """
+Four 30 ms host stalls between 1 ms simulator steps record no deadline
+violation, the kernel's longest cycle is the 1 ms simulation step, and
+no latched fault is set. Witnesses LLR-FLT-216.
+"""
+traces_to = ["942c42b5-3e17-4b3e-97c3-6a8a29948a63"]

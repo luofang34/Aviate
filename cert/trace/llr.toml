@@ -2219,3 +2219,40 @@ verification_methods = ["test"]
 modules = ["aviate-core/src/checks/in_flight.rs", "aviate-core/src/kernel_logic.rs", "aviate-core/src/kernel_logic/lifecycle.rs", "aviate-core/src/fault.rs"]
 derived = false
 traces_to = ["30f749c3-82ee-4ca3-9c0b-91413894c385", "6a9be893-efec-4a80-99c0-885dbe19808e"]
+
+[[requirements]]
+uid = "ee25123f-3a36-4cc2-bbed-46ed2ab75242"
+id = "LLR-FLT-215"
+title = "A simulator world reset ground-resets the SITL flight controller"
+owner = "aviate-core@aviate"
+description = """
+A SITL sensor sample MAY state its simulated world's epoch
+(`SimSensorPacket.reset_generation`). When a sample states an epoch
+different from the last one stated, the transport SHALL drop what it
+buffered from the old world and keep the new sample, and the SITL
+runner SHALL, before its next kernel cycle, terminate any flight
+period and run `ground_reset()`. The first epoch a simulator states,
+and a sample that states none, SHALL NOT count as a change.
+"""
+verification_methods = ["test"]
+modules = ["aviate-hal/xil/src/sitl_io.rs", "aviate-hal/xil/src/sim_types.rs", "aviate-runtime/src/sim/lifecycle.rs", "aviate-runtime/src/sim/step.rs"]
+derived = false
+traces_to = ["6a9be893-efec-4a80-99c0-885dbe19808e", "30f749c3-82ee-4ca3-9c0b-91413894c385"]
+
+[[requirements]]
+uid = "942c42b5-3e17-4b3e-97c3-6a8a29948a63"
+id = "LLR-FLT-216"
+title = "SITL cycle timing is measured on the simulation clock"
+owner = "aviate-core@aviate"
+description = """
+The SITL runner SHALL give the kernel the simulation step as its cycle
+period and SHALL NOT report host-time deadline violations
+(`report_timing_violation`). A host that stalls between simulator steps
+therefore records no timing violation and latches no
+TIMING_PERSISTENT fault.
+"""
+verification_methods = ["test"]
+modules = ["aviate-runtime/src/sim/step.rs"]
+derived = false
+traces_to = ["30f749c3-82ee-4ca3-9c0b-91413894c385"]
+

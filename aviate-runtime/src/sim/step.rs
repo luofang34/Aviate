@@ -108,6 +108,9 @@ where
     where
         A: ArmAuthorizer,
     {
+        // 0. A sample from a reset world starts a new power cycle.
+        self.adopt_generation_change();
+
         // 1. Poll transport for incoming messages
         self.transport.poll();
 

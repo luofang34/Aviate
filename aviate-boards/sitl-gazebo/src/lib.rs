@@ -161,6 +161,12 @@ where
         self.runner.step()
     }
 
+    /// Reset for a different simulator (see
+    /// [`SitlRunner::reset_for_simulator_generation`]).
+    pub fn reset_for_simulator_generation(&mut self) {
+        self.runner.reset_for_simulator_generation();
+    }
+
     /// Run one iteration for one simulator step that advanced
     /// simulation time by `sim_delta_us` (see [`SitlRunner::step_sim`]).
     pub fn step_sim(&mut self, sim_delta_us: u64) -> ActuatorCmd {
