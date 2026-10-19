@@ -109,18 +109,54 @@ fn receiver_fix() -> RawGnssReading {
     }
 }
 
+/// The position the WGS-84 tangent plane at `ORIGIN` gives an offset.
+fn on_the_tangent_plane(
+    north_m: f64,
+    east_m: f64,
+    down_m: f64,
+) -> Option<world_core::GeodeticPosition> {
+    let plane = world_core::LocalTangentPlane::new(world_core::GeodeticPosition::wgs84(
+        ORIGIN.latitude_deg,
+        ORIGIN.longitude_deg,
+        f64::from(ORIGIN.altitude_msl_m),
+    ))
+    .ok()?;
+    Some(plane.to_geodetic(world_core::Ned {
+        north_m,
+        east_m,
+        down_m,
+    }))
+}
+
 #[test]
-fn a_local_offset_maps_to_the_origin_plus_flat_earth_degrees() {
-    assert_eq!(
-        ned_to_lat_lon(&ORIGIN, 0.0, 0.0),
-        (ORIGIN.latitude_deg, ORIGIN.longitude_deg)
+fn a_local_offset_is_projected_on_the_tangent_plane() {
+    for ned in [
+        [0.0, 0.0, 0.0],
+        [111.111, 0.0, 0.0],
+        [0.0, 100.0, -5.0],
+        [-4_000.0, 3_000.0, -120.0],
+    ] {
+        let want = on_the_tangent_plane(f64::from(ned[0]), f64::from(ned[1]), f64::from(ned[2]));
+        assert!(want.is_some());
+        assert_eq!(ned_to_geodetic(&ORIGIN, ned), want, "{ned:?}");
+    }
+    // The plane rises above the ellipsoid away from the origin: 5 km out,
+    // a vehicle at local height 120 m is about 2 m higher than that.
+    let far = ned_to_geodetic(&ORIGIN, [-4_000.0, 3_000.0, -120.0]);
+    let rise = far.map(|p| p.ellipsoidal_height_m - (488.0 + 120.0));
+    assert!(
+        rise.is_some_and(|rise| (rise - 1.96).abs() < 0.05),
+        "{rise:?}"
     );
-    let (lat, lon) = ned_to_lat_lon(&ORIGIN, 111.111, 0.0);
-    assert!((lat - (ORIGIN.latitude_deg + 0.001)).abs() < 1e-9);
-    assert_eq!(lon, ORIGIN.longitude_deg);
-    let (_, lon) = ned_to_lat_lon(&ORIGIN, 0.0, 100.0);
-    // 100 m east at 47.4° N is 100 / (111 111 · cos 47.4°) degrees.
-    assert!((lon - ORIGIN.longitude_deg - 0.001_329_6).abs() < 1e-6);
+}
+
+#[test]
+fn a_malformed_origin_states_no_position() {
+    let bad = GeodeticOrigin {
+        latitude_deg: f64::NAN,
+        ..ORIGIN
+    };
+    assert_eq!(ned_to_geodetic(&bad, [0.0; 3]), None);
 }
 
 #[test]
@@ -136,11 +172,20 @@ fn the_estimate_is_stated_globally_around_the_origin() {
     let Some(global) = cycle.global() else {
         return;
     };
-    let (lat, lon) = ned_to_lat_lon(&ORIGIN, 100.0, -50.0);
+    // The reported position is the tangent-plane position of the estimate.
+    let want = on_the_tangent_plane(100.0, -50.0, -12.5);
+    assert!(want.is_some());
+    let Some(want) = want else {
+        return;
+    };
     assert_eq!(global.time_boot_ms, 4_000);
-    assert_eq!(global.lat, (lat * 1e7) as i32);
-    assert_eq!(global.lon, (lon * 1e7) as i32);
-    assert_eq!(global.alt, 500_500);
+    assert_eq!(global.lat, (want.latitude_deg * 1e7) as i32);
+    assert_eq!(global.lon, (want.longitude_deg * 1e7) as i32);
+    assert_eq!(
+        global.alt,
+        (want.ellipsoidal_height_m as f32 * 1_000.0) as i32
+    );
+    assert!((global.alt - 500_500).abs() <= 1, "{}", global.alt);
     assert_eq!(global.relative_alt, 12_500);
     assert_eq!((global.vx, global.vy, global.vz), (150, -75, -20));
     assert_eq!(global.hdg, 9_000);

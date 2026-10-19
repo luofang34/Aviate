@@ -7,6 +7,7 @@ use aviate_core::math::Quaternion;
 use aviate_core::state::StateEstimate;
 use aviate_core::types::FloatExt;
 use aviate_hal_io::{GnssFix, RawGnssReading};
+use world_core::{GeodeticPosition, LocalTangentPlane, Ned};
 
 use super::super::protocol::{
     gps_fix_type, serialize_mavlink, GlobalPositionInt, GpsRawInt, MavMessage,
@@ -14,18 +15,23 @@ use super::super::protocol::{
 use crate::errors::{TelemetryError, TelemetryResult};
 use crate::telemetry::GeodeticOrigin;
 
-/// Meters per degree of latitude in the flat-earth projection. Over the
-/// few hundred meters a local frame spans, the flat-earth error is far
-/// below a receiver's accuracy.
-const METERS_PER_DEGREE: f64 = 111_111.0;
-
-/// Latitude and longitude, in degrees, of a local NED offset from `origin`.
-pub fn ned_to_lat_lon(origin: &GeodeticOrigin, north_m: f32, east_m: f32) -> (f64, f64) {
-    let lat_cos = f64::from(FloatExt::cos((origin.latitude_deg as f32).to_radians()));
-    (
-        origin.latitude_deg + f64::from(north_m) / METERS_PER_DEGREE,
-        origin.longitude_deg + f64::from(east_m) / (METERS_PER_DEGREE * lat_cos),
-    )
+/// The geodetic position of a local NED offset from `origin`, on the
+/// WGS-84 tangent plane at the origin. The origin's sea-level altitude is
+/// taken as its ellipsoidal height (no geoid separation is applied), so
+/// the returned height is an altitude on the same surface. `None` for an
+/// origin that is not a well-formed position.
+pub fn ned_to_geodetic(origin: &GeodeticOrigin, ned_m: [f32; 3]) -> Option<GeodeticPosition> {
+    let plane = LocalTangentPlane::new(GeodeticPosition::wgs84(
+        origin.latitude_deg,
+        origin.longitude_deg,
+        f64::from(origin.altitude_msl_m),
+    ))
+    .ok()?;
+    Some(plane.to_geodetic(Ned {
+        north_m: f64::from(ned_m[0]),
+        east_m: f64::from(ned_m[1]),
+        down_m: f64::from(ned_m[2]),
+    }))
 }
 
 fn degrees_e7(deg: f64) -> i32 {
@@ -76,12 +82,12 @@ pub fn format_global_position(
         state.position_ned[1].0,
         state.position_ned[2].0,
     ];
-    let (lat, lon) = ned_to_lat_lon(origin, n, e);
+    let position = ned_to_geodetic(origin, [n, e, d]).ok_or(TelemetryError::Protocol)?;
     let msg = MavMessage::GlobalPositionInt(GlobalPositionInt {
         time_boot_ms: time_ms,
-        lat: degrees_e7(lat),
-        lon: degrees_e7(lon),
-        alt: meters_to_mm(origin.altitude_msl_m - d),
+        lat: degrees_e7(position.latitude_deg),
+        lon: degrees_e7(position.longitude_deg),
+        alt: meters_to_mm(position.ellipsoidal_height_m as f32),
         relative_alt: meters_to_mm(-d),
         vx: cm_per_s(state.velocity_ned[0].0),
         vy: cm_per_s(state.velocity_ned[1].0),
