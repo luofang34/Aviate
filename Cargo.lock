@@ -177,6 +177,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "aviate-app-template-check-app"
+version = "0.1.3"
+dependencies = [
+ "aviate-airframe-multirotor",
+ "aviate-backend-gz",
+ "aviate-board-sitl-gazebo",
+ "aviate-config",
+ "aviate-core",
+ "aviate-hal-xil",
+ "aviate-link",
+ "env_logger",
+ "log",
+]
+
+[[package]]
 name = "aviate-backend-gz"
 version = "0.1.3"
 dependencies = [
