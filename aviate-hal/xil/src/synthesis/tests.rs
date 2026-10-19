@@ -1,7 +1,11 @@
 //! Truth-synthesis tests: rotations and the step sequence, in NED.
 
 use super::*;
-use crate::world::EarthField;
+use world_atmosphere::{Altitude, Isa};
+use world_core::{GeodeticPosition, Ned};
+
+/// A fixed date, so every run evaluates the same Earth field.
+const EPOCH: DecimalYear = DecimalYear(2026.8);
 
 const TOL: f32 = 1e-5;
 
@@ -165,9 +169,13 @@ fn replay(synth: &mut StepSynthesizer, times: &[u64]) -> Vec<StepSample> {
 }
 
 fn synth_at(origin: GeoOrigin) -> StepSynthesizer {
-    let earth = EarthField::at_origin(origin.geodetic_position())
-        .expect("today and the origin are inside the model");
-    StepSynthesizer::new(origin, earth)
+    StepSynthesizer::new(origin, EPOCH).expect("the origin and date are inside the models")
+}
+
+/// The specific force a level vehicle at rest reads: the normal gravity
+/// at its position, upward.
+fn at_rest_force(synth: &StepSynthesizer) -> [f32; 3] {
+    [0.0, 0.0, -(synth.environment().gravity_mps2 as f32)]
 }
 
 fn vec_close_within(a: [f32; 3], b: [f32; 3], tol: f32) -> bool {
@@ -202,7 +210,7 @@ fn repeated_and_skipped_states_give_one_steady_sample_per_new_step() {
             gnss.vel_ned
         );
         assert!(
-            vec_close_within(imu.accel, [0.0, 0.0, -GRAVITY], 0.05),
+            vec_close_within(imu.accel, at_rest_force(&synth), 0.05),
             "t={t}: specific force {:?} is not gravity alone",
             imu.accel
         );
@@ -237,7 +245,7 @@ fn a_world_reset_reseeds_the_step_sequence() {
     assert_eq!(sample.packet.reset_generation, Some(2));
     let imu = sample.packet.imu.expect("imu lane");
     assert!(
-        vec_close_within(imu.accel, [0.0, 0.0, -GRAVITY], 0.05),
+        vec_close_within(imu.accel, at_rest_force(&synth), 0.05),
         "the first step of a new epoch has no velocity history: {:?}",
         imu.accel
     );
@@ -261,24 +269,72 @@ fn at_rest(t_us: u64, attitude: [f32; 4]) -> TruthSample {
     }
 }
 
-/// A launcher that moves the world origin moves the GNSS fix with it.
+/// A launcher that moves the world origin moves the GNSS fix with it,
+/// and the baro reads the standard atmosphere at the origin's elevation.
 #[test]
 fn gnss_and_baro_are_made_around_the_stated_origin() {
     let origin = GeoOrigin {
-        latitude_deg: 47.397_742,
-        longitude_deg: 8.545_992_1,
-        elevation_m: 500.0,
+        position: GeodeticPosition::wgs84(47.397_742, 8.545_992_1, 500.0),
     };
     let mut synth = synth_at(origin);
     let level = [1.0, 0.0, 0.0, 0.0];
     assert!(synth.next(&at_rest(1_000, level)).is_none());
     let sample = synth.next(&at_rest(2_000, level)).expect("a new step");
     let gnss = sample.packet.gnss.expect("gnss lane");
-    assert_eq!(gnss.lat_deg, origin.latitude_deg);
-    assert_eq!(gnss.lon_deg, origin.longitude_deg);
-    assert_eq!(gnss.alt_m, origin.elevation_m);
+    assert!((gnss.lat_deg - 47.397_742).abs() < 1e-12);
+    assert!((gnss.lon_deg - 8.545_992_1).abs() < 1e-12);
+    assert!((gnss.alt_m - 500.0).abs() < 1e-3);
+    let isa = Isa
+        .at(Altitude::GeometricMsl(500.0))
+        .expect("inside the standard");
     let baro = sample.packet.baro.expect("baro lane");
-    assert_eq!(baro.pressure_pa, isa_pressure(origin.elevation_m));
+    assert_eq!(baro.pressure_pa, isa.pressure_pa as f32);
+    assert_eq!(baro.temperature_c, isa.temperature_c() as f32);
+}
+
+/// Away from the origin every lane follows the vehicle: the fix is the
+/// tangent-plane position, the baro the standard atmosphere at its
+/// height, and gravity the normal gravity there.
+#[test]
+fn the_environment_follows_the_vehicle_through_the_world_models() {
+    let origin = GeoOrigin::DEFAULT;
+    let mut synth = synth_at(origin);
+    let level = [1.0, 0.0, 0.0, 0.0];
+    let at_ground = synth.environment().gravity_mps2;
+    let away = |t_us| TruthSample {
+        position_ned_m: [3_000.0, -4_000.0, -1_000.0],
+        ..at_rest(t_us, level)
+    };
+    assert!(synth.next(&away(1_000)).is_none());
+    let sample = synth.next(&away(2_000)).expect("a new step");
+
+    let expected = origin.plane().expect("a valid origin").to_geodetic(Ned {
+        north_m: 3_000.0,
+        east_m: -4_000.0,
+        down_m: -1_000.0,
+    });
+    let gnss = sample.packet.gnss.expect("gnss lane");
+    assert_eq!(
+        (gnss.lat_deg, gnss.lon_deg),
+        (expected.latitude_deg, expected.longitude_deg)
+    );
+    assert!((f64::from(gnss.alt_m) - expected.ellipsoidal_height_m).abs() < 1e-3);
+    // Curvature: the tangent plane rises above the ellipsoid away from
+    // the origin, by about d² / 2R (2 m at 5 km).
+    let rise = expected.ellipsoidal_height_m - (488.0 + 1_000.0);
+    assert!((rise - 1.96).abs() < 0.05, "{rise}");
+
+    let isa = Isa
+        .at(Altitude::GeometricMsl(expected.ellipsoidal_height_m))
+        .expect("inside the standard");
+    let baro = sample.packet.baro.expect("baro lane");
+    assert_eq!(baro.pressure_pa, isa.pressure_pa as f32);
+    // 1 km up, gravity is about 3 mm/s² weaker.
+    let aloft = synth.environment().gravity_mps2;
+    assert!(
+        (at_ground - aloft - 3.086e-3).abs() < 1e-4,
+        "{at_ground} {aloft}"
+    );
 }
 
 /// The simulated magnetometer and the controller share one Earth field:
@@ -287,17 +343,14 @@ fn gnss_and_baro_are_made_around_the_stated_origin() {
 #[test]
 fn the_magnetometer_reads_the_model_field_at_the_vehicle() {
     let origin = GeoOrigin {
-        latitude_deg: 51.05,
-        longitude_deg: -114.07,
-        elevation_m: 1_045.0,
+        position: GeodeticPosition::wgs84(51.05, -114.07, 1_045.0),
     };
-    let earth = EarthField::at_origin(origin.geodetic_position()).expect("inside the model");
-    let declination = earth.declination_deg();
+    let mut synth = synth_at(origin);
+    let declination = synth.environment().declination_deg();
     assert!(
         declination > 10.0,
         "51.05 N 114.07 W has a large declination"
     );
-    let mut synth = StepSynthesizer::new(origin, earth);
 
     // Facing true heading 30°.
     let half = 15.0_f32.to_radians();
@@ -311,4 +364,21 @@ fn the_magnetometer_reads_the_model_field_at_the_vehicle() {
         (true_heading - 30.0).abs() < 0.1,
         "magnetic {magnetic:.2}° + declination {declination:.2}° is not 30°"
     );
+}
+
+/// A world model's refusal at the origin refuses the synthesizer rather
+/// than substituting an environment.
+#[test]
+fn an_origin_outside_the_models_is_refused() {
+    let too_deep = GeoOrigin {
+        position: GeodeticPosition::wgs84(0.0, 0.0, -6_000.0),
+    };
+    assert!(matches!(
+        StepSynthesizer::new(too_deep, EPOCH),
+        Err(SynthesisError::EarthField(_) | SynthesisError::Atmosphere(_))
+    ));
+    assert!(matches!(
+        StepSynthesizer::new(GeoOrigin::DEFAULT, DecimalYear(2031.0)),
+        Err(SynthesisError::EarthField(_))
+    ));
 }

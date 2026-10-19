@@ -16,18 +16,16 @@ pub use noise::{
 };
 pub use origin::{GeoOrigin, OriginError, ORIGIN_ENV};
 
+mod environment;
+
+pub use environment::{Environment, SynthesisError};
+
+use world_core::{DecimalYear, LocalTangentPlane};
+
 use crate::sim_types::{
     sensor_presence, SimBaroData, SimGnssData, SimGnssFix, SimImuData, SimMagData, SimSensorPacket,
     SimTimestampUs,
 };
-use crate::world::EarthField;
-
-/// ISA sea-level pressure (Pa) and temperature (Celsius).
-pub const ISA_P0_PA: f32 = 101_325.0;
-/// ISA sea-level temperature (Celsius).
-pub const ISA_T0_C: f32 = 15.0;
-/// Standard gravity (m/s², NED-down convention so accel under hover ≈ -9.81 on z).
-pub const GRAVITY: f32 = 9.81;
 
 /// One read of the simulated vehicle's true state, in Aviate's
 /// conventions.
@@ -47,13 +45,7 @@ pub struct TruthSample {
 
 /// Apply tier-matched additive Gaussian noise to every populated
 /// sensor channel in `packet` in place. No-op for `NoiseTier::Off`.
-/// Reference latitude for GNSS noise is the SITL world origin.
-pub fn apply_packet_noise(
-    packet: &mut SimSensorPacket,
-    tier: NoiseTier,
-    rng: &mut NoiseRng,
-    origin: &GeoOrigin,
-) {
+pub fn apply_packet_noise(packet: &mut SimSensorPacket, tier: NoiseTier, rng: &mut NoiseRng) {
     if tier == NoiseTier::Off {
         return;
     }
@@ -67,7 +59,7 @@ pub fn apply_packet_noise(
         apply_mag_noise(mag, tier, rng);
     }
     if let Some(ref mut gnss) = packet.gnss {
-        apply_gnss_noise(gnss, tier, rng, origin.latitude_deg);
+        apply_gnss_noise(gnss, tier, rng);
     }
 }
 
@@ -97,10 +89,12 @@ pub struct StepSample {
 /// is the simulation time between the two states.
 #[derive(Debug)]
 pub struct StepSynthesizer {
-    /// The world origin that GNSS and baro readings are made around.
-    origin: GeoOrigin,
-    /// The Earth field the magnetometer reading is made from.
-    earth: EarthField,
+    /// The local NED frame at the world origin.
+    plane: LocalTangentPlane,
+    /// The date the Earth field is evaluated on.
+    epoch: DecimalYear,
+    /// The environment at the latest state.
+    environment: Environment,
     prev: Option<TruthSample>,
     /// Derived NED velocity of `prev`. `None` until two states of the
     /// same world epoch exist, because acceleration needs two
@@ -115,15 +109,31 @@ impl StepSynthesizer {
         self.prev_ned_vel = None;
     }
 
-    /// A synthesizer that makes GNSS and baro readings around `origin`
-    /// and magnetometer readings from `earth`.
-    pub fn new(origin: GeoOrigin, earth: EarthField) -> Self {
-        Self {
-            origin,
-            earth,
+    /// A synthesizer whose readings are made around `origin`, with the
+    /// Earth field of `epoch`.
+    ///
+    /// # Errors
+    ///
+    /// A world model's refusal at the origin: a malformed origin, the
+    /// date outside the geomagnetic model's validity, or an elevation
+    /// outside the standard atmosphere. Each refuses startup, since a
+    /// sensor made from a substituted environment flies the controller
+    /// somewhere else.
+    pub fn new(origin: GeoOrigin, epoch: DecimalYear) -> Result<Self, SynthesisError> {
+        let plane = origin.plane()?;
+        let environment = Environment::at(plane.origin(), epoch)?;
+        Ok(Self {
+            plane,
+            epoch,
+            environment,
             prev: None,
             prev_ned_vel: None,
-        }
+        })
+    }
+
+    /// The environment at the latest state.
+    pub fn environment(&self) -> &Environment {
+        &self.environment
     }
 
     /// The sample for `truth`, or `None` when `truth` does not start a
@@ -147,14 +157,10 @@ impl StepSynthesizer {
         if delta_us == 0 {
             return None;
         }
-        self.earth.follow(truth.position_ned_m);
-        let (packet, ned_vel) = synthesize_packet(
-            truth,
-            &prev,
-            delta_us,
-            self.prev_ned_vel,
-            (&self.origin, self.earth.ned_ut()),
-        );
+        self.environment
+            .follow(&self.plane, truth.position_ned_m, self.epoch);
+        let (packet, ned_vel) =
+            synthesize_packet(truth, &prev, delta_us, self.prev_ned_vel, &self.environment);
         self.prev = Some(*truth);
         self.prev_ned_vel = Some(ned_vel);
         Some(StepSample {
@@ -209,8 +215,9 @@ fn synthesize_packet(
     prev: &TruthSample,
     delta_us: u64,
     prev_ned_vel: Option<[f32; 3]>,
-    (origin, mag_ned_ut): (&GeoOrigin, [f32; 3]),
+    environment: &Environment,
 ) -> (SimSensorPacket, [f32; 3]) {
+    let gravity = environment.gravity_mps2 as f32;
     let now_ned_pos = truth.position_ned_m;
     let dt = delta_us as f32 * 1e-6;
 
@@ -234,7 +241,7 @@ fn synthesize_packet(
     // believes it is climbing.
     let accel_inertial_ned = match prev_ned_vel {
         Some(prev_ned_vel) => {
-            let lim = 3.0 * GRAVITY;
+            let lim = 3.0 * gravity;
             [
                 ((now_ned_vel[0] - prev_ned_vel[0]) / dt).clamp(-lim, lim),
                 ((now_ned_vel[1] - prev_ned_vel[1]) / dt).clamp(-lim, lim),
@@ -246,7 +253,7 @@ fn synthesize_packet(
     let accel_ned = [
         accel_inertial_ned[0],
         accel_inertial_ned[1],
-        accel_inertial_ned[2] - GRAVITY,
+        accel_inertial_ned[2] - gravity,
     ];
     let accel_body = rotate_world_to_body(q_ned, accel_ned);
 
@@ -256,27 +263,21 @@ fn synthesize_packet(
         temperature: Some(25.0),
     };
 
-    // Barometric pressure from NED-Z (down-positive): altitude_msl =
-    // ref_elev - down, ISA troposphere model.
-    let altitude_msl_m = origin.elevation_m - now_ned_pos[2];
     let baro = SimBaroData {
-        pressure_pa: isa_pressure(altitude_msl_m),
-        temperature_c: ISA_T0_C,
+        pressure_pa: environment.air.pressure_pa as f32,
+        temperature_c: environment.air.temperature_c() as f32,
         ..SimBaroData::default()
     };
 
     let mag = SimMagData {
-        field_ut: rotate_world_to_body(q_ned, mag_ned_ut),
+        field_ut: rotate_world_to_body(q_ned, environment.field_ned_ut),
     };
 
-    // GNSS: the NED offset as a lat/lon delta around the world origin,
-    // flat-earth, more than accurate enough for sub-kilometer flights.
-    let lat_per_m = 1.0 / 111_111.0;
-    let lon_per_m = 1.0 / (111_111.0 * (origin.latitude_deg.to_radians()).cos());
+    let position = environment.position;
     let gnss = SimGnssData {
-        lat_deg: origin.latitude_deg + (now_ned_pos[0] as f64) * lat_per_m,
-        lon_deg: origin.longitude_deg + (now_ned_pos[1] as f64) * lon_per_m,
-        alt_m: altitude_msl_m,
+        lat_deg: position.latitude_deg,
+        lon_deg: position.longitude_deg,
+        alt_m: position.ellipsoidal_height_m as f32,
         // The kernel uses local NED, so the ground-truth NED position is
         // passed directly and the GNSS update agrees with the EKF frame;
         // lat/lon/alt are what a real receiver reports.
@@ -323,14 +324,6 @@ pub fn rotate_world_to_body(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
         r10 * v[0] + r11 * v[1] + r12 * v[2],
         r20 * v[0] + r21 * v[1] + r22 * v[2],
     ]
-}
-
-/// ISA pressure (Pa) at a given altitude MSL (m), troposphere model.
-pub fn isa_pressure(altitude_msl_m: f32) -> f32 {
-    let t0 = 288.15_f32;
-    let l = 0.0065_f32;
-    let exponent = 5.2561_f32;
-    ISA_P0_PA * (1.0 - l * altitude_msl_m / t0).powf(exponent)
 }
 
 #[cfg(test)]

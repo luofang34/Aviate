@@ -9,20 +9,24 @@
 
 use core::fmt;
 
+use world_core::{GeodeticPosition, LocalTangentPlane, PositionError};
+
 /// Name of the environment variable that states the origin as
 /// `latitude_deg,longitude_deg,elevation_m`.
 pub const ORIGIN_ENV: &str = "AVIATE_GNSS_ORIGIN";
 
-/// A WGS84 origin: latitude and longitude in degrees, elevation above
-/// mean sea level in meters.
+/// The world origin a launcher states: a WGS-84 position whose height
+/// is the stated elevation.
+///
+/// The elevation is stated above mean sea level and taken as the height
+/// above the WGS-84 ellipsoid: no geoid separation is applied, so a
+/// simulated receiver's MSL altitude equals its ellipsoidal height. The
+/// tens of meters between them move neither the Earth field nor the
+/// pressure noticeably.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GeoOrigin {
-    /// Latitude, degrees north.
-    pub latitude_deg: f64,
-    /// Longitude, degrees east.
-    pub longitude_deg: f64,
-    /// Elevation above mean sea level, meters.
-    pub elevation_m: f32,
+    /// The origin position.
+    pub position: GeodeticPosition,
 }
 
 impl Default for GeoOrigin {
@@ -35,9 +39,7 @@ impl GeoOrigin {
     /// The origin of the Aviate SITL worlds when no launcher states
     /// one.
     pub const DEFAULT: Self = Self {
-        latitude_deg: 47.397_741_9,
-        longitude_deg: 8.545_593_8,
-        elevation_m: 488.0,
+        position: GeodeticPosition::wgs84(47.397_741_9, 8.545_593_8, 488.0),
     };
 
     /// Parse `latitude_deg,longitude_deg,elevation_m`.
@@ -48,7 +50,7 @@ impl GeoOrigin {
         };
         let latitude_deg = number(lat, "latitude")?;
         let longitude_deg = number(lon, "longitude")?;
-        let elevation_m = number(elev, "elevation")? as f32;
+        let elevation_m = number(elev, "elevation")?;
         if !(-90.0..=90.0).contains(&latitude_deg) {
             return Err(OriginError::OutOfRange("latitude", latitude_deg));
         }
@@ -56,21 +58,13 @@ impl GeoOrigin {
             return Err(OriginError::OutOfRange("longitude", longitude_deg));
         }
         Ok(Self {
-            latitude_deg,
-            longitude_deg,
-            elevation_m,
+            position: GeodeticPosition::wgs84(latitude_deg, longitude_deg, elevation_m),
         })
     }
 
-    /// The origin as a WGS-84 geodetic position. The stated elevation
-    /// serves as the height above the ellipsoid: the few tens of meters
-    /// between them do not move the Earth field.
-    pub fn geodetic_position(&self) -> world_core::GeodeticPosition {
-        world_core::GeodeticPosition::wgs84(
-            self.latitude_deg,
-            self.longitude_deg,
-            f64::from(self.elevation_m),
-        )
+    /// The local NED frame at the origin.
+    pub fn plane(&self) -> Result<LocalTangentPlane, PositionError> {
+        LocalTangentPlane::new(self.position)
     }
 
     /// The origin `AVIATE_GNSS_ORIGIN` states, or [`Self::DEFAULT`]

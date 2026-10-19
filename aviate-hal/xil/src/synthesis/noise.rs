@@ -19,6 +19,8 @@
 //! tier + same seed yields bit-identical sensor streams across
 //! runs.
 
+use world_core::{GeodeticPosition, LocalTangentPlane, Ned};
+
 use crate::sim_types::{SimBaroData, SimGnssData, SimImuData, SimMagData};
 
 /// Noise tier selector. Values are 1-σ standard deviations matched
@@ -196,24 +198,28 @@ pub fn apply_mag_noise(mag: &mut SimMagData, tier: NoiseTier, rng: &mut NoiseRng
     }
 }
 
-/// Mutate `gnss` in place with tier-matched additive position noise.
-/// Converts the meter-scale 1-σ to a lat/lon delta around the
-/// supplied reference latitude.
-pub fn apply_gnss_noise(
-    gnss: &mut SimGnssData,
-    tier: NoiseTier,
-    rng: &mut NoiseRng,
-    ref_lat_deg: f64,
-) {
+/// Mutate `gnss` in place with tier-matched additive position noise:
+/// a horizontal offset around the fix in its own local frame, and a
+/// vertical offset on the altitude.
+pub fn apply_gnss_noise(gnss: &mut SimGnssData, tier: NoiseTier, rng: &mut NoiseRng) {
     if tier == NoiseTier::Off {
         return;
     }
-    let h_sigma = tier.gnss_h_sigma_m() as f64;
+    let h_sigma = f64::from(tier.gnss_h_sigma_m());
     let v_sigma = tier.gnss_v_sigma_m();
-    let lat_per_m = 1.0 / 111_111.0;
-    let lon_per_m = 1.0 / (111_111.0 * ref_lat_deg.to_radians().cos());
-    gnss.lat_deg += rng.next_normal() as f64 * h_sigma * lat_per_m;
-    gnss.lon_deg += rng.next_normal() as f64 * h_sigma * lon_per_m;
+    let fix = GeodeticPosition::wgs84(gnss.lat_deg, gnss.lon_deg, f64::from(gnss.alt_m));
+    let offset = Ned {
+        north_m: f64::from(rng.next_normal()) * h_sigma,
+        east_m: f64::from(rng.next_normal()) * h_sigma,
+        down_m: 0.0,
+    };
+    // A fix that is not a well-formed position has no frame to move in;
+    // it is left as it is.
+    if let Ok(frame) = LocalTangentPlane::new(fix) {
+        let moved = frame.to_geodetic(offset);
+        gnss.lat_deg = moved.latitude_deg;
+        gnss.lon_deg = moved.longitude_deg;
+    }
     gnss.alt_m += rng.next_normal() * v_sigma;
 }
 

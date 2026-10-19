@@ -34,12 +34,12 @@ use aviate_core::control::VehicleController;
 use aviate_core::kernel::config::ActuatorCurveKind;
 use aviate_core::mixer::Mixer;
 use aviate_xil_contract::WriterState;
+use world_core::DecimalYear;
 
 use crate::synthesize::{cmd_to_omega, truth};
 use aviate_hal_xil::synthesis::{
     apply_packet_noise, GeoOrigin, NoiseRng, NoiseTier, StepSample, StepSynthesizer,
 };
-use aviate_hal_xil::world::EarthField;
 
 /// Cycle period for the FC loop (1 kHz, matching loop_periods::GAZEBO_US).
 const CYCLE_PERIOD_US: u64 = 1_000;
@@ -89,11 +89,12 @@ fn main() -> std::io::Result<()> {
     // A malformed origin refuses startup: GNSS readings around a
     // silently substituted origin put the vehicle somewhere else.
     let origin = GeoOrigin::from_env().map_err(std::io::Error::other)?;
+    let position = origin.position;
     log::info!(
         "GNSS origin: {:.7}, {:.7}, {} m",
-        origin.latitude_deg,
-        origin.longitude_deg,
-        origin.elevation_m
+        position.latitude_deg,
+        position.longitude_deg,
+        position.ellipsoidal_height_m
     );
 
     let mut board = GazeboSitlBoard::new_with_retry(
@@ -103,9 +104,9 @@ fn main() -> std::io::Result<()> {
     )?;
     log::info!("board constructed");
     board.set_geodetic_origin(aviate_board_sitl_gazebo::GeodeticOrigin {
-        latitude_deg: origin.latitude_deg,
-        longitude_deg: origin.longitude_deg,
-        altitude_msl_m: origin.elevation_m,
+        latitude_deg: position.latitude_deg,
+        longitude_deg: position.longitude_deg,
+        altitude_msl_m: position.ellipsoidal_height_m as f32,
     });
 
     // Estimate/telemetry stream (heartbeat, attitude, position,
@@ -132,15 +133,15 @@ fn main() -> std::io::Result<()> {
         .map_err(|e| std::io::Error::other(format!("gz plugin: {e:?}")))?;
     log::info!("connected to AviateGzPlugin");
 
-    // A model refusal (the host date outside the model's validity)
-    // refuses startup: a magnetometer that disagrees with the
-    // controller's declination flies a crooked heading.
-    let earth = EarthField::at_origin(origin.geodetic_position()).map_err(std::io::Error::other)?;
+    // A world model's refusal (the host date outside the geomagnetic
+    // model's validity) refuses startup: a magnetometer that disagrees
+    // with the controller's declination flies a crooked heading.
+    let mut synth =
+        StepSynthesizer::new(origin, decimal_year_now()).map_err(std::io::Error::other)?;
     log::info!(
         "simulated Earth field: declination {:.2} deg",
-        earth.declination_deg()
+        synth.environment().declination_deg()
     );
-    let mut synth = StepSynthesizer::new(origin, earth);
 
     let noise_tier = NoiseTier::from_env();
     let mut noise_rng = NoiseRng::new(0xA17_C0DE);
@@ -228,7 +229,6 @@ fn main() -> std::io::Result<()> {
                     sample,
                     noise_tier,
                     &mut noise_rng,
-                    &origin,
                 );
             }
         }
@@ -244,6 +244,14 @@ fn main() -> std::io::Result<()> {
     }
 }
 
+/// Today's date on the host clock, for the simulated Earth field.
+fn decimal_year_now() -> DecimalYear {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
+    DecimalYear::from_unix_seconds(seconds)
+}
+
 /// Run one kernel cycle for one new simulator step and forward its
 /// outputs to gz-sim.
 fn fly_sim_step<C, M>(
@@ -253,7 +261,6 @@ fn fly_sim_step<C, M>(
     mut sample: StepSample,
     noise_tier: NoiseTier,
     noise_rng: &mut NoiseRng,
-    origin: &GeoOrigin,
 ) where
     C: VehicleController,
     M: Mixer,
@@ -262,7 +269,7 @@ fn fly_sim_step<C, M>(
     // `Off` reproduces the perfect-IMU baseline of the SITL missions;
     // `Mems` / `Tactical` exercise the estimator and controller
     // against representative inputs.
-    apply_packet_noise(&mut sample.packet, noise_tier, noise_rng, origin);
+    apply_packet_noise(&mut sample.packet, noise_tier, noise_rng);
     board.transport_mut().feed_sensor_packet(&sample.packet);
     let cmd = board.step_sim(sample.delta_us);
 
