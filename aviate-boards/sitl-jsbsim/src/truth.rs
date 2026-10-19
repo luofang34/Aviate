@@ -3,6 +3,7 @@
 
 use aviate_backend_mavlink_hil::HilStateQuaternion;
 use aviate_hal_xil::synthesis::TruthSample;
+use aviate_hal_xil::VehicleState;
 use world_core::{GeodeticPosition, LocalTangentPlane};
 
 /// Which simulated world the truth stream is in.
@@ -62,6 +63,22 @@ pub(crate) fn truth_sample(
         position_ned_m: [ned.north_m as f32, ned.east_m as f32, ned.down_m as f32],
         attitude: state.attitude_quaternion,
     })
+}
+
+/// The vehicle a state states: position from its truth sample, the
+/// state's NED velocity (cm/s) and body rates, and its attitude.
+pub(crate) fn vehicle_state(state: &HilStateQuaternion, truth: &TruthSample) -> VehicleState {
+    VehicleState {
+        position: truth.position_ned_m,
+        velocity: [
+            f32::from(state.vx) / 100.0,
+            f32::from(state.vy) / 100.0,
+            f32::from(state.vz) / 100.0,
+        ],
+        orientation: state.attitude_quaternion,
+        angular_velocity: [state.rollspeed, state.pitchspeed, state.yawspeed],
+        valid: true,
+    }
 }
 
 #[cfg(test)]

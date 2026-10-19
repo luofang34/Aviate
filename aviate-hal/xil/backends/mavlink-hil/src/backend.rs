@@ -219,6 +219,26 @@ impl HilBackend {
         })
     }
 
+    /// End the simulator session and dial a new one. For a simulator
+    /// that starts a new world with each connection, this is its reset.
+    ///
+    /// # Errors
+    ///
+    /// `Unsupported` on a UDP link, which has no session to end.
+    pub fn restart_session(&mut self) -> io::Result<()> {
+        match &mut self.link {
+            Link::Tcp(transport) => {
+                transport.reconnect();
+                self.clear_generation_state();
+                Ok(())
+            }
+            Link::Udp(_) => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "a UDP HIL link has no session to restart",
+            )),
+        }
+    }
+
     /// Simulator sessions this link has opened: TCP connections made. A
     /// TCP simulator starts a new world with each connection. A UDP link
     /// is one session.

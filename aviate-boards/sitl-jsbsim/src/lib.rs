@@ -18,9 +18,11 @@
 #![forbid(clippy::unwrap_used)]
 #![forbid(clippy::expect_used)]
 
+mod backend;
 mod board;
 mod config;
 mod truth;
 
+pub use backend::JsbsimSimulatorBackend;
 pub use board::{ActuatorMap, JsbsimBoard, JsbsimError, TruthStep};
 pub use config::{JsbsimConfig, SIDECAR_BASE_PORT};

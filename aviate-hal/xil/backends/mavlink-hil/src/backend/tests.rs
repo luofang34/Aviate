@@ -134,3 +134,19 @@ fn a_truth_paced_reply_echoes_the_truth_time_with_the_lockstep_flag() {
     assert_eq!(&message.controls[..4], &[0.25; 4]);
     assert_eq!(&message.controls[4..], &[0.0; 12]);
 }
+
+#[test]
+fn a_udp_link_has_no_session_to_restart() {
+    let backend = HilBackend::new(HilBackendConfig {
+        local_port: 0,
+        simulator_addr: std::net::SocketAddr::from(([127, 0, 0, 1], 9)),
+        ..HilBackendConfig::default()
+    });
+    assert!(backend.is_ok());
+    let Ok(mut backend) = backend else {
+        return;
+    };
+    assert_eq!(backend.sessions(), 1);
+    let refused = backend.restart_session();
+    assert!(refused.is_err_and(|e| e.kind() == std::io::ErrorKind::Unsupported));
+}
