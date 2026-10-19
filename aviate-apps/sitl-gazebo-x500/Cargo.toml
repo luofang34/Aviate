@@ -30,7 +30,7 @@ aviate-backend-gz = { path = "../../aviate-hal/xil/backends/gz", features = ["gz
 aviate-config = { path = "../../aviate-config" }
 # The simulated magnetometer's Earth field: the same model the
 # controller takes its declination from.
-aviate-geomag = { path = "../../aviate-geomag" }
+world-core.workspace = true
 aviate-hal-xil = { path = "../../aviate-hal/xil" }
 log = "0.4"
 env_logger = "0.11"
