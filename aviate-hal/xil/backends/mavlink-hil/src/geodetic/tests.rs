@@ -3,6 +3,8 @@
 
 use aviate_hal_xil::sim_types::SimGnssFix;
 
+use world_core::{GeodeticPosition, LocalTangentPlane};
+
 use super::NedOrigin;
 
 /// A reference near Zurich, matching the SITL world the other backends
@@ -89,15 +91,25 @@ fn rtk_locks_are_usable_fixes() {
 }
 
 #[test]
-fn the_east_scale_is_held_at_the_origin_latitude() {
-    // A scale recomputed per sample would make the east axis stretch as
-    // the vehicle travels north. Pin that it does not.
+fn fixes_project_on_the_tangent_plane_at_the_latched_origin() {
     let mut origin = NedOrigin::default();
     let _ = origin.project(LAT, LON, ALT, SimGnssFix::ThreeD);
-    let near = origin.project(LAT, LON + 0.01, ALT, SimGnssFix::ThreeD)[1];
-    let far = origin.project(LAT + 0.5, LON + 0.01, ALT, SimGnssFix::ThreeD)[1];
-    assert!(
-        (near - far).abs() < 0.5,
-        "the east scale must not follow the vehicle: {near} vs {far}"
-    );
+    let plane = LocalTangentPlane::new(GeodeticPosition::wgs84(LAT, LON, f64::from(ALT)));
+    assert!(plane.is_ok(), "a well-formed origin");
+    let Ok(plane) = plane else {
+        return;
+    };
+    for (lat, lon, alt) in [
+        (LAT + 0.001, LON, ALT),
+        (LAT, LON + 0.01, ALT + 30.0),
+        (LAT + 0.5, LON + 0.01, ALT),
+        (LAT - 0.2, LON - 0.3, ALT - 100.0),
+    ] {
+        let got = origin.project(lat, lon, alt, SimGnssFix::ThreeD);
+        let want = plane
+            .to_ned(GeodeticPosition::wgs84(lat, lon, f64::from(alt)))
+            .map(|n| [n.north_m as f32, n.east_m as f32, n.down_m as f32]);
+        let got = Ok(got);
+        assert_eq!(got, want, "{lat} {lon} {alt}");
+    }
 }
