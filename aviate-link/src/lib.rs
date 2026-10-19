@@ -167,4 +167,4 @@ pub use errors::{LinkError, LinkResult, TelemetryError, TelemetryResult};
 pub use queue::{
     DefaultTelemetryQueue, QueueError, TelemetryQueue, TELEMETRY_MAX_FRAME, TELEMETRY_MAX_QUEUE,
 };
-pub use telemetry::{TelemetryBackend, TelemetryCycleFormatter, TelemetrySnapshot};
+pub use telemetry::{GeodeticOrigin, TelemetryBackend, TelemetryCycleFormatter, TelemetrySnapshot};

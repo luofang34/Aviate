@@ -132,7 +132,7 @@ where
         self.feed_buffered_sensors();
 
         if let Some(gps_data) = self.transport.take_gps_data() {
-            // Feed GNSS
+            self.geodetic.last_fix = Some(gps_data.gnss);
             self.board_hal.gnss_mut().feed(gps_data.gnss);
         }
 
@@ -329,6 +329,8 @@ where
                 baro_temperature_c: baro
                     .and_then(|baro| baro.air.temperature)
                     .map_or(0.0, |t| t.0),
+                geodetic_origin: self.geodetic.origin,
+                gnss_fix: self.geodetic.last_fix,
             };
             telem.update_state(snapshot); // Just copies, easy to audit
         }

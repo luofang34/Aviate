@@ -83,6 +83,27 @@ so revocation never depends on a coincident numeric emission.
 Standard `ESTIMATOR_STATUS` remains a conservative projection for common
 consumers and must not be used as the lossless authorization source.
 
+## Global position frames
+
+At the `position_hz` rate, the cycle formatter also sends two standard
+frames:
+
+- `GLOBAL_POSITION_INT` (message 33) gives the local estimate as a
+  global position. Aviate sends it only when the vehicle has a declared
+  geodetic origin, which is the point that the local NED frame is
+  measured from. The latitude and longitude are the origin plus the
+  local north and east position. `alt` is the origin altitude minus the
+  local down position. `relative_alt` is the height above the local
+  origin. This frame is part of the estimate group: it has the same
+  timestamp as `LOCAL_POSITION_NED`, and the status rules above apply to
+  it in the same way.
+- `GPS_RAW_INT` (message 24) gives the last fix that the GNSS receiver
+  reported. It is a sensor report, not an estimate, so it is not part of
+  the estimate group. The receiver reading has one height and no geoid
+  separation, so Aviate sends that height as `alt` and as
+  `alt_ellipsoid`. DOP is not part of the reading, so `eph` and `epv`
+  are `UINT16_MAX`. The 1-sigma accuracies are in `h_acc` and `v_acc`.
+
 ## Wire contract stability
 
 The Aviate dialect is a private dialect in the sense of the MAVLink
