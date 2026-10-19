@@ -2157,6 +2157,14 @@ cannot drift in what they leave behind.
 the same `Estimator` trait surface the control loop uses, and SHALL
 re-capture it on every arm, so a vehicle that lands somewhere other
 than where it took off measures height from where it actually is.
+
+`arm()` SHALL select `ControlLawV1::Primary` and clear the terminal
+cause for the new flight period. The backup law that the teardown
+leaves is the law of the disarmed state, not a degradation of the next
+flight. A degradation that must outlive the flight period is carried by
+a latched fault (LLR-FLT-214), and `arm()` SHALL refuse with
+`ArmError::Faulted` while any fault is set, before it evaluates
+readiness.
 """
 verification_methods = ["test"]
 modules = ["aviate-core/src/kernel_logic/lifecycle.rs", "aviate-core/src/kernel_update.rs"]
@@ -2186,3 +2194,28 @@ verification_methods = ["test"]
 modules = ["aviate-hal/io/src/comm.rs", "aviate-runtime/src/sim/step.rs", "aviate-hal/xil/src/sitl_io.rs"]
 derived = false
 traces_to = ["ee205f38-21b1-593d-b570-d965d63696d1"]
+
+[[requirements]]
+uid = "41c98af2-91c7-4047-be2d-8891e726feac"
+id = "LLR-FLT-214"
+title = "A capability lost in flight latches a fault until ground reset"
+owner = "aviate-core@aviate"
+description = """
+When `handle_degradation()` acts on a reason that records a loss of
+capability, it SHALL insert that reason's latched fault into
+`KernelState.faults`: AttitudeLost → ATTITUDE_LOST, ImuDegraded →
+IMU_DEGRADED, PositionLost → POSITION_LOST, VelocityLost →
+VELOCITY_LOST, BaroDegraded → BARO_DEGRADED, EnvelopeViolation →
+ENVELOPE_VIOLATION, RcLost → RC_LOST, TimingViolation →
+TIMING_PERSISTENT. The fault SHALL persist through `disarm()` and
+`terminate()`, SHALL refuse the next `arm()` with `ArmError::Faulted`,
+and SHALL clear only via `ground_reset()`.
+
+CommandTimeout and LandRequested SHALL NOT latch a fault: command
+staleness is recoverable (LLR-FLT-209), and a requested land is an
+instruction, not a loss of capability.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/checks/in_flight.rs", "aviate-core/src/kernel_logic.rs", "aviate-core/src/kernel_logic/lifecycle.rs", "aviate-core/src/fault.rs"]
+derived = false
+traces_to = ["30f749c3-82ee-4ca3-9c0b-91413894c385", "6a9be893-efec-4a80-99c0-885dbe19808e"]
