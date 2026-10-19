@@ -156,9 +156,7 @@ where
             // A new world starts disarmed; the old world's command must
             // not drive the new vehicle.
             self.last_reply = SimActuatorCmd::default();
-            if self.generation.is_some() {
-                self.enter_new_world();
-            }
+            self.enter_new_world();
             self.generation = Some(generation);
         }
         self.step_index = step;

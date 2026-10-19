@@ -42,6 +42,23 @@ fn rewound_time_or_a_new_session_starts_a_new_generation() {
 }
 
 #[test]
+fn a_requested_new_world_starts_a_generation_even_with_nothing_seen() {
+    let mut tracker = GenerationTracker::default();
+    tracker.request_new_world();
+    assert_eq!(tracker.observe(2, 4_000), (1, 0), "nothing seen, still new");
+    assert_eq!(
+        tracker.observe(2, 8_000),
+        (1, 1),
+        "the request is used once"
+    );
+    // A requested reset that also brings a new session and a rewound
+    // clock is still one new world.
+    tracker.request_new_world();
+    assert_eq!(tracker.observe(3, 4_000), (2, 0));
+    assert_eq!(tracker.observe(3, 8_000), (2, 1));
+}
+
+#[test]
 fn the_state_position_is_its_tangent_plane_offset_from_the_origin() {
     let Some(plane) = plane() else {
         return;
