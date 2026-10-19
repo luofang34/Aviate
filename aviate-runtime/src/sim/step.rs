@@ -135,8 +135,8 @@ where
         self.feed_buffered_sensors();
 
         if let Some(gps_data) = self.transport.take_gps_data() {
-            self.geodetic.last_fix = Some(gps_data.gnss);
             self.geomagnetic.observe_fix(&gps_data.gnss);
+            self.geodetic.last_fix = Some(gps_data.gnss);
             self.board_hal.gnss_mut().feed(gps_data.gnss);
         }
 
