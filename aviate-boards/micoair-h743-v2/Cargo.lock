@@ -115,6 +115,7 @@ dependencies = [
  "aviate-config",
  "aviate-core",
  "aviate-hal-io",
+ "world-core",
 ]
 
 [[package]]
