@@ -23,11 +23,14 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         if self.state.init_state == InitState::Armed {
             return Err(ArmError::AlreadyArmed);
         }
-        if self.state.init_state != InitState::Ready {
-            return Err(ArmError::NotReady);
-        }
+        // Faults first: a latched fault also holds the init state short
+        // of Ready (pre-arm NO_FAULTS), and `NotReady` would hide that
+        // only a ground reset can clear it.
         if !self.state.faults.is_empty() {
             return Err(ArmError::Faulted);
+        }
+        if self.state.init_state != InitState::Ready {
+            return Err(ArmError::NotReady);
         }
 
         // Capture the datum this flight period's height is measured
@@ -37,6 +40,11 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         let estimate = self.pipeline.estimator.estimate(&self.state.estimator);
         self.state.flight_phase.begin_flight_period(&estimate);
 
+        // Backup is the law of the disarmed state, not a degradation of
+        // the next flight: a degradation that must outlive the flight
+        // period is a latched fault, which refused this arm above.
+        self.state.control_law = ControlLawV1::Primary;
+        self.state.terminal_cause = TerminalCause::None;
         self.state.init_state = InitState::Armed;
         Ok(())
     }

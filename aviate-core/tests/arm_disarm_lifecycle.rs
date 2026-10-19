@@ -385,3 +385,6 @@ fn ground_reset_clears_a_stale_flight_phase() {
     kernel.ground_reset();
     assert_eq!(kernel.state.flight_phase.phase(), FlightPhase::OnGround);
 }
+
+#[path = "arm_disarm_lifecycle/rearm.rs"]
+mod rearm;

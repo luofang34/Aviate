@@ -6,6 +6,7 @@
 //! control law.
 
 use crate::control::envelope::ProtectionStatus;
+use crate::fault::FaultFlags;
 use crate::sensor::{SensorHealth, SensorSet};
 use crate::state::{StateEstimate, StateValidFlags};
 
@@ -38,6 +39,33 @@ pub enum DegradationReason {
     /// stabilizable (attitude and a vertical-rate source remain), so
     /// the kernel rides it down rather than cutting thrust.
     LandRequested,
+}
+
+impl DegradationReason {
+    /// The fault this degradation latches, or `None` when its cause is
+    /// recoverable or commanded.
+    ///
+    /// A latched fault survives disarm and refuses the next arm until
+    /// `ground_reset()`, so a capability lost in flight is not silently
+    /// restored by starting a new flight period (spec §21 invariant 5).
+    ///
+    /// Command loss is excluded because recency returning releases its
+    /// terminal in flight (LLR-FLT-209), and an armed vehicle without a
+    /// commander is command-stale by definition. A requested land is an
+    /// instruction, not a loss of capability.
+    pub fn latched_fault(self) -> Option<FaultFlags> {
+        match self {
+            Self::AttitudeLost => Some(FaultFlags::ATTITUDE_LOST),
+            Self::ImuDegraded => Some(FaultFlags::IMU_DEGRADED),
+            Self::PositionLost => Some(FaultFlags::POSITION_LOST),
+            Self::VelocityLost => Some(FaultFlags::VELOCITY_LOST),
+            Self::BaroDegraded => Some(FaultFlags::BARO_DEGRADED),
+            Self::EnvelopeViolation => Some(FaultFlags::ENVELOPE_VIOLATION),
+            Self::RcLost => Some(FaultFlags::RC_LOST),
+            Self::TimingViolation => Some(FaultFlags::TIMING_PERSISTENT),
+            Self::CommandTimeout | Self::LandRequested => None,
+        }
+    }
 }
 
 bitflags::bitflags! {
