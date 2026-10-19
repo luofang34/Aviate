@@ -1655,3 +1655,43 @@ declination from the seed leaves it at the magnetic heading. Witnesses
 LLR-EST-209.
 """
 traces_to = ["d2ce2764-4ede-44d5-aba9-a2b6009bc571"]
+
+[[tests]]
+uid = "747f4fd1-456f-4c34-927f-ae4772409459"
+id = "TST-EST-215"
+title = "the_applied_declination_and_its_source_are_published"
+test_selector = "the_applied_declination_and_its_source_are_published"
+owner = "aviate-core@aviate"
+description = """
+`aviate-link/src/mavlink/telemetry/geomagnetic/tests.rs`: a heartbeat
+cycle with a Model or a Configured reference of -0.2113 rad sends
+AVIATE_GEOMAGNETIC_REFERENCE with that declination and the matching
+source. Witnesses LLR-EST-210.
+"""
+traces_to = ["fdee9a3c-6585-486c-afea-33d1e644118d"]
+
+[[tests]]
+uid = "7ddbe036-ac5f-4c41-aa4f-0b2f9a943667"
+id = "TST-EST-216"
+title = "a_magnetic_heading_is_published_as_no_reference"
+test_selector = "a_magnetic_heading_is_published_as_no_reference"
+owner = "aviate-core@aviate"
+description = """
+A heartbeat cycle with no reference sends source NONE and a NaN
+declination. Witnesses LLR-EST-210.
+"""
+traces_to = ["fdee9a3c-6585-486c-afea-33d1e644118d"]
+
+[[tests]]
+uid = "2106d4c5-1c6d-4ec0-94db-dbd6ebbf5524"
+id = "TST-EST-217"
+title = "the_stream_states_the_model_declination_the_estimator_applies"
+test_selector = "the_stream_states_the_model_declination_the_estimator_applies"
+owner = "aviate-core@aviate"
+description = """
+`aviate-boards/sitl-gazebo/tests/telemetry_stream.rs`: a SITL board
+fed GNSS fixes at 47.4 N, 8.5 E streams AVIATE_GEOMAGNETIC_REFERENCE
+with source MODEL and the WMM2025 declination there (2.5 to 4.5 deg) to
+the configured consumer. Witnesses LLR-EST-210.
+"""
+traces_to = ["fdee9a3c-6585-486c-afea-33d1e644118d"]

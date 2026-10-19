@@ -312,6 +312,7 @@ where
                 baro_temperature_c: baro
                     .and_then(|baro| baro.air.temperature)
                     .map_or(0.0, |t| t.0),
+                geomagnetic: sensors.geomagnetic,
             };
             telem.update_state(snapshot); // Just copies, easy to audit
         }

@@ -83,6 +83,24 @@ so revocation never depends on a coincident numeric emission.
 Standard `ESTIMATOR_STATUS` remains a conservative projection for common
 consumers and must not be used as the lossless authorization source.
 
+## Heading reference frame
+
+Once per heartbeat, Aviate sends `AVIATE_GEOMAGNETIC_REFERENCE`
+(message 20001). It states the declination that the estimator adds to
+the magnetometer heading, and the source of that declination:
+
+- `AVIATE_GEOMAGNETIC_SOURCE_MODEL`: a geomagnetic model at the
+  vehicle's position and date.
+- `AVIATE_GEOMAGNETIC_SOURCE_CONFIGURED`: a configured value for the
+  operating area.
+- `AVIATE_GEOMAGNETIC_SOURCE_NONE`: no declination. The declination
+  field is NaN.
+
+With a model or a configured declination, the heading in
+`ATTITUDE_QUATERNION` is referenced to true north. With source NONE, it
+is magnetic. A consumer that shows a magnetic heading subtracts the
+declination from the true heading.
+
 ## Wire contract stability
 
 The Aviate dialect is a private dialect in the sense of the MAVLink

@@ -27,11 +27,13 @@
 //! Applications should NOT use this module directly - use the link layer instead.
 
 mod estimator_status;
+mod geomagnetic;
 
 pub use estimator_status::{
     aviate_estimate_quality, aviate_state_valid_flags, estimator_status_flags,
     AviateEstimatorStatus, EstimatorStatus,
 };
+pub use geomagnetic::{aviate_geomagnetic_source, AviateGeomagneticReference};
 
 // ============================================================================
 // CONSTANTS
@@ -518,6 +520,7 @@ pub enum MavMessage {
     ScaledPressure(ScaledPressure),
     EstimatorStatus(EstimatorStatus),
     AviateEstimatorStatus(AviateEstimatorStatus),
+    AviateGeomagneticReference(AviateGeomagneticReference),
     SetAttitudeTarget(SetAttitudeTarget),
     SetPositionTargetLocalNed(SetPositionTargetLocalNed),
     CommandLong(CommandLong),
@@ -541,6 +544,7 @@ impl MavMessage {
             MavMessage::ScaledPressure(_) => ScaledPressure::MSG_ID,
             MavMessage::EstimatorStatus(_) => EstimatorStatus::MSG_ID,
             MavMessage::AviateEstimatorStatus(_) => AviateEstimatorStatus::MSG_ID,
+            MavMessage::AviateGeomagneticReference(_) => AviateGeomagneticReference::MSG_ID,
             MavMessage::SetAttitudeTarget(_) => SetAttitudeTarget::MSG_ID,
             MavMessage::SetPositionTargetLocalNed(_) => SetPositionTargetLocalNed::MSG_ID,
             MavMessage::CommandLong(_) => CommandLong::MSG_ID,
@@ -778,6 +782,9 @@ fn parse_message_payload(msg_id: u32, payload: &[u8]) -> Result<MavMessage, Pars
         ScaledPressure::MSG_ID => parse_scaled_pressure(payload),
         EstimatorStatus::MSG_ID => estimator_status::parse_estimator_status(payload),
         AviateEstimatorStatus::MSG_ID => estimator_status::parse_aviate_estimator_status(payload),
+        AviateGeomagneticReference::MSG_ID => {
+            geomagnetic::parse_aviate_geomagnetic_reference(payload)
+        }
         SetAttitudeTarget::MSG_ID => parse_set_attitude_target(payload),
         SetPositionTargetLocalNed::MSG_ID => parse_set_position_target_local_ned(payload),
         CommandLong::MSG_ID => parse_command_long(payload),
@@ -1180,22 +1187,23 @@ fn crc_accumulate(byte: u8, crc: u16) -> u16 {
 /// Get CRC extra byte for message ID (from MAVLink XML definitions)
 fn get_crc_extra(msg_id: u32) -> u8 {
     match msg_id {
-        0 => 50,                                    // HEARTBEAT
-        1 => 124,                                   // SYS_STATUS
-        2 => 137,                                   // SYSTEM_TIME
-        29 => 115,                                  // SCALED_PRESSURE
-        31 => 246,                                  // ATTITUDE_QUATERNION
-        32 => 185,                                  // LOCAL_POSITION_NED
-        69 => 243,                                  // MANUAL_CONTROL
-        70 => 124,                                  // RC_CHANNELS_OVERRIDE
-        76 => 152,                                  // COMMAND_LONG
-        77 => 143,                                  // COMMAND_ACK
-        82 => 49,                                   // SET_ATTITUDE_TARGET
-        84 => 143,                                  // SET_POSITION_TARGET_LOCAL_NED
-        230 => EstimatorStatus::CRC_EXTRA,          // ESTIMATOR_STATUS
-        253 => 83,                                  // STATUSTEXT
-        20_000 => AviateEstimatorStatus::CRC_EXTRA, // AVIATE_ESTIMATOR_STATUS
-        _ => 0,                                     // Unknown message
+        0 => 50,                                         // HEARTBEAT
+        1 => 124,                                        // SYS_STATUS
+        2 => 137,                                        // SYSTEM_TIME
+        29 => 115,                                       // SCALED_PRESSURE
+        31 => 246,                                       // ATTITUDE_QUATERNION
+        32 => 185,                                       // LOCAL_POSITION_NED
+        69 => 243,                                       // MANUAL_CONTROL
+        70 => 124,                                       // RC_CHANNELS_OVERRIDE
+        76 => 152,                                       // COMMAND_LONG
+        77 => 143,                                       // COMMAND_ACK
+        82 => 49,                                        // SET_ATTITUDE_TARGET
+        84 => 143,                                       // SET_POSITION_TARGET_LOCAL_NED
+        230 => EstimatorStatus::CRC_EXTRA,               // ESTIMATOR_STATUS
+        253 => 83,                                       // STATUSTEXT
+        20_000 => AviateEstimatorStatus::CRC_EXTRA,      // AVIATE_ESTIMATOR_STATUS
+        20_001 => AviateGeomagneticReference::CRC_EXTRA, // AVIATE_GEOMAGNETIC_REFERENCE
+        _ => 0,                                          // Unknown message
     }
 }
 
@@ -1213,6 +1221,7 @@ fn declared_payload_len(msg_id: u32) -> Option<usize> {
         ScaledPressure::MSG_ID => Some(ScaledPressure::PAYLOAD_LEN),
         EstimatorStatus::MSG_ID => Some(EstimatorStatus::PAYLOAD_LEN),
         AviateEstimatorStatus::MSG_ID => Some(AviateEstimatorStatus::PAYLOAD_LEN),
+        AviateGeomagneticReference::MSG_ID => Some(AviateGeomagneticReference::PAYLOAD_LEN),
         ManualControl::MSG_ID => Some(ManualControl::PAYLOAD_LEN),
         RcChannelsOverride::MSG_ID => Some(RcChannelsOverride::PAYLOAD_LEN),
         CommandLong::MSG_ID => Some(CommandLong::PAYLOAD_LEN),
@@ -1260,6 +1269,9 @@ pub fn serialize_mavlink(
         }
         MavMessage::AviateEstimatorStatus(m) => {
             estimator_status::serialize_aviate_estimator_status(m, seq, sys_id, comp_id, buf)
+        }
+        MavMessage::AviateGeomagneticReference(m) => {
+            geomagnetic::serialize_aviate_geomagnetic_reference(m, seq, sys_id, comp_id, buf)
         }
         MavMessage::SetAttitudeTarget(m) => {
             serialize_set_attitude_target(m, seq, sys_id, comp_id, buf)

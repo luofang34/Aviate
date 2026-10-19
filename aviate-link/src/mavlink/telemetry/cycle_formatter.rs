@@ -135,6 +135,18 @@ impl TelemetryCycleFormatter for MavlinkCycleFormatter {
             ) {
                 queue.push(&buf[..len]).ok();
             }
+            // The heading reference changes rarely; once per heartbeat
+            // tells a consumer whether the attitude heading is true or
+            // magnetic, and by how much.
+            if let Ok(len) = super::geomagnetic::format_geomagnetic_reference(
+                snapshot.geomagnetic.as_ref(),
+                snapshot.time_ms,
+                (self.sys_id, self.comp_id),
+                &mut self.seq,
+                &mut buf,
+            ) {
+                queue.push(&buf[..len]).ok();
+            }
         }
 
         let emit_attitude = snapshot.iteration.is_multiple_of(self.attitude_div);

@@ -69,6 +69,9 @@ pub struct TelemetrySnapshot {
     /// Static-source temperature in Celsius, meaningful with the
     /// pressure above.
     pub baro_temperature_c: f32,
+    /// The declination the estimator applies, `None` when it applies
+    /// none and the estimated heading is magnetic.
+    pub geomagnetic: Option<aviate_core::sensor::GeomagneticReference>,
 }
 
 // ============================================================================

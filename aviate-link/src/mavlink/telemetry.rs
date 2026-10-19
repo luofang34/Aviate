@@ -36,7 +36,9 @@
 //! - ✅ No command parsing or reception logic
 //! - ✅ Format helpers are pure (no I/O, no side effects)
 mod estimator;
+mod geomagnetic;
 pub use estimator::{format_aviate_estimator_status, format_estimator_status};
+pub use geomagnetic::format_geomagnetic_reference;
 // Conditionally use aviate_config for runtime config, or use local defaults
 #[cfg(feature = "config")]
 pub use aviate_config::TelemetryConfig;
