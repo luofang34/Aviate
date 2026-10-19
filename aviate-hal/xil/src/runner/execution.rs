@@ -437,7 +437,13 @@ impl<B: SimulatorBackend> MissionRunner<B> {
         target: crate::mission::SensorTarget,
         spec: crate::mission::FaultSpec,
     ) {
-        if let Some(client) = self.fault_client_mut() {
+        let command = crate::FaultCommand::new(target, spec);
+        if let Some(ack) = self.backend.apply_fault(&command) {
+            self.log(&format!(
+                "INJECT_FAULT {target:?} {spec:?} ack={:?}",
+                ack.status
+            ));
+        } else if let Some(client) = self.fault_client_mut() {
             match client.inject(target, spec) {
                 Ok(ack) => self.log(&format!(
                     "INJECT_FAULT {target:?} {spec:?} ack={:?}",
@@ -457,7 +463,9 @@ impl<B: SimulatorBackend> MissionRunner<B> {
     }
 
     fn clear_faults(&mut self) {
-        if let Some(client) = self.fault_client_mut() {
+        if let Some(ack) = self.backend.apply_fault(&crate::FaultCommand::clear_all()) {
+            self.log(&format!("CLEAR_FAULTS ack={:?}", ack.status));
+        } else if let Some(client) = self.fault_client_mut() {
             match client.clear_all() {
                 Ok(ack) => self.log(&format!("CLEAR_FAULTS ack={:?}", ack.status)),
                 Err(error) => self.log_error(&format!("CLEAR_FAULTS failed: {error:?}")),

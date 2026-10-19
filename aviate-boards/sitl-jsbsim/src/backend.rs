@@ -3,9 +3,9 @@
 use std::time::{Duration, Instant};
 
 use aviate_hal_xil::{
-    BackendStatus, DirectiveOutcome, DirectiveReceipt, FrameEvent, SimulatorBackend,
-    SimulatorDirective, SimulatorDirectiveKind, SimulatorError, SimulatorFrame, SimulatorLifecycle,
-    SimulatorOperation,
+    BackendStatus, DirectiveOutcome, DirectiveReceipt, FaultAck, FaultCommand, FrameEvent,
+    SimulatorBackend, SimulatorDirective, SimulatorDirectiveKind, SimulatorError, SimulatorFrame,
+    SimulatorLifecycle, SimulatorOperation,
 };
 
 use crate::JsbsimBoard;
@@ -257,5 +257,9 @@ where
 
     fn instance(&self) -> u8 {
         self.instance
+    }
+
+    fn apply_fault(&mut self, command: &FaultCommand) -> Option<FaultAck> {
+        Some(self.board.apply_fault(command))
     }
 }

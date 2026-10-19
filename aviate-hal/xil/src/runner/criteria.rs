@@ -146,6 +146,13 @@ fn sensor_data_received(last_step: u64) -> CriterionResult {
     }
 }
 
+/// Shortest span positions are differentiated over. A simulator states
+/// position to a finite resolution (JSBSim's degE7 lat/lon is about a
+/// centimeter), so a derivative over one 4 ms step reads either nothing
+/// or meters per second; over this span the resolution is noise of a
+/// tenth of a meter per second at most.
+const DERIVATIVE_BASELINE_US: u64 = 100_000;
+
 pub(super) fn velocity_tracks_position(trace: &[TraceSample], tolerance: f32) -> CriterionResult {
     const MOVING_MPS: f32 = 0.5;
     let mut error_sum = 0.0_f32;
@@ -153,28 +160,31 @@ pub(super) fn velocity_tracks_position(trace: &[TraceSample], tolerance: f32) ->
     let mut published_sum = 0.0_f32;
     let mut moving = 0_u32;
 
-    for pair in trace.windows(2) {
-        let elapsed_us = pair[1].sim_time_us.saturating_sub(pair[0].sim_time_us);
-        let elapsed = elapsed_us as f32 * 1e-6;
-        if elapsed <= 0.0 {
-            continue;
+    let mut end = 0;
+    for (start, first) in trace.iter().enumerate() {
+        while end < trace.len()
+            && trace[end].sim_time_us.saturating_sub(first.sim_time_us) < DERIVATIVE_BASELINE_US
+        {
+            end += 1;
         }
-        let derived = (0..3)
-            .map(|axis| {
-                let speed = (pair[1].position[axis] - pair[0].position[axis]) / elapsed;
-                speed * speed
-            })
-            .sum::<f32>()
-            .sqrt();
+        let Some(last) = trace.get(end) else {
+            break;
+        };
+        let elapsed = last.sim_time_us.saturating_sub(first.sim_time_us) as f32 * 1e-6;
+        let derived = norm(sub(last.position, first.position)) / elapsed;
         if derived < MOVING_MPS {
             continue;
         }
-        let published = pair[1]
-            .velocity
-            .iter()
-            .map(|speed| speed * speed)
-            .sum::<f32>()
-            .sqrt();
+        // The published velocity over the same span, so both sides
+        // describe the same motion.
+        let window = &trace[start..=end];
+        let mut mean = [0.0_f32; 3];
+        for sample in window {
+            for (axis, speed) in mean.iter_mut().zip(sample.velocity) {
+                *axis += speed / window.len() as f32;
+            }
+        }
+        let published = norm(mean);
         error_sum += (published - derived).abs();
         published_sum += published;
         derived_sum += derived;
@@ -414,4 +424,12 @@ pub(super) fn quat_to_rpy(quaternion: [f32; 4]) -> (f32, f32, f32) {
     };
     let yaw = (2.0 * (w * z + x * y)).atan2(1.0 - 2.0 * (y * y + z * z));
     (roll, pitch, yaw)
+}
+
+fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn norm(v: [f32; 3]) -> f32 {
+    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
 }
