@@ -39,11 +39,13 @@
 //!   - `ekf/validity.rs` — per-source aiding-freshness bookkeeping
 //!     and the `get_estimate()` validity/quality derivation.
 //!   - `ekf/imu_gap.rs` — covariance widening for cycles predict skipped.
+//!   - `ekf/accel_clip.rs` — covariance widening for clipped accel samples.
 //!
 //! Submodules carry no re-exports to sidestep rustc's coverage
 //! phantom-DA issue (see `aviate-core/src/lib.rs` for context); every
 //! `aviate_core::ekf::Ekf::X` still resolves from the parent module.
 
+mod accel_clip;
 mod imu_gap;
 mod predict;
 mod replicable;
@@ -297,10 +299,11 @@ pub struct EkfState {
     /// to `Degraded` as the vertical-redundancy signal it is).
     pub baro_age_s: Scalar,
     /// Seconds since `predict_state` last propagated a finite IMU
-    /// sample, ticked with the aiding ages. Time the inertial model did
-    /// not cover; the next propagation widens the covariance for it
-    /// (`ekf/imu_gap.rs`).
+    /// sample, which `ekf/imu_gap.rs` widens the covariance for.
     pub imu_age_s: Scalar,
+    /// Length \[s\] of the current run of clipped accelerometer
+    /// samples, which `ekf/accel_clip.rs` widens the covariance for.
+    pub accel_clip_s: Scalar,
 }
 // COV:EXCL_STOP
 
@@ -357,6 +360,7 @@ impl EkfState {
             gnss_vel_age_s: validity::AGE_SATURATION_S,
             baro_age_s: validity::AGE_SATURATION_S,
             imu_age_s: 0.0,
+            accel_clip_s: 0.0,
         }
     }
 
@@ -391,6 +395,7 @@ impl EkfState {
         self.gnss_vel_age_s = validity::AGE_SATURATION_S;
         self.baro_age_s = validity::AGE_SATURATION_S;
         self.imu_age_s = 0.0;
+        self.accel_clip_s = 0.0;
     }
 
     /// Whether `init()` has run successfully since construction or `reset()`.

@@ -2330,3 +2330,23 @@ verification_methods = ["test"]
 modules = ["aviate-core/src/ekf/imu_gap.rs", "aviate-core/src/ekf/predict.rs", "aviate-core/src/ekf/validity.rs"]
 derived = false
 traces_to = ["a75ad122-2e13-4268-b388-f821d1bea6e3"]
+
+[[requirements]]
+uid = "1b3634d2-eba6-4b78-b297-a28423d04c16"
+id = "LLR-EST-212"
+title = "A clipped accelerometer sample widens the covariance"
+owner = "aviate-core@aviate"
+description = """
+`predict_state` SHALL treat an IMU sample with any accelerometer
+component at or beyond 16 g as clipped. It SHALL still integrate the
+sample, and SHALL add to each velocity and position axis the variance
+growth of a 500 m/s² unmeasured specific force held over the current
+run of clipped samples (`EkfState::accel_clip_s`, capped at 1 s). The
+first in-range sample SHALL end the run. The widening SHALL depend only
+on the accelerometer's saturation, never on the staleness of an aiding
+source.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf/accel_clip.rs", "aviate-core/src/ekf/predict.rs"]
+derived = false
+traces_to = ["80d94e93-b4a8-4f69-8426-31395eabb89c"]
