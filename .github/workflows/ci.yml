@@ -277,7 +277,7 @@ jobs:
           submodules: recursive
 
       - name: Install release toolchain (pinned to match the release workflow)
-        uses: dtolnay/rust-toolchain@1.95.0
+        uses: dtolnay/rust-toolchain@1.120.0
 
       - name: Verify committed lockfiles are up to date (--locked)
         run: ./scripts/check_release_lockfiles.sh
@@ -536,7 +536,7 @@ jobs:
           COVERAGE_MODE=branch ./scripts/check_coverage.sh
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: coverage-report
