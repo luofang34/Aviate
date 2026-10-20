@@ -349,6 +349,14 @@ pub trait SimulatorBackend: Send {
 
     /// Return the connected instance.
     fn instance(&self) -> u8;
+
+    /// Apply one fault command to the flight controller's sensors and
+    /// acknowledge it, for a backend whose flight controller runs in this
+    /// process. `None` means the flight controller runs elsewhere, and the
+    /// runner reaches it through the instance's fault command port.
+    fn apply_fault(&mut self, _command: &crate::FaultCommand) -> Option<crate::FaultAck> {
+        None
+    }
 }
 
 #[cfg(test)]

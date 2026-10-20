@@ -112,11 +112,13 @@ verify = [
   { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
 ]
 
+# Land under position control: the touchdown is verified, so the
+# disarm that follows is a landed vehicle's.
 [[vehicles.mission.phases]]
 name = "land"
-duration_ms = 4000
-action = { type = "thrust", value = 0.0 }
-verify = [{ type = "max_altitude", value = 1.0 }]
+duration_ms = 12000
+action = { type = "goto", position = [0.0, 0.0, 0.0], heading = 0.0 }
+verify = [{ type = "touchdown_velocity", max_descent_mps = 1.0, ground_tolerance = 0.30 }]
 
 [[vehicles.mission.phases]]
 name = "disarm"

@@ -8,6 +8,10 @@
 #   - Maintain altitude within 1m tolerance
 #   - Maintain horizontal position within 2m drift
 #   - Controlled descent and land
+#
+# Flown under position control (PositionHold targets) wherever the
+# vehicle holds or lands, so the profile holds on any plant and ends in
+# a verified touchdown.
 
 [test]
 name = "hover_stability"
@@ -26,45 +30,41 @@ spawn_heading = 0.0
 [vehicles.mission]
 name = "hover_stability_test"
 
-# Phase 1: Arm
+# Arm.
 [[vehicles.mission.phases]]
 name = "arm"
 duration_ms = 500
 action = { type = "arm" }
 verify = [{ type = "armed", value = true }]
 
-# Phase 2: Takeoff to 10m
+# Climb to 10 m.
 [[vehicles.mission.phases]]
 name = "takeoff"
-duration_ms = 5000
-action = { type = "thrust", value = 0.64 }
-verify = [{ type = "min_altitude", value = 0.1 }]
+duration_ms = 10000
+action = { type = "goto", position = [0.0, 0.0, -10.0], heading = 0.0 }
+verify = [
+    { type = "min_altitude", value = 8.0 },
+    { type = "attitude_bounded", roll_pitch_max_deg = 25.0 },
+]
 
-# Phase 3: Hover at altitude - test altitude hold
+# Hold 10 m: altitude within 1 m, horizontal drift within 2 m.
 [[vehicles.mission.phases]]
 name = "hover_hold"
 duration_ms = 8000
-action = { type = "thrust", value = 0.4225 }
+action = { type = "goto", position = [0.0, 0.0, -10.0], heading = 0.0 }
 verify = [
-    { type = "altitude_hold", target = 3.0, tolerance = 5.0 },
-    { type = "max_drift", value = 50.0 }
+    { type = "altitude_hold", target = 10.0, tolerance = 1.0 },
+    { type = "max_drift", value = 2.0 },
 ]
 
-# Phase 4: Controlled descent
-[[vehicles.mission.phases]]
-name = "descend"
-duration_ms = 4000
-action = { type = "thrust", value = 0.09 }
-verify = [{ type = "max_altitude", value = 12.0 }]
-
-# Phase 5: Land
+# Land under position control: the touchdown is verified, so the
+# disarm that follows is a landed vehicle's.
 [[vehicles.mission.phases]]
 name = "land"
-duration_ms = 3000
-action = { type = "thrust", value = 0.0 }
-verify = []
+duration_ms = 12000
+action = { type = "goto", position = [0.0, 0.0, 0.0], heading = 0.0 }
+verify = [{ type = "touchdown_velocity", max_descent_mps = 1.0, ground_tolerance = 0.30 }]
 
-# Phase 6: Disarm
 [[vehicles.mission.phases]]
 name = "disarm"
 duration_ms = 500

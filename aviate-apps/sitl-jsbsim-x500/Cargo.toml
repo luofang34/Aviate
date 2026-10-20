@@ -6,9 +6,16 @@ version.workspace = true
 license.workspace = true
 description = "X500 quadcopter FC binary for the JSBSim SITL board"
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "sitl-jsbsim-x500"
 path = "src/main.rs"
+
+[[bin]]
+name = "sitl-jsbsim-missions"
+path = "src/bin/missions.rs"
 
 [dependencies]
 # The X500 kernel: the airframe's gains, mixer and resolved config,
@@ -24,6 +31,12 @@ aviate-hal-xil = { path = "../../aviate-hal/xil" }
 world-core.workspace = true
 log = "0.4"
 env_logger = "0.11"
+# The mission harness reads the shared mission manifest.
+serde_json = "1"
+# The mission runner reports through tracing; the harness prints it,
+# and the board's log records through the same subscriber.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "tracing-log", "ansi"] }
 
 [lints]
 workspace = true
