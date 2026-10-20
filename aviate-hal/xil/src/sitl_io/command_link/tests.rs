@@ -229,3 +229,31 @@ fn invalid_attitude_target_preserves_the_retained_command_and_provenance() {
                 && command.setpoint.collective_thrust.0 == 0.61
     ));
 }
+
+/// An instance other than 0 still answers as the system its telemetry
+/// names: a ground station that filters on the telemetry's system id
+/// otherwise drops every acknowledgement and reads an arm as unanswered.
+#[test]
+fn every_instance_acknowledges_as_the_telemetry_system() {
+    let instance = 28_u8;
+    let free = std::net::UdpSocket::bind("127.0.0.1:0")
+        .and_then(|socket| socket.local_addr())
+        .expect("a free port")
+        .port();
+    let net = XilNetConfig {
+        base_port: free - u16::from(instance) * 16,
+        stride: 16,
+    };
+    let mut io = SitlIO::new(XilConfig::for_instance_with_net(instance, net)).expect("bind");
+    let gcs = std::net::UdpSocket::bind("127.0.0.1:0").expect("ground station");
+    gcs.set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .expect("timeout");
+    io.handle_command_long(arm_msg());
+    io.gcs_addr = Some(gcs.local_addr().expect("address"));
+    io.send_command_ack(mav_cmd::COMPONENT_ARM_DISARM, mav_result::ACCEPTED, 0);
+    let mut buffer = [0_u8; 300];
+    let length = gcs.recv(&mut buffer).expect("an acknowledgement");
+    let parsed = parse_mavlink_frame(&buffer[..length]).expect("a MAVLink frame");
+    assert!(matches!(parsed.message, MavMessage::CommandAck(_)));
+    assert_eq!(parsed.header.sysid, AVIATE_SYSTEM_ID);
+}

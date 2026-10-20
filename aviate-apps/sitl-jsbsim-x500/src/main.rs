@@ -14,6 +14,7 @@
 //! are injected into the airframe-neutral board.
 
 mod actuators;
+mod ground_station;
 
 use std::time::Duration;
 
@@ -96,6 +97,9 @@ fn main() -> std::io::Result<()> {
     let origin = GeoOrigin::from_env().map_err(std::io::Error::other)?;
     let mut config = JsbsimConfig::for_instance(instance, origin, decimal_year_now());
     config.noise = NoiseTier::from_env();
+    if let Some(endpoint) = ground_station::telemetry_endpoint(&app_config) {
+        config.xil.gcs_addr = endpoint;
+    }
     log::info!(
         "instance {instance}: sidecar {}, origin {:.7}, {:.7}, {} m, noise {:?}",
         config.sidecar_addr,
