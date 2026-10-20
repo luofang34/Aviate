@@ -3,6 +3,7 @@
 
 use aviate_backend_mavlink_hil::HilStateQuaternion;
 use aviate_hal_xil::synthesis::{MeasuredKinematics, TruthSample};
+use aviate_hal_xil::VehicleState;
 use world_core::{GeodeticPosition, LocalTangentPlane};
 
 /// One milli-g of specific force, m/s² (standard gravity / 1000).
@@ -19,15 +20,19 @@ pub(crate) struct GenerationTracker {
     last_time_us: Option<u64>,
     generation: u32,
     steps: u64,
+    /// A reset was requested: the next state is a new world whatever
+    /// session or time it states.
+    new_world_requested: bool,
 }
 
 impl GenerationTracker {
     /// The generation of a state stamped `time_us` on session `session`,
     /// and its step index within that generation.
     pub(crate) fn observe(&mut self, session: u64, time_us: u64) -> (u32, u64) {
+        let requested = core::mem::take(&mut self.new_world_requested);
         let new_session = self.session.is_some_and(|known| known != session);
         let rewound = self.last_time_us.is_some_and(|last| time_us < last);
-        if new_session || rewound {
+        if requested || new_session || rewound {
             self.generation = self.generation.wrapping_add(1);
             self.steps = 0;
         }
@@ -36,6 +41,13 @@ impl GenerationTracker {
         let step = self.steps;
         self.steps = self.steps.wrapping_add(1);
         (self.generation, step)
+    }
+
+    /// The board ended the session to reset the world: the next state
+    /// starts a new generation, even when no state of the old session
+    /// was seen to compare it with.
+    pub(crate) fn request_new_world(&mut self) {
+        self.new_world_requested = true;
     }
 }
 
@@ -82,6 +94,22 @@ pub(crate) fn truth_sample(
             ],
         }),
     })
+}
+
+/// The vehicle a state states: position from its truth sample, the
+/// state's NED velocity (cm/s) and body rates, and its attitude.
+pub(crate) fn vehicle_state(state: &HilStateQuaternion, truth: &TruthSample) -> VehicleState {
+    VehicleState {
+        position: truth.position_ned_m,
+        velocity: [
+            f32::from(state.vx) / 100.0,
+            f32::from(state.vy) / 100.0,
+            f32::from(state.vz) / 100.0,
+        ],
+        orientation: state.attitude_quaternion,
+        angular_velocity: [state.rollspeed, state.pitchspeed, state.yawspeed],
+        valid: true,
+    }
 }
 
 #[cfg(test)]

@@ -22,6 +22,7 @@ members = [
     "aviate-apps/sitl-jmavsim-generic-quad-x/kernel",
     "aviate-apps/sitl-gazebo-x500",
     "aviate-apps/sitl-gazebo-x500/kernel",
+    "aviate-apps/sitl-jsbsim-x500",
     "aviate-apps/sitl-xplane-alia250",
     "aviate-apps/sitl-xplane-alia250/kernel",
 

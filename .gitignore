@@ -63,5 +63,6 @@ aviate-chips/stm32h743/IWDG.md
 aviate-apps/*/
 !aviate-apps/sitl-jmavsim-generic-quad-x/
 !aviate-apps/sitl-gazebo-x500/
+!aviate-apps/sitl-jsbsim-x500/
 !aviate-apps/sitl-xplane-alia250/
 /aviate-hal/xil/backends/gz/plugin/build/

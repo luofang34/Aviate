@@ -149,6 +149,14 @@ impl HilTcpTransport {
         self.rx_len = 0;
     }
 
+    /// Drops the stream and redials at the next `poll`, without waiting
+    /// out the retry interval. A simulator that starts a new world for
+    /// each connection resets this way.
+    pub fn reconnect(&mut self) {
+        self.disconnect("a new session was requested");
+        self.next_attempt = Instant::now();
+    }
+
     /// Reads everything available and parses HIL messages, redialing
     /// when the link is down.
     pub fn poll(&mut self) {
