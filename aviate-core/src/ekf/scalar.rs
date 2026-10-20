@@ -265,12 +265,11 @@ impl super::Estimator for Ekf {
     type RuntimeState = EkfState;
 
     // Registered in cert/algorithm_id_registry.toml as
-    // "ekf.basic-15state.v6" — a clipped accelerometer sample widens
-    // the covariance for the impulse it could not measure
-    // (`ekf/accel_clip.rs`). Same 15-state shape as v5, so the identity
-    // is what keeps a v5 image from matching a v6 one at the lockstep
-    // gate.
-    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4637; // "ETIMEKF7"
+    // "ekf.basic-15state.v7" — a cycle with a non-finite IMU sample or
+    // dt fuses no aiding (LLR-EST-204). Same 15-state shape as v6, so
+    // the identity is what keeps a v6 image from matching a v7 one at
+    // the lockstep gate.
+    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4638; // "ETIMEKF8"
 
     fn observe(
         &self,
@@ -279,6 +278,12 @@ impl super::Estimator for Ekf {
         overrides: Option<&crate::control::SensorOverrides>,
         dt: Scalar,
     ) {
+        // LLR-EST-204(b): a non-finite or non-positive `dt` leaves the
+        // filter untouched, aiding included.
+        if !dt.is_finite() || dt <= 0.0 {
+            return;
+        }
+
         // Aiding-freshness ages advance once per cycle regardless of
         // which channels are healthy this cycle — un-aided time keeps
         // passing even when GNSS/baro are silently gated out below.
@@ -291,6 +296,13 @@ impl super::Estimator for Ekf {
         // an estimator consumes — `Ekf::observe` decides.
         let primary_imu = &sensors.imus[0];
         if primary_imu.valid && primary_imu.health == crate::sensor::SensorHealth::Good {
+            // LLR-EST-204(b): a non-finite sample freezes the whole cycle.
+            // Fusing aiding onto the un-propagated state would still move
+            // it; the gap widening on the next usable sample accounts for
+            // the time this cycle leaves uncovered.
+            if !super::predict::imu_is_finite(&primary_imu.value) {
+                return;
+            }
             Ekf::predict_state(self, state, &primary_imu.value, dt);
         }
 

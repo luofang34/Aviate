@@ -1840,3 +1840,20 @@ Without the widening the vertical velocity stays at 12 m/s and every
 GNSS velocity sample is gated out. Witnesses LLR-EST-212.
 """
 traces_to = ["1b3634d2-eba6-4b78-b297-a28423d04c16"]
+
+[[tests]]
+uid = "28475373-b984-421b-86af-c42209734507"
+id = "TST-EST-220"
+title = "a_non_finite_imu_cycle_fuses_no_aiding + a_non_finite_dt_cycle_fuses_no_aiding + the_same_fix_moves_the_filter_on_a_usable_cycle"
+test_selectors = ["a_non_finite_imu_cycle_fuses_no_aiding", "a_non_finite_dt_cycle_fuses_no_aiding", "the_same_fix_moves_the_filter_on_a_usable_cycle"]
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/ekf_non_finite_cycle_tests.rs` hovers the filter on
+GNSS for 10 s, then runs one `Ekf::observe` cycle with a GNSS fix 1 m
+and 0.5 m/s off the estimate and either a NaN accelerometer sample or a
+NaN `dt`. Attitude, position, velocity, both biases and the whole
+covariance stay bit-identical. The same fix on a usable cycle moves the
+filter, so the gate, not the innovation gate, is what holds it.
+Witnesses LLR-EST-204.
+"""
+traces_to = ["a8a37317-dd7c-4218-b891-58066c2affb5"]
