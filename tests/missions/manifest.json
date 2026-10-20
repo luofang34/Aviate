@@ -42,12 +42,10 @@
       "reason": "hover-trim measurement harness, run on demand for actuator-domain evidence"
     },
     "numeric_fault_inject": {
-      "gate": "quarantined",
-      "shard": "quarantine",
+      "gate": "blocking",
+      "shard": "position-numeric-timeout",
       "runs": 3,
-      "pass_threshold": 2,
-      "tracking_issue": 371,
-      "reason": "after 3 s of IMU NaN in hover the attitude estimate does not reconverge and the vehicle descends into the ground; the window is kept, not shortened to pass"
+      "pass_threshold": 2
     },
     "position_hold": {
       "gate": "blocking",
