@@ -24,7 +24,12 @@
 ## change shipped — review carefully.
 
 [estimator]
-"ekf.basic-15state.v6" = 0x4554_494D_454B_4637  # Ekf
+"ekf.basic-15state.v7" = 0x4554_494D_454B_4638  # Ekf
+# Retired: "ekf.basic-15state.v6" = 0x4554_494D_454B_4637. v6 still
+# fused GNSS, baro and magnetometer on a cycle whose IMU sample or dt was
+# non-finite, moving the state LLR-EST-204 freezes for that cycle. v7
+# fuses nothing on such a cycle. Same 15-state shape, different fusion
+# behavior, so a v6 image must not match a v7 one at the lockstep gate.
 # Retired: "ekf.basic-15state.v5" = 0x4554_494D_454B_4636. v5 trusted an
 # accelerometer sample at the sensor's range like any other, so a hard
 # touchdown left most of its impulse out of the velocity estimate and
