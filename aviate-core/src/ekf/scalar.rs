@@ -265,12 +265,12 @@ impl super::Estimator for Ekf {
     type RuntimeState = EkfState;
 
     // Registered in cert/algorithm_id_registry.toml as
-    // "ekf.basic-15state.v5" — the first propagation after cycles
-    // without a usable IMU sample widens the covariance for that time
-    // (`ekf/imu_gap.rs`). Same 15-state shape as v4, so the identity is
-    // what keeps a v4 image from matching a v5 one at the lockstep
+    // "ekf.basic-15state.v6" — a clipped accelerometer sample widens
+    // the covariance for the impulse it could not measure
+    // (`ekf/accel_clip.rs`). Same 15-state shape as v5, so the identity
+    // is what keeps a v5 image from matching a v6 one at the lockstep
     // gate.
-    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4636; // "ETIMEKF6"
+    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4637; // "ETIMEKF7"
 
     fn observe(
         &self,

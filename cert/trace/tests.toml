@@ -1824,3 +1824,19 @@ Without the widening the roll ends at 8° and every GNSS velocity sample
 is gated out. Witnesses LLR-EST-211.
 """
 traces_to = ["70d4b58a-40fc-48bf-aab7-f1ff16912986"]
+
+[[tests]]
+uid = "20b7522f-9127-4c24-aa44-b7b419e7b87a"
+id = "TST-EST-219"
+title = "the_estimate_comes_to_rest_after_a_clipped_hard_touchdown"
+test_selector = "the_estimate_comes_to_rest_after_a_clipped_hard_touchdown"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/ekf_touchdown_tests.rs` runs the filter at 250 Hz with
+10 Hz GNSS: 10 s of hover, a 15 m zero-thrust fall, a touchdown in four
+samples clipped at the SITL clamp (321.3 m/s²), then 2 s at rest. The
+vertical velocity and the height end within 0.3 m/s and 0.3 m of truth.
+Without the widening the vertical velocity stays at 12 m/s and every
+GNSS velocity sample is gated out. Witnesses LLR-EST-212.
+"""
+traces_to = ["1b3634d2-eba6-4b78-b297-a28423d04c16"]

@@ -39,6 +39,6 @@ fn app_built_kernel_matches_registered_identity() {
     assert_eq!(kernel.cfg().canonical_hash(), 0x51f4_1b49_06cf_605c);
     assert_eq!(
         kernel.pipeline().algorithm_identity_hash(),
-        0xaa05_af72_c34d_ffcd
+        0xef03_61a6_34c7_45d0
     );
 }

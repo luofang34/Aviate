@@ -30,6 +30,7 @@ impl Ekf {
             }
         }
         self.widen_for_imu_gap(state, dt);
+        self.widen_for_accel_clip(state, &imu.accel, dt);
 
         // 1. Extract IMU data (corrected with current bias)
         let gyro_corr = Vector3 {

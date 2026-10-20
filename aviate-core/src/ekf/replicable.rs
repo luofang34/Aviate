@@ -13,9 +13,10 @@ impl crate::replicable::Replicable for EkfState {
     // + 2 bytes for the boolean latches (initialized, quat_fault),
     // + 1 presence byte and 4 f32 bytes for the QFE baro_ref datum,
     // + 4 f32 bytes for its estimator variance (baro_ref_var),
-    // + 4 f32 bytes for the uncovered IMU time (imu_age_s).
-    // Total = (19 + 225) * 4 + 2 + 5 + 4 + 4 = 991 bytes.
-    const ENCODED_LEN: usize = (19 + STATE_DIM * STATE_DIM) * 4 + 2 + 5 + 4 + 4;
+    // + 4 f32 bytes for the uncovered IMU time (imu_age_s),
+    // + 4 f32 bytes for the current clipping run (accel_clip_s).
+    // Total = (19 + 225) * 4 + 2 + 5 + 4 + 4 + 4 = 995 bytes.
+    const ENCODED_LEN: usize = (19 + STATE_DIM * STATE_DIM) * 4 + 2 + 5 + 4 + 4 + 4;
 
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
         use crate::replicable::copy_into;
@@ -58,6 +59,7 @@ impl crate::replicable::Replicable for EkfState {
         w += copy_into(buf, w, &baro_ref.to_le_bytes());
         w += copy_into(buf, w, &self.baro_ref_var.to_le_bytes());
         w += copy_into(buf, w, &self.imu_age_s.to_le_bytes());
+        w += copy_into(buf, w, &self.accel_clip_s.to_le_bytes());
         w
     }
 }

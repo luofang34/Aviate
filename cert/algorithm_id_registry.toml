@@ -24,7 +24,14 @@
 ## change shipped — review carefully.
 
 [estimator]
-"ekf.basic-15state.v5" = 0x4554_494D_454B_4636  # Ekf
+"ekf.basic-15state.v6" = 0x4554_494D_454B_4637  # Ekf
+# Retired: "ekf.basic-15state.v5" = 0x4554_494D_454B_4636. v5 trusted an
+# accelerometer sample at the sensor's range like any other, so a hard
+# touchdown left most of its impulse out of the velocity estimate and
+# GNSS evidence of the vehicle at rest outside the innovation gate. v6
+# widens the covariance for each run of clipped samples. Same 15-state
+# shape, different recovery behavior, so a v5 image must not match a v6
+# one at the lockstep gate.
 # Retired: "ekf.basic-15state.v4" = 0x4554_494D_454B_4635. v4 resumed
 # propagation after an IMU gap with the covariance it held before the
 # gap, so GNSS evidence of the motion during the gap stayed outside the
