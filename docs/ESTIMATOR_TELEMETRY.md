@@ -109,10 +109,11 @@ frames:
 - `GLOBAL_POSITION_INT` (message 33) gives the local estimate as a
   global position. Aviate sends it only when the vehicle has a declared
   geodetic origin, which is the point that the local NED frame is
-  measured from. The latitude and longitude are the origin plus the
-  local north and east position. `alt` is the origin altitude minus the
-  local down position. `relative_alt` is the height above the local
-  origin. This frame is part of the estimate group: it has the same
+  measured from. `lat`, `lon` and `alt` are the local NED position
+  projected on the WGS-84 tangent plane at the origin
+  (`world_core::LocalTangentPlane`). The origin's sea-level altitude is
+  taken as its ellipsoidal height, with no geoid separation applied.
+  `relative_alt` is the height above the local origin. This frame is part of the estimate group: it has the same
   timestamp as `LOCAL_POSITION_NED`, and the status rules above apply to
   it in the same way.
 - `GPS_RAW_INT` (message 24) gives the last fix that the GNSS receiver

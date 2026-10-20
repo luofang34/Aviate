@@ -5,6 +5,7 @@ use log::{info, warn};
 use aviate_hal_io::{CommandHal, CommandOutcome, SystemCommand};
 use aviate_link::mavlink::protocol::{
     CommandAck, CommandLong, Heartbeat, SetAttitudeTarget, SetPositionTargetLocalNed,
+    AVIATE_SYSTEM_ID,
 };
 use aviate_link::mavlink::{
     mav_cmd, mav_result, parse_mavlink_frame, serialize_mavlink, MavAutopilot, MavMessage,
@@ -226,8 +227,11 @@ impl SitlIO {
 
     fn send_message_to(&mut self, message: &MavMessage, destination: std::net::SocketAddr) {
         let mut buffer = [0_u8; 300];
-        let system_id = self.config.instance.wrapping_add(1);
-        if let Some(length) = serialize_mavlink(message, self.seq, system_id, 1, &mut buffer) {
+        // The vehicle answers as the system its telemetry stream names,
+        // whatever its instance: a ground station that takes one
+        // vehicle's telemetry must also take its acknowledgements.
+        if let Some(length) = serialize_mavlink(message, self.seq, AVIATE_SYSTEM_ID, 1, &mut buffer)
+        {
             self.seq = self.seq.wrapping_add(1);
             self.socket.send_to(&buffer[..length], destination).ok();
             self.tx_count = self.tx_count.wrapping_add(1);

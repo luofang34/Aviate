@@ -685,12 +685,14 @@ jobs:
   # The SITL missions, flown on JSBSim. Pilotage's JSBSim sidecar owns
   # the physics and the simulation clock and runs unpaced: the lockstep
   # with the flight controller, not wall time, sets the pace, so each
-  # mission takes seconds. The sidecar is built from Pilotage at a pinned
-  # full commit, with JSBSim itself built by Pilotage's xtask at the
-  # release it pins. Every gate=blocking mission in
-  # tests/missions/manifest.json must meet its reliability bar here;
-  # quarantined missions run visibly on main pushes and never fail the
-  # job.
+  # mission takes seconds. The sidecar is built on its own from a public
+  # checkout of Pilotage at a pinned full commit: it is outside
+  # Pilotage's workspace and has only public dependencies, so this job
+  # needs no deploy key and no credential. JSBSim itself is built by the
+  # script Pilotage ships with the release it pins. Every gate=blocking
+  # mission in tests/missions/manifest.json must meet its reliability
+  # bar here; quarantined missions run visibly on main pushes and never
+  # fail the job.
   sitl_jsbsim:
     name: SITL Missions (JSBSim X500)
     runs-on: ubuntu-latest
@@ -699,8 +701,11 @@ jobs:
       # Pilotage commit whose sidecar this job flies against. A full
       # commit, never a branch: the mission must not change under an
       # unchanged Aviate tree. Moved deliberately, like a git dependency.
-      PILOTAGE_REV: 3db8f1252d2bf1ac2569db9a1f30489582c66442
+      PILOTAGE_REV: 7868e570c7290ed9f89f9af3662bcfda313ba6f8
       SIDECAR_PORT: "4560"
+      # The protoc Pilotage's own CI builds its protocol crate with.
+      PROTOC_VERSION: "26.1"
+      PROTOC_SHA256: a7be2928c0454f132c599e25b79b7ad1b57663f2337d7f7e468a1d59b98ec1b0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -714,22 +719,34 @@ jobs:
           repository: luofang34/Pilotage
           ref: ${{ env.PILOTAGE_REV }}
           path: pilotage
+          persist-credentials: false
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libudev-dev cmake
 
+      - name: Install protoc
+        run: |
+          archive="${RUNNER_TEMP}/protoc-${PROTOC_VERSION}.zip"
+          install_dir="${RUNNER_TEMP}/protoc"
+          curl --fail --location --retry 3 --silent --show-error \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip" \
+            --output "${archive}"
+          echo "${PROTOC_SHA256}  ${archive}" | sha256sum --check --strict
+          unzip -q "${archive}" -d "${install_dir}"
+          echo "${install_dir}/bin" >> "${GITHUB_PATH}"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # JSBSim's checkout and static library, built by Pilotage's xtask
-      # at the release it pins; the key follows that pin.
+      # JSBSim's checkout and static library, built by Pilotage's script
+      # at the release it pins; the key follows that script.
       - name: Cache the JSBSim build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/jsbsim
-          key: jsbsim-${{ runner.os }}-${{ hashFiles('pilotage/tools/xtask/src/jsbsim.rs') }}
+          key: jsbsim-${{ runner.os }}-${{ hashFiles('pilotage/scripts/build-jsbsim.sh') }}
 
       - name: Cache the sidecar build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -737,7 +754,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            pilotage/target
+            pilotage/sim/jsbsim-sidecar/target
           key: jsbsim-sidecar-${{ runner.os }}-${{ env.PILOTAGE_REV }}
 
       - name: Cache the Aviate build
@@ -747,12 +764,10 @@ jobs:
           key: ${{ runner.os }}-cargo-sitl-jsbsim-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build JSBSim
-        working-directory: pilotage
-        run: cargo run -p xtask --quiet -- build-jsbsim
+        run: bash pilotage/scripts/build-jsbsim.sh
 
       - name: Build the JSBSim sidecar
-        working-directory: pilotage
-        run: cargo build --release --locked -p pilotage-jsbsim-sidecar
+        run: cargo build --release --locked --manifest-path pilotage/sim/jsbsim-sidecar/Cargo.toml
 
       - name: Validate the mission manifest
         run: ./scripts/check_mission_manifest.py
@@ -760,15 +775,13 @@ jobs:
       - name: Build the mission harness
         run: cargo build --release --locked -p aviate-app-sitl-jsbsim-x500 --bin sitl-jsbsim-missions
 
-      # The sidecar spawns the X500 at the default SITL origin, the
-      # point the board's GeoOrigin::DEFAULT states, and runs unpaced:
-      # the lockstep, not wall time, sets the pace.
       # The sidecar spawns the X500 at the default SITL origin, the point
-      # GeoOrigin::DEFAULT states, and each mission run starts a new
-      # session, so a new world.
+      # GeoOrigin::DEFAULT states, and runs unpaced: the lockstep, not wall
+      # time, sets the pace. Each mission run starts a new session, so a
+      # new world.
       - name: Start the JSBSim sidecar
         run: |
-          pilotage/target/release/pilotage-jsbsim-sidecar \
+          pilotage/sim/jsbsim-sidecar/target/release/pilotage-jsbsim-sidecar \
             --port "$SIDECAR_PORT" --aircraft x500 --jsbsim-root ~/jsbsim \
             --latitude-deg 47.3977419 --longitude-deg 8.5455938 --heading-deg 0 \
             --site-elevation-m 488 --realtime-factor 0 > sidecar.log 2>&1 &

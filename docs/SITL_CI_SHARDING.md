@@ -7,8 +7,10 @@ the flight controller, not wall time, sets the pace, so a mission's tens of
 seconds of simulated flight take a few seconds of wall time and the whole
 blocking set fits in one job.
 
-The job builds JSBSim with Pilotage's xtask and the sidecar from Pilotage at
-the full commit `PILOTAGE_REV` names (both cached on their pins), starts the
+The job builds JSBSim with Pilotage's `scripts/build-jsbsim.sh` and the
+sidecar on its own (it is outside Pilotage's workspace and has only public
+dependencies, so no credential is needed) from a public Pilotage checkout at
+the full commit `PILOTAGE_REV` names, both cached on their pins. It starts the
 sidecar with the X500 at the default SITL origin, and runs
 `sitl-jsbsim-missions` from the `aviate-app-sitl-jsbsim-x500` crate:
 
@@ -24,8 +26,9 @@ session, so runs never share a vehicle.
 
 ## Running missions locally
 
-Build and start the sidecar from a Pilotage checkout (`cargo xtask
-build-jsbsim`, then `cargo build --release -p pilotage-jsbsim-sidecar`), with
+Build and start the sidecar from a Pilotage checkout (`bash
+scripts/build-jsbsim.sh`, then `cargo build --release --manifest-path
+sim/jsbsim-sidecar/Cargo.toml`; it needs `protoc`), with
 the same arguments the job uses, on port 4560 plus the mission vehicle's
 instance. Then, from this repository:
 
