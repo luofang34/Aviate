@@ -8,6 +8,8 @@ description = "MAVLink HIL backend for legacy simulator compatibility (jMAVSim, 
 
 [dependencies]
 aviate-hal-xil = { path = "../.." }
+# The geodetic-to-NED projection.
+world-core.workspace = true
 log = "0.4"
 
 [dev-dependencies]

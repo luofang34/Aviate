@@ -6,30 +6,16 @@
 //! per-sample origin would hold the vehicle at zero forever, and a
 //! re-latch mid-flight would teleport the estimator.
 //!
-//! The projection is flat-earth. Over the tens of kilometres a SITL
-//! flight covers, the error is far below the fix noise; it is not a
-//! survey-grade transform and does not claim to be.
+//! The projection is `world_core::LocalTangentPlane`: NED on the WGS84
+//! tangent plane at the origin, through ECEF, exact at any distance.
 
 use aviate_hal_xil::sim_types::SimGnssFix;
-
-/// Metres per degree of latitude on a sphere of the WGS84 mean radius.
-const METRES_PER_DEGREE: f64 = 111_111.0;
+use world_core::{GeodeticPosition, LocalTangentPlane};
 
 /// The latched local-tangent-plane origin for a session.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NedOrigin {
-    latched: Option<Origin>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Origin {
-    lat_deg: f64,
-    lon_deg: f64,
-    alt_m: f32,
-    /// Longitude scale at the origin latitude, held so every sample
-    /// projects against the SAME scale — recomputing it per sample
-    /// would make the east axis stretch as the vehicle moves.
-    lon_scale: f64,
+    latched: Option<LocalTangentPlane>,
 }
 
 impl NedOrigin {
@@ -49,19 +35,22 @@ impl NedOrigin {
         if !usable {
             return [0.0; 3];
         }
-        let origin = *self.latched.get_or_insert_with(|| Origin {
-            lat_deg,
-            lon_deg,
-            alt_m,
-            lon_scale: METRES_PER_DEGREE * lat_deg.to_radians().cos(),
-        });
-        // Subtract in f64 before narrowing: two degrees near 47 differ
-        // in their last f32 digits by metres, so an f32 subtraction
-        // would quantize the position to a coarse grid.
-        let north = (lat_deg - origin.lat_deg) * METRES_PER_DEGREE;
-        let east = (lon_deg - origin.lon_deg) * origin.lon_scale;
-        let down = f64::from(origin.alt_m - alt_m);
-        [north as f32, east as f32, down as f32]
+        // The bridge reports one altitude; it is taken as the height
+        // above the WGS84 ellipsoid, the same surface the origin's is on.
+        let position = GeodeticPosition::wgs84(lat_deg, lon_deg, f64::from(alt_m));
+        let plane = match self.latched {
+            Some(plane) => plane,
+            None => match LocalTangentPlane::new(position) {
+                Ok(plane) => *self.latched.insert(plane),
+                Err(_) => return [0.0; 3],
+            },
+        };
+        // The offset stays in f64 until here: two latitudes near 47
+        // differ only in their last f32 digits by metres.
+        match plane.to_ned(position) {
+            Ok(ned) => [ned.north_m as f32, ned.east_m as f32, ned.down_m as f32],
+            Err(_) => [0.0; 3],
+        }
     }
 
     /// Whether an origin has been latched.

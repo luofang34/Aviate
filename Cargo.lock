@@ -209,6 +209,7 @@ version = "0.1.3"
 dependencies = [
  "aviate-hal-xil",
  "log",
+ "world-core",
 ]
 
 [[package]]
