@@ -6,7 +6,10 @@ use std::time::Duration;
 use aviate_core::control::Command;
 use aviate_core::hal::{ActuatorHal, SystemHal};
 use aviate_core::{ArmError, DisarmError, InitState};
-use aviate_hal_xil::{BackendStatus, ResetGeneration, SimulatorLifecycle, VehicleState};
+use aviate_hal_xil::{
+    BackendStatus, FaultAck, FaultCommand, FaultController, FaultSensors, ResetGeneration,
+    SimulatorLifecycle, VehicleState,
+};
 use log::info;
 
 use super::JsbsimBoard;
@@ -133,6 +136,21 @@ where
             aviate_hal_io::SystemCommand::FlightControl(command),
             now_ticks,
         );
+    }
+
+    /// Apply one fault command to the flight controller's sensors, as
+    /// its fault command port would, and acknowledge it.
+    pub fn apply_fault(&mut self, command: &FaultCommand) -> FaultAck {
+        let (imu, baro, mag, gnss) = self.runner.board_hal.sensors_mut();
+        FaultController::apply(
+            command,
+            &mut FaultSensors {
+                imu,
+                baro,
+                mag,
+                gnss,
+            },
+        )
     }
 
     /// A state of a new world arrived (or the first state of all): the

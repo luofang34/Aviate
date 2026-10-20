@@ -10,6 +10,10 @@
 #   - horizontal drift over the 5 s dropout window ≤ 2.0 m
 #   - estimator does not produce numeric fault
 #   - attitude (independent of GNSS) tracks normally throughout
+#
+# Flown under position control (PositionHold targets) wherever the
+# vehicle holds or lands, so the profile holds on any plant and ends in
+# a verified touchdown.
 
 [test]
 name = "gnss_dropout"
@@ -26,56 +30,48 @@ spawn_heading = 0.0
 [vehicles.mission]
 name = "gnss_dropout_test"
 
-# Phase 1: Arm.
+# Arm.
 [[vehicles.mission.phases]]
 name = "arm"
 duration_ms = 500
 action = { type = "arm" }
 verify = [{ type = "armed", value = true }]
 
-# Phase 2: Takeoff to 10 m and let the estimator settle.
+# Take off to 10 m and let the estimator settle.
 [[vehicles.mission.phases]]
 name = "takeoff"
-duration_ms = 5000
-action = { type = "thrust", value = 0.64 }
-verify = [{ type = "min_altitude", value = 0.1 }]
+duration_ms = 10000
+action = { type = "goto", position = [0.0, 0.0, -10.0], heading = 0.0 }
+verify = [{ type = "min_altitude", value = 8.0 }]
 
-# Phase 3: Estimator warmup. The kernel just needs to stay armed
-# while the EKF settles into a steady-state estimate; flight quality
-# is irrelevant here, the dropout phase is what we're protecting.
+# Estimator warmup.
 [[vehicles.mission.phases]]
 name = "hover_warmup"
 duration_ms = 3000
-action = { type = "thrust", value = 0.4225 }
+action = { type = "goto", position = [0.0, 0.0, -10.0], heading = 0.0 }
 verify = [{ type = "armed", value = true }]
 
-# Phase 4: GNSS dropout. Inject Lost-health on the GNSS channel
-# and continue holding hover throttle. Drift bound is loose (3 m)
-# because at this integration tier we are checking "the kernel
-# stays alive and bounded," not the cert-grade 2 m bound of
-# LLR-EST-206 (which is verified at the unit-test tier via
-# behavioral_tests::ekf_gnss_dropout_bounded_dead_reckoning_drift).
+# GNSS health drops to Lost. The bounded-drift cert property
+# (HLR-EST-205, <= 2 m over 5 s) is verified at the unit tier by
+# behavioral_tests::ekf_gnss_dropout_bounded_dead_reckoning_drift; here
+# the kernel must stay armed and bounded, and recover.
 [[vehicles.mission.phases]]
 name = "inject_gnss_lost"
 duration_ms = 100
 action = { type = "inject_fault", sensor = "gnss", fault = "health_failed" }
 verify = [{ type = "armed", value = true }]
 
-# Position drift during GNSS loss is expected behavior — the EKF
-# falls back to IMU-only dead-reckoning and the position loop has
-# no GNSS feedback to correct against. The bounded-drift cert
-# property (HLR-EST-205's ≤ 2 m over 5 s) is verified at the
-# unit tier via `behavioral_tests::ekf_gnss_dropout_bounded_dead_reckoning_drift`
-# with synthetic dynamics; here we only verify the kernel stays
-# armed and the dropout is recoverable.
 [[vehicles.mission.phases]]
 name = "hover_under_dropout"
 duration_ms = 5000
-action = { type = "thrust", value = 0.4225 }
-verify = [{ type = "armed", value = true }]
+action = { type = "goto", position = [0.0, 0.0, -10.0], heading = 0.0 }
+verify = [
+    { type = "armed", value = true },
+    { type = "max_excursion", center = [0.0, 0.0, -10.0], xy_max = 10.0, z_max = 6.0 },
+]
 
-# Phase 5: Clear faults — GNSS returns. Innovation gate
-# (LLR-EST-207) limits the resume-step state delta.
+# GNSS returns; the innovation gate (LLR-EST-207) limits the
+# resume-step state delta.
 [[vehicles.mission.phases]]
 name = "clear_faults"
 duration_ms = 100
@@ -85,15 +81,19 @@ verify = [{ type = "armed", value = true }]
 [[vehicles.mission.phases]]
 name = "hover_after_recovery"
 duration_ms = 3000
-action = { type = "thrust", value = 0.4225 }
-verify = [{ type = "armed", value = true }]
+action = { type = "goto", position = [0.0, 0.0, -10.0], heading = 0.0 }
+verify = [
+    { type = "armed", value = true },
+    { type = "max_excursion", center = [0.0, 0.0, -10.0], xy_max = 10.0, z_max = 6.0 },
+]
 
-# Phase 6: Land + disarm.
+# Land under position control: the touchdown is verified, so the
+# disarm that follows is a landed vehicle's.
 [[vehicles.mission.phases]]
 name = "land"
-duration_ms = 4000
-action = { type = "thrust", value = 0.0 }
-verify = []
+duration_ms = 12000
+action = { type = "goto", position = [0.0, 0.0, 0.0], heading = 0.0 }
+verify = [{ type = "touchdown_velocity", max_descent_mps = 1.0, ground_tolerance = 0.30 }]
 
 [[vehicles.mission.phases]]
 name = "disarm"

@@ -129,11 +129,11 @@ jobs:
       - name: Enforce control-limit classification (tuning vs invariant)
         run: ./scripts/check_control_limits.sh
 
-  # The C++ gz plugin consumes the cbindgen-generated contract header.
-  # Without this fast gate, a broken include path or a layout drift is
-  # only caught by the Gazebo build lane 20 minutes later — or, if that
-  # lane is skipped, becomes a cross-process runtime mystery. No Gazebo
-  # toolchain needed, just a C++ compiler.
+  # The C++ gz plugin consumes the cbindgen-generated contract header,
+  # and no CI job builds the plugin itself. Without this gate a broken
+  # include path or a layout drift would surface only when someone next
+  # builds it, as a cross-process runtime mystery. No Gazebo toolchain
+  # needed, just a C++ compiler.
   xil-contract-header:
     name: XIL Contract Header (C++ ABI)
     runs-on: ubuntu-latest
@@ -682,174 +682,127 @@ jobs:
       - name: cargo evidence check --mode=source
         run: cargo evidence check --mode=source
 
-  sitl_build:
-    name: SITL Build (Gazebo XIL)
+  # The SITL missions, flown on JSBSim. Pilotage's JSBSim sidecar owns
+  # the physics and the simulation clock and runs unpaced: the lockstep
+  # with the flight controller, not wall time, sets the pace, so each
+  # mission takes seconds. The sidecar is built on its own from a public
+  # checkout of Pilotage at a pinned full commit: it is outside
+  # Pilotage's workspace and has only public dependencies, so this job
+  # needs no deploy key and no credential. JSBSim itself is built by the
+  # script Pilotage ships with the release it pins. Every gate=blocking
+  # mission in tests/missions/manifest.json must meet its reliability
+  # bar here; quarantined missions run visibly on main pushes and never
+  # fail the job.
+  sitl_jsbsim:
+    name: SITL Missions (JSBSim X500)
     runs-on: ubuntu-latest
-    # Cold-cache cargo + plugin cmake builds dominate this job; the warm
-    # path finishes in a few minutes.
-    timeout-minutes: 30
-    outputs:
-      shard_matrix: ${{ steps.shards.outputs.matrix }}
+    timeout-minutes: 40
+    env:
+      # Pilotage commit whose sidecar this job flies against. A full
+      # commit, never a branch: the mission must not change under an
+      # unchanged Aviate tree. Moved deliberately, like a git dependency.
+      PILOTAGE_REV: 7868e570c7290ed9f89f9af3662bcfda313ba6f8
+      SIDECAR_PORT: "4560"
+      # The protoc Pilotage's own CI builds its protocol crate with.
+      PROTOC_VERSION: "26.1"
+      PROTOC_SHA256: a7be2928c0454f132c599e25b79b7ad1b57663f2337d7f7e468a1d59b98ec1b0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
 
-      # Guards the install script's retry/timeout policy: an unreachable
-      # fetch must fail within the declared bound, never hang the job.
-      - name: Gazebo install bound self-test
-        timeout-minutes: 2
-        run: ./scripts/install_gazebo_harmonic.sh --self-test
+      - name: The Pilotage pin is a full commit
+        run: '[[ "$PILOTAGE_REV" =~ ^[0-9a-f]{40}$ ]]'
 
-      # Package sets, bounded-retry policy, and phase markers live in the
-      # script so every SITL job shares one install entry point. The step
-      # timeout is the backstop that turns a mirror stall into a fast
-      # failure of this required gate.
-      - name: Install Gazebo Harmonic + build dependencies
-        timeout-minutes: 6
-        run: ./scripts/install_gazebo_harmonic.sh build
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: luofang34/Pilotage
+          ref: ${{ env.PILOTAGE_REV }}
+          path: pilotage
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev cmake
+
+      - name: Install protoc
+        run: |
+          archive="${RUNNER_TEMP}/protoc-${PROTOC_VERSION}.zip"
+          install_dir="${RUNNER_TEMP}/protoc"
+          curl --fail --location --retry 3 --silent --show-error \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip" \
+            --output "${archive}"
+          echo "${PROTOC_SHA256}  ${archive}" | sha256sum --check --strict
+          unzip -q "${archive}" -d "${install_dir}"
+          echo "${install_dir}/bin" >> "${GITHUB_PATH}"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry
+      # JSBSim's checkout and static library, built by Pilotage's script
+      # at the release it pins; the key follows that script.
+      - name: Cache the JSBSim build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/jsbsim
+          key: jsbsim-${{ runner.os }}-${{ hashFiles('pilotage/scripts/build-jsbsim.sh') }}
+
+      - name: Cache the sidecar build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-sitl-${{ hashFiles('**/Cargo.lock') }}
+            pilotage/sim/jsbsim-sidecar/target
+          key: jsbsim-sidecar-${{ runner.os }}-${{ env.PILOTAGE_REV }}
 
-      - name: Validate mission manifest and emit shard matrix
-        id: shards
-        run: |
-          ./scripts/check_mission_manifest.py
-          echo "matrix=$(./scripts/check_mission_manifest.py --emit-shard-matrix)" >> "$GITHUB_OUTPUT"
-
-      - name: Build shared SITL artifact
-        run: |
-          ./scripts/build_gz_plugin.sh
-          cargo build -p gcs-test --features gazebo
-          cargo build -p aviate-app-sitl-gazebo-x500
-          sha256sum \
-            target/debug/gcs-test \
-            target/debug/sitl-gazebo-x500 \
-            aviate-hal/xil/backends/gz/plugin/build/libAviateGzPlugin.so \
-            aviate-hal/xil/backends/gz/plugin/build/libMotorFailurePlugin.so \
-            > sitl-artifact.sha256
-          tar -cf sitl-artifact.tar \
-            sitl-artifact.sha256 \
-            target/debug/gcs-test \
-            target/debug/sitl-gazebo-x500 \
-            aviate-hal/xil/backends/gz/plugin/build/libAviateGzPlugin.so \
-            aviate-hal/xil/backends/gz/plugin/build/libMotorFailurePlugin.so
-
-      - name: Upload shared SITL artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Cache the Aviate build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          name: sitl-linux-x64
-          path: sitl-artifact.tar
-          compression-level: 0
-          retention-days: 1
-          if-no-files-found: error
+          path: target
+          key: ${{ runner.os }}-cargo-sitl-jsbsim-${{ hashFiles('**/Cargo.lock') }}
 
-  # Every runner pays the Gazebo install and checkout overhead. Keep each
-  # shard at 3-5 minutes of mission execution, excluding that setup time;
-  # add a shard only when the existing missions cannot stay below the upper
-  # bound after rebalancing. Missions need separate runners because their
-  # fixed UDP ports, shared-memory names, and cleanup processes conflict.
-  # See docs/SITL_CI_SHARDING.md for the update procedure and cost model.
-  sitl_missions:
-    name: SITL Missions (Gazebo XIL) / ${{ matrix.name }}
-    needs: sitl_build
-    runs-on: ubuntu-latest
-    # Budget: the 3-5 minute mission envelope plus bounded setup
-    # (checkout, Gazebo install, artifact download). A shard that cannot
-    # finish inside this bound is failing, not pending — the timeout
-    # fails this required gate rather than holding CI Success open.
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.sitl_build.outputs.shard_matrix) }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          submodules: recursive
+      - name: Build JSBSim
+        run: bash pilotage/scripts/build-jsbsim.sh
 
-      - name: Install Gazebo Harmonic runtime
-        timeout-minutes: 6
-        run: ./scripts/install_gazebo_harmonic.sh runtime
+      - name: Build the JSBSim sidecar
+        run: cargo build --release --locked --manifest-path pilotage/sim/jsbsim-sidecar/Cargo.toml
 
-      - name: Download shared SITL artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: sitl-linux-x64
+      - name: Validate the mission manifest
+        run: ./scripts/check_mission_manifest.py
 
-      - name: Verify shared SITL artifact
+      - name: Build the mission harness
+        run: cargo build --release --locked -p aviate-app-sitl-jsbsim-x500 --bin sitl-jsbsim-missions
+
+      # The sidecar spawns the X500 at the default SITL origin, the point
+      # GeoOrigin::DEFAULT states, and runs unpaced: the lockstep, not wall
+      # time, sets the pace. Each mission run starts a new session, so a
+      # new world.
+      - name: Start the JSBSim sidecar
         run: |
-          tar -xf sitl-artifact.tar
-          sha256sum --check sitl-artifact.sha256
-          test -x target/debug/gcs-test
-          test -x target/debug/sitl-gazebo-x500
+          pilotage/sim/jsbsim-sidecar/target/release/pilotage-jsbsim-sidecar \
+            --port "$SIDECAR_PORT" --aircraft x500 --jsbsim-root ~/jsbsim \
+            --latitude-deg 47.3977419 --longitude-deg 8.5455938 --heading-deg 0 \
+            --site-elevation-m 488 --realtime-factor 0 > sidecar.log 2>&1 &
+          for _ in $(seq 1 100); do
+            if (exec 3<>"/dev/tcp/127.0.0.1/$SIDECAR_PORT") 2>/dev/null; then exit 0; fi
+            sleep 0.2
+          done
+          echo "::error::the sidecar never listened" >&2
+          exit 1
 
-      # Each mission runs behind the reliability bar the manifest
-      # assigns it (run_sitl_missions.sh exits non-zero if any mission
-      # misses its bar, and prints the failing phase). These are the
-      # XIL-tier witnesses for arm/takeoff/hover/land (FLT-201),
-      # hover-position stability (CTL-203), GNSS-dropout dead reckoning
-      # (EST-206), position convergence (EST-203), command-timeout
-      # failsafe (FLT-204), and IMU-NaN numeric-fault isolation
-      # (EST-204), end-to-end through the FC↔Gazebo control loop.
-      # Gate membership and quarantine live in
-      # tests/missions/manifest.json, not here.
-      - name: Run SITL mission shard
-        env:
-          GCS_TEST_BIN: ./target/debug/gcs-test
-          LIBGL_ALWAYS_SOFTWARE: 1
-        run: xvfb-run -a ./scripts/run_sitl_missions.sh ${{ matrix.missions }}
+      - name: Fly the blocking missions
+        run: target/release/sitl-jsbsim-missions blocking
 
-  # Quarantined missions run visibly but never feed CI Success: a red
-  # here is truth about the quarantine, not a merge gate. Runs on main
-  # pushes to bound per-PR minutes; membership and tracking issues live
-  # in tests/missions/manifest.json.
-  sitl_quarantine:
-    name: SITL Quarantine (non-blocking)
-    needs: sitl_build
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    # Non-blocking, but still bounded so a stalled quarantine run cannot
-    # burn runner minutes; quarantine membership may grow past one shard's
-    # mission envelope.
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          submodules: recursive
+      - name: Fly the quarantined missions (non-blocking)
+        if: github.event_name == 'push'
+        continue-on-error: true
+        run: target/release/sitl-jsbsim-missions quarantine
 
-      - name: Install Gazebo Harmonic runtime
-        timeout-minutes: 6
-        run: ./scripts/install_gazebo_harmonic.sh runtime
-
-      - name: Download shared SITL artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: sitl-linux-x64
-
-      - name: Unpack shared SITL artifact
-        run: |
-          tar -xf sitl-artifact.tar
-          sha256sum --check sitl-artifact.sha256
-          test -x target/debug/gcs-test
-          test -x target/debug/sitl-gazebo-x500
-
-      - name: Run quarantined missions
-        env:
-          GCS_TEST_BIN: ./target/debug/gcs-test
-          LIBGL_ALWAYS_SOFTWARE: 1
-        run: |
-          missions=$(./scripts/check_mission_manifest.py --emit-quarantine-missions)
-          xvfb-run -a ./scripts/run_sitl_missions.sh $missions
+      - name: Sidecar log
+        if: always()
+        run: tail -n 200 sidecar.log || true
 
   ci-success:
     name: CI Success
@@ -875,8 +828,7 @@ jobs:
       - doc
       - build-release
       - evidence
-      - sitl_build
-      - sitl_missions
+      - sitl_jsbsim
     runs-on: ubuntu-latest
     steps:
       - name: Fail unless every blocking gate succeeded

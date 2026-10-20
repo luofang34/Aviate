@@ -122,7 +122,7 @@ impl FaultController {
                 Ok((len, src)) => {
                     if len >= FAULT_CMD_SIZE {
                         if let Some(cmd) = FaultCommand::from_bytes(&self.buf[..len]) {
-                            let ack = Self::handle_command(&cmd, sensors);
+                            let ack = Self::apply(&cmd, sensors);
                             let ack_bytes = ack.to_bytes();
                             let _ = self.socket.send_to(&ack_bytes, src);
                             count += 1;
@@ -143,8 +143,10 @@ impl FaultController {
         count
     }
 
-    /// Handle a single fault command
-    fn handle_command(cmd: &FaultCommand, sensors: &mut FaultSensors<'_>) -> FaultAck {
+    /// Apply one fault command to `sensors` and acknowledge it: the work
+    /// `poll` does for each command it receives, for a flight controller
+    /// that runs in the mission runner's own process.
+    pub fn apply(cmd: &FaultCommand, sensors: &mut FaultSensors<'_>) -> FaultAck {
         // When xil-fault feature is not enabled, return NotEnabled
         #[cfg(not(feature = "xil-fault"))]
         {

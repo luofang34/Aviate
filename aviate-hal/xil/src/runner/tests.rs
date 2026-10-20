@@ -38,6 +38,30 @@ fn dead_velocity_lane_fails_position_derivative_check() {
     assert!(result.actual_value.contains("3.00m/s"));
 }
 
+/// Positions stated to a centimeter, sampled every 4 ms at 2 m/s: a
+/// step moves 8 mm, so consecutive samples differ by 0 or 1 cm. The
+/// lane that states the true 2 m/s still tracks the position.
+#[test]
+fn velocity_lane_tracks_positions_quantized_finer_than_a_step() {
+    let trace: Vec<_> = (0..500)
+        .map(|index| {
+            let elapsed = index as f32 * 0.004;
+            let north = (elapsed * 2.0 * 100.0).floor() / 100.0;
+            velocity_sample(elapsed, north, 2.0)
+        })
+        .collect();
+    let result = velocity_tracks_position(&trace, 0.25);
+    assert!(result.passed, "{}", result.actual_value);
+    let dead: Vec<_> = trace
+        .iter()
+        .map(|sample| TraceSample {
+            velocity: [0.0; 3],
+            ..*sample
+        })
+        .collect();
+    assert!(!velocity_tracks_position(&dead, 0.25).passed);
+}
+
 #[test]
 fn stationary_trace_cannot_prove_velocity_lane_health() {
     let trace: Vec<_> = (0..20)

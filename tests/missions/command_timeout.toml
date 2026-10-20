@@ -9,8 +9,12 @@
 #
 # Unit-tier coverage: TST-FLT-207 (kernel.rs::update_command_age_
 # gates_command_recent_flag) verifies the cycle-level clear and the
-# boundary case. This scenario exercises the same logic through
-# MAVLink over real UDP, against gz-sim physics.
+# boundary case. This scenario exercises the same logic through the
+# simulator backend, against simulated physics.
+#
+# Flown under position control (PositionHold targets) wherever the
+# vehicle holds or lands, so the profile holds on any plant and ends in
+# a verified touchdown.
 
 [test]
 name = "command_timeout"
@@ -27,47 +31,42 @@ spawn_heading = 0.0
 [vehicles.mission]
 name = "command_timeout_test"
 
-# Phase 1: Arm.
+# Arm.
 [[vehicles.mission.phases]]
 name = "arm"
 duration_ms = 500
 action = { type = "arm" }
 verify = [{ type = "armed", value = true }]
 
-# Phase 2: Brief takeoff so the vehicle is in flight when commands
-# stop. Smoke-level altitude floor.
+# Take off to 5 m.
 [[vehicles.mission.phases]]
 name = "takeoff"
-duration_ms = 3000
-action = { type = "thrust", value = 0.64 }
-verify = [{ type = "min_altitude", value = 0.1 }]
+duration_ms = 8000
+action = { type = "goto", position = [0.0, 0.0, -5.0], heading = 0.0 }
+verify = [{ type = "min_altitude", value = 3.0 }]
 
-# Phase 3: Wait. `Action::Wait` only sends heartbeat — no
-# SetAttitudeTarget — so the FC's `command_age_ms` rises. Per
-# HLR-FLT-204 the kernel must transition to its configured
-# command-loss-safe mode but stay armed. Mission-level criterion:
-# kernel still reports armed at the end of the wait window.
+# No setpoints, heartbeats only: the command ages past its timeout and
+# the vehicle stays armed (staleness is recoverable, not a fault).
 [[vehicles.mission.phases]]
 name = "wait_no_command"
 duration_ms = 4000
 action = { type = "wait" }
 verify = [{ type = "armed", value = true }]
 
-# Phase 4: Resume sending thrust. Per HLR-FLT-209 the kernel
-# re-engages the active control law within one cycle. Still smoke
-# level — the cert-grade tracking-error bound is unit-tier.
+# Setpoints resume.
 [[vehicles.mission.phases]]
 name = "resume_command"
-duration_ms = 2000
-action = { type = "thrust", value = 0.4225 }
+duration_ms = 3000
+action = { type = "goto", position = [0.0, 0.0, -5.0], heading = 0.0 }
 verify = [{ type = "armed", value = true }]
 
-# Phase 5: Land + disarm.
+# Land under position control: the touchdown is verified, so the
+# disarm that follows is a landed vehicle's.
 [[vehicles.mission.phases]]
 name = "land"
-duration_ms = 3000
-action = { type = "thrust", value = 0.0 }
-verify = []
+duration_ms = 12000
+action = { type = "goto", position = [0.0, 0.0, 0.0], heading = 0.0 }
+verify = [{ type = "touchdown_velocity", max_descent_mps = 1.0, ground_tolerance = 0.30 }]
 
 [[vehicles.mission.phases]]
 name = "disarm"
