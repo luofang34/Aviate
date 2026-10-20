@@ -1808,3 +1808,19 @@ with source MODEL and the WMM2025 declination there (2.5 to 4.5 deg) to
 the configured consumer. Witnesses LLR-EST-210.
 """
 traces_to = ["fdee9a3c-6585-486c-afea-33d1e644118d"]
+
+[[tests]]
+uid = "6ae10a5e-e8dd-4889-90fb-1b7242ee7c00"
+id = "TST-EST-218"
+title = "the_estimate_recovers_after_a_three_second_imu_outage"
+test_selector = "the_estimate_recovers_after_a_three_second_imu_outage"
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/ekf_imu_outage_tests.rs` hovers the filter for 10 s,
+feeds 3 s of NaN IMU samples while the GNSS truth rolls 30° and
+accelerates east at g·tan(30°), then 5 s of the rolled IMU. The roll
+estimate ends within 5° and the east velocity within 1 m/s of truth.
+Without the widening the roll ends at 8° and every GNSS velocity sample
+is gated out. Witnesses LLR-EST-211.
+"""
+traces_to = ["70d4b58a-40fc-48bf-aab7-f1ff16912986"]

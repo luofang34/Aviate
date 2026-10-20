@@ -2310,3 +2310,23 @@ modules = ["aviate-link/src/mavlink/telemetry/geomagnetic.rs", "aviate-link/src/
 derived = false
 traces_to = ["c3f236b1-ea09-43ea-95e6-b98734433c10"]
 
+
+[[requirements]]
+uid = "70d4b58a-40fc-48bf-aab7-f1ff16912986"
+id = "LLR-EST-211"
+title = "An IMU gap widens the covariance at the next propagation"
+owner = "aviate-core@aviate"
+description = """
+`EkfState::imu_age_s` SHALL count the time since `predict_state` last
+propagated a finite IMU sample. The next propagation SHALL first add,
+for the time beyond its own `dt` (capped at 10 s), the variance of a
+0.5 rad/s rotation rate to each attitude axis, of a 5 m/s² acceleration
+to each velocity axis and of its integral to each position axis. The
+widening SHALL depend only on the IMU gap, never on the staleness of an
+aiding source, and the non-finite cycles themselves SHALL still leave
+the state and covariance untouched (LLR-EST-204).
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf/imu_gap.rs", "aviate-core/src/ekf/predict.rs", "aviate-core/src/ekf/validity.rs"]
+derived = false
+traces_to = ["a75ad122-2e13-4268-b388-f821d1bea6e3"]

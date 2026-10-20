@@ -97,10 +97,11 @@ fn ekf_state_encoded_len_matches_documented_size() {
     // 19 vector f32s + 15*15 = 225 covariance f32s = 244 floats =
     // 976 bytes; plus 2 boolean latches = 978 bytes; plus the QFE
     // baro datum (1 presence byte + 4 f32 bytes) = 983 bytes; plus the
-    // datum estimator variance (4 f32 bytes) = 987 bytes. Mismatched
+    // datum estimator variance (4 f32 bytes) = 987 bytes; plus the
+    // uncovered IMU time (4 f32 bytes) = 991 bytes. Mismatched
     // const ENCODED_LEN would surface a manual edit drift between the
     // doc-comment and the impl.
-    assert_eq!(EkfState::ENCODED_LEN, 987);
+    assert_eq!(EkfState::ENCODED_LEN, 991);
 }
 
 #[test]
