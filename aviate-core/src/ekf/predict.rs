@@ -21,13 +21,15 @@ impl Ekf {
             return;
         }
 
-        // Optional: early bail if IMU clearly bad
+        // A non-finite sample leaves the state and covariance untouched
+        // (LLR-EST-204); `imu_age_s` keeps counting the uncovered time.
         for c in 0..3 {
             if !imu.gyro[c].is_valid() || !imu.accel[c].is_valid() {
                 // TODO: set fault flag / quality = Degraded
                 return;
             }
         }
+        self.widen_for_imu_gap(state, dt);
 
         // 1. Extract IMU data (corrected with current bias)
         let gyro_corr = Vector3 {

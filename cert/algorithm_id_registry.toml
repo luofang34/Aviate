@@ -24,7 +24,13 @@
 ## change shipped — review carefully.
 
 [estimator]
-"ekf.basic-15state.v4" = 0x4554_494D_454B_4635  # Ekf
+"ekf.basic-15state.v5" = 0x4554_494D_454B_4636  # Ekf
+# Retired: "ekf.basic-15state.v4" = 0x4554_494D_454B_4635. v4 resumed
+# propagation after an IMU gap with the covariance it held before the
+# gap, so GNSS evidence of the motion during the gap stayed outside the
+# innovation gate. v5 widens the covariance for the uncovered time.
+# Same 15-state shape, different recovery behavior, so a v4 image must
+# not match a v5 one at the lockstep gate.
 # Retired: "ekf.basic-15state.v3" = 0x4554_494D_454B_4634. v3 fused the
 # magnetic heading as yaw, so yaw was referenced to magnetic north. v4
 # adds the supplied magnetic declination, so yaw is referenced to true

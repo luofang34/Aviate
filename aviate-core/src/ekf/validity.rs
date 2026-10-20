@@ -67,7 +67,8 @@ pub(crate) const POSITION_COV_BOUND_M2: Scalar = 50.0;
 pub(crate) const VELOCITY_COV_BOUND_M2S2: Scalar = 25.0;
 
 impl EkfState {
-    /// Advance every aiding-age counter by one cycle's elapsed time.
+    /// Advance every aiding-age counter, and the IMU age, by one
+    /// cycle's elapsed time.
     /// Mirrors `predict_state`'s dt gate: a non-finite or non-positive
     /// `dt`, or an un-initialized filter, leaves the counters untouched
     /// rather than corrupting them. Saturates at `AGE_SATURATION_S` so
@@ -80,6 +81,7 @@ impl EkfState {
         self.gnss_pos_age_s = (self.gnss_pos_age_s + dt).min(AGE_SATURATION_S);
         self.gnss_vel_age_s = (self.gnss_vel_age_s + dt).min(AGE_SATURATION_S);
         self.baro_age_s = (self.baro_age_s + dt).min(AGE_SATURATION_S);
+        self.imu_age_s = (self.imu_age_s + dt).min(AGE_SATURATION_S);
     }
 
     /// Largest covariance diagonal across the 3-axis block starting at
