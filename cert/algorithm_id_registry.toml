@@ -111,3 +111,4 @@
 "controller.mock.v1"         = 0x4354_4C4D_4F43_4B00  # MockController
 "mixer.mock.v1"              = 0x4D49_584D_4F43_4B00  # MockMixer
 "sanitizer.mock.v1"          = 0x5341_4E4D_4F43_4B00  # MockSanitizer
+"mixer.xil_direct_fw_passthrough.v1" = 0x5453_5446_574D_4958  # direct_modes_and_determinism::PassthroughFwMixer
