@@ -1,0 +1,27 @@
+[package]
+publish = false
+name = "aviate-xil-direct"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "In-process no_std XIL board and sensor synthesizer for Aviate"
+
+[dependencies]
+aviate-core = { path = "../../../aviate-core", default-features = false }
+aviate-hal-io = { path = "../../io" }
+aviate-link = { path = "../../../aviate-link" }
+libm = "0.2"
+log = "0.4"
+world-atmosphere.workspace = true
+world-core.workspace = true
+world-geomag.workspace = true
+
+[dev-dependencies]
+aviate-airframe-fixed-wing = { path = "../../../aviate-airframes/fixed-wing" }
+aviate-app-sitl-gazebo-x500-kernel = { path = "../../../aviate-apps/sitl-gazebo-x500/kernel" }
+aviate-core = { path = "../../../aviate-core", default-features = false, features = ["fw"] }
+
+[lints]
+workspace = true
