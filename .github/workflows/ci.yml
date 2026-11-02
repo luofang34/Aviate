@@ -694,14 +694,23 @@ jobs:
   # bar here; quarantined missions run visibly on main pushes and never
   # fail the job.
   sitl_jsbsim:
-    name: SITL Missions (JSBSim X500)
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - engine: rust
+            name: SITL Missions (JSBSim X500)
+          - engine: cpp
+            name: SITL Missions (JSBSim X500, C++)
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
       # Pilotage commit whose sidecar this job flies against. A full
       # commit, never a branch: the mission must not change under an
       # unchanged Aviate tree. Moved deliberately, like a git dependency.
-      PILOTAGE_REV: 7868e570c7290ed9f89f9af3662bcfda313ba6f8
+      PILOTAGE_REV: 9296611ee3bab20b925092b63eda26dcce176135
+      JSBSIM_ENGINE: ${{ matrix.engine }}
       SIDECAR_PORT: "4560"
       # The protoc Pilotage's own CI builds its protocol crate with.
       PROTOC_VERSION: "26.1"
@@ -743,6 +752,7 @@ jobs:
       # JSBSim's checkout and static library, built by Pilotage's script
       # at the release it pins; the key follows that script.
       - name: Cache the JSBSim build
+        if: matrix.engine == 'cpp'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/jsbsim
@@ -755,7 +765,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             pilotage/sim/jsbsim-sidecar/target
-          key: jsbsim-sidecar-${{ runner.os }}-${{ env.PILOTAGE_REV }}
+          key: jsbsim-sidecar-${{ runner.os }}-${{ matrix.engine }}-${{ env.PILOTAGE_REV }}
 
       - name: Cache the Aviate build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -764,10 +774,18 @@ jobs:
           key: ${{ runner.os }}-cargo-sitl-jsbsim-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build JSBSim
+        if: matrix.engine == 'cpp'
         run: bash pilotage/scripts/build-jsbsim.sh
 
-      - name: Build the JSBSim sidecar
-        run: cargo build --release --locked --manifest-path pilotage/sim/jsbsim-sidecar/Cargo.toml
+      - name: Build the Rust JSBSim sidecar without a C++ checkout
+        if: matrix.engine == 'rust'
+        run: |
+          test ! -e ~/jsbsim
+          cargo build --release --locked --manifest-path pilotage/sim/jsbsim-sidecar/Cargo.toml
+
+      - name: Build the sidecar with the C++ engine
+        if: matrix.engine == 'cpp'
+        run: cargo build --release --locked --features cpp --manifest-path pilotage/sim/jsbsim-sidecar/Cargo.toml
 
       - name: Validate the mission manifest
         run: ./scripts/check_mission_manifest.py
@@ -782,7 +800,7 @@ jobs:
       - name: Start the JSBSim sidecar
         run: |
           pilotage/sim/jsbsim-sidecar/target/release/pilotage-jsbsim-sidecar \
-            --port "$SIDECAR_PORT" --aircraft x500 --jsbsim-root ~/jsbsim \
+            --port "$SIDECAR_PORT" --aircraft x500 --engine "$JSBSIM_ENGINE" --jsbsim-root ~/jsbsim \
             --latitude-deg 47.3977419 --longitude-deg 8.5455938 --heading-deg 0 \
             --site-elevation-m 488 --realtime-factor 0 > sidecar.log 2>&1 &
           for _ in $(seq 1 100); do
