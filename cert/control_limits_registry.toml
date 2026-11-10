@@ -105,3 +105,43 @@ field = "rate_i"
 name = "RATE_I_LIMIT"
 file = "aviate-core/src/control/rate.rs"
 value = "0.8"
+
+[[invariant]]
+name = "MAX_PROPER_ACCEL_G"
+file = "aviate-core/src/control/spacecraft.rs"
+value = "4.0"
+
+[[invariant]]
+name = "LANDING_FIN_LOCK_ALTITUDE_M"
+file = "aviate-core/src/control/spacecraft.rs"
+value = "50.0"
+
+[[invariant]]
+name = "SPACECRAFT_ATT_KP"
+file = "aviate-core/src/control/spacecraft.rs"
+value = "2.5"
+
+[[invariant]]
+name = "SPACECRAFT_RATE_KP"
+file = "aviate-core/src/control/spacecraft.rs"
+value = "0.4"
+
+[[invariant]]
+name = "SAS_DIRECTION_NORM_FLOOR"
+file = "aviate-core/src/control/spacecraft.rs"
+value = "1e-4"
+
+[[invariant]]
+name = "RW_SATURATION_THRESHOLD"
+file = "aviate-core/src/control/spacecraft.rs"
+value = "0.85"
+
+[[invariant]]
+name = "RCS_VEL_DEADBAND_MPS"
+file = "aviate-core/src/control/spacecraft.rs"
+value = "0.02"
+
+[[invariant]]
+name = "RCS_VEL_KP"
+file = "aviate-core/src/control/spacecraft.rs"
+value = "2.5"
