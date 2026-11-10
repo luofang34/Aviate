@@ -84,11 +84,13 @@
 # at yaw 0, anti-corrective past 90° (#110). Never reuse the v1 ID.
 "controller.fixed_wing.v1"  = 0x4354_4C46_5747_5631  # FixedWingController
 "controller.vtol.v1"        = 0x4354_4C56_544F_4C31  # VtolController
+"controller.spacecraft.v1"  = 0x4354_4C53_5043_5631  # SpacecraftController
 
 [mixer]
 "mixer.quad_x.v2"      = 0x4D49_5851_5541_4432  # QuadXMixer
 "mixer.quad_x_x500.v2" = 0x4D49_5851_5835_5632  # QuadXMixerX500
 "mixer.quad_x_x500_reversed_spin.v1" = 0x4D49_5851_5852_5631  # QuadXMixerReversedSpin
+"mixer.spacecraft.v1"  = 0x4D49_5853_5043_5631  # SpacecraftMixer
 # Retired: "mixer.quad_x.v1" = 0x4D49_5851_5541_4458 and
 # QuadXMixerX500's pre-registry ID 0x4D49_5851_5435_3030. v1 mixers
 # clamped each motor independently, silently truncating whichever

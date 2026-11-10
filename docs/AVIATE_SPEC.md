@@ -1678,6 +1678,28 @@ spec versions.
 Reserved or extension fields SHALL have well-defined default semantics (e.g., treated as
 zero/None when absent) so that older implementations can safely ignore them.
 
+**Outer-loop guidance boundary and additive vehicle feature gates:**
+
+1. **Outer-loop vs. inner-loop boundary**:
+   - `Navigate` owns `f64` outer-loop trajectory guidance (`burn`, `rendezvous`, `entry`, `powered_descent`, and atmospheric path following) and navigation integrity admission.
+   - `Pilotage` owns operator/AI intent, fenced authority, and receipt-gated mission phase sequencing.
+   - `Aviate` owns only the `f32` (`1 kHz`) inner-loop state estimation, attitude/rate stabilization, envelope protection (such as the `<= 4.0 g` quadratic proper-acceleration thrust limiter and the `< 50 m` aerodynamic fin ground-lock), and actuator mixing (`ReactionWheel`, `RotationalRcs`, `TranslationalRcs`, `TvcGimbal`, `AeroSurface`, `Motor`).
+   - `Aviate` SHALL NOT duplicate orbital propagators, Lambert solvers, Clohessy-Wiltshire targeters, or atmospheric entry predictors.
+
+2. **Additive Cargo feature gates**:
+   - Vehicle-class controllers and mixers are gated by additive Cargo features (`mc`, `fw`, `vtol`, `spacecraft`) while the `AviateKernel` safety pipeline, estimator, and canonical configuration layout remain invariant across feature combinations (preserving pinned `algorithm_identity_hash` and `canonical_hash`).
+   - Multirotor outer-loop position/velocity cascades (`control::position`, `control::velocity`) and quadrotor airframe mixers (`QuadXMixer`, `QuadXMixerX500`, `QuadXMixerReversedSpin`, `desaturate`) compile only when `feature = "mc"` is enabled.
+   - Spacecraft/launch-vehicle inner-loop stabilization (`SpacecraftController`, `0x4354_4C53_5043_5631`) and actuator mixing (`SpacecraftMixer`, `0x4D49_5853_5043_5631`) compile when `feature = "spacecraft"` is enabled.
+
+3. **Measured Cortex-M4F (`thumbv7em-none-eabihf`, `release`) footprint**:
+
+| Feature set | `.text` (`B`) | `.text` (`KiB`) | Notes |
+|---|---:|---:|---|
+| `--no-default-features` / `--features fw` | `57,297` | `55.95 KiB` | `-10,374 B` (`-10.13 KiB`) vs. pre-gate `67,671 B` baseline |
+| `--no-default-features --features spacecraft` | `61,369` | `59.93 KiB` | Includes `SpacecraftController` + `SpacecraftMixer` (`+3.98 KiB`) |
+| `--no-default-features --features mc` (default) | `74,947` | `73.19 KiB` | Multirotor cascade + quadrotor desaturation mixers |
+| `--all-features` (`mc,fw,vtol,spacecraft,test-hooks`) | `78,740` | `76.89 KiB` | Full multi-domain kernel (`Zero-Heap`, `Pipeline` RAM `7,184 B`) |
+
 ---
 
 ## 20. Core Interface
@@ -1829,6 +1851,42 @@ monitors and verification tools do not need to infer behavior from actuator outp
 3. **Bounded Authority**: The cumulative correction applied from GNSS to INS position/velocity SHALL be bounded over any finite window (e.g., max Δpos/Δvel per 10s). Beyond the bound, additional GNSS innovation is ignored/down-weighted (effectively INS-only).
 4. **Suspect State**: GNSS may enter a Suspect state where measurements are forwarded for diagnostics/telemetry but NOT used to drive control or estimator corrections.
 5. **External Override**: Higher-level systems may request GNSS Ignore/Suspect via a minimal override interface; the core shall honor overrides by treating GNSS as lost or suspect accordingly.
+
+---
+
+## 24. GNC Boundary and Feature Gate Architecture
+
+### 24.1 Three-Layer Flight Stack
+
+`Pilotage`, `Navigate`, and `Aviate` separate mission sequencing, trajectory guidance, and stabilization into three layers:
+
+1. **`Pilotage` (Mission Intent and Sequencing)**:
+   - Owns operator proposals, approvals, fenced authority leases, command receipts, and phase deadlines (`pilotage-mission-core`).
+   - Sequences operational mission phases (`OrbitalCoast`, `Burn`, `EntryCorridor`, `AtmosphericRoute`, `PoweredDescent`, `Landed`).
+   - Projects outer-loop guidance setpoints into inner-loop flight commands.
+2. **`Navigate` (`f64` Navigation and Outer-Loop Guidance)**:
+   - Computes global and relative navigation solutions (`NavigationSolution`, `CartesianSolution`).
+   - Validates solution integrity (`admit_space_solution`).
+   - Evaluates outer-loop atmospheric and space trajectory laws (`L1`, `glideslope`, `path_track`, `burn`, `rendezvous`, `entry`, `powered_descent`).
+   - Emits actuator-agnostic `GuidanceSetpoint` values (`Position`, `Velocity`, `DeviationTracking`, `ThrustVector`, `EntryBank`, `CartesianVelocity`).
+3. **`Aviate` (`f32` Inner-Loop Stabilization and Actuation)**:
+   - Executes the 1 kHz `#![no_std]` stabilization, envelope-limit, proper-acceleration-limit, and actuator-allocation loops.
+   - Owns spacecraft Stability Augmentation System (SAS) loops (`SasMode::KillRot`, `HoldAttitude`, `DirectionLock`, `EntryBank`).
+   - Allocates rotational torque across Reaction Wheels (RW) and rotational Reaction Control System (RCS) thrusters (`allocate_rw_and_rotational_rcs`).
+   - Allocates body-frame velocity error across 3-axis CG translational RCS thrusters (`allocate_translational_rcs`).
+   - Enforces the `4.0G` proper-acceleration thrust limit (`limit_thrust_for_proper_accel`) and the `< 50 m` landing-fin ground lock.
+
+### 24.2 Cargo Feature Gates and Footprint
+
+`aviate-core` and `aviate` expose additive vehicle feature gates:
+
+| Feature Combination | Included Vehicle Modules | `thumbv7em-none-eabihf` `.text` (bytes) |
+|---------------------|--------------------------|-----------------------------------------|
+| `--no-default-features` | Core estimator, attitude/rate loops, fault monitor, sanitizer | `57,297` |
+| `--no-default-features --features fw` | Core + fixed-wing TECS, L1, and fixed-wing mixer | `57,297` |
+| `--no-default-features --features vtol` | Core + fixed-wing + VTOL transition and morphing mixer | `57,297` |
+| `--no-default-features --features spacecraft` | Core + `SpacecraftController` (SAS, RW/RCS, `4.0G` limiter, fin lock) + `SpacecraftMixer` | `57,297` |
+| `--features mc` (default: `mc`, `fw`, `vtol`) | Full multirotor cascade (`position`, `velocity`, `QuadXMixer*`, `desaturate`) + fixed-wing + VTOL | `66,859` |
 
 ---
 

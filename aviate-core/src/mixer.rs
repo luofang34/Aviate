@@ -1,4 +1,6 @@
+#[cfg(feature = "mc")]
 use crate::time::Timestamp;
+#[cfg(feature = "mc")]
 use crate::types::Normalized;
 
 use crate::control::AxisCommand;
@@ -35,6 +37,7 @@ pub trait Mixer {
 /// variant. Picking the wrong mixer for the airframe makes the
 /// yaw loop close in the wrong direction — the controller
 /// commands +yaw and the body yaws -yaw, runaway-style.
+#[cfg(feature = "mc")]
 pub struct QuadXMixer {
     pub timestamp_source: fn() -> Timestamp,
 }
@@ -49,12 +52,14 @@ pub struct QuadXMixer {
 /// Roll (+right) lowers the right side (M0/M3), pitch (+nose-up)
 /// raises the front (M0/M1), and +yaw (CW) raises the CCW motors
 /// (M1/M2) whose reaction torque is CW.
+#[cfg(feature = "mc")]
 const QUAD_X_SIGNS: desaturate::QuadSigns = desaturate::QuadSigns {
     roll: [-1.0, 1.0, 1.0, -1.0],
     pitch: [1.0, 1.0, -1.0, -1.0],
     yaw: [-1.0, 1.0, 1.0, -1.0],
 };
 
+#[cfg(feature = "mc")]
 impl Mixer for QuadXMixer {
     // Registered in cert/algorithm_id_registry.toml as
     // "mixer.quad_x.v2" — v2 replaced per-motor clamping with
@@ -81,6 +86,7 @@ impl Mixer for QuadXMixer {
 }
 
 /// Packs four desaturated motor outputs into an [`ActuatorCmd`].
+#[cfg(feature = "mc")]
 fn quad_actuator_cmd(motors: [crate::types::Scalar; 4], timestamp: Timestamp) -> ActuatorCmd {
     let mut outputs = [Normalized(0.0); MAX_ACTUATORS];
     for (out, m) in outputs.iter_mut().zip(motors) {
@@ -114,6 +120,7 @@ fn quad_actuator_cmd(motors: [crate::types::Scalar; 4], timestamp: Timestamp) ->
 /// direction; picking the wrong mixer makes the yaw command
 /// produce body rotation in the opposite direction (positive
 /// feedback → tumble).
+#[cfg(feature = "mc")]
 pub struct QuadXMixerX500 {
     pub timestamp_source: fn() -> Timestamp,
 }
@@ -127,12 +134,14 @@ pub struct QuadXMixerX500 {
 ///   rotor_0: FR, CCW → −r +p +y      rotor_1: RL, CCW → +r −p +y
 ///   rotor_2: FL, CW  → +r +p −y      rotor_3: RR, CW  → −r −p −y
 /// ```
+#[cfg(feature = "mc")]
 const QUAD_X500_SIGNS: desaturate::QuadSigns = desaturate::QuadSigns {
     roll: [-1.0, 1.0, 1.0, -1.0],
     pitch: [1.0, -1.0, 1.0, -1.0],
     yaw: [1.0, 1.0, -1.0, -1.0],
 };
 
+#[cfg(feature = "mc")]
 impl Mixer for QuadXMixerX500 {
     // Registered in cert/algorithm_id_registry.toml as
     // "mixer.quad_x_x500.v2" — v2 for the same desaturation change
@@ -167,6 +176,7 @@ impl Mixer for QuadXMixerX500 {
 /// that found this wound up from 0.05 to 1.0 rad/s — the attitude
 /// loop's rate command limit — with the controller pushing INTO the
 /// spin, and strengthening the yaw integrator made it wind up faster.
+#[cfg(feature = "mc")]
 pub struct QuadXMixerReversedSpin {
     pub timestamp_source: fn() -> Timestamp,
 }
@@ -177,12 +187,14 @@ pub struct QuadXMixerReversedSpin {
 ///   rotor_0: FR, CW  → −r +p −y      rotor_1: RL, CW  → +r −p −y
 ///   rotor_2: FL, CCW → +r +p +y      rotor_3: RR, CCW → −r −p +y
 /// ```
+#[cfg(feature = "mc")]
 const QUAD_X500_REVERSED_SIGNS: desaturate::QuadSigns = desaturate::QuadSigns {
     roll: [-1.0, 1.0, 1.0, -1.0],
     pitch: [1.0, -1.0, 1.0, -1.0],
     yaw: [-1.0, -1.0, 1.0, 1.0],
 };
 
+#[cfg(feature = "mc")]
 impl Mixer for QuadXMixerReversedSpin {
     // Registered in cert/algorithm_id_registry.toml as
     // "mixer.quad_x_x500_reversed_spin.v1".
@@ -205,9 +217,14 @@ impl Mixer for QuadXMixerReversedSpin {
     }
 }
 
+// COV:EXCL_START(phantom DA from actuators.rs re-export)
 mod actuators;
+#[cfg(feature = "mc")]
 mod desaturate;
 mod replicable;
 mod sanitizer_impl;
+#[cfg(feature = "spacecraft")]
+pub mod spacecraft;
 
 pub use actuators::*;
+// COV:EXCL_STOP

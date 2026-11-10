@@ -78,9 +78,11 @@ IMPL_MAP=(
     'controller|controller.multirotor.v4|MultirotorController|aviate-core/src/control/multirotor.rs'
     'controller|controller.fixed_wing.v1|FixedWingController|aviate-core/src/control/fixed_wing.rs'
     'controller|controller.vtol.v1|VtolController|aviate-core/src/control/vtol.rs'
+    'controller|controller.spacecraft.v1|SpacecraftController|aviate-core/src/control/spacecraft.rs'
     'mixer|mixer.quad_x.v2|QuadXMixer|aviate-core/src/mixer.rs'
     'mixer|mixer.quad_x_x500.v2|QuadXMixerX500|aviate-core/src/mixer.rs'
     'mixer|mixer.quad_x_x500_reversed_spin.v1|QuadXMixerReversedSpin|aviate-core/src/mixer.rs'
+    'mixer|mixer.spacecraft.v1|SpacecraftMixer|aviate-core/src/mixer/spacecraft.rs'
     'sanitizer|sanitizer.group_aware.v1|Sanitizer|aviate-core/src/mixer/sanitizer_impl.rs'
 )
 
@@ -106,12 +108,14 @@ OWNERSHIP=(
     'aviate-core/src/control/velocity.rs|controller/controller.multirotor.v4'
     'aviate-core/src/control/fixed_wing.rs|controller/controller.fixed_wing.v1'
     'aviate-core/src/control/vtol.rs|controller/controller.vtol.v1'
-    'aviate-core/src/control.rs|controller/controller.multirotor.v4,controller/controller.fixed_wing.v1,controller/controller.vtol.v1'
-    'aviate-core/src/control/|controller/controller.multirotor.v4,controller/controller.fixed_wing.v1,controller/controller.vtol.v1'
+    'aviate-core/src/control/spacecraft.rs|controller/controller.spacecraft.v1'
+    'aviate-core/src/control.rs|controller/controller.multirotor.v4,controller/controller.fixed_wing.v1,controller/controller.vtol.v1,controller/controller.spacecraft.v1'
+    'aviate-core/src/control/|controller/controller.multirotor.v4,controller/controller.fixed_wing.v1,controller/controller.vtol.v1,controller/controller.spacecraft.v1'
     'aviate-core/src/mixer/sanitizer_impl.rs|sanitizer/sanitizer.group_aware.v1'
+    'aviate-core/src/mixer/spacecraft.rs|mixer/mixer.spacecraft.v1'
     'aviate-core/src/mixer/desaturate.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1'
-    'aviate-core/src/mixer.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,sanitizer/sanitizer.group_aware.v1'
-    'aviate-core/src/mixer/|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,sanitizer/sanitizer.group_aware.v1'
+    'aviate-core/src/mixer.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,mixer/mixer.spacecraft.v1,sanitizer/sanitizer.group_aware.v1'
+    'aviate-core/src/mixer/|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,mixer/mixer.spacecraft.v1,sanitizer/sanitizer.group_aware.v1'
 )
 
 # Pinned production aggregate identity hashes. These are the same
@@ -689,7 +693,9 @@ fixture_init() {
         aviate-core/src/control/multirotor.rs \
         aviate-core/src/control/fixed_wing.rs \
         aviate-core/src/control/vtol.rs \
+        aviate-core/src/control/spacecraft.rs \
         aviate-core/src/mixer.rs \
+        aviate-core/src/mixer/spacecraft.rs \
         aviate-core/src/mixer/sanitizer_impl.rs; do
         mkdir -p "$FIXTURE/$(dirname "$f")"
         cp "$REPO_ROOT/$f" "$FIXTURE/$f"

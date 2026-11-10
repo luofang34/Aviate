@@ -290,10 +290,11 @@ pub mod cascade_gains;
 mod cascade_tests;
 pub mod envelope;
 pub mod law_invariants;
+#[cfg(feature = "mc")]
 pub mod position;
 pub mod rate;
+#[cfg(feature = "mc")]
 pub mod velocity;
-// COV:EXCL_STOP
 
 #[cfg(feature = "mc")]
 pub mod multirotor;
@@ -303,3 +304,7 @@ pub mod fixed_wing;
 
 #[cfg(feature = "vtol")]
 pub mod vtol;
+
+#[cfg(feature = "spacecraft")]
+pub mod spacecraft;
+// COV:EXCL_STOP
