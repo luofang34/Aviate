@@ -13,7 +13,7 @@ use aviate_link::mavlink::{
     mav_cmd, mav_result, serialize_mavlink, LocalAddress, MavMessage, MavState,
 };
 
-use mavlink_rx::{next_inbound_action, InboundAction, Sender};
+use mavlink_rx::{next_inbound_action, AirspeedRequest, InboundAction, Sender};
 
 /// Default inbound MAVLink RX byte ring capacity.
 pub const DEFAULT_RX_RING_BYTES: usize = 2048;
@@ -77,6 +77,10 @@ pub struct DirectMavlinkEndpoint<
     /// Sender of the command that `poll_command` returned last. Its
     /// acknowledgement goes back to this address.
     ack_target: Option<Sender>,
+    /// Indicated airspeed target \[m/s\] from `MAV_CMD_DO_CHANGE_SPEED`.
+    airspeed_target: Option<f32>,
+    /// Whether the vehicle flies a commanded airspeed.
+    airspeed_commandable: bool,
     sys_id: u8,
     comp_id: u8,
     seq: u8,
@@ -101,6 +105,8 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
             cmd_head: 0,
             cmd_len: 0,
             ack_target: None,
+            airspeed_target: None,
+            airspeed_commandable: false,
             sys_id,
             comp_id,
             seq: 0,
@@ -190,6 +196,26 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
         Some(queued.command)
     }
 
+    /// Whether the command that [`Self::poll_command`] returned last came
+    /// over the link, as opposed to the typed entry.
+    #[must_use]
+    pub const fn polled_from_link(&self) -> bool {
+        self.ack_target.is_some()
+    }
+
+    /// Declare whether the vehicle flies a commanded airspeed. A vehicle
+    /// that does not refuses `MAV_CMD_DO_CHANGE_SPEED`.
+    pub fn set_airspeed_commandable(&mut self, commandable: bool) {
+        self.airspeed_commandable = commandable;
+    }
+
+    /// Indicated airspeed target \[m/s\] that the last accepted
+    /// `MAV_CMD_DO_CHANGE_SPEED` set, `None` for the cruise airspeed.
+    #[must_use]
+    pub const fn airspeed_target(&self) -> Option<f32> {
+        self.airspeed_target
+    }
+
     /// Update the armed flag advertised in `HEARTBEAT`.
     pub fn set_armed(&mut self, armed: bool) {
         self.armed = armed;
@@ -207,6 +233,7 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
         self.cmd_head = 0;
         self.cmd_len = 0;
         self.ack_target = None;
+        self.airspeed_target = None;
         self.armed = false;
         self.mav_state = MavState::Boot;
         self.last_heartbeat_us = None;
@@ -252,6 +279,10 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
                 InboundAction::Enqueue { command, sender } => {
                     let _ = self.enqueue(command, Some(sender));
                 }
+                InboundAction::Airspeed { request, sender } => {
+                    let result = self.apply_airspeed(request);
+                    self.emit_command_ack(mav_cmd::DO_CHANGE_SPEED, result, 0, Some(sender));
+                }
                 InboundAction::ImmediateAck {
                     command,
                     result,
@@ -262,6 +293,20 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
                 InboundAction::Ignore => {}
             }
         }
+    }
+
+    /// Apply an airspeed request and return its `MAV_RESULT`. The target
+    /// persists until the next request or a world reset.
+    fn apply_airspeed(&mut self, request: AirspeedRequest) -> u8 {
+        if !self.airspeed_commandable {
+            return mav_result::UNSUPPORTED;
+        }
+        match request {
+            AirspeedRequest::Set(speed) => self.airspeed_target = Some(speed),
+            AirspeedRequest::Default => self.airspeed_target = None,
+            AirspeedRequest::NoChange => {}
+        }
+        mav_result::ACCEPTED
     }
 
     /// Acknowledge `command` to the system and component that sent it.

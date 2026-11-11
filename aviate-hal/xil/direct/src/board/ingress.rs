@@ -10,6 +10,14 @@ use aviate_core::InitState;
 use aviate_hal_io::SystemCommand;
 use aviate_link::mavlink::MavState;
 
+/// Why the board dropped a flight command that came over the link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirectCommandRefusal {
+    /// The vehicle does not let an external commander request this mode.
+    /// A multirotor keeps its height hold for the kernel's own descent.
+    ModeNotCommandable(ControlMode),
+}
+
 /// Command ingress state machine enforcing `#133` setpoint freshness semantics.
 #[derive(Debug, Clone, Default)]
 pub(super) struct DirectCommandIngress {

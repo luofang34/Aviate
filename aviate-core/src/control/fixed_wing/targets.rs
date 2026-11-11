@@ -220,7 +220,11 @@ fn deviation_targets(
     Targets::Flight {
         lateral: Lateral::Course(wrap_angle(track_course - intercept)),
         vertical,
-        airspeed: course_and_speed(setpoint).map_or(cruise, |(_course, speed)| speed),
+        airspeed: setpoint
+            .airspeed
+            .map(|airspeed| airspeed.0)
+            .or(course_and_speed(setpoint).map(|(_course, speed)| speed))
+            .unwrap_or(cruise),
         throttle: params.cruise_throttle.0,
     }
 }
@@ -228,7 +232,10 @@ fn deviation_targets(
 /// Targets for a velocity command: course, airspeed and climb.
 fn velocity_targets(setpoint: &Setpoint, params: &FixedWingParams, cruise: Scalar) -> Targets {
     let (lateral, airspeed) = match course_and_speed(setpoint) {
-        Some((course, speed)) => (Lateral::Course(course), speed),
+        Some((course, speed)) => (
+            Lateral::Course(course),
+            setpoint.airspeed.map_or(speed, |airspeed| airspeed.0),
+        ),
         None => (heading_or_bank(setpoint), cruise),
     };
     Targets::Flight {
@@ -334,7 +341,10 @@ impl Targets {
         params: &FixedWingParams,
     ) -> Self {
         let setpoint = &command.setpoint;
-        let cruise = params.cruise_airspeed.0;
+        // A commanded airspeed replaces the cruise airspeed wherever the
+        // law would fly the cruise airspeed or a speed over the ground.
+        let commanded = setpoint.airspeed.map(|airspeed| airspeed.0);
+        let cruise = commanded.unwrap_or(params.cruise_airspeed.0);
         match command.mode {
             ControlMode::Rate => Targets::Rates {
                 rates: setpoint

@@ -46,6 +46,9 @@ pub struct Setpoint {
     pub velocity: Option<[MetersPerSecond; 3]>,
     pub lateral_deviation: Option<Meters>,
     pub vertical_deviation: Option<Meters>,
+    /// Indicated airspeed target \[m/s\] for a vehicle that flies on its
+    /// wing. `None` leaves the airframe's cruise airspeed.
+    pub airspeed: Option<MetersPerSecond>,
     pub collective_thrust: NormalizedThrust,
 }
 
@@ -61,6 +64,7 @@ impl Default for Setpoint {
             velocity: None,
             lateral_deviation: None,
             vertical_deviation: None,
+            airspeed: None,
             collective_thrust: NormalizedThrust(0.0),
         }
     }
@@ -241,6 +245,20 @@ pub trait VehicleController {
     /// controller with an incomplete mode surface must override this method.
     fn supports_mode(&self, _mode: ControlMode) -> bool {
         true
+    }
+
+    /// Return whether an external commander may request `mode`.
+    ///
+    /// A mode can exist only for the kernel's own use, for example a
+    /// descent terminal. The default is every supported mode.
+    fn accepts_external_mode(&self, mode: ControlMode) -> bool {
+        self.supports_mode(mode)
+    }
+
+    /// Return whether this controller flies a commanded airspeed
+    /// (`Setpoint::airspeed`). Only a vehicle that flies on its wing does.
+    fn flies_airspeed_target(&self) -> bool {
+        false
     }
 
     fn step(

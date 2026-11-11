@@ -20,7 +20,8 @@ use crate::link::DirectTelemetryFrameInput;
 use crate::synthesis::DirectTruthSample;
 
 use super::ingress::{
-    default_failsafe_command, init_state_to_mav_state, DirectCommandIngress, DirectSensorCache,
+    default_failsafe_command, init_state_to_mav_state, DirectCommandIngress, DirectCommandRefusal,
+    DirectSensorCache,
 };
 use super::triad::triad_init_quat;
 use super::{DirectActuatorCmd, DirectBoardHal, DirectTime, DirectXilBoard};
@@ -105,7 +106,10 @@ where
             tick_delta: delta_us,
         };
         let command_age_ms = self.ingress.setpoint_age_ms(time_us);
-        let flight_cmd = self.ingress.active_command();
+        let mut flight_cmd = self.ingress.active_command();
+        if flight_cmd.setpoint.airspeed.is_none() {
+            flight_cmd.setpoint.airspeed = self.endpoint.airspeed_target().map(MetersPerSecond);
+        }
         let result = self.kernel.update(
             ChannelId(0),
             time_delta,
@@ -184,6 +188,7 @@ where
         self.host_clock_us = None;
         self.seed_wait_since_us = None;
         self.model_declination_rad = self.origin_declination_rad;
+        self.origin_announced = false;
     }
 
     fn feed_and_read_sensors(&mut self, sensors: &DirectHostSensors) {
@@ -297,6 +302,16 @@ where
     fn drain_inbound_commands(&mut self, now_us: u64) {
         while let Some(sys_cmd) = self.endpoint.poll_command() {
             if let SystemCommand::FlightControl(ref flight) = sys_cmd {
+                let commandable = self
+                    .kernel
+                    .pipeline()
+                    .controller
+                    .accepts_external_mode(flight.mode);
+                if self.endpoint.polled_from_link() && !commandable {
+                    log::warn!("DirectXilBoard refuses link command in {:?}", flight.mode);
+                    self.last_refusal = Some(DirectCommandRefusal::ModeNotCommandable(flight.mode));
+                    continue;
+                }
                 self.kernel.state.checks.pre_arm.update_throttle(
                     flight.setpoint.collective_thrust
                         < aviate_core::kernel_types::THROTTLE_LOW_MAX_COLLECTIVE,
@@ -351,11 +366,22 @@ where
         estimate: &aviate_core::state::StateEstimate,
         geomag: GeomagneticReference,
     ) {
+        let origin_msl_m =
+            self.config.origin.ellipsoidal_height_m - self.geoid_separation_m.unwrap_or(0.0);
         let origin = GeodeticOrigin {
             latitude_deg: self.config.origin.latitude_deg,
             longitude_deg: self.config.origin.longitude_deg,
-            altitude_msl_m: self.config.origin.ellipsoidal_height_m as f32,
+            altitude_msl_m: origin_msl_m as f32,
         };
+        if self.geoid_separation_m.is_some() && !self.origin_announced {
+            self.endpoint.emit_global_origin(
+                origin.latitude_deg,
+                origin.longitude_deg,
+                origin_msl_m,
+                u64::from(time_boot_ms) * 1_000,
+            );
+            self.origin_announced = true;
+        }
         let input = DirectTelemetryFrameInput {
             sim_time_us,
             time_boot_ms,

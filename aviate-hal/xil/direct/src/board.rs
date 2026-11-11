@@ -20,6 +20,7 @@ use crate::synthesis::{
     DirectNoiseTier, DirectOrigin, DirectSensorRates, DirectSynthesisError, DirectSynthesizer,
 };
 
+pub use ingress::DirectCommandRefusal;
 use ingress::{default_failsafe_command, DirectCommandIngress, DirectSensorCache};
 
 /// Simulation clock in microseconds implementing [`TimeSource`] and [`TimeHal`].
@@ -137,6 +138,13 @@ where
     origin_declination_rad: f32,
     /// Declination from the geomagnetic model at the last GNSS fix.
     model_declination_rad: f32,
+    /// Why the last refused link command was dropped.
+    last_refusal: Option<DirectCommandRefusal>,
+    /// Height of the geoid above the WGS-84 ellipsoid at the origin \[m\],
+    /// when the host declares it.
+    geoid_separation_m: Option<f64>,
+    /// Whether `GPS_GLOBAL_ORIGIN` went out for the present origin.
+    origin_announced: bool,
 }
 
 impl<C, M> DirectXilBoard<C, M>
@@ -165,7 +173,8 @@ where
             DirectTime::new(),
             FakeActuator::new(),
         );
-        let endpoint = DirectMavlinkEndpoint::new(config.sys_id, config.comp_id);
+        let mut endpoint = DirectMavlinkEndpoint::new(config.sys_id, config.comp_id);
+        endpoint.set_airspeed_commandable(kernel.pipeline().controller.flies_airspeed_target());
         let origin_declination_rad = synthesizer.environment().declination_rad();
         Ok(Self {
             config,
@@ -185,12 +194,17 @@ where
             host_clock_us: None,
             origin_declination_rad,
             model_declination_rad: origin_declination_rad,
+            last_refusal: None,
+            geoid_separation_m: None,
+            origin_announced: false,
         })
     }
 
     /// Replace the active kernel and reset all sensor, link, and lifecycle state.
     pub fn reset_with_kernel(&mut self, mut kernel: DefaultAviateKernel<C, M>) {
         kernel.state.checks.pre_arm.update_throttle(true);
+        self.endpoint
+            .set_airspeed_commandable(kernel.pipeline().controller.flies_airspeed_target());
         self.kernel = kernel;
         self.clear_runtime_state();
         self.active_generation = None;
@@ -251,6 +265,25 @@ where
         self.synthesizer.set_rates(rates);
     }
 
+    /// Declare the height of the geoid above the WGS-84 ellipsoid at the
+    /// origin \[m\].
+    ///
+    /// MAVLink altitudes in `GPS_GLOBAL_ORIGIN` and `GLOBAL_POSITION_INT`
+    /// are above mean sea level, but the origin is configured with an
+    /// ellipsoidal height. With the separation the board gives mean sea
+    /// level and announces the origin. Without it the board does not send
+    /// `GPS_GLOBAL_ORIGIN`, because it cannot state its altitude, and the
+    /// altitude of `GLOBAL_POSITION_INT` is the ellipsoidal height.
+    pub fn set_geoid_separation(&mut self, separation_m: f64) {
+        self.geoid_separation_m = Some(separation_m).filter(|value| value.is_finite());
+        self.origin_announced = false;
+    }
+
+    /// Send `GPS_GLOBAL_ORIGIN` again with the next telemetry.
+    pub fn announce_origin(&mut self) {
+        self.origin_announced = false;
+    }
+
     /// Configure outbound MAVLink telemetry stream rates.
     pub fn set_telemetry_rates(&mut self, rates: DirectTelemetryRates) {
         self.endpoint.set_rates(rates);
@@ -260,6 +293,13 @@ where
     #[must_use]
     pub const fn last_effective_command(&self) -> &Command {
         &self.last_effective_command
+    }
+
+    /// Why the board dropped the last refused flight command from the
+    /// link, if it dropped one.
+    #[must_use]
+    pub const fn last_command_refusal(&self) -> Option<DirectCommandRefusal> {
+        self.last_refusal
     }
 
     /// Return `true` when the kernel has reached [`InitState::Ready`].

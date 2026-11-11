@@ -313,6 +313,11 @@ impl VehicleController for MultirotorController {
             != crate::control::MultirotorModeCapability::Unsupported
     }
 
+    fn accepts_external_mode(&self, mode: crate::control::ControlMode) -> bool {
+        crate::control::multirotor_mode_capability(mode)
+            == crate::control::MultirotorModeCapability::External
+    }
+
     fn step(
         &self,
         runtime: &mut MultirotorRuntimeState,

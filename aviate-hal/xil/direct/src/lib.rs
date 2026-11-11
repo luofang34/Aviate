@@ -15,7 +15,10 @@ pub mod host_sensors;
 pub mod link;
 pub mod synthesis;
 
-pub use board::{DirectActuatorCmd, DirectBoardConfig, DirectBoardHal, DirectTime, DirectXilBoard};
+pub use board::{
+    DirectActuatorCmd, DirectBoardConfig, DirectBoardHal, DirectCommandRefusal, DirectTime,
+    DirectXilBoard,
+};
 pub use host_sensors::{DirectHostSensors, DirectSensorSample};
 pub use link::{
     DirectByteRing, DirectMavlinkEndpoint, DirectTelemetryRates, DEFAULT_RX_RING_BYTES,

@@ -96,6 +96,10 @@ impl VehicleController for FixedWingController {
         mode != ControlMode::PositionHold
     }
 
+    fn flies_airspeed_target(&self) -> bool {
+        true
+    }
+
     fn step(
         &self,
         runtime: &mut FixedWingRuntimeState,
