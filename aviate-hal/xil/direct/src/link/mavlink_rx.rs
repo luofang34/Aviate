@@ -29,6 +29,14 @@ const VELOCITY_MASK: u16 = position_target_typemask::VX_IGNORE
 const ACCELERATION_MASK: u16 = position_target_typemask::AX_IGNORE
     | position_target_typemask::AY_IGNORE
     | position_target_typemask::AZ_IGNORE;
+/// A height and a heading: `z` and `yaw` active, everything else
+/// ignored (type mask 2555). A fixed wing flies it as a heading and a
+/// height hold, with no horizontal position.
+const HEIGHT_HEADING_MASK: u16 = position_target_typemask::X_IGNORE
+    | position_target_typemask::Y_IGNORE
+    | VELOCITY_MASK
+    | ACCELERATION_MASK
+    | position_target_typemask::YAW_RATE_IGNORE;
 const KNOWN_POSITION_MASK: u16 = POSITION_MASK
     | VELOCITY_MASK
     | ACCELERATION_MASK
@@ -43,9 +51,24 @@ pub(super) struct Sender {
     pub(super) component: u8,
 }
 
+/// What a `MAV_CMD_DO_CHANGE_SPEED` asks of the airspeed target.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum AirspeedRequest {
+    /// Fly this indicated airspeed \[m/s\] until told otherwise.
+    Set(f32),
+    /// Return to the airframe's cruise airspeed.
+    Default,
+    /// Leave the target as it is.
+    NoChange,
+}
+
 pub(super) enum InboundAction {
     Enqueue {
         command: SystemCommand,
+        sender: Sender,
+    },
+    Airspeed {
+        request: AirspeedRequest,
         sender: Sender,
     },
     ImmediateAck {
@@ -163,6 +186,12 @@ fn map_command_long(cmd: &CommandLong, local: LocalAddress, sender: Sender) -> I
         result,
         sender,
     };
+    if cmd.command == mav_cmd::DO_CHANGE_SPEED {
+        return match airspeed_request(cmd) {
+            Some(request) => InboundAction::Airspeed { request, sender },
+            None => refuse(mav_result::DENIED),
+        };
+    }
     if cmd.command != mav_cmd::COMPONENT_ARM_DISARM {
         return refuse(mav_result::UNSUPPORTED);
     }
@@ -177,6 +206,33 @@ fn map_command_long(cmd: &CommandLong, local: LocalAddress, sender: Sender) -> I
         return refuse(mav_result::DENIED);
     };
     InboundAction::Enqueue { command, sender }
+}
+
+/// Speed type of `MAV_CMD_DO_CHANGE_SPEED` for an airspeed.
+const SPEED_TYPE_AIRSPEED: f32 = 0.0;
+/// `param2` of `MAV_CMD_DO_CHANGE_SPEED` that leaves the speed unchanged.
+const SPEED_NO_CHANGE: f32 = -1.0;
+/// `param2` of `MAV_CMD_DO_CHANGE_SPEED` that returns to the default speed.
+const SPEED_DEFAULT: f32 = -2.0;
+
+/// Read a `MAV_CMD_DO_CHANGE_SPEED`. Only the airspeed type is flown;
+/// a ground speed, climb or descent speed is refused, as is a speed
+/// that is not a finite positive number or one of the two markers.
+/// The throttle parameter is not used: the law sets the throttle.
+fn airspeed_request(cmd: &CommandLong) -> Option<AirspeedRequest> {
+    if cmd.param1 != SPEED_TYPE_AIRSPEED {
+        return None;
+    }
+    let speed = cmd.param2;
+    if speed == SPEED_NO_CHANGE {
+        Some(AirspeedRequest::NoChange)
+    } else if speed == SPEED_DEFAULT {
+        Some(AirspeedRequest::Default)
+    } else if speed.is_finite() && speed > 0.0 {
+        Some(AirspeedRequest::Set(speed))
+    } else {
+        None
+    }
 }
 
 fn map_attitude_target(set_att: &SetAttitudeTarget, seq: u8) -> Option<Command> {
@@ -215,6 +271,9 @@ fn map_position_target(set_pos: &SetPositionTargetLocalNed, seq: u8) -> Option<C
         return None;
     }
     let mask = set_pos.type_mask;
+    if mask == HEIGHT_HEADING_MASK {
+        return height_and_heading(set_pos, seq);
+    }
     let position_active = vector_active(mask, POSITION_MASK)?;
     let velocity_active = vector_active(mask, VELOCITY_MASK)?;
     let unsupported = mask & !KNOWN_POSITION_MASK != 0
@@ -253,6 +312,26 @@ fn map_position_target(set_pos: &SetPositionTargetLocalNed, seq: u8) -> Option<C
             position,
             velocity,
             heading,
+            ..Setpoint::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: u32::from(seq),
+        source: CommandSource::Gcs,
+    })
+}
+
+/// Height hold on a heading: `z` is the local NED down coordinate, so
+/// the height above the origin datum is `-z`; `yaw` is the true heading.
+fn height_and_heading(set_pos: &SetPositionTargetLocalNed, seq: u8) -> Option<Command> {
+    if !all_finite(&[set_pos.z, set_pos.yaw]) {
+        return None;
+    }
+    Some(Command {
+        mode: ControlMode::AltitudeHold,
+        setpoint: Setpoint {
+            altitude: Some(Meters(-set_pos.z)),
+            heading: Some(Radians(set_pos.yaw)),
             ..Setpoint::default()
         },
         config_mode_request: None,

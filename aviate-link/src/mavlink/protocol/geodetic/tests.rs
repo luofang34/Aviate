@@ -90,3 +90,33 @@ fn pymavlink_frames_parse_to_the_same_fields() {
     };
     assert_eq!(raw, Some(gps_raw()));
 }
+
+// GPS_GLOBAL_ORIGIN with the time extension, seq=6. The zero high bytes
+// of time_usec truncate the payload from 20 to 15 bytes.
+const PYMAVLINK_GPS_GLOBAL_ORIGIN: &[u8] = &[
+    0xFD, 0x0F, 0x00, 0x00, 0x06, 0x01, 0x01, 0x31, 0x00, 0x00, 0x4C, 0x52, 0x40, 0x1C, 0xD1, 0x03,
+    0x18, 0x05, 0xC8, 0x85, 0x07, 0x00, 0x87, 0xD6, 0x12, 0xB0, 0xAF,
+];
+
+fn global_origin() -> GpsGlobalOrigin {
+    GpsGlobalOrigin {
+        latitude: 473_977_420,
+        longitude: 85_459_921,
+        altitude: 493_000,
+        time_usec: 1_234_567,
+    }
+}
+
+#[test]
+fn gps_global_origin_matches_pymavlink_both_ways() {
+    assert_serializes_to(
+        MavMessage::GpsGlobalOrigin(global_origin()),
+        6,
+        PYMAVLINK_GPS_GLOBAL_ORIGIN,
+    );
+    let parsed = match parse_mavlink(PYMAVLINK_GPS_GLOBAL_ORIGIN) {
+        Ok((MavMessage::GpsGlobalOrigin(m), _, _)) => Some(m),
+        _ => None,
+    };
+    assert_eq!(parsed, Some(global_origin()));
+}

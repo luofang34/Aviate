@@ -100,6 +100,70 @@ impl GpsRawInt {
     pub const CRC_EXTRA: u8 = 24;
 }
 
+/// Standard MAVLink `GPS_GLOBAL_ORIGIN` (message 49): the geodetic
+/// point at the origin of the local NED frame of `LOCAL_POSITION_NED`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct GpsGlobalOrigin {
+    /// Latitude, degrees × 1e7.
+    pub latitude: i32,
+    /// Longitude, degrees × 1e7.
+    pub longitude: i32,
+    /// Altitude above mean sea level, millimeters.
+    pub altitude: i32,
+    /// Time since system boot, in microseconds (extension field).
+    pub time_usec: u64,
+}
+
+impl GpsGlobalOrigin {
+    /// MAVLink common message ID.
+    pub const MSG_ID: u32 = 49;
+    /// Wire payload length: 12 base bytes plus the 8-byte extension.
+    pub const PAYLOAD_LEN: usize = 20;
+    /// CRC extra from the MAVLink common dialect.
+    pub const CRC_EXTRA: u8 = 39;
+}
+
+pub(super) fn parse_gps_global_origin(payload: &[u8]) -> Result<MavMessage, ParseError> {
+    if payload.len() < GpsGlobalOrigin::PAYLOAD_LEN {
+        return Err(ParseError::InvalidPayload);
+    }
+    Ok(MavMessage::GpsGlobalOrigin(GpsGlobalOrigin {
+        latitude: read_i32_le(payload, 0),
+        longitude: read_i32_le(payload, 4),
+        altitude: read_i32_le(payload, 8),
+        time_usec: read_u64_le(payload, 12),
+    }))
+}
+
+pub(super) fn serialize_gps_global_origin(
+    msg: &GpsGlobalOrigin,
+    seq: u8,
+    sys_id: u8,
+    comp_id: u8,
+    buf: &mut [u8],
+) -> Option<usize> {
+    if buf.len() < MavHeader::SIZE + GpsGlobalOrigin::PAYLOAD_LEN + 2 {
+        return None;
+    }
+    let offset = write_header(
+        buf,
+        GpsGlobalOrigin::PAYLOAD_LEN as u8,
+        seq,
+        sys_id,
+        comp_id,
+        GpsGlobalOrigin::MSG_ID,
+    );
+    write_i32_le(buf, offset, msg.latitude);
+    write_i32_le(buf, offset + 4, msg.longitude);
+    write_i32_le(buf, offset + 8, msg.altitude);
+    write_u64_le(buf, offset + 12, msg.time_usec);
+    Some(write_crc(
+        buf,
+        offset + GpsGlobalOrigin::PAYLOAD_LEN,
+        GpsGlobalOrigin::CRC_EXTRA,
+    ))
+}
+
 pub(super) fn parse_global_position_int(payload: &[u8]) -> Result<MavMessage, ParseError> {
     if payload.len() < GlobalPositionInt::PAYLOAD_LEN {
         return Err(ParseError::InvalidPayload);
