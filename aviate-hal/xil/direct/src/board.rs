@@ -14,6 +14,7 @@ use aviate_hal_io::{
     BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag, RawGnssReading, SystemCommand,
     TimeHal, TimeSource, MAX_ACTUATOR_OUTPUTS,
 };
+use aviate_link::mavlink::vehicle_mav_type;
 use world_core::{DecimalYear, GeodeticPosition};
 
 use crate::link::{
@@ -195,6 +196,7 @@ where
         );
         let mut endpoint = DirectMavlinkEndpoint::new(config.sys_id, config.comp_id);
         endpoint.set_airspeed_commandable(kernel.pipeline().controller.flies_airspeed_target());
+        endpoint.set_vehicle_type(vehicle_mav_type(kernel.cfg().mixer_geometry));
         let origin_declination_rad = synthesizer.environment().declination_rad();
         let origin_pressure_pa = synthesizer.environment().air.pressure_pa as f32;
         Ok(Self {
@@ -229,6 +231,8 @@ where
         kernel.state.checks.pre_arm.update_throttle(true);
         self.endpoint
             .set_airspeed_commandable(kernel.pipeline().controller.flies_airspeed_target());
+        self.endpoint
+            .set_vehicle_type(vehicle_mav_type(kernel.cfg().mixer_geometry));
         self.kernel = kernel;
         self.clear_runtime_state();
         self.active_generation = None;

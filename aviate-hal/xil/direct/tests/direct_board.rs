@@ -11,7 +11,7 @@ use aviate_link::mavlink::protocol::{
 };
 use aviate_link::mavlink::{
     mav_cmd, mav_result, parse_mavlink_frame, serialize_mavlink, MavAutopilot, MavMessage,
-    MavModeFlag, MavState,
+    MavModeFlag, MavState, MavType,
 };
 use aviate_xil_direct::{DirectBoardConfig, DirectNoiseTier, DirectXilBoard};
 use world_core::{DecimalYear, GeodeticPosition};
@@ -103,6 +103,7 @@ fn drain_and_count_telemetry<C, M>(
         match parsed.message {
             MavMessage::Heartbeat(hb) => {
                 assert_eq!(hb.autopilot, MavAutopilot::Aviate as u8);
+                assert_eq!(hb.mav_type, MavType::Quadrotor as u8);
                 if hb.system_status == MavState::Active as u8
                     && (hb.base_mode & MavModeFlag::SAFETY_ARMED.0) != 0
                 {

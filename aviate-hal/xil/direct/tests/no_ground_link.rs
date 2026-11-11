@@ -12,7 +12,7 @@ use aviate_link::mavlink::protocol::{
     position_target_typemask, CommandLong, Heartbeat, SetPositionTargetLocalNed,
 };
 use aviate_link::mavlink::{
-    mav_cmd, mav_result, parse_mavlink_frame, serialize_mavlink, MavMessage, MavType,
+    mav_cmd, mav_result, parse_mavlink_frame, serialize_mavlink, MavMessage, MavModeFlag, MavType,
 };
 use aviate_xil_direct::{DirectNoiseTier, DirectSensorRates, DirectTelemetryRates};
 
@@ -120,7 +120,13 @@ impl Downlink {
             let parsed = parse_mavlink_frame(&buf[cursor..n]).expect("outbound frame");
             cursor += parsed.consumed;
             match parsed.message {
-                MavMessage::Heartbeat(_) => self.heartbeat += 1,
+                MavMessage::Heartbeat(heartbeat) => {
+                    // The host learns the airframe and that the board is
+                    // simulated from the heartbeat alone.
+                    assert_eq!(heartbeat.mav_type, MavType::FixedWing as u8);
+                    assert_ne!(heartbeat.base_mode & MavModeFlag::HIL_ENABLED.0, 0);
+                    self.heartbeat += 1;
+                }
                 MavMessage::SysStatus(_) => self.sys_status += 1,
                 MavMessage::AttitudeQuaternion(_) => self.attitude += 1,
                 MavMessage::LocalPositionNed(_) => self.local_position += 1,
