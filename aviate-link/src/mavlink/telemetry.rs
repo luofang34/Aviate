@@ -75,6 +75,7 @@ impl Default for TelemetryConfig {
     }
 }
 
+use aviate_core::kernel::config::MixerGeometry;
 use aviate_core::mixer::ActuatorCmd;
 use aviate_core::state::StateEstimate;
 use aviate_core::ChannelStatus;
@@ -87,6 +88,20 @@ use super::protocol::{
 
 use crate::errors::{TelemetryError, TelemetryResult};
 use crate::telemetry::TelemetryBackend;
+
+/// `MAV_TYPE` that a ground station or host sees in `HEARTBEAT` for a
+/// vehicle with `geometry`.
+///
+/// The match is exhaustive, so a new geometry needs a decision here
+/// before it can build.
+pub const fn vehicle_mav_type(geometry: MixerGeometry) -> MavType {
+    match geometry {
+        MixerGeometry::QuadX | MixerGeometry::QuadXX500 | MixerGeometry::QuadXX500ReversedSpin => {
+            MavType::Quadrotor
+        }
+        MixerGeometry::FixedWing => MavType::FixedWing,
+    }
+}
 
 /// Pure helper - format heartbeat message (safe for high-DAL)
 ///

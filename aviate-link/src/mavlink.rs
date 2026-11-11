@@ -88,5 +88,5 @@ pub use command::{parse_system_command, LocalAddress, MavlinkCommandLink, Parsed
 pub use telemetry::{
     format_actuators, format_attitude, format_aviate_estimator_status, format_estimator_status,
     format_global_position, format_gps_raw, format_heartbeat, format_local_position,
-    MavlinkCycleFormatter, MavlinkTelemetry,
+    vehicle_mav_type, MavlinkCycleFormatter, MavlinkTelemetry,
 };
