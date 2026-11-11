@@ -6,6 +6,7 @@ use aviate_core::control::fixed_wing::{AirspeedSource, FixedWingController};
 use aviate_core::control::{Command, CommandSource, ControlMode, Setpoint};
 use aviate_core::ekf::Estimator;
 use aviate_core::mixer::fixed_wing::FixedWingMixer;
+use aviate_core::sensor::GeomagneticReference;
 use aviate_core::state::StateEstimate;
 use aviate_core::time::{TimeSource, Timestamp};
 use aviate_core::types::{Meters, MetersPerSecond, Radians};
@@ -56,6 +57,8 @@ pub struct Flight {
     pub accel_bias_mps2: [f32; 3],
     /// Pressure-sensor errors of the pitot-static probe, when modelled.
     pub probe_errors: Option<ProbeErrors>,
+    /// Declination that the host supplies; `None` leaves the board's model.
+    pub geomagnetic: Option<GeomagneticReference>,
     step: u64,
     sequence: u32,
     pub last: DirectActuatorCmd,
@@ -237,6 +240,7 @@ impl Flight {
             gyro_bias_rps: faults.gyro_bias_rps,
             accel_bias_mps2: faults.accel_bias_mps2,
             probe_errors: None,
+            geomagnetic: None,
             step: 0,
             sequence: 0,
             last: DirectActuatorCmd::default(),
@@ -256,7 +260,7 @@ impl Flight {
     pub fn advance(&mut self) {
         let truth = self.curved_truth();
         let mut sensors = match self.sensors.synthesize(&truth) {
-            Some(sample) => sample.host_sensors(None),
+            Some(sample) => sample.host_sensors(self.geomagnetic),
             None => DirectHostSensors {
                 time_us: truth.time_us,
                 ..DirectHostSensors::default()
