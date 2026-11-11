@@ -228,16 +228,15 @@ impl super::Estimator for Ekf {
             Ekf::predict_state(self, state, &primary_imu.value, dt);
         }
 
-        if let Some(o) = overrides {
-            if let Some(gnss_health) = o.gnss_force_state {
-                let mut primary_gnss_reading = sensors.gnss[0];
-                primary_gnss_reading.health = match gnss_health {
-                    crate::sensor::GnssHealth::Good => crate::sensor::SensorHealth::Good,
-                    crate::sensor::GnssHealth::Suspect => crate::sensor::SensorHealth::Degraded,
-                    crate::sensor::GnssHealth::Lost => crate::sensor::SensorHealth::Failed,
-                };
-                Ekf::update_gnss_state(self, state, &primary_gnss_reading);
-            }
+        // An override block without a GNSS override leaves GNSS as it is.
+        if let Some(gnss_health) = overrides.and_then(|o| o.gnss_force_state) {
+            let mut primary_gnss_reading = sensors.gnss[0];
+            primary_gnss_reading.health = match gnss_health {
+                crate::sensor::GnssHealth::Good => crate::sensor::SensorHealth::Good,
+                crate::sensor::GnssHealth::Suspect => crate::sensor::SensorHealth::Degraded,
+                crate::sensor::GnssHealth::Lost => crate::sensor::SensorHealth::Failed,
+            };
+            Ekf::update_gnss_state(self, state, &primary_gnss_reading);
         } else {
             let primary_gnss = &sensors.gnss[0];
             if primary_gnss.valid && primary_gnss.health == crate::sensor::SensorHealth::Good {
