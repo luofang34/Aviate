@@ -103,6 +103,15 @@ fn complete_position_takes_precedence_when_velocity_is_also_present() {
 }
 
 #[test]
+fn a_height_and_heading_target_is_refused_with_its_own_reason() {
+    let height_heading = position_target(2555);
+    assert!(matches!(
+        mavlink_position_to_command(&height_heading),
+        Err(MavlinkCommandMappingError::HeightHeadingNotCommandable { type_mask: 2555 })
+    ));
+}
+
+#[test]
 fn partial_position_and_velocity_vectors_are_rejected() {
     let partial_position = position_target(
         position_target_typemask::X_IGNORE
