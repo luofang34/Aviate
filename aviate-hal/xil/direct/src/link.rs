@@ -33,6 +33,20 @@ const ALL_COMPONENTS: u8 = 0;
 struct QueuedCommand {
     command: SystemCommand,
     sender: Option<Sender>,
+    /// Geodetic position of a target that the board must express in
+    /// its present frame before it flies the command.
+    geodetic: Option<GeodeticTarget>,
+}
+
+/// A geodetic position target from `SET_POSITION_TARGET_GLOBAL_INT`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GeodeticTarget {
+    /// Geodetic latitude \[deg\].
+    pub latitude_deg: f64,
+    /// Longitude \[deg\].
+    pub longitude_deg: f64,
+    /// Altitude above mean sea level \[m\].
+    pub altitude_msl_m: f64,
 }
 pub(crate) const MAX_FRAME_BUF: usize = 280;
 
@@ -77,6 +91,8 @@ pub struct DirectMavlinkEndpoint<
     /// Sender of the command that `poll_command` returned last. Its
     /// acknowledgement goes back to this address.
     ack_target: Option<Sender>,
+    /// Geodetic target of the command that `poll_command` returned last.
+    polled_geodetic: Option<GeodeticTarget>,
     /// Indicated airspeed target \[m/s\] from `MAV_CMD_DO_CHANGE_SPEED`.
     airspeed_target: Option<f32>,
     /// Whether the vehicle flies a commanded airspeed.
@@ -105,6 +121,7 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
             cmd_head: 0,
             cmd_len: 0,
             ack_target: None,
+            polled_geodetic: None,
             airspeed_target: None,
             airspeed_commandable: false,
             sys_id,
@@ -164,16 +181,25 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
     ///
     /// Returns `true` if queued, or `false` when the 16-slot command FIFO is full.
     pub fn enqueue_command(&mut self, cmd: SystemCommand) -> bool {
-        self.enqueue(cmd, None)
+        self.enqueue(cmd, None, None)
     }
 
-    fn enqueue(&mut self, command: SystemCommand, sender: Option<Sender>) -> bool {
+    fn enqueue(
+        &mut self,
+        command: SystemCommand,
+        sender: Option<Sender>,
+        geodetic: Option<GeodeticTarget>,
+    ) -> bool {
         if self.cmd_len >= COMMAND_QUEUE_CAP {
             return false;
         }
         let tail = (self.cmd_head.wrapping_add(self.cmd_len)) % COMMAND_QUEUE_CAP;
         if let Some(slot) = self.cmd_queue.get_mut(tail) {
-            *slot = Some(QueuedCommand { command, sender });
+            *slot = Some(QueuedCommand {
+                command,
+                sender,
+                geodetic,
+            });
         }
         self.cmd_len = self.cmd_len.wrapping_add(1);
         true
@@ -193,6 +219,7 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
         }
         let queued = queued?;
         self.ack_target = queued.sender;
+        self.polled_geodetic = queued.geodetic;
         Some(queued.command)
     }
 
@@ -201,6 +228,14 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
     #[must_use]
     pub const fn polled_from_link(&self) -> bool {
         self.ack_target.is_some()
+    }
+
+    /// Geodetic position of the target that [`Self::poll_command`]
+    /// returned last, when it came as `SET_POSITION_TARGET_GLOBAL_INT`.
+    /// The returned command then carries no local position yet.
+    #[must_use]
+    pub const fn polled_geodetic_target(&self) -> Option<GeodeticTarget> {
+        self.polled_geodetic
     }
 
     /// Declare whether the vehicle flies a commanded airspeed. A vehicle
@@ -233,6 +268,7 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
         self.cmd_head = 0;
         self.cmd_len = 0;
         self.ack_target = None;
+        self.polled_geodetic = None;
         self.airspeed_target = None;
         self.armed = false;
         self.mav_state = MavState::Boot;
@@ -277,7 +313,14 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
             };
             match action {
                 InboundAction::Enqueue { command, sender } => {
-                    let _ = self.enqueue(command, Some(sender));
+                    let _ = self.enqueue(command, Some(sender), None);
+                }
+                InboundAction::EnqueueGeodetic {
+                    command,
+                    target,
+                    sender,
+                } => {
+                    let _ = self.enqueue(command, Some(sender), Some(target));
                 }
                 InboundAction::Airspeed { request, sender } => {
                     let result = self.apply_airspeed(request);
