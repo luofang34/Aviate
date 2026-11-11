@@ -259,7 +259,9 @@ fn a_block_that_cannot_fly_builds_no_controller() {
 
 #[test]
 fn every_mode_but_position_hold_is_supported() {
+    use crate::control::{gate_controller_mode_entry, gate_vehicle_mode_entry, ModeEntryDecision};
     let controller = controller();
+    assert!(controller.flies_airspeed_target());
     for mode in [
         ControlMode::Rate,
         ControlMode::Attitude,
@@ -270,4 +272,43 @@ fn every_mode_but_position_hold_is_supported() {
         assert!(controller.supports_mode(mode), "{mode:?}");
     }
     assert!(!controller.supports_mode(ControlMode::PositionHold));
+    assert_eq!(
+        controller.required_validity(ControlMode::PositionHold),
+        StateValidFlags::ATTITUDE
+            | StateValidFlags::HEIGHT
+            | StateValidFlags::VELOCITY
+            | StateValidFlags::POSITION
+    );
+    assert_eq!(
+        gate_vehicle_mode_entry(&controller, ControlMode::Rate, StateValidFlags::empty()),
+        ModeEntryDecision::Granted(ControlMode::Rate)
+    );
+    assert_eq!(
+        gate_vehicle_mode_entry(
+            &controller,
+            ControlMode::DeviationTracking,
+            StateValidFlags::all()
+        ),
+        ModeEntryDecision::Granted(ControlMode::DeviationTracking)
+    );
+    assert_eq!(
+        gate_vehicle_mode_entry(
+            &controller,
+            ControlMode::PositionHold,
+            StateValidFlags::all()
+        ),
+        ModeEntryDecision::Unsupported {
+            requested: ControlMode::PositionHold
+        }
+    );
+    assert_eq!(
+        gate_controller_mode_entry(ControlMode::PositionHold, StateValidFlags::all(), false),
+        ModeEntryDecision::Unsupported {
+            requested: ControlMode::PositionHold
+        }
+    );
+    assert_eq!(
+        gate_controller_mode_entry(ControlMode::Attitude, StateValidFlags::ATTITUDE, true),
+        ModeEntryDecision::Granted(ControlMode::Attitude)
+    );
 }

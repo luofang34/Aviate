@@ -1908,11 +1908,13 @@ traces_to = ["eaa72043-0393-4d0c-b54b-8794301969f5"]
 uid = "cd2002c9-80b0-4254-ad2f-957c04c95322"
 id = "TST-EST-224"
 title = "air-data aiding without GNSS and through an outage"
-test_selectors = ["ekf::joint::tests::airspeed_jacobian_matches_the_predicted_airspeed", "ekf::joint::tests::sideslip_jacobian_matches_the_predicted_lateral_air_velocity", "no_gnss_ever_from_an_in_air_start_through_two_turns", "gnss_outage_with_turns_and_a_wind_shift_then_recovery"]
+test_selectors = ["ekf::joint::tests::airspeed_jacobian_matches_the_predicted_airspeed", "ekf::joint::tests::sideslip_jacobian_matches_the_predicted_lateral_air_velocity", "ekf::joint::tests::air_aiding_fuses_pitot_propagates_wind_and_tracks_validity", "no_gnss_ever_from_an_in_air_start_through_two_turns", "gnss_outage_with_turns_and_a_wind_shift_then_recovery"]
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/src/ekf/joint/tests.rs` checks the airspeed and sideslip
 Jacobians against finite differences of the predicted air velocity.
+The unit tests also check 15-state bit-identity without air-data aiding,
+pitot fusion, wind propagation, and `AIRSPEED` validity limits.
 `aviate-hal/xil/direct/tests/fixed_wing_estimation.rs` flies the C172
 plant with no GNSS from an in-air start through two turns, and through a
 GNSS outage with turns and a wind shift, and bounds the tilt error to 2°
@@ -1924,14 +1926,16 @@ traces_to = ["3def065b-779e-4bb8-b30d-5a1d008c7141"]
 uid = "56892ad7-cfae-40fe-b7fc-2864d12ded84"
 id = "TST-CTL-209"
 title = "fixed-wing lateral and airspeed targets"
-test_selectors = ["control::fixed_wing::tests::targets_tests::height_modes_take_heading_then_bank_then_wings_level", "control::fixed_wing::tests::targets_tests::velocity_command_is_course_airspeed_and_climb", "control::fixed_wing::tests::targets_tests::course_is_the_track_over_the_ground_or_else_the_heading", "a_north_east_course_in_a_crosswind_holds_across_moves"]
+test_selectors = ["control::fixed_wing::tests::targets_tests::height_modes_take_heading_then_bank_then_wings_level", "control::fixed_wing::tests::targets_tests::velocity_command_is_course_airspeed_and_climb", "control::fixed_wing::tests::targets_tests::commanded_airspeed_replaces_ground_speed_and_cruise_airspeed", "control::fixed_wing::tests::targets_tests::course_is_the_track_over_the_ground_or_else_the_heading", "a_north_east_course_in_a_crosswind_holds_across_moves"]
 owner = "aviate-core@aviate"
 description = """
 `aviate-core/src/control/fixed_wing/tests/targets_tests.rs` resolves
-height-mode, velocity and course commands into targets, including the
-commanded airspeed. `track_across_rebases.rs` flies a north-east course in
-a 10 m/s crosswind and holds the course over the ground. Witnesses
-LLR-CTL-209.
+height-mode, velocity, and course commands into targets.
+The unit tests also check that `Setpoint::airspeed` replaces the cruise
+airspeed and the ground speed in flight modes and automatic fallback.
+`track_across_rebases.rs` flies a north-east course in a 10 m/s crosswind
+and holds the course over the ground.
+These tests verify LLR-CTL-209.
 """
 traces_to = ["df4574a8-fdd6-43d7-95cb-c1aaf01eec0e"]
 

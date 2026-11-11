@@ -123,13 +123,115 @@ fn close(a: Scalar, b: Scalar, tolerance: Scalar) -> bool {
 
 #[test]
 fn the_rotation_quaternion_is_the_rotation() {
-    let shift = shift();
-    let matrix = shift.rotation_quaternion().to_rotation_matrix();
-    for (row, expected) in shift.rotation.iter().enumerate() {
-        for (column, value) in expected.iter().enumerate() {
-            assert!((f64::from(matrix.get(row, column)) - value).abs() < 1e-6);
+    let base = shift();
+    let check_rotation = |frame_shift: FrameShift| {
+        let matrix = frame_shift.rotation_quaternion().to_rotation_matrix();
+        for (row, expected) in frame_shift.rotation.iter().enumerate() {
+            for (column, value) in expected.iter().enumerate() {
+                assert!((f64::from(matrix.get(row, column)) - value).abs() < 1e-6);
+            }
         }
+    };
+    check_rotation(base);
+
+    // Half-turns (trace = -1 <= 0) across every diagonal-dominance arm of Shepperd's method.
+    for axis in [[1.0_f64, 0.0, 0.0], [0.0, 1.0, 0.0], [0.6, 0.0, 0.8]] {
+        let mut rotation = [[0.0; 3]; 3];
+        for r in 0..3 {
+            for c in 0..3 {
+                let diag = if r == c { 1.0 } else { 0.0 };
+                rotation[r][c] = 2.0 * axis[r] * axis[c] - diag;
+            }
+        }
+        check_rotation(FrameShift {
+            rotation,
+            offset_m: [0.0; 3],
+            origin: base.origin,
+        });
     }
+
+    let quarter_turn = FrameShift {
+        rotation: [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+        offset_m: [0.0; 3],
+        origin: base.origin,
+    };
+    assert!((quarter_turn.heading_change() + core::f64::consts::FRAC_PI_2).abs() < 1e-12);
+}
+
+#[test]
+fn rebase_without_air_aiding_seed_uncertainty_and_kernel_wrapper_preserve_invariants() {
+    use crate::control::multirotor::MultirotorController;
+    use crate::ekf::seed::SeedUncertainty;
+    use crate::ekf::{Ekf, IDX_VEL};
+    use crate::kernel::builder::AviateKernelBuilder;
+    use crate::mixer::{QuadXMixer, Sanitizer};
+    use crate::time::{TimeSource, Timestamp};
+
+    let mut plain = EkfState::new();
+    let uncertainty_ground = SeedUncertainty {
+        horizontal_position: 25.0,
+        velocity: 4.0,
+        tilt: 0.01,
+        heading: 0.25,
+        wind: None,
+    };
+    plain.init_uncertain(
+        Vector3::new(Meters(10.0), Meters(20.0), Meters(-50.0)),
+        Vector3::new(
+            MetersPerSecond(12.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
+        Quaternion::IDENTITY,
+        &uncertainty_ground,
+    );
+    assert!(!plain.air.active);
+    assert_eq!(plain.p_cov.get(IDX_VEL, IDX_VEL), 4.0);
+    plain.rebase(&shift());
+    assert!(!plain.air.active);
+    assert_eq!(plain.frame.rebases, 1);
+
+    let mut air_seeded = EkfState::new();
+    let uncertainty_air = SeedUncertainty {
+        wind: Some(36.0),
+        ..uncertainty_ground
+    };
+    air_seeded.init_uncertain(
+        Vector3::new(Meters(0.0), Meters(0.0), Meters(-100.0)),
+        Vector3::new(
+            MetersPerSecond(50.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ),
+        Quaternion::IDENTITY,
+        &uncertainty_air,
+    );
+    assert!(air_seeded.air.active);
+    assert_eq!(air_seeded.p_cov.get(IDX_VEL, IDX_VEL), 40.0);
+    assert_eq!(air_seeded.air.p_xw[IDX_VEL], [36.0, 0.0]);
+
+    let ts = || Timestamp {
+        ticks: 0,
+        source: TimeSource::Internal,
+    };
+    assert_eq!(ts().ticks, 0);
+    let mut kernel = AviateKernelBuilder::new()
+        .estimator(Ekf::default())
+        .controller(MultirotorController::default())
+        .mixer(QuadXMixer {
+            timestamp_source: ts,
+        })
+        .sanitizer(Sanitizer)
+        .build()
+        .expect("default kernel");
+    kernel.state.estimator = state();
+    let frame_shift = shift();
+    kernel.rebase_navigation_frame(&frame_shift);
+    assert_eq!(kernel.state.estimator.frame.rebases, 1);
+    assert_eq!(
+        kernel.state.estimator.frame.origin,
+        Some(frame_shift.origin)
+    );
 }
 
 #[test]

@@ -90,7 +90,12 @@
 # velocity loop mapped the NED acceleration command straight to
 # roll/pitch without rotating into the heading frame — correct only
 # at yaw 0, anti-corrective past 90° (#110). Never reuse the v1 ID.
-"controller.fixed_wing.v3"  = 0x4354_4C46_5747_5633  # FixedWingController
+"controller.fixed_wing.v4"  = 0x4354_4C46_5747_5634  # FixedWingController
+# Retired: "controller.fixed_wing.v3" = 0x4354_4C46_5747_5633. In
+# AltitudeHold, PositionHold, and automatic Attitude fallback, v3 let
+# the ground speed from Setpoint::velocity overwrite Setpoint::airspeed.
+# v4 uses Setpoint::airspeed before Setpoint::velocity in every mode and
+# in automatic fallback. Never reuse the v3 ID.
 # Retired: "controller.fixed_wing.v2" = 0x4354_4C46_5747_5632. v2 flew
 # its attitude fallback on the cruise throttle, left a steady course
 # error in straight flight, took a turn to the envelope roll limit, and

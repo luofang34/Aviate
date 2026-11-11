@@ -141,6 +141,22 @@ fn built_kernel_binding_cannot_be_separated_afterwards() {
         *kernel.pipeline().controller.velocity_gains(),
         kernel.cfg().cascade_gains
     );
+    assert_eq!(
+        *kernel.pipeline().controller.rate_gains(),
+        kernel.cfg().cascade_gains
+    );
+    assert!(kernel
+        .pipeline()
+        .controller
+        .accepts_external_mode(aviate_core::control::ControlMode::PositionHold));
+    assert!(!kernel
+        .pipeline()
+        .controller
+        .accepts_external_mode(aviate_core::control::ControlMode::DeviationTracking));
+    assert!(!kernel
+        .pipeline()
+        .controller
+        .accepts_external_mode(aviate_core::control::ControlMode::AltitudeHold));
 }
 
 #[test]
