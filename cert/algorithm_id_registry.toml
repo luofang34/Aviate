@@ -24,7 +24,15 @@
 ## change shipped — review carefully.
 
 [estimator]
-"ekf.basic-15state.v7" = 0x4554_494D_454B_4638  # Ekf
+"ekf.basic-15state.v8" = 0x4554_494D_454B_4639  # Ekf
+# Retired: "ekf.basic-15state.v7" = 0x4554_494D_454B_4638. v7 fused the
+# magnetometer heading into the heading state alone, so a gyro bias
+# drove roll and pitch off in each turn without GNSS; it had no air-data
+# block, no HEIGHT or AIRSPEED validity, a loose tilt seed, it stopped
+# GNSS fusion for an override block without a GNSS override, and its
+# navigation frame never moved. v8 changes all of these while the
+# 15-state core keeps its shape, so a v7 image must not match a v8 one
+# at the lockstep gate.
 # Retired: "ekf.basic-15state.v6" = 0x4554_494D_454B_4637. v6 still
 # fused GNSS, baro and magnetometer on a cycle whose IMU sample or dt was
 # non-finite, moving the state LLR-EST-204 freezes for that cycle. v7

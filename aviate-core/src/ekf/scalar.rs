@@ -187,11 +187,12 @@ impl super::Estimator for Ekf {
     type RuntimeState = EkfState;
 
     // Registered in cert/algorithm_id_registry.toml as
-    // "ekf.basic-15state.v7" — a cycle with a non-finite IMU sample or
-    // dt fuses no aiding (LLR-EST-204). Same 15-state shape as v6, so
-    // the identity is what keeps a v6 image from matching a v7 one at
-    // the lockstep gate.
-    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4638; // "ETIMEKF8"
+    // "ekf.basic-15state.v8": the magnetometer heading is fused with its
+    // tilt Jacobian, an air-data block is present when the configuration
+    // declares it, and the navigation frame moves by a rigid rebase. The
+    // 15-state core keeps its shape, so the identity is what keeps a v7
+    // image from matching a v8 one at the lockstep gate.
+    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4639; // "ETIMEKF9"
 
     fn observe(
         &self,

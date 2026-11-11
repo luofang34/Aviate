@@ -74,7 +74,7 @@ PROD_SECTIONS='estimator controller mixer sanitizer'
 # block declares the compiled `ALGORITHM_ID` constant.
 # Fields: section|registry-key|rust-type|const-file
 IMPL_MAP=(
-    'estimator|ekf.basic-15state.v7|Ekf|aviate-core/src/ekf/scalar.rs'
+    'estimator|ekf.basic-15state.v8|Ekf|aviate-core/src/ekf/scalar.rs'
     'controller|controller.multirotor.v4|MultirotorController|aviate-core/src/control/multirotor.rs'
     'controller|controller.fixed_wing.v2|FixedWingController|aviate-core/src/control/fixed_wing.rs'
     'controller|controller.vtol.v1|VtolController|aviate-core/src/control/vtol.rs'
@@ -98,8 +98,8 @@ IMPL_MAP=(
 # generic mixer-tree churn.
 # Fields: pattern|comma-separated owners (section/key)
 OWNERSHIP=(
-    'aviate-core/src/ekf.rs|estimator/ekf.basic-15state.v7'
-    'aviate-core/src/ekf/|estimator/ekf.basic-15state.v7'
+    'aviate-core/src/ekf.rs|estimator/ekf.basic-15state.v8'
+    'aviate-core/src/ekf/|estimator/ekf.basic-15state.v8'
     'aviate-core/src/control/multirotor.rs|controller/controller.multirotor.v4'
     'aviate-core/src/control/multirotor/|controller/controller.multirotor.v4'
     'aviate-core/src/control/observation.rs|controller/controller.multirotor.v4'
@@ -128,10 +128,10 @@ OWNERSHIP=(
 # drift apart without both pins moving in the same commit.
 # Fold order matches KernelPipeline::algorithm_identity_hash:
 # estimator, controller, mixer, sanitizer.
-GENERIC_QUAD_BUNDLE='ekf.basic-15state.v7 controller.multirotor.v4 mixer.quad_x.v2 sanitizer.group_aware.v1'
-GENERIC_QUAD_AGGREGATE='368cf1e12e89dc02'
-X500_BUNDLE='ekf.basic-15state.v7 controller.multirotor.v4 mixer.quad_x_x500.v2 sanitizer.group_aware.v1'
-X500_AGGREGATE='816eeba94d64ae7f'
+GENERIC_QUAD_BUNDLE='ekf.basic-15state.v8 controller.multirotor.v4 mixer.quad_x.v2 sanitizer.group_aware.v1'
+GENERIC_QUAD_AGGREGATE='7ef1a40bd8e2892f'
+X500_BUNDLE='ekf.basic-15state.v8 controller.multirotor.v4 mixer.quad_x_x500.v2 sanitizer.group_aware.v1'
+X500_AGGREGATE='1bc22c5bdf4ac682'
 
 # ---------------------------------------------------------------- utils
 
@@ -806,7 +806,7 @@ self_test() {
     # The fold must reproduce the Rust-side TST-PIPE-104 pin before
     # anything else is trusted.
     local folded
-    folded="$(fnv_fold 4554494d454b4638 43544c4d55525634 4d49585155414432 53414e4752505631)"
+    folded="$(fnv_fold 4554494d454b4639 43544c4d55525634 4d49585155414432 53414e4752505631)"
     if [[ "$folded" != "$GENERIC_QUAD_AGGREGATE" ]]; then
         echo "SELF-TEST FAIL: bash FNV fold ($folded) disagrees with the TST-PIPE-104 pin ($GENERIC_QUAD_AGGREGATE)" >&2
         return 1
@@ -988,7 +988,7 @@ self_test() {
 //! Experimental estimator variant.
 
 impl super::Estimator for Ekf2 {
-    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4638; // aliases Ekf
+    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4639; // aliases Ekf
 }
 RS
     fixture_commit 'new estimator impl without an IMPL_MAP row'

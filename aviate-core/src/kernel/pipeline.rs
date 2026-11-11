@@ -202,16 +202,17 @@ mod tests {
         // exactly what spec §16 cross-channel firmware verification
         // exists to catch.
         //
-        // This value reflects the Ekf identity `ETIMEKF8`
-        // ("ekf.basic-15state.v7", no aiding fused on a cycle with a
-        // non-finite IMU sample or dt), the
+        // This value reflects the Ekf identity `ETIMEKF9`
+        // ("ekf.basic-15state.v8", the magnetometer heading with its
+        // tilt Jacobian, the optional air-data block and the frame
+        // rebase), the
         // controller identity `CTLMURV4` ("controller.multirotor.v4",
         // kernel-owned cycle interval and explicit transfer guardrails),
         // and the mixer identity
         // `MIXQUAD2` ("mixer.quad_x.v2", priority desaturation): each
         // moved deliberately off its retired predecessor because its
         // observable behavior changed while its state shape did not.
-        const EXPECTED: u64 = 0x368c_f1e1_2e89_dc02;
+        const EXPECTED: u64 = 0x7ef1_a40b_d8e2_892f;
         let actual = make_pipeline().algorithm_identity_hash();
         assert_eq!(
             actual, EXPECTED,
@@ -232,7 +233,7 @@ mod tests {
         // cert/algorithm_id_registry.toml — rotate a bundle member
         // and both pins must move in the same commit.
         use crate::mixer::QuadXMixerX500;
-        const EXPECTED: u64 = 0x816e_eba9_4d64_ae7f;
+        const EXPECTED: u64 = 0x1bc2_2c5b_df4a_c682;
         let actual = KernelPipeline::new(
             Ekf::default(),
             MultirotorController::default(),
