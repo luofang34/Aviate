@@ -29,6 +29,7 @@
 mod estimator_status;
 mod geodetic;
 mod geomagnetic;
+mod vfr_hud;
 
 pub use estimator_status::{
     aviate_estimate_quality, aviate_state_valid_flags, estimator_status_flags,
@@ -38,6 +39,7 @@ pub use geodetic::{
     gps_fix_type, GlobalPositionInt, GpsGlobalOrigin, GpsRawInt, SetPositionTargetGlobalInt,
 };
 pub use geomagnetic::{aviate_geomagnetic_source, AviateGeomagneticReference};
+pub use vfr_hud::VfrHud;
 
 // ============================================================================
 // CONSTANTS
@@ -538,6 +540,7 @@ pub enum MavMessage {
     ManualControl(ManualControl),
     SysStatus(SysStatus),
     Statustext(Statustext),
+    VfrHud(VfrHud),
 
     Unknown { msg_id: u32 },
 }
@@ -558,6 +561,7 @@ impl MavMessage {
             MavMessage::AviateEstimatorStatus(_) => AviateEstimatorStatus::MSG_ID,
             MavMessage::AviateGeomagneticReference(_) => AviateGeomagneticReference::MSG_ID,
             MavMessage::SetAttitudeTarget(_) => SetAttitudeTarget::MSG_ID,
+            MavMessage::VfrHud(_) => VfrHud::MSG_ID,
             MavMessage::SetPositionTargetLocalNed(_) => SetPositionTargetLocalNed::MSG_ID,
             MavMessage::SetPositionTargetGlobalInt(_) => SetPositionTargetGlobalInt::MSG_ID,
             MavMessage::CommandLong(_) => CommandLong::MSG_ID,
@@ -806,6 +810,7 @@ fn parse_message_payload(msg_id: u32, payload: &[u8]) -> Result<MavMessage, Pars
         SetPositionTargetGlobalInt::MSG_ID => {
             geodetic::parse_set_position_target_global_int(payload)
         }
+        VfrHud::MSG_ID => vfr_hud::parse_vfr_hud(payload),
         CommandLong::MSG_ID => parse_command_long(payload),
         CommandAck::MSG_ID => parse_command_ack(payload),
         RcChannelsOverride::MSG_ID => parse_rc_channels_override(payload),
@@ -1217,6 +1222,7 @@ fn get_crc_extra(msg_id: u32) -> u8 {
         49 => GpsGlobalOrigin::CRC_EXTRA,                // GPS_GLOBAL_ORIGIN
         69 => 243,                                       // MANUAL_CONTROL
         70 => 124,                                       // RC_CHANNELS_OVERRIDE
+        74 => VfrHud::CRC_EXTRA,                         // VFR_HUD
         76 => 152,                                       // COMMAND_LONG
         77 => 143,                                       // COMMAND_ACK
         82 => 49,                                        // SET_ATTITUDE_TARGET
@@ -1255,6 +1261,7 @@ fn declared_payload_len(msg_id: u32) -> Option<usize> {
         SetAttitudeTarget::MSG_ID => Some(SetAttitudeTarget::PAYLOAD_LEN),
         SetPositionTargetLocalNed::MSG_ID => Some(SetPositionTargetLocalNed::PAYLOAD_LEN),
         SetPositionTargetGlobalInt::MSG_ID => Some(SetPositionTargetGlobalInt::PAYLOAD_LEN),
+        VfrHud::MSG_ID => Some(VfrHud::PAYLOAD_LEN),
         Statustext::MSG_ID => Some(Statustext::PAYLOAD_LEN),
         _ => None,
     }
@@ -1316,6 +1323,7 @@ pub fn serialize_mavlink(
         MavMessage::SetPositionTargetGlobalInt(m) => {
             geodetic::serialize_set_position_target_global_int(m, seq, sys_id, comp_id, buf)
         }
+        MavMessage::VfrHud(m) => vfr_hud::serialize_vfr_hud(m, seq, sys_id, comp_id, buf),
         MavMessage::CommandLong(m) => serialize_command_long(m, seq, sys_id, comp_id, buf),
         MavMessage::CommandAck(m) => serialize_command_ack(m, seq, sys_id, comp_id, buf),
         MavMessage::RcChannelsOverride(m) => {

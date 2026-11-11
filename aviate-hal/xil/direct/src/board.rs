@@ -5,6 +5,7 @@ mod frame;
 mod host;
 mod ingress;
 mod step;
+mod telemetry;
 mod triad;
 
 use aviate_core::control::Command;

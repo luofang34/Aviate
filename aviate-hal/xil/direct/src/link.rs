@@ -63,6 +63,8 @@ pub struct DirectTelemetryRates {
     pub position_hz: u8,
     /// Standalone `ESTIMATOR_STATUS` and `AVIATE_ESTIMATOR_STATUS` rate in Hertz (default `10`).
     pub estimator_status_hz: u8,
+    /// `VFR_HUD` rate in Hertz (default `4`).
+    pub vfr_hud_hz: u8,
 }
 
 impl Default for DirectTelemetryRates {
@@ -73,6 +75,7 @@ impl Default for DirectTelemetryRates {
             attitude_hz: 20,
             position_hz: 10,
             estimator_status_hz: 10,
+            vfr_hud_hz: 4,
         }
     }
 }
@@ -109,6 +112,7 @@ pub struct DirectMavlinkEndpoint<
     last_attitude_us: Option<u64>,
     last_position_us: Option<u64>,
     last_estimator_status_us: Option<u64>,
+    last_vfr_hud_us: Option<u64>,
 }
 
 impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_CAP> {
@@ -137,12 +141,14 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
                 attitude_hz: 20,
                 position_hz: 10,
                 estimator_status_hz: 10,
+                vfr_hud_hz: 4,
             },
             last_heartbeat_us: None,
             last_sys_status_us: None,
             last_attitude_us: None,
             last_position_us: None,
             last_estimator_status_us: None,
+            last_vfr_hud_us: None,
         }
     }
 
@@ -291,6 +297,7 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
         self.last_attitude_us = None;
         self.last_position_us = None;
         self.last_estimator_status_us = None;
+        self.last_vfr_hud_us = None;
     }
 
     /// Encode a `COMMAND_ACK` for `command` and `outcome` into the TX ring.
