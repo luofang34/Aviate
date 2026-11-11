@@ -76,7 +76,7 @@ PROD_SECTIONS='estimator controller mixer sanitizer'
 IMPL_MAP=(
     'estimator|ekf.basic-15state.v8|Ekf|aviate-core/src/ekf/scalar.rs'
     'controller|controller.multirotor.v4|MultirotorController|aviate-core/src/control/multirotor.rs'
-    'controller|controller.fixed_wing.v2|FixedWingController|aviate-core/src/control/fixed_wing.rs'
+    'controller|controller.fixed_wing.v3|FixedWingController|aviate-core/src/control/fixed_wing.rs'
     'controller|controller.vtol.v1|VtolController|aviate-core/src/control/vtol.rs'
     'controller|controller.spacecraft.v1|SpacecraftController|aviate-core/src/control/spacecraft.rs'
     'mixer|mixer.quad_x.v2|QuadXMixer|aviate-core/src/mixer.rs'
@@ -107,12 +107,12 @@ OWNERSHIP=(
     'aviate-core/src/control/vehicle_control_mode.rs|controller/controller.multirotor.v4'
     'aviate-core/src/control/rate.rs|controller/controller.multirotor.v4'
     'aviate-core/src/control/velocity.rs|controller/controller.multirotor.v4'
-    'aviate-core/src/control/fixed_wing.rs|controller/controller.fixed_wing.v2'
-    'aviate-core/src/control/fixed_wing/|controller/controller.fixed_wing.v2'
+    'aviate-core/src/control/fixed_wing.rs|controller/controller.fixed_wing.v3'
+    'aviate-core/src/control/fixed_wing/|controller/controller.fixed_wing.v3'
     'aviate-core/src/control/vtol.rs|controller/controller.vtol.v1'
     'aviate-core/src/control/spacecraft.rs|controller/controller.spacecraft.v1'
-    'aviate-core/src/control.rs|controller/controller.multirotor.v4,controller/controller.fixed_wing.v2,controller/controller.vtol.v1,controller/controller.spacecraft.v1'
-    'aviate-core/src/control/|controller/controller.multirotor.v4,controller/controller.fixed_wing.v2,controller/controller.vtol.v1,controller/controller.spacecraft.v1'
+    'aviate-core/src/control.rs|controller/controller.multirotor.v4,controller/controller.fixed_wing.v3,controller/controller.vtol.v1,controller/controller.spacecraft.v1'
+    'aviate-core/src/control/|controller/controller.multirotor.v4,controller/controller.fixed_wing.v3,controller/controller.vtol.v1,controller/controller.spacecraft.v1'
     'aviate-core/src/mixer/sanitizer_impl.rs|sanitizer/sanitizer.group_aware.v1'
     'aviate-core/src/mixer/spacecraft.rs|mixer/mixer.spacecraft.v1'
     'aviate-core/src/mixer/fixed_wing.rs|mixer/mixer.fixed_wing.v1'
@@ -867,7 +867,7 @@ self_test() {
     expect fail 'duplicate active IDs are rejected (testing vs production)'
 
     fixture_branch s-mismatch
-    replace_in aviate-core/src/ekf/scalar.rs '454B_4638' '454B_4639'
+    replace_in aviate-core/src/ekf/scalar.rs '454B_4639' '454B_4641'
     fixture_commit 'EKF constant changed without registry'
     expect fail 'source/registry parity mismatch is rejected'
 
@@ -961,10 +961,10 @@ self_test() {
     # can catch it.
     fixture_branch s-id-swap
     replace_in "$REGISTRY" '4354_4C56_544F_4C31' 'SWAP_PLACEHOLDER'
-    replace_in "$REGISTRY" '4354_4C46_5747_5632' '4354_4C56_544F_4C31'
-    replace_in "$REGISTRY" 'SWAP_PLACEHOLDER' '4354_4C46_5747_5632'
-    replace_in aviate-core/src/control/vtol.rs '4354_4C56_544F_4C31' '4354_4C46_5747_5632'
-    replace_in aviate-core/src/control/fixed_wing.rs '4354_4C46_5747_5632' '4354_4C56_544F_4C31'
+    replace_in "$REGISTRY" '4354_4C46_5747_5633' '4354_4C56_544F_4C31'
+    replace_in "$REGISTRY" 'SWAP_PLACEHOLDER' '4354_4C46_5747_5633'
+    replace_in aviate-core/src/control/vtol.rs '4354_4C56_544F_4C31' '4354_4C46_5747_5633'
+    replace_in aviate-core/src/control/fixed_wing.rs '4354_4C46_5747_5633' '4354_4C56_544F_4C31'
     fixture_commit 'vtol and fixed_wing swap numeric IDs'
     expect_msg fail 'unrotated: controller/controller.vtol.v1' \
         'two entries swapping numeric IDs is not a rotation'

@@ -1857,3 +1857,96 @@ filter, so the gate, not the innovation gate, is what holds it.
 Witnesses LLR-EST-204.
 """
 traces_to = ["a8a37317-dd7c-4218-b891-58066c2affb5"]
+
+[[tests]]
+uid = "82309492-7db6-47eb-af9e-b78472e704de"
+id = "TST-EST-221"
+title = "rebase: same innovations and the inverse shift"
+test_selectors = ["ekf::rebase::tests::the_rotation_quaternion_is_the_rotation", "ekf::rebase::tests::air_measurements_see_the_same_innovation_and_variance", "ekf::rebase::tests::a_gnss_fix_sees_the_same_innovation_and_the_barometer_datum_stays", "ekf::rebase::tests::the_inverse_shift_returns_the_original_state"]
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/src/ekf/rebase/tests.rs` checks that the attitude turn is
+the frame rotation, that a GNSS fix and the air-data measurements see the
+same innovation and variance before and after a rebase, that the
+barometer datum stays, and that the inverse shift returns the original
+state. Witnesses LLR-EST-213.
+"""
+traces_to = ["336ed2e9-9a4b-4a24-8940-1e05443dc2a7"]
+
+[[tests]]
+uid = "1535ff17-7adb-4ed5-9a2c-01f0c3bba1d4"
+id = "TST-EST-222"
+title = "long flights across moves of the origin"
+test_selectors = ["a_50_km_flight_keeps_attitude_and_height_against_the_local_level", "outputs_do_not_step_when_the_origin_moves", "an_east_course_holds_across_moves_of_the_origin", "an_east_heading_holds_across_moves_of_the_origin"]
+owner = "aviate-core@aviate"
+description = """
+`aviate-hal/xil/direct/tests/frame_rebase.rs` and
+`track_across_rebases.rs` fly the C172 point-mass plant over a curved
+Earth: 50 km north keeps attitude and height against the local level
+across more than 45 moves, the outputs do not step at a move, and east
+legs on a course and on a heading hold their track across 26 moves as
+they do in a frame that never moves. Witnesses LLR-EST-213.
+"""
+traces_to = ["336ed2e9-9a4b-4a24-8940-1e05443dc2a7"]
+
+[[tests]]
+uid = "41181f22-100a-40aa-ae43-838c1eb41c8e"
+id = "TST-EST-223"
+title = "the heading Jacobian sees tilt; a withheld declination turns the leg"
+test_selectors = ["ekf::joint::tests::heading_jacobian_sees_tilt_through_the_levelled_field", "a_heading_flown_without_the_declination_is_turned_toward_magnetic_north"]
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/src/ekf/joint/tests.rs` checks the heading Jacobian against
+a finite difference of the heading of the levelled field over heading and
+tilt. `track_across_rebases.rs` flies a heading leg with a supplied zero
+declination and sees the leg turned toward magnetic north. Witnesses
+LLR-EST-214.
+"""
+traces_to = ["eaa72043-0393-4d0c-b54b-8794301969f5"]
+
+[[tests]]
+uid = "cd2002c9-80b0-4254-ad2f-957c04c95322"
+id = "TST-EST-224"
+title = "air-data aiding without GNSS and through an outage"
+test_selectors = ["ekf::joint::tests::airspeed_jacobian_matches_the_predicted_airspeed", "ekf::joint::tests::sideslip_jacobian_matches_the_predicted_lateral_air_velocity", "no_gnss_ever_from_an_in_air_start_through_two_turns", "gnss_outage_with_turns_and_a_wind_shift_then_recovery"]
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/src/ekf/joint/tests.rs` checks the airspeed and sideslip
+Jacobians against finite differences of the predicted air velocity.
+`aviate-hal/xil/direct/tests/fixed_wing_estimation.rs` flies the C172
+plant with no GNSS from an in-air start through two turns, and through a
+GNSS outage with turns and a wind shift, and bounds the tilt error to 2°
+and the heading error to 5° with the height held. Witnesses LLR-EST-215.
+"""
+traces_to = ["3def065b-779e-4bb8-b30d-5a1d008c7141"]
+
+[[tests]]
+uid = "56892ad7-cfae-40fe-b7fc-2864d12ded84"
+id = "TST-CTL-209"
+title = "fixed-wing lateral and airspeed targets"
+test_selectors = ["control::fixed_wing::tests::targets_tests::height_modes_take_heading_then_bank_then_wings_level", "control::fixed_wing::tests::targets_tests::velocity_command_is_course_airspeed_and_climb", "control::fixed_wing::tests::targets_tests::course_is_the_track_over_the_ground_or_else_the_heading", "a_north_east_course_in_a_crosswind_holds_across_moves"]
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/src/control/fixed_wing/tests/targets_tests.rs` resolves
+height-mode, velocity and course commands into targets, including the
+commanded airspeed. `track_across_rebases.rs` flies a north-east course in
+a 10 m/s crosswind and holds the course over the ground. Witnesses
+LLR-CTL-209.
+"""
+traces_to = ["df4574a8-fdd6-43d7-95cb-c1aaf01eec0e"]
+
+[[tests]]
+uid = "9b23338e-cc2b-4cec-9706-47a48e9feb45"
+id = "TST-CTL-210"
+title = "fixed-wing validity fallback keeps the intent"
+test_selectors = ["control::fixed_wing::tests::targets_tests::vertical_target_falls_back_with_the_validity_of_the_estimate", "control::fixed_wing::tests::targets_tests::attitude_after_an_automatic_fallback_keeps_course_and_airspeed_as_intent", "control::fixed_wing::tests::fallback_tests::fallback_holds_the_pressure_level_of_the_probe_with_the_throttle", "control::fixed_wing::tests::fallback_tests::fallback_without_a_static_port_uses_the_cruise_throttle", "control::fixed_wing::tests::fallback_tests::gnss_loss_falls_back_to_a_heading_and_a_height_on_the_barometer"]
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/src/control/fixed_wing/tests/targets_tests.rs` and
+`fallback_tests.rs` check that a height target falls back with the
+validity of the estimate, that the automatic fallback keeps course and
+airspeed as intent, that the throttle holds the probe's pressure level or
+the cruise throttle without a static port, and that a GNSS loss falls
+back to a heading and a height on the barometer. Witnesses LLR-CTL-210.
+"""
+traces_to = ["08a5c434-1340-4fd3-a44d-cc5081a5cfbe"]

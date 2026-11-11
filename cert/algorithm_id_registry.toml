@@ -90,7 +90,18 @@
 # velocity loop mapped the NED acceleration command straight to
 # roll/pitch without rotating into the heading frame — correct only
 # at yaw 0, anti-corrective past 90° (#110). Never reuse the v1 ID.
-"controller.fixed_wing.v2"  = 0x4354_4C46_5747_5632  # FixedWingController
+"controller.fixed_wing.v3"  = 0x4354_4C46_5747_5633  # FixedWingController
+# Retired: "controller.fixed_wing.v2" = 0x4354_4C46_5747_5632. v2 flew
+# its attitude fallback on the cruise throttle, left a steady course
+# error in straight flight, took a turn to the envelope roll limit, and
+# needed a valid position for a height and a valid velocity for a climb
+# rate. v3 keeps the intent of the command in the fallback (course as a
+# heading, airspeed on pitch, the static-port pressure level on the
+# throttle), trims straight flight with a course integrator, limits a
+# guided turn to the route bank, flies a commanded airspeed
+# (Setpoint::airspeed), flies a velocity's course as a heading in the
+# height modes, and holds a height and a climb rate on the HEIGHT
+# validity alone. Never reuse the v2 ID.
 # Retired: "controller.fixed_wing.v1" = 0x4354_4C46_5747_5631. v1 was a
 # placeholder: it commanded zero roll, pitch and yaw and passed the
 # collective through. v2 is a control law with persistent state:
