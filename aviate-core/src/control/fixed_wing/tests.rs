@@ -89,7 +89,7 @@ fn command(mode: ControlMode, setpoint: Setpoint) -> Command {
 fn pitot(indicated: Scalar) -> AirData {
     AirData {
         dynamic_pressure: Some(Pascals(
-            0.5 * super::air_data::SEA_LEVEL_AIR_DENSITY_KGPM3 * indicated * indicated,
+            0.5 * crate::sensor::SEA_LEVEL_AIR_DENSITY_KGPM3 * indicated * indicated,
         )),
         ..AirData::default()
     }

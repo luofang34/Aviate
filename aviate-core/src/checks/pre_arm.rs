@@ -52,6 +52,11 @@ bitflags::bitflags! {
         const GYRO_CALIBRATED   = 1 << 12;
         /// Accelerometer calibration valid
         const ACCEL_CALIBRATED  = 1 << 13;
+        /// No fault that forces the safe state (`CRITICAL_FAULTS`). A
+        /// vehicle that may start without a position fix requires this
+        /// in place of `NO_FAULTS`: a lost GNSS is a fault, but not one
+        /// that it cannot fly with.
+        const NO_CRITICAL_FAULTS = 1 << 14;
 
         // === Composite Requirements ===
 
@@ -64,6 +69,19 @@ bitflags::bitflags! {
                            | Self::THROTTLE_LOW.bits()
                            | Self::CONFIG_VALID.bits()
                            | Self::NO_FAULTS.bits();
+
+        /// Checks for a fixed wing: attitude, heading, height and no
+        /// critical fault. A position fix is not required.
+        const FIXED_WING_MINIMUM = Self::IMU_HEALTHY.bits()
+                                 | Self::BARO_HEALTHY.bits()
+                                 | Self::MAG_HEALTHY.bits()
+                                 | Self::IMU_CONVERGED.bits()
+                                 | Self::BARO_CONVERGED.bits()
+                                 | Self::MAG_CONVERGED.bits()
+                                 | Self::EKF_CONVERGED.bits()
+                                 | Self::THROTTLE_LOW.bits()
+                                 | Self::CONFIG_VALID.bits()
+                                 | Self::NO_CRITICAL_FAULTS.bits();
 
         /// Full checks for GPS-enabled vehicle
         const QUAD_WITH_GPS = Self::QUAD_MINIMUM.bits()
@@ -252,6 +270,10 @@ impl PreArmStatus {
     /// Update from fault flags
     pub fn update_from_faults(&mut self, faults: FaultFlags) {
         self.current.set(PreArmFlags::NO_FAULTS, faults.is_empty());
+        self.current.set(
+            PreArmFlags::NO_CRITICAL_FAULTS,
+            !faults.intersects(crate::kernel_types::CRITICAL_FAULTS),
+        );
         self.current.set(
             PreArmFlags::CONFIG_VALID,
             !faults.contains(FaultFlags::CONFIG_INVALID),

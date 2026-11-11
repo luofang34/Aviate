@@ -1,0 +1,87 @@
+//! Covariance of a freshly seeded filter.
+
+use super::air_aiding::AirAidingState;
+use super::{EkfState, IDX_AB, IDX_ATT, IDX_GB, IDX_POS, IDX_VEL, STATE_DIM};
+use crate::math::{Matrix, Quaternion, Vector3};
+use crate::types::{Meters, MetersPerSecond, Scalar};
+
+/// Initial covariance: position/velocity/attitude blocks start loose
+/// (0.1), bias blocks start at realistic MEMS scales — gyro
+/// (0.02 rad/s)², accel (0.2 m/s²)². Seeding the gyro-bias variance
+/// at 0.1 (σ ≈ 0.32 rad/s, ~30× a real bias) invites the filter to
+/// explain early attitude motion as bias: with oscillating flight
+/// the GNSS cross-terms walk the bias state to whole rad/s and
+/// predict integrates the phantom rate (the #123 pump).
+pub(super) fn initial_covariance() -> Matrix<STATE_DIM, STATE_DIM> {
+    let mut p = Matrix::identity().mul_scalar(0.1);
+    for i in 0..3 {
+        p.set(IDX_GB + i, IDX_GB + i, 4e-4);
+        p.set(IDX_AB + i, IDX_AB + i, 0.04);
+    }
+    p
+}
+
+/// Variances of a seed that no position fix backs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SeedUncertainty {
+    /// Variance of each horizontal position component \[m²\].
+    pub horizontal_position: Scalar,
+    /// Variance of each velocity component about the seed \[(m/s)²\],
+    /// without the wind.
+    pub velocity: Scalar,
+    /// Variance of roll and pitch \[rad²\].
+    pub tilt: Scalar,
+    /// Variance of the heading \[rad²\].
+    pub heading: Scalar,
+    /// Variance of each wind component \[(m/s)²\] when the velocity seed
+    /// is an air velocity, `None` when it is a velocity over the ground.
+    pub wind: Option<Scalar>,
+}
+
+impl EkfState {
+    /// Seed the filter from a state that no position fix backs.
+    ///
+    /// The variances state how far the seed can be from the truth. A
+    /// seed with an honest variance lets the first fix through the
+    /// innovation gate; a seed that claims the default variance would
+    /// have it rejected.
+    ///
+    /// A velocity seed that is an air velocity misses the wind. The
+    /// velocity over the ground is then uncertain by the wind, and the
+    /// error of the two is the same error: the seed states that with the
+    /// covariance of velocity and wind, so that the airspeed still
+    /// agrees with the seed however large the wind variance is.
+    pub fn init_uncertain(
+        &mut self,
+        pos: Vector3<Meters>,
+        vel: Vector3<MetersPerSecond>,
+        quat: Quaternion,
+        uncertainty: &SeedUncertainty,
+    ) {
+        self.init(pos, vel, quat);
+        let wind = uncertainty.wind.unwrap_or(0.0);
+        for axis in 0..2 {
+            self.p_cov.set(
+                IDX_POS + axis,
+                IDX_POS + axis,
+                uncertainty.horizontal_position,
+            );
+            self.p_cov
+                .set(IDX_VEL + axis, IDX_VEL + axis, uncertainty.velocity + wind);
+            self.p_cov
+                .set(IDX_ATT + axis, IDX_ATT + axis, uncertainty.tilt);
+        }
+        self.p_cov
+            .set(IDX_VEL + 2, IDX_VEL + 2, uncertainty.velocity);
+        self.p_cov
+            .set(IDX_ATT + 2, IDX_ATT + 2, uncertainty.heading);
+        if uncertainty.wind.is_some() {
+            self.air = AirAidingState::default();
+            self.air.active = true;
+            for axis in 0..2 {
+                self.air.p_ww[axis][axis] = wind;
+                self.air.p_xw[IDX_VEL + axis][axis] = wind;
+            }
+        }
+    }
+}

@@ -4,12 +4,13 @@
 use aviate_airframe_fixed_wing::{c172, FixedWingAirframe};
 use aviate_core::control::fixed_wing::{AirspeedSource, FixedWingController};
 use aviate_core::control::{Command, CommandSource, ControlMode, Setpoint};
-use aviate_core::ekf::Ekf;
+use aviate_core::ekf::Estimator;
 use aviate_core::kernel::builder::AviateKernelBuilder;
 use aviate_core::mixer::fixed_wing::FixedWingMixer;
 use aviate_core::mixer::Sanitizer;
+use aviate_core::state::StateEstimate;
 use aviate_core::time::{TimeSource, Timestamp};
-use aviate_core::types::{Meters, MetersPerSecond};
+use aviate_core::types::{Meters, MetersPerSecond, Radians};
 use aviate_hal_io::SystemCommand;
 use aviate_xil_direct::{
     DirectActuatorCmd, DirectBoardConfig, DirectHostSensors, DirectNoiseTier, DirectOrigin,
@@ -46,6 +47,8 @@ pub struct Flight {
     sensors: DirectSynthesizer,
     /// The GNSS receiver supplies no sample.
     pub gnss_silent: bool,
+    /// Constant bias of the gyroscope in body axes \[rad/s\].
+    pub gyro_bias_rps: [f32; 3],
     /// Pressure-sensor errors of the pitot-static probe, when modelled.
     pub probe_errors: Option<ProbeErrors>,
     step: u64,
@@ -141,6 +144,17 @@ pub struct Extremes {
     pub throttle_deviation: f32,
     /// Standard deviation of the elevator lane over the segment.
     pub elevator_deviation: f32,
+    /// Largest error of the estimated roll, pitch and heading \[rad\].
+    pub max_attitude_error: [f32; 3],
+}
+
+/// Sensor faults that are present from the first step of a flight.
+#[derive(Clone, Copy, Default)]
+pub struct Faults {
+    /// The GNSS receiver never supplies a sample.
+    pub no_gnss: bool,
+    /// Constant bias of the gyroscope in body axes \[rad/s\].
+    pub gyro_bias_rps: [f32; 3],
 }
 
 impl Flight {
@@ -151,11 +165,23 @@ impl Flight {
         noise: DirectNoiseTier,
         rates: DirectSensorRates,
     ) -> Self {
+        Self::cruising_with(airframe, model, noise, rates, Faults::default())
+    }
+
+    /// As [`Self::cruising`], with sensor faults from the first step.
+    pub fn cruising_with(
+        airframe: &FixedWingAirframe,
+        model: PlantModel,
+        noise: DirectNoiseTier,
+        rates: DirectSensorRates,
+        faults: Faults,
+    ) -> Self {
         let kernel = AviateKernelBuilder::new()
-            .estimator(Ekf::default())
+            .estimator(airframe.estimator())
             .controller(airframe.controller().expect("valid description"))
             .mixer(FixedWingAirframe::mixer(ts))
             .sanitizer(Sanitizer)
+            .pre_arm_required(FixedWingAirframe::pre_arm_required())
             .config(airframe.kernel_config())
             .build()
             .expect("build fixed-wing kernel");
@@ -179,7 +205,8 @@ impl Flight {
             board: DirectXilBoard::new(kernel, config).expect("create board"),
             plant: FixedWingPlant::cruising(model, START_HEIGHT_M, gravity),
             sensors,
-            gnss_silent: false,
+            gnss_silent: faults.no_gnss,
+            gyro_bias_rps: faults.gyro_bias_rps,
             probe_errors: None,
             step: 0,
             sequence: 0,
@@ -211,6 +238,11 @@ impl Flight {
         if self.gnss_silent {
             sensors.gnss = None;
         }
+        if let Some(imu) = sensors.imu.as_mut() {
+            for (rate, bias) in imu.reading.gyro.iter_mut().zip(self.gyro_bias_rps) {
+                *rate += bias;
+            }
+        }
         if let (Some(errors), Some(airspeed)) =
             (self.probe_errors.as_mut(), sensors.airspeed.as_mut())
         {
@@ -235,7 +267,11 @@ impl Flight {
     /// Fly hands-off until the kernel is ready, then arm it.
     fn engage(&mut self) {
         while !self.board.is_ready() {
-            assert!(self.step < 1_000, "kernel not ready after 4 s");
+            assert!(
+                self.step < 1_500,
+                "kernel not ready after 6 s: {:?}",
+                self.board.kernel().state.checks.pre_arm.missing()
+            );
             self.advance();
         }
         self.board.send_command(SystemCommand::Arm);
@@ -278,6 +314,7 @@ impl Flight {
             mean_rudder: 0.5,
             throttle_deviation: 0.0,
             elevator_deviation: 0.0,
+            max_attitude_error: [0.0; 3],
         };
         let mut rudder_sum = 0.0_f32;
         let (mut throttle, mut elevator) = (Spread::default(), Spread::default());
@@ -300,6 +337,13 @@ impl Flight {
             seen.max_climb = seen.max_climb.max(climb);
             seen.max_sink = seen.max_sink.max(-climb);
             seen.max_sideslip = seen.max_sideslip.max(self.plant.sideslip().abs());
+            for (worst, error) in seen
+                .max_attitude_error
+                .iter_mut()
+                .zip(self.attitude_error())
+            {
+                *worst = worst.max(error.abs());
+            }
             rudder_sum += self.last.outputs[3];
             throttle.add(self.last.outputs[0]);
             elevator.add(self.last.outputs[2]);
@@ -312,8 +356,42 @@ impl Flight {
         seen
     }
 
+    /// The estimate that the kernel flies on.
+    pub fn estimate(&self) -> StateEstimate {
+        let kernel = self.board.kernel();
+        kernel
+            .pipeline()
+            .estimator
+            .estimate(&kernel.state.estimator)
+    }
+
+    /// Estimated minus true roll, pitch and heading \[rad\].
+    pub fn attitude_error(&self) -> [f32; 3] {
+        let (roll, pitch, yaw) = self.estimate().attitude.to_euler();
+        [
+            wrap(roll - self.plant.roll),
+            wrap(pitch - self.plant.pitch),
+            wrap(yaw - self.plant.heading),
+        ]
+    }
+
     pub fn airspeed_source(&self) -> AirspeedSource {
         self.board.kernel().state.controller.targets.airspeed_source
+    }
+}
+
+/// Heading, airspeed and height: the command of a flight without a
+/// position fix.
+pub fn heading_speed_height(heading_rad: f32, airspeed: f32, height: f32) -> Setpoint {
+    Setpoint {
+        heading: Some(Radians(heading_rad)),
+        altitude: Some(Meters(height)),
+        velocity: Some([
+            MetersPerSecond(airspeed),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ]),
+        ..Setpoint::default()
     }
 }
 

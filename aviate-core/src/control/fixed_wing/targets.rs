@@ -184,10 +184,15 @@ fn climb_target(setpoint: &Setpoint) -> Vertical {
 }
 
 /// Lateral target of a mode that holds a height and may hold a heading:
-/// the heading when the command has one, else the commanded bank.
+/// the heading when the command has one, else the course of its velocity
+/// flown as a heading, else the commanded bank.
 fn heading_or_bank(setpoint: &Setpoint) -> Lateral {
-    match (setpoint.heading, setpoint.attitude) {
-        (Some(heading), _) => Lateral::Heading(heading.0),
+    let course = course_and_speed(setpoint).map(|(course, _speed)| course);
+    match (
+        setpoint.heading.map(|heading| heading.0).or(course),
+        setpoint.attitude,
+    ) {
+        (Some(heading), _) => Lateral::Heading(heading),
         (None, Some(attitude)) => Lateral::Bank(attitude.to_euler().0),
         (None, None) => Lateral::WingsLevel,
     }
@@ -280,20 +285,14 @@ fn attitude_targets(
 impl Vertical {
     /// The target that the present estimate can support.
     ///
-    /// A height needs a valid position and a climb rate needs a valid
-    /// velocity. The kernel can hand over a command whose mode the gate
-    /// did not check against the estimate, so the law checks here: it
-    /// must not close a loop on a number that the estimator disowns.
+    /// A height and a climb rate need a valid height channel. The kernel
+    /// can hand over a command whose mode the gate did not check against
+    /// the estimate, so the law checks here: it must not close a loop on
+    /// a number that the estimator disowns.
     fn supported_by(self, valid: StateValidFlags) -> Self {
-        let level = match self {
-            Vertical::Height(_) if !valid.contains(StateValidFlags::POSITION) => {
-                Vertical::ClimbRate(0.0)
-            }
-            other => other,
-        };
-        match level {
+        match self {
             Vertical::ClimbRate(_) | Vertical::Height(_)
-                if !valid.contains(StateValidFlags::VELOCITY) =>
+                if !valid.contains(StateValidFlags::HEIGHT) =>
             {
                 Vertical::AirspeedOnPitch
             }
@@ -348,7 +347,7 @@ impl Targets {
             ControlMode::AltitudeHold | ControlMode::PositionHold => Targets::Flight {
                 lateral: heading_or_bank(setpoint),
                 vertical: climb_target(setpoint),
-                airspeed: cruise,
+                airspeed: course_and_speed(setpoint).map_or(cruise, |(_course, speed)| speed),
                 throttle: params.cruise_throttle.0,
             },
             ControlMode::VelocityControl => velocity_targets(setpoint, params, cruise),

@@ -302,6 +302,18 @@ impl Ekf {
             return; // COV:EXCL(DEFENSIVE: weight 0.01-0.1 rejected by earlier check)
         };
 
+        let dbg_mode = super::scalar::DBG_HEADING_MODE.load(core::sync::atomic::Ordering::Relaxed); // DBGHACK
+        if dbg_mode >= 3 {
+            let m = state.quat.rotate_vector(crate::math::Vector3::new(mag_x, mag_y, mag_z));
+            let h2 = (m.x * m.x + m.y * m.y).max(1e-6);
+            let mut h_x = [0.0; super::STATE_DIM];
+            h_x[super::IDX_ATT] = -m.z * m.x / h2;
+            h_x[super::IDX_ATT + 1] = -m.z * m.y / h2;
+            h_x[super::IDX_ATT + 2] = 1.0;
+            let noise = if dbg_mode == 4 { 0.003 / (incl_weight * incl_weight) } else { r_effective };
+            self.fuse_joint(state, &super::air_aiding::JointMeasurement { h_x, h_w: [0.0; 2], innovation: innov, noise });
+            return;
+        }
         self.heading_update(state, innov, r_effective);
     }
 }

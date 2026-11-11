@@ -133,6 +133,9 @@ where
     seed_wait_since_us: Option<u64>,
     /// Time of the last [`Self::step_sensors`] call in this generation.
     host_clock_us: Option<u64>,
+    /// Static pressure at the origin: the datum of the pressure height
+    /// of a seed without a fix.
+    origin_pressure_pa: f32,
     /// Declination from the geomagnetic model at the origin.
     origin_declination_rad: f32,
     /// Declination from the geomagnetic model at the last GNSS fix.
@@ -167,6 +170,7 @@ where
         );
         let endpoint = DirectMavlinkEndpoint::new(config.sys_id, config.comp_id);
         let origin_declination_rad = synthesizer.environment().declination_rad();
+        let origin_pressure_pa = synthesizer.environment().air.pressure_pa as f32;
         Ok(Self {
             config,
             kernel,
@@ -183,6 +187,7 @@ where
             ekf_initialized: false,
             seed_wait_since_us: None,
             host_clock_us: None,
+            origin_pressure_pa,
             origin_declination_rad,
             model_declination_rad: origin_declination_rad,
         })
@@ -249,6 +254,16 @@ where
     /// Configure aiding-sensor synthesis periods.
     pub fn set_sensor_rates(&mut self, rates: DirectSensorRates) {
         self.synthesizer.set_rates(rates);
+    }
+
+    /// Declare the static pressure at the origin.
+    ///
+    /// A board that starts without a position fix takes its height from
+    /// the barometer, as the pressure height above this pressure. The
+    /// default is the pressure of the standard atmosphere at the height
+    /// of the origin.
+    pub fn set_origin_pressure(&mut self, pressure_pa: f32) {
+        self.origin_pressure_pa = pressure_pa;
     }
 
     /// Configure outbound MAVLink telemetry stream rates.

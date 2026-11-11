@@ -99,10 +99,12 @@ fn ekf_state_encoded_len_matches_documented_size() {
     // baro datum (1 presence byte + 4 f32 bytes) = 983 bytes; plus the
     // datum estimator variance (4 f32 bytes) = 987 bytes; plus the
     // uncovered IMU time (4 f32 bytes) = 991 bytes; plus the current
-    // clipping run (4 f32 bytes) = 995 bytes. Mismatched
-    // const ENCODED_LEN would surface a manual edit drift between the
-    // doc-comment and the impl.
-    assert_eq!(EkfState::ENCODED_LEN, 995);
+    // clipping run (4 f32 bytes) = 995 bytes; plus the wind block: 2
+    // wind states, 4 wind covariances, 15*2 = 30 cross covariances and
+    // 1 aiding age = 37 floats = 148 bytes, and 1 activity byte =
+    // 1144 bytes. Mismatched const ENCODED_LEN would surface a manual
+    // edit drift between the doc-comment and the impl.
+    assert_eq!(EkfState::ENCODED_LEN, 1144);
 }
 
 #[test]

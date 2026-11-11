@@ -170,6 +170,13 @@ impl Ekf {
             );
         }
 
+        // The wind block shares the transition of the filter states.
+        let wind_growth = self
+            .config
+            .air_aiding
+            .map_or(0.0, |air| air.process_noise_wind * dt);
+        state.air.propagate(&f_mat, wind_growth);
+
         // P = F * P * F' + Q
         let fp = f_mat.mat_mul(&state.p_cov);
         let fpft = fp.mat_mul(&f_mat.t());

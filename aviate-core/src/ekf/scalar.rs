@@ -15,7 +15,7 @@ use crate::types::{Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSe
 /// fusion. Sequential f32 rank-1 updates on a 15×15 matrix accumulate
 /// round-off that can push a variance to zero or slightly negative;
 /// flooring keeps P positive-definite so gains stay meaningful.
-const COV_VAR_FLOOR: Scalar = 1e-9;
+pub(super) const COV_VAR_FLOOR: Scalar = 1e-9;
 
 // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; the fn body below is exercised by the covariance-PSD tests)
 /// Joseph-stabilized rank-1 covariance update for a scalar observation
@@ -27,6 +27,8 @@ const COV_VAR_FLOOR: Scalar = 1e-9;
 /// `A = I − K H` differs from the identity only in column `h_idx`, where
 /// `A[r][h_idx] = δ_{r,h_idx} − K[r]`.
 // COV:EXCL_STOP
+/// DBGHACK
+pub static DBG_HEADING_MODE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 fn joseph_scalar_cov_update(
     p: &mut Matrix<STATE_DIM, STATE_DIM>,
     k: &[Scalar; STATE_DIM],
@@ -57,7 +59,7 @@ impl Ekf {
     /// bias beyond tens of mrad/s (gyro) or a few dm/s² (accel) is
     /// the filter mis-attributing vehicle motion to bias; letting it
     /// stand hands predict a phantom rate to integrate every cycle.
-    fn clamp_biases(&self, state: &mut EkfState) {
+    pub(super) fn clamp_biases(&self, state: &mut EkfState) {
         let g = self.config.gyro_bias_limit;
         state.gyro_bias.x = RadiansPerSecond(state.gyro_bias.x.0.clamp(-g, g));
         state.gyro_bias.y = RadiansPerSecond(state.gyro_bias.y.0.clamp(-g, g));
@@ -140,7 +142,12 @@ impl Ekf {
         // as a real angular rate and the vehicle spins after
         // takeoff. The mag observation only constrains yaw — gyro
         // bias should be observed by motion, not heading.
-        let _ = (k_vector[IDX_GB], k_vector[IDX_GB + 1], k_vector[IDX_GB + 2]);
+        let dbg_mode = DBG_HEADING_MODE.load(core::sync::atomic::Ordering::Relaxed); // DBGHACK
+        if dbg_mode == 2 {
+            state.gyro_bias.x = RadiansPerSecond(state.gyro_bias.x.0 + k_vector[IDX_GB] * innov);
+            state.gyro_bias.y = RadiansPerSecond(state.gyro_bias.y.0 + k_vector[IDX_GB + 1] * innov);
+            state.gyro_bias.z = RadiansPerSecond(state.gyro_bias.z.0 + k_vector[IDX_GB + 2] * innov);
+        }
 
         // Update accel bias
         state.accel_bias.x =
@@ -151,6 +158,14 @@ impl Ekf {
             MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
         self.clamp_biases(state);
 
+        state
+            .air
+            .follow_state_update(state_idx, &k_vector, s, innov);
+        if dbg_mode == 1 {
+            k_vector[IDX_GB] = 0.0;
+            k_vector[IDX_GB + 1] = 0.0;
+            k_vector[IDX_GB + 2] = 0.0;
+        }
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
     }
 
@@ -247,6 +262,9 @@ impl Ekf {
         let new_quat = dq_small.mul(&state.quat);
         state.quat = state.sanitize_quat(new_quat);
 
+        state
+            .air
+            .follow_state_update(state_idx, &k_vector, s, innov);
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
         true
         // COV:EXCL_STOP
@@ -333,6 +351,8 @@ impl super::Estimator for Ekf {
             let declination = sensors.geomagnetic.map_or(0.0, |g| g.declination.0);
             Ekf::update_mag_state(self, state, primary_mag, declination);
         }
+
+        self.fuse_air_data(state, sensors, dt);
     }
 
     fn estimate(&self, state: &EkfState) -> crate::state::StateEstimate {

@@ -56,6 +56,11 @@ pub(crate) const GNSS_VEL_AIDING_TIMEOUT_S: Scalar = 5.0;
 /// since the vertical-redundancy source has gone quiet.
 pub(crate) const BARO_AIDING_TIMEOUT_S: Scalar = 5.0;
 
+/// Air-data aiding timeout \[s\]: the same window as the GNSS channels,
+/// in which the propagated velocity is still the one the last accepted
+/// airspeed bounded.
+pub(crate) const AIR_AIDING_TIMEOUT_S: Scalar = 5.0;
+
 /// Position covariance-diagonal bound \[m²\] per axis. Wide margin over
 /// the converged steady-state diagonal (`meas_noise_gnss_pos` = 0.5 m²
 /// settles the filter well under 1 m²), but tight enough to catch
@@ -122,8 +127,21 @@ impl EkfState {
         let position_bounded = self.max_block_variance(IDX_POS) < POSITION_COV_BOUND_M2;
         let velocity_bounded = self.max_block_variance(IDX_VEL) < VELOCITY_COV_BOUND_M2S2;
 
-        let position_valid = attitude_valid && pos_finite && position_aided && position_bounded;
-        let velocity_valid = attitude_valid && vel_finite && velocity_aided && velocity_bounded;
+        // Air-data aiding bounds the velocity without a fix. Whether the
+        // bound is tight enough is then a question of covariance alone:
+        // an unknown wind leaves the velocity over the ground uncertain,
+        // and a position that is only dead-reckoned outgrows its bound.
+        let air_aided = self.air.active && self.air.age_s <= AIR_AIDING_TIMEOUT_S;
+        let position_valid =
+            attitude_valid && pos_finite && (position_aided || air_aided) && position_bounded;
+        let velocity_valid =
+            attitude_valid && vel_finite && (velocity_aided || air_aided) && velocity_bounded;
+        let height_bounded = self.p_cov.get(IDX_POS + 2, IDX_POS + 2) < POSITION_COV_BOUND_M2;
+        let height_valid = attitude_valid
+            && pos_finite
+            && vel_finite
+            && (baro_aided || position_aided)
+            && height_bounded;
 
         let mut valid_flags = StateValidFlags::empty();
         if attitude_valid {
@@ -134,6 +152,12 @@ impl EkfState {
         }
         if velocity_valid {
             valid_flags |= StateValidFlags::VELOCITY;
+        }
+        if height_valid {
+            valid_flags |= StateValidFlags::HEIGHT;
+        }
+        if attitude_valid && air_aided {
+            valid_flags |= StateValidFlags::AIRSPEED;
         }
 
         let quality = if !attitude_valid || !pos_finite || !vel_finite {

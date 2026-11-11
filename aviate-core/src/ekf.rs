@@ -46,11 +46,13 @@
 //! `aviate_core::ekf::Ekf::X` still resolves from the parent module.
 
 mod accel_clip;
+pub mod air_aiding;
 mod imu_gap;
 mod predict;
 mod replicable;
 pub mod runtime;
-mod scalar;
+pub mod scalar; // DBGHACK
+pub mod seed;
 mod update;
 mod validity;
 
@@ -201,6 +203,8 @@ pub struct EkfConfig {
     pub mag_field_min: Scalar,
     /// Maximum valid field strength \[μT\] (default 70.0)
     pub mag_field_max: Scalar,
+    /// Air-data aiding; `None` for a vehicle that can fly sideways.
+    pub air_aiding: Option<air_aiding::AirAidingConfig>,
 }
 
 impl Default for EkfConfig {
@@ -228,6 +232,7 @@ impl Default for EkfConfig {
             mag_inclination_limit: 0.95,       // Stop fusion
             mag_field_min: 20.0,               // μT
             mag_field_max: 70.0,               // μT
+            air_aiding: None,
         }
     }
 }
@@ -304,24 +309,10 @@ pub struct EkfState {
     /// Length \[s\] of the current run of clipped accelerometer
     /// samples, which `ekf/accel_clip.rs` widens the covariance for.
     pub accel_clip_s: Scalar,
+    /// Wind states and their covariance blocks (`ekf/air_aiding.rs`).
+    pub air: air_aiding::AirAidingState,
 }
 // COV:EXCL_STOP
-
-/// Initial covariance: position/velocity/attitude blocks start loose
-/// (0.1), bias blocks start at realistic MEMS scales — gyro
-/// (0.02 rad/s)², accel (0.2 m/s²)². Seeding the gyro-bias variance
-/// at 0.1 (σ ≈ 0.32 rad/s, ~30× a real bias) invites the filter to
-/// explain early attitude motion as bias: with oscillating flight
-/// the GNSS cross-terms walk the bias state to whole rad/s and
-/// predict integrates the phantom rate (the #123 pump).
-fn initial_covariance() -> Matrix<STATE_DIM, STATE_DIM> {
-    let mut p = Matrix::identity().mul_scalar(0.1);
-    for i in 0..3 {
-        p.set(IDX_GB + i, IDX_GB + i, 4e-4);
-        p.set(IDX_AB + i, IDX_AB + i, 0.04);
-    }
-    p
-}
 
 impl EkfState {
     /// Construct a fresh state with the initial-uncertainty
@@ -351,7 +342,7 @@ impl EkfState {
                 RadiansPerSecond(0.0),
                 RadiansPerSecond(0.0),
             ),
-            p_cov: initial_covariance(),
+            p_cov: seed::initial_covariance(),
             initialized: false,
             quat_fault: false,
             baro_ref: None,
@@ -361,6 +352,7 @@ impl EkfState {
             baro_age_s: validity::AGE_SATURATION_S,
             imu_age_s: 0.0,
             accel_clip_s: 0.0,
+            air: air_aiding::AirAidingState::default(),
         }
     }
 
@@ -380,7 +372,7 @@ impl EkfState {
             MetersPerSecondSquared(0.0),
             MetersPerSecondSquared(0.0),
         );
-        self.p_cov = initial_covariance();
+        self.p_cov = seed::initial_covariance();
         self.initialized = true;
         self.quat_fault = false;
         // A fresh init/arm re-latches the baro datum on the next
@@ -396,6 +388,7 @@ impl EkfState {
         self.baro_age_s = validity::AGE_SATURATION_S;
         self.imu_age_s = 0.0;
         self.accel_clip_s = 0.0;
+        self.air = air_aiding::AirAidingState::default();
     }
 
     /// Whether `init()` has run successfully since construction or `reset()`.

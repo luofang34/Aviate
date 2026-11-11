@@ -1,5 +1,6 @@
 //! Per-tick stepping, sensor feeding, command dispatch, and reset handling for [`super::DirectXilBoard`].
 
+use aviate_core::ekf::seed::SeedUncertainty;
 use aviate_core::hal::{ActuatorHal, SensorHal};
 use aviate_core::math::Vector3;
 use aviate_core::mixer::ActuatorState;
@@ -10,7 +11,8 @@ use aviate_core::time::{TimeDelta, TimeSource as CoreTimeSource, Timestamp};
 use aviate_core::types::{Meters, MetersPerSecond, Radians, Seconds};
 use aviate_core::ChannelId;
 use aviate_hal_io::{
-    ActuatorDriver, BoardHal, CommandOutcome, FakeActuator, SystemCommand, MAX_ACTUATOR_OUTPUTS,
+    ActuatorDriver, BoardHal, CommandOutcome, FakeActuator, RawBaroReading, SystemCommand,
+    MAX_ACTUATOR_OUTPUTS,
 };
 use aviate_link::mavlink::MavState;
 use aviate_link::telemetry::GeodeticOrigin;
@@ -28,6 +30,25 @@ use super::{DirectActuatorCmd, DirectBoardHal, DirectTime, DirectXilBoard};
 /// Longest wait for a first GNSS fix before the estimator is seeded at rest
 /// at the origin: two periods of a 1 Hz receiver.
 const SEED_FIX_WAIT_US: u64 = 2_000_000;
+/// Variance of the wind that a seed without a fix does not know: 8 m/s
+/// at one standard deviation.
+const SEED_WIND_VAR_M2PS2: f32 = 64.0;
+/// Variance of an air-velocity seed along the nose: angle of attack,
+/// sideslip and probe error, 2 m/s at one standard deviation.
+const SEED_AIR_VELOCITY_VAR_M2PS2: f32 = 4.0;
+/// Variance of roll and pitch of a seed from the accelerometer of a
+/// vehicle that may be in a turn: 5 degrees at one standard deviation.
+const SEED_TILT_VAR_RAD2: f32 = 0.0076;
+/// Variance of the heading of a seed from the magnetometer: 10 degrees
+/// at one standard deviation.
+const SEED_HEADING_VAR_RAD2: f32 = 0.03;
+/// Variance of a velocity seed of zero: nothing says how fast the
+/// vehicle flies, 30 m/s at one standard deviation.
+const SEED_SPEED_VAR_M2PS2: f32 = 900.0;
+/// Variance of a horizontal position seed at the origin: 5 km at one
+/// standard deviation. The first fix must lie inside the innovation gate
+/// of this variance.
+const SEED_POSITION_VAR_M2: f32 = 2.5e7;
 
 impl<C, M> DirectXilBoard<C, M>
 where
@@ -236,10 +257,9 @@ where
 
     /// Seed the estimator from the first attitude sources and the first GNSS fix.
     ///
-    /// The estimator never adopts a fix that its innovation gate rejects, so a
-    /// seed at rest at the origin is permanent for a vehicle that starts in
-    /// motion. The seed therefore waits for a fix. A board that gets no fix
-    /// within [`SEED_FIX_WAIT_US`] is taken to be at rest at the origin.
+    /// A fix gives the position and the velocity. The seed waits
+    /// [`SEED_FIX_WAIT_US`] for one. Without a fix the seed does not
+    /// claim that the vehicle is at rest: see [`Self::seed_without_fix`].
     fn maybe_initialize_ekf(&mut self, decl: f32, time_us: u64) {
         if self.ekf_initialized {
             return;
@@ -255,43 +275,85 @@ where
         if fix.is_none() && waited_us < SEED_FIX_WAIT_US {
             return;
         }
-        let init_quat = triad_init_quat(
-            [
-                imu.value.accel[0].0,
-                imu.value.accel[1].0,
-                imu.value.accel[2].0,
-            ],
-            [
-                mag.value.field_ut[0].0,
-                mag.value.field_ut[1].0,
-                mag.value.field_ut[2].0,
-            ],
-            decl,
-        );
-        let (pos, vel) = match fix {
-            Some(gnss) => (
-                Vector3::new(
-                    gnss.value.position_ned[0],
-                    gnss.value.position_ned[1],
-                    gnss.value.position_ned[2],
-                ),
-                Vector3::new(
-                    gnss.value.velocity_ned[0],
-                    gnss.value.velocity_ned[1],
-                    gnss.value.velocity_ned[2],
-                ),
-            ),
-            None => (
-                Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-                Vector3::new(
+        let [ax, ay, az] = imu.value.accel;
+        let [mx, my, mz] = mag.value.field_ut;
+        let init_quat = triad_init_quat([ax.0, ay.0, az.0], [mx.0, my.0, mz.0], decl);
+        match fix {
+            Some(gnss) => {
+                let [north, east, down] = gnss.value.position_ned;
+                let [north_rate, east_rate, down_rate] = gnss.value.velocity_ned;
+                self.kernel.state.estimator.init(
+                    Vector3::new(north, east, down),
+                    Vector3::new(north_rate, east_rate, down_rate),
+                    init_quat,
+                );
+            }
+            // A vehicle with air-data aiding can be in flight without a
+            // fix. Any other vehicle that has no fix is on the ground.
+            None if self.kernel.pipeline().estimator.has_air_aiding() => {
+                self.seed_without_fix(init_quat);
+            }
+            None => {
+                let rest = Vector3::new(
                     MetersPerSecond(0.0),
                     MetersPerSecond(0.0),
                     MetersPerSecond(0.0),
-                ),
-            ),
-        };
-        self.kernel.state.estimator.init(pos, vel, init_quat);
+                );
+                let origin = Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0));
+                self.kernel.state.estimator.init(origin, rest, init_quat);
+            }
+        }
         self.ekf_initialized = true;
+    }
+
+    /// Seed the estimator when no fix came.
+    ///
+    /// The velocity is the true airspeed along the nose when a probe
+    /// gives one, with the variance of an unknown wind; without a probe
+    /// it is zero with the variance of an unknown flight speed. The
+    /// horizontal position is the origin with the variance of an unknown
+    /// position. The height is the pressure height above the pressure of
+    /// the origin.
+    fn seed_without_fix(&mut self, init_quat: aviate_core::math::Quaternion) {
+        let true_airspeed = self
+            .sensor_cache
+            .airspeed
+            .and_then(|reading| reading.value.air.pitot_static())
+            .map(|probe| probe.true_mps);
+        let (velocity, velocity_var, wind_var) = match true_airspeed {
+            Some(speed) => (
+                init_quat.rotate_vector(Vector3::new(speed, 0.0, 0.0)),
+                SEED_AIR_VELOCITY_VAR_M2PS2,
+                Some(SEED_WIND_VAR_M2PS2),
+            ),
+            None => (Vector3::new(0.0, 0.0, 0.0), SEED_SPEED_VAR_M2PS2, None),
+        };
+        let origin_height = RawBaroReading {
+            pressure_pa: self.origin_pressure_pa,
+            ..RawBaroReading::default()
+        }
+        .altitude_m();
+        let height = self
+            .sensor_cache
+            .baro
+            .and_then(|reading| reading.value.altitude)
+            .map_or(0.0, |altitude| altitude.0 - origin_height);
+        self.kernel.state.estimator.init_uncertain(
+            Vector3::new(Meters(0.0), Meters(0.0), Meters(-height)),
+            Vector3::new(
+                MetersPerSecond(velocity.x),
+                MetersPerSecond(velocity.y),
+                MetersPerSecond(velocity.z),
+            ),
+            init_quat,
+            &SeedUncertainty {
+                horizontal_position: SEED_POSITION_VAR_M2,
+                velocity: velocity_var,
+                tilt: SEED_TILT_VAR_RAD2,
+                heading: SEED_HEADING_VAR_RAD2,
+                wind: wind_var,
+            },
+        );
     }
 
     fn drain_inbound_commands(&mut self, now_us: u64) {

@@ -24,7 +24,8 @@ pub mod transfer;
 pub mod vehicle_control_mode;
 pub use enums::{CommandSource, ConfigMode, ControlLawV1, ControlMode, SafetyLevelV1};
 pub use mode_gate::{
-    apply_mode_entry, gate_controller_mode_entry, gate_mode_entry, ModeEntryDecision,
+    apply_mode_entry, gate_controller_mode_entry, gate_mode_entry, gate_vehicle_mode_entry,
+    ModeEntryDecision,
 };
 pub use observation::{
     ControllerLoopObservation, ControllerStep, ControllerStepObservation,
@@ -241,6 +242,15 @@ pub trait VehicleController {
     /// controller with an incomplete mode surface must override this method.
     fn supports_mode(&self, _mode: ControlMode) -> bool {
         true
+    }
+
+    /// Estimator validity that `mode` needs on this vehicle.
+    ///
+    /// The default is the table of [`ControlMode::required_validity`]. A
+    /// vehicle whose loops close on other parts of the estimate states
+    /// its own needs here.
+    fn required_validity(&self, mode: ControlMode) -> crate::state::StateValidFlags {
+        mode.required_validity()
     }
 
     fn step(

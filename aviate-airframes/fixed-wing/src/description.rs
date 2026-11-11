@@ -1,7 +1,10 @@
 //! One fixed-wing airframe and the kernel parts that follow from it.
 
+use aviate_core::checks::PreArmFlags;
 use aviate_core::control::fixed_wing::FixedWingController;
 use aviate_core::control::{ConfigMode, Limits};
+use aviate_core::ekf::air_aiding::AirAidingConfig;
+use aviate_core::ekf::{Ekf, EkfConfig};
 use aviate_core::kernel::config::{
     FixedWingParams, FixedWingParamsError, MixerGeometry, ResolvedKernelConfig,
 };
@@ -25,6 +28,8 @@ pub struct FixedWingAirframe {
     pub params: FixedWingParams,
     /// Envelope limits for the kernel.
     pub limits: Limits,
+    /// Air-data aiding of the estimator: airspeed, zero sideslip, wind.
+    pub air_aiding: AirAidingConfig,
 }
 
 /// Safe pattern of the surface group: every surface at neutral.
@@ -81,6 +86,25 @@ impl FixedWingAirframe {
     /// Returns [`FixedWingParamsError`] when the description cannot fly.
     pub fn controller(&self) -> Result<FixedWingController, FixedWingParamsError> {
         FixedWingController::new(self.params)
+    }
+
+    /// Construct the estimator for this airframe.
+    ///
+    /// It is the estimator of every other vehicle with air-data aiding
+    /// switched on, so that attitude, height and airspeed stay usable
+    /// without a position fix.
+    #[must_use]
+    pub fn estimator(&self) -> Ekf {
+        Ekf::new(EkfConfig {
+            air_aiding: Some(self.air_aiding),
+            ..EkfConfig::default()
+        })
+    }
+
+    /// Pre-arm checks for a fixed wing: no position fix is required.
+    #[must_use]
+    pub const fn pre_arm_required() -> PreArmFlags {
+        PreArmFlags::FIXED_WING_MINIMUM
     }
 
     /// Construct the four-lane mixer.

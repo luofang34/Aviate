@@ -16,7 +16,10 @@ impl crate::replicable::Replicable for EkfState {
     // + 4 f32 bytes for the uncovered IMU time (imu_age_s),
     // + 4 f32 bytes for the current clipping run (accel_clip_s).
     // Total = (19 + 225) * 4 + 2 + 5 + 4 + 4 + 4 = 995 bytes.
-    const ENCODED_LEN: usize = (19 + STATE_DIM * STATE_DIM) * 4 + 2 + 5 + 4 + 4 + 4;
+    // The wind block adds 2 wind states, 4 wind covariances, 2 cross
+    // covariances for each filter state, one age and one activity tag.
+    const ENCODED_LEN: usize =
+        (19 + STATE_DIM * STATE_DIM) * 4 + 2 + 5 + 4 + 4 + 4 + (2 + 4 + 2 * STATE_DIM + 1) * 4 + 1;
 
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
         use crate::replicable::copy_into;
@@ -60,6 +63,14 @@ impl crate::replicable::Replicable for EkfState {
         w += copy_into(buf, w, &self.baro_ref_var.to_le_bytes());
         w += copy_into(buf, w, &self.imu_age_s.to_le_bytes());
         w += copy_into(buf, w, &self.accel_clip_s.to_le_bytes());
+        let air = &self.air;
+        let wind_block = air.p_ww.iter().flatten();
+        let cross_block = air.p_xw.iter().flatten();
+        for v in air.wind_ne.iter().chain(wind_block).chain(cross_block) {
+            w += copy_into(buf, w, &v.to_le_bytes());
+        }
+        w += copy_into(buf, w, &air.age_s.to_le_bytes());
+        w += copy_into(buf, w, &[u8::from(air.active)]);
         w
     }
 }
