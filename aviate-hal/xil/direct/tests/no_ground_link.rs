@@ -148,14 +148,14 @@ struct Run {
 }
 
 impl Run {
-    fn new(with_ground_station: bool) -> Self {
+    fn new(with_ground_station: bool, rates: DirectTelemetryRates) -> Self {
         let mut flight = Flight::cruising_disarmed(
             &c172(),
             PlantModel::C172,
             DirectNoiseTier::Off,
             DirectSensorRates::default().with_airspeed(50_000),
         );
-        flight.board.set_telemetry_rates(RATES);
+        flight.board.set_telemetry_rates(rates);
         Self {
             flight,
             seq: 0,
@@ -217,7 +217,7 @@ impl Run {
 
 #[test]
 fn c172_flies_on_mavlink_bytes_without_a_ground_station_link() {
-    let mut run = Run::new(false);
+    let mut run = Run::new(false, RATES);
     let mut before_arm = Downlink::default();
     let mut step = run.engage(&mut before_arm);
     // The board streams from its first cycle and acknowledges the arm
@@ -269,13 +269,37 @@ fn c172_flies_on_mavlink_bytes_without_a_ground_station_link() {
 #[test]
 fn a_ground_station_heartbeat_and_stream_request_change_nothing() {
     let fly = |with_ground_station: bool| {
-        let mut run = Run::new(with_ground_station);
+        let mut run = Run::new(with_ground_station, DirectTelemetryRates::default());
+        let mut engage = Downlink::default();
+        let step = run.engage(&mut engage);
         let mut downlink = Downlink::default();
-        let step = run.engage(&mut downlink);
-        run.cruise(step, 20 * STEPS_PER_SECOND, &mut downlink);
+        run.cruise(step, WINDOW_S * STEPS_PER_SECOND, &mut downlink);
+        engage.other_acks.append(&mut downlink.other_acks);
+        downlink.other_acks = engage.other_acks;
         (run.outputs, downlink)
     };
+    const WINDOW_S: u64 = 20;
     let (alone, alone_downlink) = fly(false);
+    // The default rates do not all divide into the 4 ms step; each
+    // stream still averages its configured rate.
+    let rates = DirectTelemetryRates::default();
+    let near = |count: u32, hz: u8| count.abs_diff(u32::from(hz) * WINDOW_S as u32) <= 1;
+    assert!(
+        near(alone_downlink.heartbeat, rates.heartbeat_hz),
+        "{alone_downlink:?}"
+    );
+    assert!(
+        near(alone_downlink.sys_status, rates.sys_status_hz),
+        "{alone_downlink:?}"
+    );
+    assert!(
+        near(alone_downlink.attitude, rates.attitude_hz),
+        "{alone_downlink:?}"
+    );
+    assert!(
+        near(alone_downlink.local_position, rates.position_hz),
+        "{alone_downlink:?}"
+    );
     let (attended, attended_downlink) = fly(true);
     assert_eq!(alone, attended, "a ground station changed the outputs");
     // The board has no stream configuration over the link: it refuses
