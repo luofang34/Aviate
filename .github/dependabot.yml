@@ -45,6 +45,11 @@ updates:
       day: monday
     commit-message:
       prefix: "ci(deps)"
+    ignore:
+      # dtolnay/rust-toolchain tags name Rust compiler versions; the
+      # pinned release-scripts step passes the compiler through
+      # `with.toolchain` and must not be bumped to unrelated tags.
+      - dependency-name: dtolnay/rust-toolchain
     groups:
       actions:
         patterns:
