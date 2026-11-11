@@ -36,9 +36,14 @@ The standard projection is deliberately narrower than Aviate's state model:
 | `VELOCITY` | `ESTIMATOR_VELOCITY_HORIZ`, `ESTIMATOR_VELOCITY_VERT` |
 | `POSITION` | `ESTIMATOR_POS_HORIZ_REL` |
 | `ANGULAR_RATE` | none; read the Aviate message |
+| `HEIGHT` | none; read the Aviate message |
+| `AIRSPEED` | none; read the Aviate message |
 
 Local vertical-position validity has no exact standard flag and remains only
-in the Aviate bitmap. The standard absolute-height and above-ground flags are
+in the Aviate bitmap. `HEIGHT` is set when the height above the origin datum
+and the vertical speed are usable from the barometer or GNSS. It does not
+need a horizontal position fix. `AIRSPEED` is set when an airspeed sensor
+aids the velocity relative to the air mass. The standard absolute-height and above-ground flags are
 not substitutes for local NED vertical position.
 
 Only `Good` estimates set standard validity flags because the standard enum

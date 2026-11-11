@@ -28,14 +28,13 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // of Ready (pre-arm NO_FAULTS), and `NotReady` would hide that
         // only a ground reset can clear it.
         //
-        // A vehicle whose pre-arm set asks for no critical fault in place
-        // of no fault at all (a fixed wing that may fly without a
-        // position fix) is held back by the critical faults only.
+        // A vehicle whose pre-arm set tolerates a missing position fix
+        // (a fixed wing) is held back by every other fault.
         let required = self.state.checks.pre_arm.required;
-        let critical_only = required.contains(PreArmFlags::NO_CRITICAL_FAULTS)
+        let fix_tolerant = required.contains(PreArmFlags::NO_FAULTS_BUT_FIX)
             && !required.contains(PreArmFlags::NO_FAULTS);
-        let blocking = if critical_only {
-            self.state.faults & crate::kernel_types::CRITICAL_FAULTS
+        let blocking = if fix_tolerant {
+            self.state.faults - crate::kernel_types::POSITION_FIX_FAULTS
         } else {
             self.state.faults
         };

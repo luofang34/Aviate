@@ -27,8 +27,6 @@ pub(super) const COV_VAR_FLOOR: Scalar = 1e-9;
 /// `A = I − K H` differs from the identity only in column `h_idx`, where
 /// `A[r][h_idx] = δ_{r,h_idx} − K[r]`.
 // COV:EXCL_STOP
-/// DBGHACK
-pub static DBG_HEADING_MODE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 fn joseph_scalar_cov_update(
     p: &mut Matrix<STATE_DIM, STATE_DIM>,
     k: &[Scalar; STATE_DIM],
@@ -142,12 +140,7 @@ impl Ekf {
         // as a real angular rate and the vehicle spins after
         // takeoff. The mag observation only constrains yaw — gyro
         // bias should be observed by motion, not heading.
-        let dbg_mode = DBG_HEADING_MODE.load(core::sync::atomic::Ordering::Relaxed); // DBGHACK
-        if dbg_mode == 2 {
-            state.gyro_bias.x = RadiansPerSecond(state.gyro_bias.x.0 + k_vector[IDX_GB] * innov);
-            state.gyro_bias.y = RadiansPerSecond(state.gyro_bias.y.0 + k_vector[IDX_GB + 1] * innov);
-            state.gyro_bias.z = RadiansPerSecond(state.gyro_bias.z.0 + k_vector[IDX_GB + 2] * innov);
-        }
+        let _ = (k_vector[IDX_GB], k_vector[IDX_GB + 1], k_vector[IDX_GB + 2]);
 
         // Update accel bias
         state.accel_bias.x =
@@ -161,11 +154,6 @@ impl Ekf {
         state
             .air
             .follow_state_update(state_idx, &k_vector, s, innov);
-        if dbg_mode == 1 {
-            k_vector[IDX_GB] = 0.0;
-            k_vector[IDX_GB + 1] = 0.0;
-            k_vector[IDX_GB + 2] = 0.0;
-        }
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
     }
 

@@ -52,11 +52,11 @@ bitflags::bitflags! {
         const GYRO_CALIBRATED   = 1 << 12;
         /// Accelerometer calibration valid
         const ACCEL_CALIBRATED  = 1 << 13;
-        /// No fault that forces the safe state (`CRITICAL_FAULTS`). A
-        /// vehicle that may start without a position fix requires this
-        /// in place of `NO_FAULTS`: a lost GNSS is a fault, but not one
-        /// that it cannot fly with.
-        const NO_CRITICAL_FAULTS = 1 << 14;
+        /// No fault other than those of `POSITION_FIX_FAULTS`. A vehicle
+        /// that may start without a position fix requires this in place
+        /// of `NO_FAULTS`: a lost GNSS is a fault, but not one that it
+        /// cannot fly with.
+        const NO_FAULTS_BUT_FIX = 1 << 14;
 
         // === Composite Requirements ===
 
@@ -71,7 +71,7 @@ bitflags::bitflags! {
                            | Self::NO_FAULTS.bits();
 
         /// Checks for a fixed wing: attitude, heading, height and no
-        /// critical fault. A position fix is not required.
+        /// fault beyond a missing position fix. A fix is not required.
         const FIXED_WING_MINIMUM = Self::IMU_HEALTHY.bits()
                                  | Self::BARO_HEALTHY.bits()
                                  | Self::MAG_HEALTHY.bits()
@@ -81,7 +81,7 @@ bitflags::bitflags! {
                                  | Self::EKF_CONVERGED.bits()
                                  | Self::THROTTLE_LOW.bits()
                                  | Self::CONFIG_VALID.bits()
-                                 | Self::NO_CRITICAL_FAULTS.bits();
+                                 | Self::NO_FAULTS_BUT_FIX.bits();
 
         /// Full checks for GPS-enabled vehicle
         const QUAD_WITH_GPS = Self::QUAD_MINIMUM.bits()
@@ -271,8 +271,8 @@ impl PreArmStatus {
     pub fn update_from_faults(&mut self, faults: FaultFlags) {
         self.current.set(PreArmFlags::NO_FAULTS, faults.is_empty());
         self.current.set(
-            PreArmFlags::NO_CRITICAL_FAULTS,
-            !faults.intersects(crate::kernel_types::CRITICAL_FAULTS),
+            PreArmFlags::NO_FAULTS_BUT_FIX,
+            (faults - crate::kernel_types::POSITION_FIX_FAULTS).is_empty(),
         );
         self.current.set(
             PreArmFlags::CONFIG_VALID,
@@ -300,6 +300,18 @@ impl PreArmStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_fix_is_the_only_fault_a_fixed_wing_may_arm_with() {
+        use crate::fault::FaultFlags;
+        let mut status = PreArmStatus::with_required(PreArmFlags::FIXED_WING_MINIMUM);
+        status.update_from_faults(FaultFlags::ALL_GNSS_LOST | FaultFlags::POSITION_LOST);
+        assert!(status.current.contains(PreArmFlags::NO_FAULTS_BUT_FIX));
+        assert!(!status.current.contains(PreArmFlags::NO_FAULTS));
+        status.update_from_faults(FaultFlags::ALL_GNSS_LOST | FaultFlags::ATTITUDE_LOST);
+        assert!(!status.current.contains(PreArmFlags::NO_FAULTS_BUT_FIX));
+        assert!(!PreArmFlags::FIXED_WING_MINIMUM.contains(PreArmFlags::GNSS_AVAILABLE));
+    }
 
     #[test]
     fn test_pre_arm_flags_quad_minimum() {

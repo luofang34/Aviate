@@ -7,7 +7,8 @@
 //! of attack that needs a constant elevator deflection, and a yaw axis
 //! with sideslip: directional stability, yaw damping, rudder power,
 //! adverse yaw from the ailerons, side force and roll from sideslip.
-//! There is no wind.
+//! The air mass may move over the ground with a constant or slowly
+//! changing horizontal wind; the aeroplane flies relative to the air.
 //!
 //! Two parameter sets exist: a Cessna 172 class aeroplane and a Rascal
 //! 110 class small unmanned aeroplane.
@@ -147,6 +148,12 @@ pub struct FixedWingPlant {
     pub engine: f32,
     /// Body roll rate in radians per second.
     pub roll_rate: f32,
+    /// Wind over the ground, north and east, in meters per second.
+    pub wind_ne: [f32; 2],
+    /// Rate of change of the wind, north and east, in meters per second
+    /// squared. A wind that changes by steps would be an infinite
+    /// acceleration.
+    pub wind_rate_ne: [f32; 2],
     model: PlantModel,
     pitch_rate: f32,
     yaw_rate: f32,
@@ -174,6 +181,8 @@ impl FixedWingPlant {
             load_factor: 1.0,
             engine: 1.0,
             roll_rate: 0.0,
+            wind_ne: [0.0; 2],
+            wind_rate_ne: [0.0; 2],
             pitch_rate: 0.0,
             yaw_rate: 0.0,
             accel_ned: [0.0; 3],
@@ -191,7 +200,13 @@ impl FixedWingPlant {
         self.airspeed * (air_density(self.height()) / 1.225).sqrt()
     }
 
-    /// Velocity in local NED meters per second.
+    /// Velocity over the ground in local NED meters per second.
+    pub fn ground_velocity_ned(&self) -> [f32; 3] {
+        let [north, east, down] = self.velocity_ned();
+        [north + self.wind_ne[0], east + self.wind_ne[1], down]
+    }
+
+    /// Velocity relative to the air in local NED meters per second.
     pub fn velocity_ned(&self) -> [f32; 3] {
         let horizontal = self.airspeed * self.path_angle.cos();
         [
@@ -236,7 +251,7 @@ impl FixedWingPlant {
             position_ned_m: self.pos_ned,
             attitude_wxyz: attitude,
             measured: Some(DirectMeasuredKinematics {
-                velocity_ned_mps: self.velocity_ned(),
+                velocity_ned_mps: self.ground_velocity_ned(),
                 body_rates_frd_rps: [self.roll_rate, self.pitch_rate, self.yaw_rate],
                 specific_force_frd_mps2: aviate_xil_direct::synthesis::rotate_world_to_body(
                     attitude,
@@ -312,7 +327,7 @@ impl FixedWingPlant {
             + self.engine * throttle * model.propeller_yaw_per_s2;
         self.yaw_rate += dt_s * yaw_acceleration;
 
-        let velocity_before = self.velocity_ned();
+        let velocity_before = self.ground_velocity_ned();
         let (sin_roll, cos_roll) = self.roll.sin_cos();
         let heading_rate =
             (self.pitch_rate * sin_roll + self.yaw_rate * cos_roll) / self.pitch.cos();
@@ -322,7 +337,10 @@ impl FixedWingPlant {
         self.airspeed += dt_s * speed_rate;
         self.path_angle += dt_s * path_rate;
         self.course += dt_s * course_rate;
-        let velocity = self.velocity_ned();
+        for (wind, rate) in self.wind_ne.iter_mut().zip(self.wind_rate_ne) {
+            *wind += dt_s * rate;
+        }
+        let velocity = self.ground_velocity_ned();
         for axis in 0..3 {
             self.accel_ned[axis] = (velocity[axis] - velocity_before[axis]) / dt_s;
             self.pos_ned[axis] += dt_s * velocity[axis];

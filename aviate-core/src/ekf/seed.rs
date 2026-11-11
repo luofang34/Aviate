@@ -60,28 +60,23 @@ impl EkfState {
     ) {
         self.init(pos, vel, quat);
         let wind = uncertainty.wind.unwrap_or(0.0);
-        for axis in 0..2 {
-            self.p_cov.set(
-                IDX_POS + axis,
-                IDX_POS + axis,
-                uncertainty.horizontal_position,
-            );
-            self.p_cov
-                .set(IDX_VEL + axis, IDX_VEL + axis, uncertainty.velocity + wind);
-            self.p_cov
-                .set(IDX_ATT + axis, IDX_ATT + axis, uncertainty.tilt);
+        let seeded = [
+            (IDX_POS, uncertainty.horizontal_position),
+            (IDX_POS + 1, uncertainty.horizontal_position),
+            (IDX_VEL, uncertainty.velocity + wind),
+            (IDX_VEL + 1, uncertainty.velocity + wind),
+            (IDX_VEL + 2, uncertainty.velocity),
+            (IDX_ATT, uncertainty.tilt),
+            (IDX_ATT + 1, uncertainty.tilt),
+            (IDX_ATT + 2, uncertainty.heading),
+        ];
+        for (idx, variance) in seeded {
+            self.p_cov.set(idx, idx, variance);
         }
-        self.p_cov
-            .set(IDX_VEL + 2, IDX_VEL + 2, uncertainty.velocity);
-        self.p_cov
-            .set(IDX_ATT + 2, IDX_ATT + 2, uncertainty.heading);
-        if uncertainty.wind.is_some() {
-            self.air = AirAidingState::default();
-            self.air.active = true;
-            for axis in 0..2 {
-                self.air.p_ww[axis][axis] = wind;
-                self.air.p_xw[IDX_VEL + axis][axis] = wind;
-            }
+        if let Some(wind) = uncertainty.wind {
+            self.air = AirAidingState::activated(wind);
+            self.air.p_xw[IDX_VEL] = [wind, 0.0];
+            self.air.p_xw[IDX_VEL + 1] = [0.0, wind];
         }
     }
 }

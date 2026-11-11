@@ -48,10 +48,11 @@
 mod accel_clip;
 pub mod air_aiding;
 mod imu_gap;
+mod joint;
 mod predict;
 mod replicable;
 pub mod runtime;
-pub mod scalar; // DBGHACK
+mod scalar;
 pub mod seed;
 mod update;
 mod validity;
@@ -454,7 +455,12 @@ impl EkfState {
             y: state.velocity_ned[1],
             z: state.velocity_ned[2],
         };
-        self.initialized = state.valid_flags.contains(StateValidFlags::all());
+        self.initialized = state.valid_flags.contains(
+            StateValidFlags::ATTITUDE
+                | StateValidFlags::ANGULAR_RATE
+                | StateValidFlags::POSITION
+                | StateValidFlags::VELOCITY,
+        );
     }
 }
 

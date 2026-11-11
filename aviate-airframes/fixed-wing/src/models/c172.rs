@@ -71,7 +71,7 @@ pub fn c172() -> FixedWingAirframe {
             meas_noise_tas: 1.0,
             sideslip_sigma: 0.05,
             wind_prior_var: 64.0,
-            process_noise_wind: 0.01,
+            process_noise_wind: 0.05,
             min_true_airspeed: 15.0,
         },
     }

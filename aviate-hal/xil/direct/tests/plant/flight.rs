@@ -5,9 +5,7 @@ use aviate_airframe_fixed_wing::{c172, FixedWingAirframe};
 use aviate_core::control::fixed_wing::{AirspeedSource, FixedWingController};
 use aviate_core::control::{Command, CommandSource, ControlMode, Setpoint};
 use aviate_core::ekf::Estimator;
-use aviate_core::kernel::builder::AviateKernelBuilder;
 use aviate_core::mixer::fixed_wing::FixedWingMixer;
-use aviate_core::mixer::Sanitizer;
 use aviate_core::state::StateEstimate;
 use aviate_core::time::{TimeSource, Timestamp};
 use aviate_core::types::{Meters, MetersPerSecond, Radians};
@@ -49,6 +47,8 @@ pub struct Flight {
     pub gnss_silent: bool,
     /// Constant bias of the gyroscope in body axes \[rad/s\].
     pub gyro_bias_rps: [f32; 3],
+    /// Constant bias of the accelerometer in body axes \[m/s²\].
+    pub accel_bias_mps2: [f32; 3],
     /// Pressure-sensor errors of the pitot-static probe, when modelled.
     pub probe_errors: Option<ProbeErrors>,
     step: u64,
@@ -155,6 +155,10 @@ pub struct Faults {
     pub no_gnss: bool,
     /// Constant bias of the gyroscope in body axes \[rad/s\].
     pub gyro_bias_rps: [f32; 3],
+    /// Constant bias of the accelerometer in body axes \[m/s²\].
+    pub accel_bias_mps2: [f32; 3],
+    /// Wind over the ground, north and east \[m/s\].
+    pub wind_ne: [f32; 2],
 }
 
 impl Flight {
@@ -176,15 +180,7 @@ impl Flight {
         rates: DirectSensorRates,
         faults: Faults,
     ) -> Self {
-        let kernel = AviateKernelBuilder::new()
-            .estimator(airframe.estimator())
-            .controller(airframe.controller().expect("valid description"))
-            .mixer(FixedWingAirframe::mixer(ts))
-            .sanitizer(Sanitizer)
-            .pre_arm_required(FixedWingAirframe::pre_arm_required())
-            .config(airframe.kernel_config())
-            .build()
-            .expect("build fixed-wing kernel");
+        let kernel = airframe.kernel(ts).expect("build fixed-wing kernel");
         let config = DirectBoardConfig {
             origin: GeodeticPosition::wgs84(39.1582, -75.5244, 15.0),
             epoch: DecimalYear(2026.5),
@@ -201,12 +197,15 @@ impl Flight {
             config.noise_seed,
         )
         .expect("host sensor models");
+        let mut plant = FixedWingPlant::cruising(model, START_HEIGHT_M, gravity);
+        plant.wind_ne = faults.wind_ne;
         let mut flight = Self {
             board: DirectXilBoard::new(kernel, config).expect("create board"),
-            plant: FixedWingPlant::cruising(model, START_HEIGHT_M, gravity),
+            plant,
             sensors,
             gnss_silent: faults.no_gnss,
             gyro_bias_rps: faults.gyro_bias_rps,
+            accel_bias_mps2: faults.accel_bias_mps2,
             probe_errors: None,
             step: 0,
             sequence: 0,
@@ -241,6 +240,19 @@ impl Flight {
         if let Some(imu) = sensors.imu.as_mut() {
             for (rate, bias) in imu.reading.gyro.iter_mut().zip(self.gyro_bias_rps) {
                 *rate += bias;
+            }
+            for (force, bias) in imu.reading.accel.iter_mut().zip(self.accel_bias_mps2) {
+                *force += bias;
+            }
+        }
+        // The host models know only the velocity over the ground; the
+        // probe measures the velocity through the air.
+        if let Some(airspeed) = sensors.airspeed.as_mut() {
+            let squared = |v: [f32; 3]| v.iter().map(|c| c * c).sum::<f32>();
+            let ground = squared(self.plant.ground_velocity_ned());
+            if ground > 1.0 {
+                airspeed.reading.differential_pressure_pa *=
+                    squared(self.plant.velocity_ned()) / ground;
             }
         }
         if let (Some(errors), Some(airspeed)) =

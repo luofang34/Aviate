@@ -99,6 +99,17 @@ impl EkfState {
             .fold(Scalar::MIN, Scalar::max)
     }
 
+    /// Largest variance of the velocity relative to the air mass across
+    /// the three axes: velocity minus wind, with their covariance.
+    fn max_air_velocity_variance(&self) -> Scalar {
+        let air = &self.air;
+        let north = self.p_cov.get(IDX_VEL, IDX_VEL) + air.p_ww[0][0] - 2.0 * air.p_xw[IDX_VEL][0];
+        let east = self.p_cov.get(IDX_VEL + 1, IDX_VEL + 1) + air.p_ww[1][1]
+            - 2.0 * air.p_xw[IDX_VEL + 1][1];
+        let down = self.p_cov.get(IDX_VEL + 2, IDX_VEL + 2);
+        north.max(east).max(down)
+    }
+
     /// Snapshot the current state estimate for downstream consumers.
     ///
     /// POSITION and VELOCITY are graded independently: each requires
@@ -127,21 +138,25 @@ impl EkfState {
         let position_bounded = self.max_block_variance(IDX_POS) < POSITION_COV_BOUND_M2;
         let velocity_bounded = self.max_block_variance(IDX_VEL) < VELOCITY_COV_BOUND_M2S2;
 
-        // Air-data aiding bounds the velocity without a fix. Whether the
-        // bound is tight enough is then a question of covariance alone:
-        // an unknown wind leaves the velocity over the ground uncertain,
-        // and a position that is only dead-reckoned outgrows its bound.
-        let air_aided = self.air.active && self.air.age_s <= AIR_AIDING_TIMEOUT_S;
-        let position_valid =
-            attitude_valid && pos_finite && (position_aided || air_aided) && position_bounded;
-        let velocity_valid =
-            attitude_valid && vel_finite && (velocity_aided || air_aided) && velocity_bounded;
-        let height_bounded = self.p_cov.get(IDX_POS + 2, IDX_POS + 2) < POSITION_COV_BOUND_M2;
+        let position_valid = attitude_valid && pos_finite && position_aided && position_bounded;
+        let velocity_valid = attitude_valid && vel_finite && velocity_aided && velocity_bounded;
+        // Height and vertical speed need a height source (barometer or
+        // GNSS) and a bounded height variance, but no horizontal fix.
+        let height_bounded = self.p_cov.get(IDX_POS + 2, IDX_POS + 2) < POSITION_COV_BOUND_M2
+            && self.p_cov.get(IDX_VEL + 2, IDX_VEL + 2) < VELOCITY_COV_BOUND_M2S2;
         let height_valid = attitude_valid
             && pos_finite
             && vel_finite
             && (baro_aided || position_aided)
             && height_bounded;
+        // The velocity through the air is aided by the airspeed sensor
+        // and is bounded even while the wind, and with it the velocity
+        // over the ground, is not known.
+        let air_aided = self.air.active && self.air.age_s <= AIR_AIDING_TIMEOUT_S;
+        let airspeed_valid = attitude_valid
+            && vel_finite
+            && air_aided
+            && self.max_air_velocity_variance() < VELOCITY_COV_BOUND_M2S2;
 
         let mut valid_flags = StateValidFlags::empty();
         if attitude_valid {
@@ -156,7 +171,7 @@ impl EkfState {
         if height_valid {
             valid_flags |= StateValidFlags::HEIGHT;
         }
-        if attitude_valid && air_aided {
+        if airspeed_valid {
             valid_flags |= StateValidFlags::AIRSPEED;
         }
 

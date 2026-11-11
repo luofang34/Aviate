@@ -4,8 +4,10 @@
 //! &mut EkfState`. Persistent filter state lives only in
 //! `KernelState.estimator`.
 
+use super::joint::heading_measurement;
 use super::{EkfState, IDX_POS, IDX_VEL};
 use crate::ekf::Ekf;
+use crate::math::{Quaternion, Vector3};
 use crate::sensor::{
     BaroData, GnssData, GnssFix, GnssHealth, MagData, SensorHealth, SensorReading,
 };
@@ -261,59 +263,71 @@ impl Ekf {
         }
         // COV:EXCL_STOP
 
-        // Step 4: Tilt-Compensated Heading Extraction
-        //
-        // Projecting the body field through the FULL body→NED rotation
-        // reconstructs the earth field with yaw already baked in, so the
-        // resulting heading is independent of the yaw estimate and its // COV:EXCL(phantom DA: grcov debug-info attribution onto this comment line)
-        // innovation can never correct yaw. Rotating through roll/pitch
-        // only (yaw = 0) leaves the horizontal components in a level,
-        // yaw-free frame, making `heading_mag` an absolute measurement
-        // whose innovation is the true heading error.
-        let (roll, pitch, yaw_est) = state.quat.to_euler();
-        let (sin_r, cos_r) = (roll.sin(), roll.cos());
-        let (sin_p, cos_p) = (pitch.sin(), pitch.cos());
-        // COV:EXCL(phantom DA: grcov debug-info attribution onto blank line)
-        // Level-frame horizontal field via R_tilt = Ry(pitch) * Rx(roll).  // COV:EXCL(phantom DA: grcov debug-info attribution onto this line)
-        let mag_n_level = cos_p * mag_x + sin_p * sin_r * mag_y + sin_p * cos_r * mag_z;
-        let mag_e_level = cos_r * mag_y - sin_r * mag_z;
-        // COV:EXCL(phantom DA: grcov debug-info attribution onto blank line)
-        // Positive yaw is clockwise from magnetic north (NED, z down),  // COV:EXCL(phantom DA: grcov debug-info attribution onto this line)
-        // so the heading that reproduces the true yaw from a
-        // north-pointing field is atan2(-east, north).
-        let heading_mag = (-mag_e_level).atan2(mag_n_level);
-        // Magnetic north lies `declination` east of true north, so the
-        // true heading is the magnetic heading plus the declination.
-        let heading_true = heading_mag + declination;
-
-        // Step 5: Innovation Gating & Yaw Update
-        let mut innov = heading_true - yaw_est;
-        // COV:EXCL_START(DEFENSIVE: atan2/euler outputs bounded to [-π,π], wrapping is safety guard)
-        while innov > PI {
-            innov -= 2.0 * PI;
-        }
-        while innov < -PI {
-            innov += 2.0 * PI;
-        }
-        // COV:EXCL_STOP
+        // Step 4 and 5: tilt-compensated heading and its innovation.
+        let innov = heading_innovation(&state.quat, [mag_x, mag_y, mag_z], declination);
         let r_effective = if incl_weight > 0.1 {
             self.config.meas_noise_mag / (incl_weight * incl_weight)
         } else {
             return; // COV:EXCL(DEFENSIVE: weight 0.01-0.1 rejected by earlier check)
         };
 
-        let dbg_mode = super::scalar::DBG_HEADING_MODE.load(core::sync::atomic::Ordering::Relaxed); // DBGHACK
-        if dbg_mode >= 3 {
-            let m = state.quat.rotate_vector(crate::math::Vector3::new(mag_x, mag_y, mag_z));
-            let h2 = (m.x * m.x + m.y * m.y).max(1e-6);
-            let mut h_x = [0.0; super::STATE_DIM];
-            h_x[super::IDX_ATT] = -m.z * m.x / h2;
-            h_x[super::IDX_ATT + 1] = -m.z * m.y / h2;
-            h_x[super::IDX_ATT + 2] = 1.0;
-            let noise = if dbg_mode == 4 { 0.003 / (incl_weight * incl_weight) } else { r_effective };
-            self.fuse_joint(state, &super::air_aiding::JointMeasurement { h_x, h_w: [0.0; 2], innovation: innov, noise });
+        // With air-data aiding the vehicle flies long banked turns with no
+        // position fix. The heading then also measures roll and pitch
+        // through the estimated attitude that levels the field, and the
+        // joint update corrects all three with the gyro bias. Without
+        // that path a gyro bias drives the tilt off in each turn. The
+        // configuration decides this at construction.
+        if self.has_air_aiding() {
+            let field_nav = state.quat.rotate_vector(Vector3::new(mag_x, mag_y, mag_z));
+            if let Some(measurement) = heading_measurement(field_nav, innov, r_effective) {
+                self.fuse_joint(state, &measurement);
+            }
             return;
         }
         self.heading_update(state, innov, r_effective);
     }
+}
+
+/// Heading innovation of a magnetometer sample: the true heading from
+/// the field, levelled by the estimated roll and pitch, minus the
+/// estimated heading, wrapped to `[-PI, PI]`.
+pub(crate) fn heading_innovation(
+    quat: &Quaternion,
+    field_body: [Scalar; 3],
+    declination: Scalar,
+) -> Scalar {
+    let [mag_x, mag_y, mag_z] = field_body;
+    // Projecting the body field through the FULL body→NED rotation
+    // reconstructs the earth field with yaw already baked in, so the
+    // resulting heading is independent of the yaw estimate and its // COV:EXCL(phantom DA: grcov debug-info attribution onto this comment line)
+    // innovation can never correct yaw. Rotating through roll/pitch
+    // only (yaw = 0) leaves the horizontal components in a level,
+    // yaw-free frame, making `heading_mag` an absolute measurement
+    // whose innovation is the true heading error.
+    let (roll, pitch, yaw_est) = quat.to_euler();
+    let (sin_r, cos_r) = (roll.sin(), roll.cos());
+    let (sin_p, cos_p) = (pitch.sin(), pitch.cos());
+    // COV:EXCL(phantom DA: grcov debug-info attribution onto blank line)
+    // Level-frame horizontal field via R_tilt = Ry(pitch) * Rx(roll).  // COV:EXCL(phantom DA: grcov debug-info attribution onto this line)
+    let mag_n_level = cos_p * mag_x + sin_p * sin_r * mag_y + sin_p * cos_r * mag_z;
+    let mag_e_level = cos_r * mag_y - sin_r * mag_z;
+    // COV:EXCL(phantom DA: grcov debug-info attribution onto blank line)
+    // Positive yaw is clockwise from magnetic north (NED, z down),  // COV:EXCL(phantom DA: grcov debug-info attribution onto this line)
+    // so the heading that reproduces the true yaw from a
+    // north-pointing field is atan2(-east, north).
+    let heading_mag = (-mag_e_level).atan2(mag_n_level);
+    // Magnetic north lies `declination` east of true north, so the
+    // true heading is the magnetic heading plus the declination.
+    let heading_true = heading_mag + declination;
+
+    let mut innov = heading_true - yaw_est;
+    // COV:EXCL_START(DEFENSIVE: atan2/euler outputs bounded to [-π,π], wrapping is safety guard)
+    while innov > PI {
+        innov -= 2.0 * PI;
+    }
+    while innov < -PI {
+        innov += 2.0 * PI;
+    }
+    // COV:EXCL_STOP
+    innov
 }

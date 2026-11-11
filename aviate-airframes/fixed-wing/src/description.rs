@@ -5,15 +5,17 @@ use aviate_core::control::fixed_wing::FixedWingController;
 use aviate_core::control::{ConfigMode, Limits};
 use aviate_core::ekf::air_aiding::AirAidingConfig;
 use aviate_core::ekf::{Ekf, EkfConfig};
+use aviate_core::kernel::builder::{AviateKernelBuilder, KernelBuildError};
 use aviate_core::kernel::config::{
     FixedWingParams, FixedWingParamsError, MixerGeometry, ResolvedKernelConfig,
 };
+use aviate_core::kernel::DefaultAviateKernel;
 use aviate_core::mixer::fixed_wing::{
     neutral_outputs, FixedWingMixer, AILERON_LANE, ELEVATOR_LANE, RUDDER_LANE, THROTTLE_LANE,
 };
 use aviate_core::mixer::{
     ActuatorGroupConfig, CouplingKind, FallbackPolicy, GroupKind, GroupVector, ModeConfig,
-    MAX_ACTUATORS,
+    Sanitizer, MAX_ACTUATORS,
 };
 use aviate_core::time::Timestamp;
 use aviate_core::types::Normalized;
@@ -30,6 +32,15 @@ pub struct FixedWingAirframe {
     pub limits: Limits,
     /// Air-data aiding of the estimator: airspeed, zero sideslip, wind.
     pub air_aiding: AirAidingConfig,
+}
+
+/// Why [`FixedWingAirframe::kernel`] cannot build a kernel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixedWingKernelError {
+    /// The description cannot fly.
+    Params(FixedWingParamsError),
+    /// The kernel parts do not agree.
+    Build(KernelBuildError),
 }
 
 /// Safe pattern of the surface group: every surface at neutral.
@@ -99,6 +110,32 @@ impl FixedWingAirframe {
             air_aiding: Some(self.air_aiding),
             ..EkfConfig::default()
         })
+    }
+
+    /// Construct the whole kernel of this airframe: the estimator with
+    /// air-data aiding, the law, the mixer and the fixed-wing pre-arm
+    /// checks. A host that assembles the parts itself can miss one of
+    /// them, and a fixed wing without its estimator block or pre-arm
+    /// set cannot start without a position fix.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixedWingKernelError`] when the description cannot fly
+    /// or its parts do not agree.
+    pub fn kernel(
+        &self,
+        timestamp_source: fn() -> Timestamp,
+    ) -> Result<DefaultAviateKernel<FixedWingController, FixedWingMixer>, FixedWingKernelError>
+    {
+        AviateKernelBuilder::new()
+            .estimator(self.estimator())
+            .controller(self.controller().map_err(FixedWingKernelError::Params)?)
+            .mixer(Self::mixer(timestamp_source))
+            .sanitizer(Sanitizer)
+            .pre_arm_required(Self::pre_arm_required())
+            .config(self.kernel_config())
+            .build()
+            .map_err(FixedWingKernelError::Build)
     }
 
     /// Pre-arm checks for a fixed wing: no position fix is required.

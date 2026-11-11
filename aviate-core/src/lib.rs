@@ -63,7 +63,7 @@ pub use crate::kernel_types::{
     ConfigTransitionState, CrossChannelData, CycleTiming, DegradationEvent, DisarmError,
     EnumValidationError, EnvelopeMargin, HealthReport, InitResult, TimingStats, TransitionError,
     UpdateResult, CONTROL_LOOP_DEADLINE_US, CONTROL_LOOP_PERIOD_US, CRITICAL_FAULTS,
-    DEFAULT_COMMAND_TIMEOUT_MS, TIMING_VIOLATION_THRESHOLD,
+    DEFAULT_COMMAND_TIMEOUT_MS, POSITION_FIX_FAULTS, TIMING_VIOLATION_THRESHOLD,
 };
 // `Config` was deleted in the Phase 1 ResolvedKernelConfig consolidation.
 // Consumers needing the resolved config import from `aviate_core::kernel::config`.
