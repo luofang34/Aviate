@@ -131,6 +131,15 @@ impl DirectEnvironment {
     }
 }
 
+/// Return the model declination at `position` in radians (positive east of true north).
+pub(crate) fn declination_rad_at(
+    position: GeodeticPosition,
+    epoch: DecimalYear,
+) -> Result<f32, GeomagError> {
+    let [north, east, _down] = field_at(position, epoch)?;
+    Ok(libm::atan2f(east, north))
+}
+
 fn air_at(position: GeodeticPosition) -> Result<AtmosphereState, AtmosphereError> {
     Isa.at(Altitude::GeometricMsl(position.ellipsoidal_height_m))
 }

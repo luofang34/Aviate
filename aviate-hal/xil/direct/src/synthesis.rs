@@ -3,6 +3,7 @@
 mod environment;
 mod noise;
 
+pub(crate) use environment::declination_rad_at;
 pub use environment::{DirectEnvironment, DirectOrigin, DirectSynthesisError};
 pub use noise::{
     apply_baro_noise, apply_gnss_noise, apply_imu_noise, apply_mag_noise, DirectNoiseRng,

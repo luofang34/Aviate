@@ -3,7 +3,9 @@
 use aviate_core::hal::{ActuatorHal, SensorHal};
 use aviate_core::math::Vector3;
 use aviate_core::mixer::ActuatorState;
-use aviate_core::sensor::{GeomagneticReference, GeomagneticSource};
+use aviate_core::sensor::{
+    GeomagneticReference, GeomagneticSource, GnssFix, SensorHealth, SensorReading,
+};
 use aviate_core::time::{TimeDelta, TimeSource as CoreTimeSource, Timestamp};
 use aviate_core::types::{Meters, MetersPerSecond, Radians, Seconds};
 use aviate_core::ChannelId;
@@ -13,8 +15,9 @@ use aviate_hal_io::{
 use aviate_link::mavlink::MavState;
 use aviate_link::telemetry::GeodeticOrigin;
 
+use crate::host_sensors::DirectHostSensors;
 use crate::link::DirectTelemetryFrameInput;
-use crate::synthesis::{DirectStepSample, DirectTruthSample};
+use crate::synthesis::DirectTruthSample;
 
 use super::ingress::{
     default_failsafe_command, init_state_to_mav_state, DirectCommandIngress, DirectSensorCache,
@@ -22,35 +25,69 @@ use super::ingress::{
 use super::triad::triad_init_quat;
 use super::{DirectActuatorCmd, DirectBoardHal, DirectTime, DirectXilBoard};
 
+/// Longest wait for a first GNSS fix before the estimator is seeded at rest
+/// at the origin: two periods of a 1 Hz receiver.
+const SEED_FIX_WAIT_US: u64 = 2_000_000;
+
 impl<C, M> DirectXilBoard<C, M>
 where
     C: aviate_core::control::VehicleController,
     M: aviate_core::mixer::Mixer,
 {
     /// Advance the flight controller by one ground-truth sample and return actuator outputs.
+    ///
+    /// The built-in [`crate::DirectSynthesizer`] makes the sensor samples from `truth`.
+    /// Use [`Self::step_sensors`] when the host owns the sensor models.
     pub fn step_truth(&mut self, truth: &DirectTruthSample) -> DirectActuatorCmd {
         self.handle_generation_transition(truth.reset_generation);
         let anchor_us = *self.boot_anchor_us.get_or_insert(truth.time_us);
         advance_board_hal_time(&mut self.board_hal, truth.time_us);
 
         let Some(sample) = self.synthesizer.synthesize(truth) else {
-            self.drain_inbound_commands(truth.time_us);
-            self.last_actuator_cmd.timestamp_us = truth.time_us;
-            self.last_actuator_cmd.armed = self.is_armed();
-            if !self.is_armed() {
-                self.last_actuator_cmd.outputs = [0.0; MAX_ACTUATOR_OUTPUTS];
-            }
-            return self.last_actuator_cmd;
+            return self.idle_step(truth.time_us);
         };
+        let geomag = GeomagneticReference {
+            declination: Radians(self.synthesizer.environment().declination_rad()),
+            source: GeomagneticSource::Model,
+        };
+        self.run_cycle(
+            &sample.host_sensors(Some(geomag)),
+            sample.delta_us,
+            geomag,
+            anchor_us,
+        )
+    }
 
-        self.feed_and_read_sensors(&sample);
-        self.maybe_initialize_ekf();
-        let geomag = self.current_geomagnetic_reference();
+    /// Hold the last actuator command on a step that runs no kernel cycle.
+    pub(super) fn idle_step(&mut self, time_us: u64) -> DirectActuatorCmd {
+        self.drain_inbound_commands(time_us);
+        self.last_actuator_cmd.timestamp_us = time_us;
+        self.last_actuator_cmd.armed = self.is_armed();
+        if !self.is_armed() {
+            self.last_actuator_cmd.outputs = [0.0; MAX_ACTUATOR_OUTPUTS];
+        }
+        self.last_actuator_cmd
+    }
+
+    /// Run one kernel cycle on `sensors` after `delta_us` of simulation time.
+    ///
+    /// Both step entries end here, so the kernel cannot tell which one
+    /// supplied the samples.
+    pub(super) fn run_cycle(
+        &mut self,
+        sensors_in: &DirectHostSensors,
+        delta_us: u64,
+        geomag: GeomagneticReference,
+        anchor_us: u64,
+    ) -> DirectActuatorCmd {
+        let time_us = sensors_in.time_us;
+        self.feed_and_read_sensors(sensors_in);
+        self.maybe_initialize_ekf(geomag.declination.0, time_us);
         let sensors = self.sensor_cache.to_sensor_set(Some(geomag));
 
         if !self.kernel.is_ready() {
             let ts = Timestamp {
-                ticks: truth.time_us,
+                ticks: time_us,
                 source: CoreTimeSource::Internal,
             };
             let prev = self.kernel.state.init_state;
@@ -61,13 +98,13 @@ where
             }
         }
 
-        self.drain_inbound_commands(truth.time_us);
+        self.drain_inbound_commands(time_us);
 
         let time_delta = TimeDelta {
-            dt_sec: Seconds(((sample.delta_us as f32) * 1.0e-6).clamp(0.0001, 0.1)),
-            tick_delta: sample.delta_us,
+            dt_sec: Seconds(((delta_us as f32) * 1.0e-6).clamp(0.0001, 0.1)),
+            tick_delta: delta_us,
         };
-        let command_age_ms = self.ingress.setpoint_age_ms(truth.time_us);
+        let command_age_ms = self.ingress.setpoint_age_ms(time_us);
         let flight_cmd = self.ingress.active_command();
         let result = self.kernel.update(
             ChannelId(0),
@@ -81,12 +118,12 @@ where
         self.last_effective_command = result.effective_command;
         self.board_hal.write(&result.actuator);
 
-        let cmd = self.take_actuator_cmd(truth.time_us);
+        let cmd = self.take_actuator_cmd(time_us);
         self.last_actuator_cmd = cmd;
 
         let time_boot_ms =
-            u32::try_from(truth.time_us.saturating_sub(anchor_us) / 1_000).unwrap_or(u32::MAX);
-        self.emit_cycle_telemetry(truth.time_us, time_boot_ms, &result.estimate, geomag);
+            u32::try_from(time_us.saturating_sub(anchor_us) / 1_000).unwrap_or(u32::MAX);
+        self.emit_cycle_telemetry(time_us, time_boot_ms, &result.estimate, geomag);
         cmd
     }
 
@@ -112,7 +149,7 @@ where
         }
     }
 
-    fn handle_generation_transition(&mut self, generation: u32) {
+    pub(super) fn handle_generation_transition(&mut self, generation: u32) {
         if let Some(prev_gen) = self.active_generation {
             if prev_gen != generation {
                 log::info!("DirectXilBoard reset_generation {prev_gen} -> {generation}");
@@ -144,44 +181,80 @@ where
         self.last_gnss_raw = None;
         self.boot_anchor_us = None;
         self.ekf_initialized = false;
+        self.host_clock_us = None;
+        self.seed_wait_since_us = None;
+        self.model_declination_rad = self.origin_declination_rad;
     }
 
-    fn feed_and_read_sensors(&mut self, sample: &DirectStepSample) {
+    fn feed_and_read_sensors(&mut self, sensors: &DirectHostSensors) {
         self.sensor_cache.begin_step();
-        self.board_hal.imu_mut().feed(sample.imu);
-        if let Some(baro) = sample.baro {
-            self.board_hal.baro_mut().feed(baro);
+        if let Some(imu) = sensors.imu {
+            self.board_hal.imu_mut().feed(imu.reading);
         }
-        if let Some(mag) = sample.mag {
-            self.board_hal.mag_mut().feed(mag);
+        if let Some(baro) = sensors.baro {
+            self.board_hal.baro_mut().feed(baro.reading);
         }
-        if let Some(gnss) = sample.gnss {
-            self.last_gnss_raw = Some(gnss);
-            self.board_hal.gnss_mut().feed(gnss);
+        if let Some(mag) = sensors.mag {
+            self.board_hal.mag_mut().feed(mag.reading);
+        }
+        if let Some(gnss) = sensors.gnss {
+            self.last_gnss_raw = Some(gnss.reading);
+            self.board_hal.gnss_mut().feed(gnss.reading);
         }
 
-        if let Some(imu) = self.board_hal.read_imu() {
+        // The HAL stamps a reading with the board clock. The measurement
+        // time that the source reported replaces that stamp.
+        if let Some(mut imu) = self.board_hal.read_imu() {
+            stamp(&mut imu, sensors.imu.map(|s| s.timestamp_us));
             self.sensor_cache.imu = Some(imu);
         }
-        if let Some(baro) = self.board_hal.read_baro() {
+        if let Some(mut baro) = self.board_hal.read_baro() {
+            stamp(&mut baro, sensors.baro.map(|s| s.timestamp_us));
             self.sensor_cache.record_baro(baro);
         }
-        if let Some(mag) = self.board_hal.read_mag() {
+        if let Some(mut mag) = self.board_hal.read_mag() {
+            stamp(&mut mag, sensors.mag.map(|s| s.timestamp_us));
             self.sensor_cache.record_mag(mag);
         }
-        if let Some(gnss) = self.board_hal.read_gnss() {
+        if let Some(mut gnss) = self.board_hal.read_gnss() {
+            stamp(&mut gnss, sensors.gnss.map(|s| s.timestamp_us));
             self.sensor_cache.record_gnss(gnss);
+        }
+        if let Some(airspeed) = sensors.airspeed {
+            self.sensor_cache.record_airspeed(SensorReading {
+                value: airspeed.reading.air_data(),
+                valid: true,
+                source_id: 0,
+                timestamp: Timestamp {
+                    ticks: airspeed.timestamp_us,
+                    source: CoreTimeSource::Internal,
+                },
+                health: SensorHealth::Good,
+            });
         }
     }
 
-    fn maybe_initialize_ekf(&mut self) {
+    /// Seed the estimator from the first attitude sources and the first GNSS fix.
+    ///
+    /// The estimator never adopts a fix that its innovation gate rejects, so a
+    /// seed at rest at the origin is permanent for a vehicle that starts in
+    /// motion. The seed therefore waits for a fix. A board that gets no fix
+    /// within [`SEED_FIX_WAIT_US`] is taken to be at rest at the origin.
+    fn maybe_initialize_ekf(&mut self, decl: f32, time_us: u64) {
         if self.ekf_initialized {
             return;
         }
         let (Some(imu), Some(mag)) = (self.sensor_cache.imu, self.sensor_cache.mag) else {
             return;
         };
-        let decl = self.synthesizer.environment().declination_rad();
+        let fix = self
+            .sensor_cache
+            .gnss
+            .filter(|gnss| gnss.valid && gnss.value.fix != GnssFix::None);
+        let waited_us = time_us.saturating_sub(*self.seed_wait_since_us.get_or_insert(time_us));
+        if fix.is_none() && waited_us < SEED_FIX_WAIT_US {
+            return;
+        }
         let init_quat = triad_init_quat(
             [
                 imu.value.accel[0].0,
@@ -195,7 +268,7 @@ where
             ],
             decl,
         );
-        let (pos, vel) = match self.sensor_cache.gnss {
+        let (pos, vel) = match fix {
             Some(gnss) => (
                 Vector3::new(
                     gnss.value.position_ned[0],
@@ -271,13 +344,6 @@ where
         }
     }
 
-    fn current_geomagnetic_reference(&self) -> GeomagneticReference {
-        GeomagneticReference {
-            declination: Radians(self.synthesizer.environment().declination_rad()),
-            source: GeomagneticSource::Model,
-        }
-    }
-
     fn emit_cycle_telemetry(
         &mut self,
         sim_time_us: u64,
@@ -305,7 +371,14 @@ where
     }
 }
 
-fn advance_board_hal_time(hal: &mut DirectBoardHal, now_us: u64) {
+/// Replace the HAL stamp of `reading` with the reported measurement time.
+fn stamp<T>(reading: &mut SensorReading<T>, measured_us: Option<u64>) {
+    if let Some(ticks) = measured_us {
+        reading.timestamp.ticks = ticks;
+    }
+}
+
+pub(super) fn advance_board_hal_time(hal: &mut DirectBoardHal, now_us: u64) {
     let was_armed = hal.is_armed();
     let pending_cmd = hal.actuator_mut().take_cmd();
     let pending_status = hal.actuator_mut().read_status();
