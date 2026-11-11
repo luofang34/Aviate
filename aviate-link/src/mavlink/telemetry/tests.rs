@@ -427,3 +427,63 @@ fn achieved_rate_never_exceeds_requested_rate() {
     // The stream must still run close to the requested rate.
     assert!(heartbeats >= 3 * seconds - 1);
 }
+
+#[test]
+fn each_airframe_geometry_has_its_heartbeat_type() {
+    use aviate_core::kernel::config::MixerGeometry;
+    for (geometry, expected) in [
+        (MixerGeometry::QuadX, MavType::Quadrotor),
+        (MixerGeometry::QuadXX500, MavType::Quadrotor),
+        (MixerGeometry::QuadXX500ReversedSpin, MavType::Quadrotor),
+        (MixerGeometry::FixedWing, MavType::FixedWing),
+    ] {
+        assert_eq!(vehicle_mav_type(geometry), expected, "{geometry:?}");
+    }
+}
+
+fn heartbeat_type(frame: &[u8]) -> Option<u8> {
+    match parsed_message(frame) {
+        Some(MavMessage::Heartbeat(heartbeat)) => Some(heartbeat.mav_type),
+        _ => None,
+    }
+}
+
+#[test]
+fn the_heartbeat_carries_the_vehicle_type_it_is_given() {
+    for mav_type in [MavType::FixedWing, MavType::Quadrotor] {
+        let mut seq = 0;
+        let mut buf = [0u8; 64];
+        let len = format_heartbeat(&Default::default(), mav_type, 1, 1, &mut seq, &mut buf)
+            .unwrap_or_default();
+        assert_eq!(heartbeat_type(&buf[..len]), Some(mav_type as u8));
+    }
+}
+
+#[test]
+fn the_cycle_formatter_claims_no_airframe_until_told_one() {
+    let first_heartbeat = |formatter: &mut MavlinkCycleFormatter| {
+        let mut queue = DefaultTelemetryQueue::new();
+        formatter.format_cycle(&TelemetrySnapshot::default(), &mut queue);
+        let mut found = None;
+        while queue.pop_with(|frame| {
+            if found.is_none() {
+                found = heartbeat_type(frame);
+            }
+        }) {}
+        found
+    };
+    let formatter = MavlinkCycleFormatter::with_ids(&TelemetryConfig::default(), 400, 1, 1);
+    assert!(formatter.is_ok());
+    let Ok(mut formatter) = formatter else {
+        return;
+    };
+    assert_eq!(
+        first_heartbeat(&mut formatter),
+        Some(MavType::Generic as u8)
+    );
+    formatter.set_vehicle_type(MavType::FixedWing);
+    assert_eq!(
+        first_heartbeat(&mut formatter),
+        Some(MavType::FixedWing as u8)
+    );
+}

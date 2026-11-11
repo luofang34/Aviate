@@ -10,7 +10,7 @@ pub use ring::DirectByteRing;
 use aviate_hal_io::{CommandOutcome, SystemCommand};
 use aviate_link::mavlink::protocol::CommandAck;
 use aviate_link::mavlink::{
-    mav_cmd, mav_result, serialize_mavlink, LocalAddress, MavMessage, MavState,
+    mav_cmd, mav_result, serialize_mavlink, LocalAddress, MavMessage, MavState, MavType,
 };
 
 use mavlink_rx::{next_inbound_action, AirspeedRequest, InboundAction, Sender};
@@ -102,6 +102,7 @@ pub struct DirectMavlinkEndpoint<
     seq: u8,
     armed: bool,
     mav_state: MavState,
+    mav_type: MavType,
     rates: DirectTelemetryRates,
     last_heartbeat_us: Option<u64>,
     last_sys_status_us: Option<u64>,
@@ -129,6 +130,7 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
             seq: 0,
             armed: false,
             mav_state: MavState::Boot,
+            mav_type: MavType::Generic,
             rates: DirectTelemetryRates {
                 heartbeat_hz: 1,
                 sys_status_hz: 2,
@@ -254,6 +256,18 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
     /// Update the armed flag advertised in `HEARTBEAT`.
     pub fn set_armed(&mut self, armed: bool) {
         self.armed = armed;
+    }
+
+    /// Set the `MAV_TYPE` advertised in `HEARTBEAT`. It describes the
+    /// airframe, so a simulator world reset leaves it as it is.
+    pub fn set_vehicle_type(&mut self, mav_type: MavType) {
+        self.mav_type = mav_type;
+    }
+
+    /// Return the `MAV_TYPE` advertised in `HEARTBEAT`.
+    #[must_use]
+    pub const fn vehicle_type(&self) -> MavType {
+        self.mav_type
     }
 
     /// Update the `MAV_STATE` advertised in `HEARTBEAT`.

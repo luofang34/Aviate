@@ -32,23 +32,7 @@ fn runner() -> SitlRunner<MultirotorController, QuadXMixer> {
         .sanitizer(Sanitizer)
         .build()
         .expect("valid test kernel");
-    let transport = SitlIO::new(XilConfig::for_instance_with_net(
-        0,
-        XilNetConfig {
-            base_port: 0,
-            stride: 16,
-        },
-    ))
-    .expect("ephemeral SITL transport");
-    let board_hal = BoardHal::new(
-        FakeImu::new(),
-        FakeBaro::new(),
-        FakeMag::new(),
-        FakeGnss::new(),
-        SitlTime::new(),
-        FakeActuator::new(),
-    );
-    SitlRunner::new(transport, board_hal, kernel)
+    SitlRunner::new(transport(), board_hal(), kernel)
 }
 
 /// The faults latched until ground reset. The sensor-health bits follow
@@ -167,4 +151,50 @@ fn a_stalled_host_with_steady_sim_steps_latches_nothing() {
         "{:?}",
         runner.kernel.state.faults
     );
+}
+
+fn transport() -> SitlIO {
+    SitlIO::new(XilConfig::for_instance_with_net(
+        0,
+        XilNetConfig {
+            base_port: 0,
+            stride: 16,
+        },
+    ))
+    .expect("ephemeral SITL transport")
+}
+
+fn board_hal() -> super::super::SitlBoardHal {
+    BoardHal::new(
+        FakeImu::new(),
+        FakeBaro::new(),
+        FakeMag::new(),
+        FakeGnss::new(),
+        SitlTime::new(),
+        FakeActuator::new(),
+    )
+}
+
+/// The heartbeat names the airframe of the kernel configuration: a host
+/// that checks the vehicle type refuses a rotorcraft report for a
+/// configured fixed wing.
+#[test]
+fn the_heartbeat_type_follows_the_airframe_configuration() {
+    use aviate_link::mavlink::MavType;
+
+    assert_eq!(runner().transport.vehicle_type(), MavType::Quadrotor);
+
+    let c172 = aviate_airframe_fixed_wing::c172();
+    let kernel = AviateKernelBuilder::new()
+        .estimator(Ekf::default())
+        .controller(c172.controller().expect("valid description"))
+        .mixer(aviate_airframe_fixed_wing::FixedWingAirframe::mixer(
+            timestamp,
+        ))
+        .sanitizer(Sanitizer)
+        .config(c172.kernel_config())
+        .build()
+        .expect("valid fixed-wing kernel");
+    let fixed_wing = SitlRunner::new(transport(), board_hal(), kernel);
+    assert_eq!(fixed_wing.transport.vehicle_type(), MavType::FixedWing);
 }
