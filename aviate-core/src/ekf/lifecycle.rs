@@ -1,6 +1,6 @@
 //! Construction, seeding, reset and numeric-fault latches of [`EkfState`].
 
-use super::{air_aiding, seed, validity, EkfState};
+use super::{air_aiding, rebase, seed, validity, EkfState};
 use crate::math::{Quaternion, Vector3, QUAT_NORM_EPS};
 #[cfg(feature = "test-hooks")]
 use crate::state::{StateEstimate, StateValidFlags};
@@ -45,6 +45,7 @@ impl EkfState {
             imu_age_s: 0.0,
             accel_clip_s: 0.0,
             air: air_aiding::AirAidingState::default(),
+            frame: rebase::NavFrame::default(),
         }
     }
 
@@ -80,6 +81,8 @@ impl EkfState {
         self.baro_age_s = validity::AGE_SATURATION_S;
         self.imu_age_s = 0.0;
         self.accel_clip_s = 0.0;
+        // A seed is expressed in the configured frame.
+        self.frame = rebase::NavFrame::default();
         self.air = air_aiding::AirAidingState::default();
     }
 

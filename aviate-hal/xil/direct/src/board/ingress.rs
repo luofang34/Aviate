@@ -26,6 +26,14 @@ impl DirectCommandIngress {
         }
     }
 
+    /// Move the retained setpoint into a new navigation frame. Its age
+    /// stays: the command is the same command, in other coordinates.
+    pub(super) fn rebase(&mut self, shift: &aviate_core::ekf::rebase::FrameShift) {
+        if let Some(command) = self.setpoint.as_mut() {
+            super::frame::rebase_command(command, shift);
+        }
+    }
+
     /// Return the latest retained flight setpoint, or [`default_failsafe_command`] before the first.
     pub(super) fn active_command(&self) -> Command {
         self.setpoint

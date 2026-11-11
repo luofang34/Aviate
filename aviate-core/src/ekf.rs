@@ -53,6 +53,7 @@ mod imu_gap;
 mod joint;
 mod lifecycle;
 mod predict;
+pub mod rebase;
 mod replicable;
 pub mod runtime;
 mod scalar;
@@ -151,6 +152,13 @@ pub trait Estimator {
     /// `StateEstimate` projection, so they ignore the call. EKF-shape
     /// estimators (`Ekf`, future MEKF) override to forward the
     /// injection into their concrete state.
+    /// Express the runtime state in a new navigation frame.
+    ///
+    /// The host moves the frame origin to the vehicle when the vehicle
+    /// is far from it. The change is rigid; an implementation moves
+    /// every frame-referenced quantity and nothing else.
+    fn rebase(&self, state: &mut Self::RuntimeState, shift: &rebase::FrameShift);
+
     #[cfg(feature = "test-hooks")]
     fn inject_state(&self, state: &mut Self::RuntimeState, est: &StateEstimate) {
         let _ = (state, est);
@@ -313,6 +321,8 @@ pub struct EkfState {
     pub accel_clip_s: Scalar,
     /// Wind states and their covariance blocks (`ekf/air_aiding.rs`).
     pub air: air_aiding::AirAidingState,
+    /// The navigation frame of the estimate (`ekf/rebase.rs`).
+    pub frame: rebase::NavFrame,
 }
 // COV:EXCL_STOP
 

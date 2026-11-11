@@ -144,8 +144,9 @@ fn no_gnss_ever_with_a_gyro_turn_on_bias() {
 fn horizontal_nees(flight: &Flight) -> f32 {
     let estimate = flight.estimate();
     let p = &flight.board.kernel().state.estimator.p_cov;
-    let north = estimate.position_ned[0].0 - flight.plant.pos_ned[0];
-    let east = estimate.position_ned[1].0 - flight.plant.pos_ned[1];
+    let truth = flight.truth_in_estimate_frame();
+    let north = estimate.position_ned[0].0 - truth[0];
+    let east = estimate.position_ned[1].0 - truth[1];
     let (pnn, pne, pee) = (p.get(0, 0), p.get(0, 1), p.get(1, 1));
     let det = pnn * pee - pne * pne;
     (north * north * pee - 2.0 * north * east * pne + east * east * pnn) / det
@@ -170,9 +171,12 @@ fn gnss_outage_with_turns_and_a_wind_shift_then_recovery() {
     );
 
     // 300 s without GNSS: three legs, two 90 degree turns, and a wind
-    // that changes by 3 m/s on each axis during the second leg.
+    // that changes by 3 m/s on each axis during the second leg. The
+    // flight covers about 16 km, so the frame origin moves about 16 times.
     flight.gnss_silent = true;
+    let rebases_before = flight.board.kernel().state.estimator.frame.rebases;
     let mut nees = Vec::new();
+    let mut worst_height_m = 0.0_f32;
     for (index, course) in [0.0, QUARTER, 2.0 * QUARTER].into_iter().enumerate() {
         flight.plant.wind_rate_ne = if index == 1 { WIND_SHIFT } else { [0.0; 2] };
         for _ in 0..20 {
@@ -183,9 +187,11 @@ fn gnss_outage_with_turns_and_a_wind_shift_then_recovery() {
                 course_hold(course),
             ));
             nees.push(horizontal_nees(&flight));
+            worst_height_m = worst_height_m.max((flight.plant.height() - HEIGHT_M).abs());
         }
     }
     flight.plant.wind_rate_ne = [0.0; 2];
+    let rebases = flight.board.kernel().state.estimator.frame.rebases - rebases_before;
     let fallback = flight.board.last_effective_command().mode;
     let mean_nees = nees.iter().sum::<f32>() / nees.len() as f32;
     let max_nees = nees.iter().fold(0.0_f32, |a, b| a.max(*b));
@@ -221,13 +227,17 @@ fn gnss_outage_with_turns_and_a_wind_shift_then_recovery() {
     }
     println!(
         "outage: worst {worst:?} deg, fallback {fallback:?}, NEES mean {mean_nees:.2} max {max_nees:.2}, \
+         {rebases} rebases, worst height error {worst_height_m:.2} m, \
          attitude error change in the first 3 s of fixes {largest_step:.2} deg, \
          position valid again after {position_back_after_s:?} s, wind {:?} true {:?}",
         flight.board.kernel().state.estimator.air.wind_ne,
         flight.plant.wind_ne
     );
     assert_eq!(fallback, ControlMode::AltitudeHold);
+    assert!(rebases >= 10, "the outage crosses many frames: {rebases}");
     assert!(worst.within(2.0, 5.0), "{worst:?}");
+    // A rebase must not carry a height offset into the next frame.
+    assert!(worst_height_m < 0.75, "height error {worst_height_m}");
     assert!(
         mean_nees < 2.0,
         "position covariance is overconfident: {mean_nees}"

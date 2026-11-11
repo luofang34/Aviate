@@ -16,8 +16,11 @@ use aviate_xil_direct::{
 };
 use world_core::{normal_gravity, DecimalYear, GeodeticPosition};
 
+#[path = "earth.rs"]
+mod earth;
 #[path = "fixed_wing.rs"]
 mod fixed_wing_plant;
+use earth::Earth;
 pub use fixed_wing_plant::{FixedWingPlant, PlantModel};
 
 const DT_US: u64 = 4_000;
@@ -43,6 +46,8 @@ pub struct Flight {
     pub board: Board,
     pub plant: FixedWingPlant,
     sensors: DirectSynthesizer,
+    /// The curved Earth that the host models report against.
+    earth: Earth,
     /// The GNSS receiver supplies no sample.
     pub gnss_silent: bool,
     /// Constant bias of the gyroscope in body axes \[rad/s\].
@@ -203,6 +208,7 @@ impl Flight {
             board: DirectXilBoard::new(kernel, config).expect("create board"),
             plant,
             sensors,
+            earth: Earth::new(config.origin),
             gnss_silent: faults.no_gnss,
             gyro_bias_rps: faults.gyro_bias_rps,
             accel_bias_mps2: faults.accel_bias_mps2,
@@ -226,7 +232,7 @@ impl Flight {
     }
 
     pub fn advance(&mut self) {
-        let truth = self.plant.truth(self.step * DT_US, self.step);
+        let truth = self.curved_truth();
         let mut sensors = match self.sensors.synthesize(&truth) {
             Some(sample) => sample.host_sensors(None),
             None => DirectHostSensors {
@@ -237,6 +243,7 @@ impl Flight {
         if self.gnss_silent {
             sensors.gnss = None;
         }
+        self.add_transport_rate(&mut sensors);
         if let Some(imu) = sensors.imu.as_mut() {
             for (rate, bias) in imu.reading.gyro.iter_mut().zip(self.gyro_bias_rps) {
                 *rate += bias;
@@ -366,6 +373,60 @@ impl Flight {
             seen.elevator_deviation = elevator.deviation();
         }
         seen
+    }
+
+    /// The plant's truth on the curved Earth for the host models: the
+    /// position and velocity in the configured plane, which the models
+    /// read as plane coordinates (GNSS, and the barometer through the
+    /// height above the ellipsoid). Attitude and body kinematics stay
+    /// relative to the local level, as an IMU and a magnetometer see them.
+    fn curved_truth(&self) -> aviate_xil_direct::DirectTruthSample {
+        let plant = &self.plant;
+        let mut truth = plant.truth(self.step * DT_US, self.step);
+        let at = self
+            .earth
+            .position(plant.pos_ned[0], plant.pos_ned[1], plant.height());
+        truth.position_ned_m = self.earth.plane_position(at);
+        if let Some(measured) = truth.measured.as_mut() {
+            measured.velocity_ned_mps = self.earth.plane_vector(at, plant.ground_velocity_ned());
+        }
+        truth
+    }
+
+    /// The gyroscope also measures the turn of the local level as the
+    /// vehicle moves over the ellipsoid (the transport rate).
+    fn add_transport_rate(&self, sensors: &mut DirectHostSensors) {
+        let plant = &self.plant;
+        let at = self
+            .earth
+            .position(plant.pos_ned[0], plant.pos_ned[1], plant.height());
+        if let Some(imu) = sensors.imu.as_mut() {
+            let transport = self.earth.transport_rate_body(
+                at,
+                plant.ground_velocity_ned(),
+                plant.attitude_wxyz(),
+            );
+            for (rate, extra) in imu.reading.gyro.iter_mut().zip(transport) {
+                *rate += extra;
+            }
+        }
+    }
+
+    /// The true position in the frame of the estimate.
+    pub fn truth_in_estimate_frame(&self) -> [f32; 3] {
+        let plant = &self.plant;
+        let at = self
+            .earth
+            .position(plant.pos_ned[0], plant.pos_ned[1], plant.height());
+        let frame = self.board.kernel().state.estimator.frame;
+        let origin = frame.origin.map_or(
+            (
+                self.board.config().origin.latitude_deg,
+                self.board.config().origin.longitude_deg,
+            ),
+            |o| (o.latitude_deg, o.longitude_deg),
+        );
+        self.earth.position_in_frame(at, origin)
     }
 
     /// The estimate that the kernel flies on.

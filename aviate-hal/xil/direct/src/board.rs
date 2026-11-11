@@ -1,5 +1,6 @@
 //! In-process `no_std` XIL board driving [`aviate_core::DefaultAviateKernel`].
 
+mod frame;
 mod host;
 mod ingress;
 mod step;
@@ -20,6 +21,7 @@ use crate::synthesis::{
     DirectNoiseTier, DirectOrigin, DirectSensorRates, DirectSynthesisError, DirectSynthesizer,
 };
 
+pub use frame::DEFAULT_REBASE_RADIUS_M;
 use ingress::{default_failsafe_command, DirectCommandIngress, DirectSensorCache};
 
 /// Simulation clock in microseconds implementing [`TimeSource`] and [`TimeHal`].
@@ -140,6 +142,12 @@ where
     origin_declination_rad: f32,
     /// Declination from the geomagnetic model at the last GNSS fix.
     model_declination_rad: f32,
+    /// Distance from the frame origin at which the origin moves to the
+    /// vehicle \[m\].
+    rebase_radius_m: f64,
+    /// Map from the configured frame to the frame of the estimate, once
+    /// the origin has moved.
+    frame_map: Option<aviate_core::ekf::rebase::FrameShift>,
 }
 
 impl<C, M> DirectXilBoard<C, M>
@@ -190,6 +198,8 @@ where
             origin_pressure_pa,
             origin_declination_rad,
             model_declination_rad: origin_declination_rad,
+            rebase_radius_m: frame::DEFAULT_REBASE_RADIUS_M,
+            frame_map: None,
         })
     }
 

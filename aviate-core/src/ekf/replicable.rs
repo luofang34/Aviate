@@ -18,8 +18,19 @@ impl crate::replicable::Replicable for EkfState {
     // Total = (19 + 225) * 4 + 2 + 5 + 4 + 4 + 4 = 995 bytes.
     // The wind block adds 2 wind states, 4 wind covariances, 2 cross
     // covariances for each filter state, one age and one activity tag.
-    const ENCODED_LEN: usize =
-        (19 + STATE_DIM * STATE_DIM) * 4 + 2 + 5 + 4 + 4 + 4 + (2 + 4 + 2 * STATE_DIM + 1) * 4 + 1;
+    // The navigation frame adds a presence byte, the origin latitude and
+    // longitude (2 f64) and the rebase count (u32).
+    const ENCODED_LEN: usize = (19 + STATE_DIM * STATE_DIM) * 4
+        + 2
+        + 5
+        + 4
+        + 4
+        + 4
+        + (2 + 4 + 2 * STATE_DIM + 1) * 4
+        + 1
+        + 1
+        + 2 * 8
+        + 4;
 
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
         use crate::replicable::copy_into;
@@ -71,6 +82,13 @@ impl crate::replicable::Replicable for EkfState {
         }
         w += copy_into(buf, w, &air.age_s.to_le_bytes());
         w += copy_into(buf, w, &[u8::from(air.active)]);
+        let origin = self.frame.origin;
+        w += copy_into(buf, w, &[u8::from(origin.is_some())]);
+        let (latitude, longitude) =
+            origin.map_or((0.0, 0.0), |o| (o.latitude_deg, o.longitude_deg));
+        w += copy_into(buf, w, &latitude.to_le_bytes());
+        w += copy_into(buf, w, &longitude.to_le_bytes());
+        w += copy_into(buf, w, &self.frame.rebases.to_le_bytes());
         w
     }
 }

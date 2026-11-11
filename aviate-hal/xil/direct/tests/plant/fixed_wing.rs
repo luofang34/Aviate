@@ -223,7 +223,7 @@ impl FixedWingPlant {
         slip.sin().atan2(slip.cos())
     }
 
-    fn attitude_wxyz(&self) -> [f32; 4] {
+    pub fn attitude_wxyz(&self) -> [f32; 4] {
         // ZYX Euler angles.
         let (sr, cr) = (0.5 * self.roll).sin_cos();
         let (sp, cp) = (0.5 * self.pitch).sin_cos();

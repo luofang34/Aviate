@@ -102,6 +102,9 @@ where
         anchor_us: u64,
     ) -> DirectActuatorCmd {
         let time_us = sensors_in.time_us;
+        // A rebase comes first, so that this cycle's fix, estimate and
+        // telemetry share one frame.
+        self.maybe_rebase();
         self.feed_and_read_sensors(sensors_in);
         self.maybe_initialize_ekf(geomag.declination.0, time_us);
         let sensors = self.sensor_cache.to_sensor_set(Some(geomag));
@@ -205,6 +208,7 @@ where
         self.host_clock_us = None;
         self.seed_wait_since_us = None;
         self.model_declination_rad = self.origin_declination_rad;
+        self.frame_map = None;
     }
 
     fn feed_and_read_sensors(&mut self, sensors: &DirectHostSensors) {
@@ -220,7 +224,8 @@ where
         }
         if let Some(gnss) = sensors.gnss {
             self.last_gnss_raw = Some(gnss.reading);
-            self.board_hal.gnss_mut().feed(gnss.reading);
+            let mapped = self.map_gnss(gnss.reading);
+            self.board_hal.gnss_mut().feed(mapped);
         }
 
         // The HAL stamps a reading with the board clock. The measurement
@@ -303,6 +308,8 @@ where
                 self.kernel.state.estimator.init(origin, rest, init_quat);
             }
         }
+        // A seed is in the configured frame.
+        self.frame_map = None;
         self.ekf_initialized = true;
     }
 
@@ -413,9 +420,10 @@ where
         estimate: &aviate_core::state::StateEstimate,
         geomag: GeomagneticReference,
     ) {
+        let frame = self.frame_origin();
         let origin = GeodeticOrigin {
-            latitude_deg: self.config.origin.latitude_deg,
-            longitude_deg: self.config.origin.longitude_deg,
+            latitude_deg: frame.latitude_deg,
+            longitude_deg: frame.longitude_deg,
             altitude_msl_m: self.config.origin.ellipsoidal_height_m as f32,
         };
         let input = DirectTelemetryFrameInput {

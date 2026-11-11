@@ -258,6 +258,10 @@ impl super::Estimator for Ekf {
         self.fuse_air_data(state, sensors, dt);
     }
 
+    fn rebase(&self, state: &mut EkfState, shift: &super::rebase::FrameShift) {
+        state.rebase(shift);
+    }
+
     fn estimate(&self, state: &EkfState) -> crate::state::StateEstimate {
         state.get_estimate()
     }
