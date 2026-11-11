@@ -126,3 +126,30 @@ fn the_reported_position_is_continuous_across_moves() {
     // hundreds of metres.
     assert!(largest_m < 7.0, "{largest_m}");
 }
+
+#[test]
+fn each_move_announces_the_new_origin() {
+    let mut flight = c172_flight(DirectNoiseTier::Off);
+    flight.board.set_geoid_separation(-33.4);
+    let mut origins = Vec::new();
+    let mut buf = [0_u8; 8192];
+    for _ in 0..(45.0 / flight::DT_S) as u32 {
+        flight.advance();
+        let n = flight.board.pop_mavlink_tx(&mut buf);
+        let mut cursor = 0;
+        while cursor < n {
+            let parsed = parse_mavlink_frame(&buf[cursor..n]).expect("frame");
+            cursor += parsed.consumed;
+            if let MavMessage::GpsGlobalOrigin(origin) = parsed.message {
+                origins.push(origin);
+            }
+        }
+    }
+    let frame = flight.board.kernel().state.estimator.frame;
+    let newest = frame.origin.expect("the origin moved");
+    // One at the start and one per move, the last at the present origin.
+    assert_eq!(origins.len() as u32, 1 + frame.rebases, "{origins:?}");
+    let last = origins.last().expect("an origin");
+    assert_eq!(last.latitude, (newest.latitude_deg * 1e7).round() as i32);
+    assert_eq!(last.longitude, (newest.longitude_deg * 1e7).round() as i32);
+}

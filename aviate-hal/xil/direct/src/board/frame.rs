@@ -5,6 +5,11 @@
 //! rebase radius from it, through the estimator's rigid
 //! [`aviate_core::ekf::rebase`] hook. Hosts keep reporting GNSS in the
 //! configured frame; the board maps each fix into the present frame.
+//!
+//! `LOCAL_POSITION_NED` and local position targets are relative to the
+//! newest `GPS_GLOBAL_ORIGIN`, which the board sends after each move. A
+//! retained target moves with the frame. A height is above the datum
+//! and does not change with the origin.
 
 use aviate_core::control::Command;
 use aviate_core::ekf::rebase::{FrameShift, NavOrigin};
@@ -154,6 +159,8 @@ where
         self.kernel.rebase_navigation_frame(&shift);
         self.ingress.rebase(&shift);
         self.frame_map = Some(map);
+        // Hosts express local targets against the newest origin.
+        self.origin_announced = false;
         log::info!(
             "DirectXilBoard frame origin moved to {:.7}, {:.7}",
             to.latitude_deg,
