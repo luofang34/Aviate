@@ -17,9 +17,10 @@ mod targets;
 #[allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 mod tests;
 
-pub use air_data::{AirDataLatch, AirspeedSource};
+pub use air_data::{AirDataLatch, AirspeedSource, StaticAir};
 pub use attitude::RateLoopState;
 pub use energy::EnergyLoopState;
+pub use lateral::LateralLoopState;
 pub use runtime_state::{AirSample, FixedWingRuntimeState, FlightTargets};
 
 use crate::control::{
@@ -28,10 +29,12 @@ use crate::control::{
 };
 use crate::kernel::config::{FixedWingParams, FixedWingParamsError, ResolvedKernelConfig};
 use crate::state::StateEstimate;
-use crate::types::{NormalizedSigned, NormalizedThrust};
+use crate::types::{NormalizedSigned, NormalizedThrust, Scalar};
 
 use air_data::Airspeed;
 use energy::EnergyInputs;
+use lateral::LateralInputs;
+use targets::Vertical;
 use targets::{Envelope, Targets};
 
 /// Fixed-wing controller for one airframe description.
@@ -114,6 +117,8 @@ impl VehicleController for FixedWingController {
         let (demand, throttle) = match Targets::resolve(command, flags, state, params) {
             Targets::Rates { rates, throttle } => {
                 runtime.energy = EnergyLoopState::default();
+                runtime.lateral = LateralLoopState::default();
+                runtime.held_static_pa = None;
                 (rates, throttle.clamp(0.0, 1.0))
             }
             Targets::Flight {
@@ -122,7 +127,18 @@ impl VehicleController for FixedWingController {
                 airspeed,
                 throttle,
             } => {
-                let bank = lateral::bank_command(lateral, state, &air, params, &envelope);
+                let bank = lateral::bank_command(
+                    &mut runtime.lateral,
+                    &LateralInputs {
+                        lateral,
+                        state,
+                        air: &air,
+                        params,
+                        envelope: &envelope,
+                        dt,
+                    },
+                );
+                let pressure_hold = runtime.pressure_hold(vertical);
                 let energy = energy::step(
                     &mut runtime.energy,
                     &EnergyInputs {
@@ -133,6 +149,7 @@ impl VehicleController for FixedWingController {
                         air: &air,
                         params,
                         envelope: &envelope,
+                        pressure_hold,
                         dt,
                     },
                 );
@@ -156,5 +173,25 @@ impl VehicleController for FixedWingController {
             yaw: NormalizedSigned(yaw),
             collective: NormalizedThrust(throttle),
         }
+    }
+}
+
+impl FixedWingRuntimeState {
+    /// Height below the held pressure level \[m\] and climb rate \[m/s\],
+    /// while the airspeed is on pitch and the probe has a static port.
+    ///
+    /// The level is the one the vehicle is at when the airspeed goes on
+    /// pitch; any other vertical target releases it.
+    fn pressure_hold(&mut self, vertical: Vertical) -> Option<(Scalar, Scalar)> {
+        if vertical != Vertical::AirspeedOnPitch {
+            self.held_static_pa = None;
+            return None;
+        }
+        let present = self.air.static_pa;
+        // A level is taken only from a static port that is in use now.
+        self.air.pressure_height(present)?;
+        let reference = *self.held_static_pa.get_or_insert(present);
+        let (above, climb_rate) = self.air.pressure_height(reference)?;
+        Some((-above, climb_rate))
     }
 }

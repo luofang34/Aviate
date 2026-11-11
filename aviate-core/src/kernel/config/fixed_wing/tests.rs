@@ -23,7 +23,9 @@ pub(crate) fn reference_params() -> FixedWingParams {
         energy_rate_i: 0.02,
         balance_rate_p: 0.5,
         balance_rate_i: 0.2,
+        route_bank_angle: Radians(0.44),
         course_time_constant: Seconds(5.0),
+        course_integral_time: Seconds(20.0),
         track_lookahead_time: Seconds(8.0),
         max_intercept_angle: Radians(0.785),
         roll_time_constant: Seconds(0.5),
@@ -39,7 +41,7 @@ pub(crate) fn reference_params() -> FixedWingParams {
 }
 
 /// One mutation of each stored value, in declaration order.
-fn mutations() -> [fn(&mut FixedWingParams); 34] {
+fn mutations() -> [fn(&mut FixedWingParams); 36] {
     [
         |p| p.stall_airspeed.0 += 0.5,
         |p| p.min_airspeed.0 += 0.5,
@@ -57,7 +59,9 @@ fn mutations() -> [fn(&mut FixedWingParams); 34] {
         |p| p.energy_rate_i += 0.01,
         |p| p.balance_rate_p += 0.1,
         |p| p.balance_rate_i += 0.1,
+        |p| p.route_bank_angle.0 += 0.05,
         |p| p.course_time_constant.0 += 0.5,
+        |p| p.course_integral_time.0 += 0.5,
         |p| p.track_lookahead_time.0 += 0.5,
         |p| p.max_intercept_angle.0 += 0.1,
         |p| p.roll_time_constant.0 += 0.1,
@@ -93,7 +97,7 @@ fn reference_block_is_valid() {
 #[test]
 fn every_value_moves_the_tuning_identity_and_the_canonical_hash() {
     let reference = config_with(reference_params());
-    let mut identities = [reference.fixed_wing_tuning_identity(); 35];
+    let mut identities = [reference.fixed_wing_tuning_identity(); 37];
     for (index, mutate) in mutations().into_iter().enumerate() {
         let mut params = reference_params();
         mutate(&mut params);

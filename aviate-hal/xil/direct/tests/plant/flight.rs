@@ -46,9 +46,79 @@ pub struct Flight {
     sensors: DirectSynthesizer,
     /// The GNSS receiver supplies no sample.
     pub gnss_silent: bool,
+    /// Pressure-sensor errors of the pitot-static probe, when modelled.
+    pub probe_errors: Option<ProbeErrors>,
     step: u64,
     sequence: u32,
     pub last: DirectActuatorCmd,
+}
+
+/// Running mean and variance of one lane.
+#[derive(Default)]
+struct Spread {
+    count: f32,
+    sum: f32,
+    sum_squares: f32,
+}
+
+impl Spread {
+    fn add(&mut self, value: f32) {
+        self.count += 1.0;
+        self.sum += value;
+        self.sum_squares += value * value;
+    }
+
+    fn deviation(&self) -> f32 {
+        let mean = self.sum / self.count;
+        (self.sum_squares / self.count - mean * mean)
+            .max(0.0)
+            .sqrt()
+    }
+}
+
+/// Pressure-sensor errors of a pitot-static probe: white noise on each
+/// sample and a slow drift, for the pitot port and for the static port.
+pub struct ProbeErrors {
+    state: u64,
+}
+
+impl ProbeErrors {
+    /// White noise, one standard deviation, on each port \[Pa\].
+    const WHITE_PA: f32 = 3.0;
+    /// Amplitude of the slow drift of the pitot port \[Pa\].
+    const PITOT_DRIFT_PA: f32 = 10.0;
+    /// Amplitude of the slow drift of the static port \[Pa\].
+    const STATIC_DRIFT_PA: f32 = 20.0;
+    /// Period of the slow drift \[s\].
+    const DRIFT_PERIOD_S: f32 = 120.0;
+
+    pub fn new(seed: u64) -> Self {
+        Self { state: seed | 1 }
+    }
+
+    /// One draw from an approximately normal distribution, unit variance.
+    fn normal(&mut self) -> f32 {
+        let mut sum = 0.0_f32;
+        for _ in 0..12 {
+            self.state ^= self.state << 13;
+            self.state ^= self.state >> 7;
+            self.state ^= self.state << 17;
+            sum += (self.state >> 40) as f32 / (1_u64 << 24) as f32;
+        }
+        sum - 6.0
+    }
+
+    fn drift(time_s: f32, amplitude: f32) -> f32 {
+        amplitude * (core::f32::consts::TAU * time_s / Self::DRIFT_PERIOD_S).sin()
+    }
+
+    fn pitot_pa(&mut self, time_s: f32) -> f32 {
+        Self::WHITE_PA * self.normal() + Self::drift(time_s, Self::PITOT_DRIFT_PA)
+    }
+
+    fn static_pa(&mut self, time_s: f32) -> f32 {
+        Self::WHITE_PA * self.normal() + Self::drift(time_s + 30.0, Self::STATIC_DRIFT_PA)
+    }
 }
 
 /// What one flight segment saw.
@@ -67,6 +137,10 @@ pub struct Extremes {
     pub max_sideslip: f32,
     /// Mean rudder lane over the segment.
     pub mean_rudder: f32,
+    /// Standard deviation of the throttle lane over the segment.
+    pub throttle_deviation: f32,
+    /// Standard deviation of the elevator lane over the segment.
+    pub elevator_deviation: f32,
 }
 
 impl Flight {
@@ -106,6 +180,7 @@ impl Flight {
             plant: FixedWingPlant::cruising(model, START_HEIGHT_M, gravity),
             sensors,
             gnss_silent: false,
+            probe_errors: None,
             step: 0,
             sequence: 0,
             last: DirectActuatorCmd::default(),
@@ -135,6 +210,15 @@ impl Flight {
         };
         if self.gnss_silent {
             sensors.gnss = None;
+        }
+        if let (Some(errors), Some(airspeed)) =
+            (self.probe_errors.as_mut(), sensors.airspeed.as_mut())
+        {
+            let time_s = truth.time_us as f32 * 1.0e-6;
+            airspeed.reading.differential_pressure_pa += errors.pitot_pa(time_s);
+            if let Some(static_pa) = airspeed.reading.static_pressure_pa.as_mut() {
+                *static_pa += errors.static_pa(time_s);
+            }
         }
         self.last = self.board.step_sensors(&sensors);
         self.plant.step(&self.last, DT_S);
@@ -192,8 +276,11 @@ impl Flight {
             max_sink: f32::MIN,
             max_sideslip: 0.0,
             mean_rudder: 0.5,
+            throttle_deviation: 0.0,
+            elevator_deviation: 0.0,
         };
         let mut rudder_sum = 0.0_f32;
+        let (mut throttle, mut elevator) = (Spread::default(), Spread::default());
         let steps = (seconds / DT_S).round() as u64;
         for local in 0..steps {
             if local % SETPOINT_REFRESH_STEPS == 0 {
@@ -214,9 +301,13 @@ impl Flight {
             seen.max_sink = seen.max_sink.max(-climb);
             seen.max_sideslip = seen.max_sideslip.max(self.plant.sideslip().abs());
             rudder_sum += self.last.outputs[3];
+            throttle.add(self.last.outputs[0]);
+            elevator.add(self.last.outputs[2]);
         }
         if steps > 0 {
             seen.mean_rudder = rudder_sum / steps as f32;
+            seen.throttle_deviation = throttle.deviation();
+            seen.elevator_deviation = elevator.deviation();
         }
         seen
     }

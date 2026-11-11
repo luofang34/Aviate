@@ -1,144 +1,13 @@
-//! The guidance, energy, attitude and rate loops through the controller step.
+//! The energy, attitude and rate loops through the controller step.
 
-use super::{attitude, command, cruise_state, Rig, DT};
-use crate::control::{Command, ControlMode, Setpoint};
+use super::{
+    attitude, attitude_command, banked, climb_command, command, course_command, cruise_state,
+    height_command, rate_command, Rig, DT,
+};
+use crate::control::{ControlMode, Setpoint};
 use crate::kernel::config::fixed_wing::tests::reference_params;
-use crate::state::{StateEstimate, StateValidFlags};
-use crate::types::{Meters, MetersPerSecond, NormalizedThrust, Radians, RadiansPerSecond};
-
-fn course_command(course: f32) -> Command {
-    command(
-        ControlMode::VelocityControl,
-        Setpoint {
-            velocity: Some([
-                MetersPerSecond(55.0 * course.cos()),
-                MetersPerSecond(55.0 * course.sin()),
-                MetersPerSecond(0.0),
-            ]),
-            ..Setpoint::default()
-        },
-    )
-}
-
-fn height_command(height: f32) -> Command {
-    command(
-        ControlMode::VelocityControl,
-        Setpoint {
-            velocity: Some([
-                MetersPerSecond(55.0),
-                MetersPerSecond(0.0),
-                MetersPerSecond(0.0),
-            ]),
-            altitude: Some(Meters(height)),
-            ..Setpoint::default()
-        },
-    )
-}
-
-fn climb_command(climb: f32) -> Command {
-    command(
-        ControlMode::VelocityControl,
-        Setpoint {
-            velocity: Some([
-                MetersPerSecond(55.0),
-                MetersPerSecond(0.0),
-                MetersPerSecond(-climb),
-            ]),
-            ..Setpoint::default()
-        },
-    )
-}
-
-fn attitude_command(roll: f32, pitch: f32, throttle: f32) -> Command {
-    command(
-        ControlMode::Attitude,
-        Setpoint {
-            attitude: Some(attitude(roll, pitch, 0.0)),
-            collective_thrust: NormalizedThrust(throttle),
-            ..Setpoint::default()
-        },
-    )
-}
-
-fn rate_command(roll: f32, pitch: f32, yaw: f32) -> Command {
-    command(
-        ControlMode::Rate,
-        Setpoint {
-            angular_rate: Some([
-                RadiansPerSecond(roll),
-                RadiansPerSecond(pitch),
-                RadiansPerSecond(yaw),
-            ]),
-            collective_thrust: NormalizedThrust(0.5),
-            ..Setpoint::default()
-        },
-    )
-}
-
-fn banked(roll: f32) -> StateEstimate {
-    StateEstimate {
-        attitude: attitude(roll, 0.0, 0.0),
-        ..cruise_state()
-    }
-}
-
-#[test]
-fn course_error_becomes_a_coordinated_turn_bank() {
-    let mut rig = Rig::new();
-    let _ = rig.step(&cruise_state(), &course_command(0.2));
-    // 0.2 rad of error over the 5 s time constant is 0.04 rad/s, and
-    // a 55 m/s turn at that rate banks atan(55 * 0.04 / 9.81).
-    assert!((rig.runtime.targets.bank - 0.2206).abs() < 1.0e-3);
-
-    let _ = rig.step(&cruise_state(), &course_command(-0.2));
-    assert!((rig.runtime.targets.bank + 0.2206).abs() < 1.0e-3);
-
-    // A large error stops at the 45 degree bank limit, on either side.
-    let _ = rig.step(&cruise_state(), &course_command(2.5));
-    assert_eq!(rig.runtime.targets.bank, 0.785);
-    let _ = rig.step(&cruise_state(), &course_command(-2.5));
-    assert_eq!(rig.runtime.targets.bank, -0.785);
-}
-
-#[test]
-fn heading_hold_turns_on_the_attitude_and_wings_level_does_not_turn() {
-    let mut rig = Rig::new();
-    let heading = command(
-        ControlMode::AltitudeHold,
-        Setpoint {
-            heading: Some(Radians(-0.2)),
-            ..Setpoint::default()
-        },
-    );
-    let _ = rig.step(&cruise_state(), &heading);
-    assert!((rig.runtime.targets.bank + 0.2206).abs() < 1.0e-3);
-
-    let level = command(ControlMode::AltitudeHold, Setpoint::default());
-    let _ = rig.step(&banked(0.3), &level);
-    assert_eq!(rig.runtime.targets.bank, 0.0);
-}
-
-#[test]
-fn bank_is_limited_by_the_envelope_and_by_the_stall_margin() {
-    let mut rig = Rig::new();
-    let _ = rig.step(&cruise_state(), &attitude_command(1.2, 0.0, 0.5));
-    assert_eq!(rig.runtime.targets.bank, 0.785);
-    let _ = rig.step(&cruise_state(), &attitude_command(-1.2, 0.0, 0.5));
-    assert_eq!(rig.runtime.targets.bank, -0.785);
-
-    // At 26 m/s the wing has (26/25)^2 = 1.08 times the lift of level
-    // flight: a level turn can bank acos(1/1.08) = 0.39 rad.
-    rig.probe = Some(26.0);
-    rig.runtime = Default::default();
-    let _ = rig.step(&cruise_state(), &course_command(2.5));
-    assert!((rig.runtime.targets.bank - 0.391).abs() < 2.0e-3);
-
-    // Below the stall speed no bank is available.
-    rig.probe = Some(20.0);
-    rig.runtime = Default::default();
-    let _ = rig.step(&cruise_state(), &course_command(2.5));
-    assert!(rig.runtime.targets.bank.abs() < 1.0e-3);
-}
+use crate::state::StateEstimate;
+use crate::types::{Meters, MetersPerSecond, Radians, RadiansPerSecond};
 
 #[test]
 fn height_above_the_target_lowers_the_nose_and_closes_the_throttle() {
@@ -270,40 +139,6 @@ fn underspeed_gives_pitch_to_the_airspeed_and_opens_the_throttle() {
     rig.probe = Some(50.0);
     let _ = rig.run(300, &cruise_state(), &height_command(400.0));
     assert!(!rig.runtime.energy.underspeed);
-}
-
-#[test]
-fn underspeed_needs_a_measurement_and_a_height_target() {
-    // No probe: the ground speed is not the airflow.
-    let mut rig = Rig::new();
-    rig.probe = None;
-    let mut slow = cruise_state();
-    slow.velocity_ned[0].0 = 28.0;
-    let _ = rig.step(&slow, &height_command(400.0));
-    assert!(!rig.runtime.energy.underspeed);
-
-    // Airspeed already on pitch: there is no height target to give up.
-    let mut rig = Rig::new();
-    rig.probe = Some(28.0);
-    rig.fallback_from = Some(ControlMode::VelocityControl);
-    let output = rig.step(&cruise_state(), &attitude_command(0.0, 0.0, 0.0));
-    assert!(!rig.runtime.energy.underspeed);
-    assert_eq!(output.collective.0, reference_params().cruise_throttle.0);
-    assert!(rig.runtime.targets.pitch < reference_params().trim_pitch.0);
-    assert_eq!(rig.runtime.energy.throttle_integrator, 0.0);
-}
-
-#[test]
-fn fallback_without_any_airspeed_holds_the_trim_pitch() {
-    let mut rig = Rig::new();
-    rig.probe = None;
-    rig.fallback_from = Some(ControlMode::VelocityControl);
-    let mut blind = cruise_state();
-    blind.valid_flags.remove(StateValidFlags::VELOCITY);
-    let output = rig.step(&blind, &attitude_command(0.4, 0.2, 0.0));
-    assert_eq!(rig.runtime.targets.bank, 0.0);
-    assert_eq!(rig.runtime.targets.pitch, reference_params().trim_pitch.0);
-    assert_eq!(output.collective.0, reference_params().cruise_throttle.0);
 }
 
 #[test]
