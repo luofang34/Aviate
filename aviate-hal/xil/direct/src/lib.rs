@@ -16,8 +16,8 @@ pub mod link;
 pub mod synthesis;
 
 pub use board::{
-    DirectActuatorCmd, DirectBoardConfig, DirectBoardHal, DirectCommandRefusal, DirectTime,
-    DirectXilBoard, DEFAULT_REBASE_RADIUS_M,
+    DirectActuatorCmd, DirectBoardConfig, DirectBoardHal, DirectCommandRefusal, DirectNavFrame,
+    DirectTime, DirectXilBoard, DEFAULT_REBASE_RADIUS_M,
 };
 pub use host_sensors::{DirectHostSensors, DirectSensorSample};
 pub use link::{
