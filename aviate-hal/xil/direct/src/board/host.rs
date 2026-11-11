@@ -28,6 +28,11 @@ where
     /// does not increase also runs no kernel cycle. Each later call runs one
     /// kernel cycle whose interval is the increase of `time_us`.
     ///
+    /// The estimator is seeded when IMU and magnetometer samples are present
+    /// and a GNSS fix has arrived. Without a fix in the first 2 s it is seeded
+    /// at rest at the origin, so a vehicle that starts in motion must supply
+    /// a fix inside that time.
+    ///
     /// A lane that is `None` keeps its last value and adds no new measurement.
     /// The estimator therefore ages a silent sensor by its own rules. The
     /// kernel does not use the sample timestamps to compensate latency.

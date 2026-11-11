@@ -3,7 +3,9 @@
 use aviate_core::hal::{ActuatorHal, SensorHal};
 use aviate_core::math::Vector3;
 use aviate_core::mixer::ActuatorState;
-use aviate_core::sensor::{GeomagneticReference, GeomagneticSource, SensorHealth, SensorReading};
+use aviate_core::sensor::{
+    GeomagneticReference, GeomagneticSource, GnssFix, SensorHealth, SensorReading,
+};
 use aviate_core::time::{TimeDelta, TimeSource as CoreTimeSource, Timestamp};
 use aviate_core::types::{Meters, MetersPerSecond, Radians, Seconds};
 use aviate_core::ChannelId;
@@ -22,6 +24,10 @@ use super::ingress::{
 };
 use super::triad::triad_init_quat;
 use super::{DirectActuatorCmd, DirectBoardHal, DirectTime, DirectXilBoard};
+
+/// Longest wait for a first GNSS fix before the estimator is seeded at rest
+/// at the origin: two periods of a 1 Hz receiver.
+const SEED_FIX_WAIT_US: u64 = 2_000_000;
 
 impl<C, M> DirectXilBoard<C, M>
 where
@@ -76,7 +82,7 @@ where
     ) -> DirectActuatorCmd {
         let time_us = sensors_in.time_us;
         self.feed_and_read_sensors(sensors_in);
-        self.maybe_initialize_ekf(geomag.declination.0);
+        self.maybe_initialize_ekf(geomag.declination.0, time_us);
         let sensors = self.sensor_cache.to_sensor_set(Some(geomag));
 
         if !self.kernel.is_ready() {
@@ -176,6 +182,7 @@ where
         self.boot_anchor_us = None;
         self.ekf_initialized = false;
         self.host_clock_us = None;
+        self.seed_wait_since_us = None;
         self.model_declination_rad = self.origin_declination_rad;
     }
 
@@ -227,13 +234,27 @@ where
         }
     }
 
-    fn maybe_initialize_ekf(&mut self, decl: f32) {
+    /// Seed the estimator from the first attitude sources and the first GNSS fix.
+    ///
+    /// The estimator never adopts a fix that its innovation gate rejects, so a
+    /// seed at rest at the origin is permanent for a vehicle that starts in
+    /// motion. The seed therefore waits for a fix. A board that gets no fix
+    /// within [`SEED_FIX_WAIT_US`] is taken to be at rest at the origin.
+    fn maybe_initialize_ekf(&mut self, decl: f32, time_us: u64) {
         if self.ekf_initialized {
             return;
         }
         let (Some(imu), Some(mag)) = (self.sensor_cache.imu, self.sensor_cache.mag) else {
             return;
         };
+        let fix = self
+            .sensor_cache
+            .gnss
+            .filter(|gnss| gnss.valid && gnss.value.fix != GnssFix::None);
+        let waited_us = time_us.saturating_sub(*self.seed_wait_since_us.get_or_insert(time_us));
+        if fix.is_none() && waited_us < SEED_FIX_WAIT_US {
+            return;
+        }
         let init_quat = triad_init_quat(
             [
                 imu.value.accel[0].0,
@@ -247,7 +268,7 @@ where
             ],
             decl,
         );
-        let (pos, vel) = match self.sensor_cache.gnss {
+        let (pos, vel) = match fix {
             Some(gnss) => (
                 Vector3::new(
                     gnss.value.position_ned[0],

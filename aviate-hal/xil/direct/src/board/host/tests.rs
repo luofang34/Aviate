@@ -254,3 +254,97 @@ fn board_declination_follows_the_gnss_fix_and_survives_its_loss() {
     let _ = board.step_sensors(&reset);
     assert_eq!(board.model_declination_rad, at_origin);
 }
+
+fn imu_and_mag(time_us: u64) -> DirectHostSensors {
+    DirectHostSensors {
+        mag: Some(DirectSensorSample::new(
+            time_us,
+            RawMagReading {
+                field_ut: [20.0, -4.0, 45.0],
+            },
+        )),
+        ..imu_only(time_us)
+    }
+}
+
+#[test]
+fn a_cycle_without_an_imu_sample_holds_the_last_one() {
+    let mut board = board();
+    let _ = board.step_sensors(&imu_only(0));
+    let _ = board.step_sensors(&imu_only(2_500));
+
+    let silent = DirectHostSensors {
+        time_us: 5_000,
+        ..DirectHostSensors::default()
+    };
+    let _ = board.step_sensors(&silent);
+    assert_eq!(board.kernel().state.timing_stats.total_cycles, 2);
+    assert_eq!(board.sensor_cache.imu.expect("imu").timestamp.ticks, 2_500);
+    assert!(!board
+        .kernel()
+        .state
+        .faults
+        .contains(aviate_core::fault::FaultFlags::ALL_IMU_FAILED));
+}
+
+#[test]
+fn estimator_seed_waits_for_a_fix_and_then_takes_it() {
+    let mut board = board();
+    let _ = board.step_sensors(&imu_and_mag(0));
+
+    // A reading without a fix is not a seed, whatever position it carries.
+    let no_fix = DirectHostSensors {
+        gnss: Some(DirectSensorSample::new(
+            2_500,
+            RawGnssReading {
+                position_ned: [900.0, 0.0, 0.0],
+                ..fix_at(origin(), GnssFix::None)
+            },
+        )),
+        ..imu_and_mag(2_500)
+    };
+    let _ = board.step_sensors(&no_fix);
+    assert!(!board.ekf_initialized);
+
+    let with_fix = DirectHostSensors {
+        gnss: Some(DirectSensorSample::new(
+            5_000,
+            RawGnssReading {
+                position_ned: [120.0, -30.0, -80.0],
+                vel_ned: [40.0, 5.0, -1.0],
+                ..fix_at(origin(), GnssFix::ThreeD)
+            },
+        )),
+        ..imu_and_mag(5_000)
+    };
+    let _ = board.step_sensors(&with_fix);
+    assert!(board.ekf_initialized);
+    // The cycle that seeds the filter also propagates it once, by at most
+    // 40 m/s over 2.5 ms, so the state is within 0.2 m and 0.2 m/s of the fix.
+    let seeded = &board.kernel().state.estimator;
+    assert!(
+        (seeded.pos.x.0 - 120.0).abs() < 0.2,
+        "north {}",
+        seeded.pos.x.0
+    );
+    assert!(
+        (seeded.vel.x.0 - 40.0).abs() < 0.2,
+        "north rate {}",
+        seeded.vel.x.0
+    );
+}
+
+#[test]
+fn estimator_seed_without_any_fix_is_at_rest_after_the_wait() {
+    let mut board = board();
+    let _ = board.step_sensors(&imu_and_mag(0));
+    let _ = board.step_sensors(&imu_and_mag(2_500));
+    assert!(!board.ekf_initialized);
+
+    // 2 s after the attitude sources were complete, less one cycle.
+    let _ = board.step_sensors(&imu_and_mag(2_000_000));
+    assert!(!board.ekf_initialized);
+    let _ = board.step_sensors(&imu_and_mag(2_002_500));
+    assert!(board.ekf_initialized);
+    assert_eq!(board.kernel().state.estimator.vel.x.0, 0.0);
+}

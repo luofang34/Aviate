@@ -129,6 +129,8 @@ where
     active_generation: Option<u32>,
     boot_anchor_us: Option<u64>,
     ekf_initialized: bool,
+    /// Time at which the attitude sources for the estimator seed were first complete.
+    seed_wait_since_us: Option<u64>,
     /// Time of the last [`Self::step_sensors`] call in this generation.
     host_clock_us: Option<u64>,
     /// Declination from the geomagnetic model at the origin.
@@ -179,6 +181,7 @@ where
             active_generation: None,
             boot_anchor_us: None,
             ekf_initialized: false,
+            seed_wait_since_us: None,
             host_clock_us: None,
             origin_declination_rad,
             model_declination_rad: origin_declination_rad,

@@ -10,10 +10,10 @@ use aviate_core::state::{StateEstimate, StateValidFlags};
 use aviate_core::types::{Meters, Radians};
 use aviate_hal_io::{GnssFix, SystemCommand};
 use aviate_xil_direct::{
-    DirectActuatorCmd, DirectBoardConfig, DirectHostSensors, DirectNoiseTier, DirectOrigin,
-    DirectSynthesizer, DirectTruthSample, DirectXilBoard,
+    DirectActuatorCmd, DirectBoardConfig, DirectHostSensors, DirectMeasuredKinematics,
+    DirectNoiseTier, DirectOrigin, DirectSynthesizer, DirectTruthSample, DirectXilBoard,
 };
-use world_core::{DecimalYear, GeodeticPosition};
+use world_core::{normal_gravity, DecimalYear, GeodeticPosition};
 
 #[path = "plant/x500.rs"]
 mod x500_plant;
@@ -447,4 +447,93 @@ fn host_injected_offsets_move_the_estimate_by_those_offsets() {
         "heading offset {heading_offset} rad moved the yaw estimate by {} rad",
         turned.yaw_error_rad
     );
+}
+
+/// Level cruise due north at 18 m/s, 50 m above the origin.
+fn cruise_truth(step: u64, gravity_mps2: f32) -> DirectTruthSample {
+    const SPEED_MPS: f32 = 18.0;
+    DirectTruthSample {
+        time_us: step * DT_US,
+        reset_generation: 0,
+        step,
+        position_ned_m: [SPEED_MPS * step as f32 * DT_S, 0.0, -50.0],
+        attitude_wxyz: [1.0, 0.0, 0.0, 0.0],
+        measured: Some(DirectMeasuredKinematics {
+            velocity_ned_mps: [SPEED_MPS, 0.0, 0.0],
+            body_rates_frd_rps: [0.0; 3],
+            specific_force_frd_mps2: [0.0, 0.0, -gravity_mps2],
+        }),
+    }
+}
+
+/// What the GNSS lane carries before the receiver has its first fix.
+#[derive(Clone, Copy)]
+enum BeforeFirstFix {
+    NoSample,
+    NoFix,
+}
+
+fn airborne_start(before: BeforeFirstFix) -> (StateEstimate, DirectTruthSample) {
+    // The first fix arrives 300 ms after the first IMU and magnetometer
+    // samples: the lanes of a real sensor set do not start together.
+    const FIRST_FIX_STEP: u64 = 120;
+    let cfg = test_config(DirectNoiseTier::Off, 3);
+    let gravity = normal_gravity(cfg.origin).expect("gravity") as f32;
+    let mut board = new_board(cfg);
+    let mut host = HostSensorModel::new(&cfg);
+
+    let mut truth = cruise_truth(0, gravity);
+    for step in 0..1_200_u64 {
+        truth = cruise_truth(step, gravity);
+        let mut sensors = host.sample(&truth);
+        if step < FIRST_FIX_STEP {
+            match before {
+                BeforeFirstFix::NoSample => sensors.gnss = None,
+                BeforeFirstFix::NoFix => {
+                    if let Some(gnss) = sensors.gnss.as_mut() {
+                        gnss.reading.fix = GnssFix::None;
+                        gnss.reading.position_ned = [0.0; 3];
+                        gnss.reading.vel_ned = [0.0; 3];
+                    }
+                }
+            }
+        }
+        let _ = board.step_sensors(&sensors);
+    }
+    (estimate_of(&board), truth)
+}
+
+#[test]
+fn vehicle_that_starts_in_motion_is_seeded_from_its_first_fix() {
+    for before in [BeforeFirstFix::NoSample, BeforeFirstFix::NoFix] {
+        let (estimate, truth) = airborne_start(before);
+        assert!(
+            estimate
+                .valid_flags
+                .contains(StateValidFlags::POSITION | StateValidFlags::VELOCITY),
+            "validity {:?}",
+            estimate.valid_flags
+        );
+        // Noise is off and the flight is unaccelerated, so the estimate
+        // sits on the truth. A seed at rest would leave an 18 m/s velocity
+        // error that the innovation gate never lets the fixes remove; the
+        // tolerances are two orders of magnitude below that failure.
+        let truth_velocity = truth.measured.expect("measured").velocity_ned_mps;
+        let velocity = estimate.velocity_ned.iter().zip(truth_velocity);
+        for (estimated, truth_axis) in velocity {
+            let velocity_error = estimated.0 - truth_axis;
+            assert!(
+                velocity_error.abs() < 0.1,
+                "velocity error {velocity_error} m/s"
+            );
+        }
+        let position = estimate.position_ned.iter().zip(truth.position_ned_m);
+        for (estimated, truth_axis) in position {
+            let position_error = estimated.0 - truth_axis;
+            assert!(
+                position_error.abs() < 0.5,
+                "position error {position_error} m"
+            );
+        }
+    }
 }
