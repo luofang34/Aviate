@@ -111,6 +111,13 @@ pub struct DirectBoardConfig {
 }
 
 /// Zero-overhead in-process XIL board generic over controller `C` and mixer `M`.
+///
+/// The board needs no ground-station link. It becomes ready, arms,
+/// accepts commands from any sender and streams telemetry at the
+/// configured [`DirectTelemetryRates`] without ever hearing a
+/// `HEARTBEAT` or a stream request, so an embedded host only sends
+/// commands. The one liveness rule is the kernel's setpoint refresh
+/// timeout, which is about commands, not the link.
 pub struct DirectXilBoard<C, M>
 where
     C: aviate_core::control::VehicleController,

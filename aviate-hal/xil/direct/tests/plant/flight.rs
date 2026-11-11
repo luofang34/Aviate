@@ -151,6 +151,19 @@ impl Flight {
         noise: DirectNoiseTier,
         rates: DirectSensorRates,
     ) -> Self {
+        let mut flight = Self::cruising_disarmed(airframe, model, noise, rates);
+        flight.engage();
+        flight
+    }
+
+    /// As [`Self::cruising`], before the kernel is ready or armed, so the
+    /// test owns the arming path.
+    pub fn cruising_disarmed(
+        airframe: &FixedWingAirframe,
+        model: PlantModel,
+        noise: DirectNoiseTier,
+        rates: DirectSensorRates,
+    ) -> Self {
         let kernel = AviateKernelBuilder::new()
             .estimator(Ekf::default())
             .controller(airframe.controller().expect("valid description"))
@@ -175,7 +188,7 @@ impl Flight {
             config.noise_seed,
         )
         .expect("host sensor models");
-        let mut flight = Self {
+        Self {
             board: DirectXilBoard::new(kernel, config).expect("create board"),
             plant: FixedWingPlant::cruising(model, START_HEIGHT_M, gravity),
             sensors,
@@ -184,9 +197,7 @@ impl Flight {
             step: 0,
             sequence: 0,
             last: DirectActuatorCmd::default(),
-        };
-        flight.engage();
-        flight
+        }
     }
 
     /// A C172 with an airspeed probe at 20 Hz.
