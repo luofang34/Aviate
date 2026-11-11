@@ -32,8 +32,10 @@ use crate::types::{Normalized, NormalizedThrust};
 
 pub mod actuation;
 mod canonical;
+pub mod fixed_wing;
 
 pub use actuation::{ActuatorCurveKind, MixerGeometry};
+pub use fixed_wing::{FixedWingParams, FixedWingParamsError};
 
 /// Maximum number of actuator channels the kernel can drive.
 /// Mirrors `crate::mixer::MAX_ACTUATORS` — duplicated here as a const
@@ -125,6 +127,14 @@ pub struct ResolvedKernelConfig {
     /// ONCE at the board/simulator boundary via
     /// [`ActuatorCurveKind::boundary_command`].
     pub actuator_curve: ActuatorCurveKind,
+
+    /// Airframe description and loop tuning that a fixed-wing
+    /// controller copies. `None` for every other vehicle class.
+    ///
+    /// `canonical_hash` folds this block only when it is present, so
+    /// the hash of a configuration without it does not depend on the
+    /// existence of this field.
+    pub fixed_wing: Option<FixedWingParams>,
 }
 // COV:EXCL_STOP
 
@@ -144,6 +154,7 @@ impl Default for ResolvedKernelConfig {
             hover_thrust_norm: NormalizedThrust(0.5),
             mixer_geometry: MixerGeometry::QuadX,
             actuator_curve: ActuatorCurveKind::Linear,
+            fixed_wing: None,
         }
     }
 }
@@ -219,6 +230,15 @@ impl ResolvedKernelConfig {
     pub fn controller_tuning_identity(&self) -> u64 {
         canonical::controller_tuning_identity(&self.cascade_gains, self.hover_thrust_norm.0)
     }
+
+    /// Canonical identity over the fixed-wing block, or `None` when the
+    /// configuration has no such block. The builder rejects a kernel
+    /// whose fixed-wing controller reports a different value.
+    pub fn fixed_wing_tuning_identity(&self) -> Option<u64> {
+        self.fixed_wing
+            .as_ref()
+            .map(canonical::fixed_wing_tuning_identity)
+    }
 }
 
 /// Default flight-envelope limits used by the builder when the caller
@@ -255,4 +275,12 @@ pub(crate) fn canonical_controller_tuning_identity(
     hover_thrust_norm: crate::types::Scalar,
 ) -> u64 {
     canonical::controller_tuning_identity(gains, hover_thrust_norm)
+}
+
+/// Canonical identity over one fixed-wing block. Controller
+/// construction and `ResolvedKernelConfig::fixed_wing_tuning_identity`
+/// both call this one function, so their encodings cannot drift.
+#[cfg(feature = "fw")]
+pub(crate) fn canonical_fixed_wing_tuning_identity(params: &FixedWingParams) -> u64 {
+    canonical::fixed_wing_tuning_identity(params)
 }

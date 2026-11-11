@@ -6,11 +6,13 @@ mod noise;
 pub(crate) use environment::declination_rad_at;
 pub use environment::{DirectEnvironment, DirectOrigin, DirectSynthesisError};
 pub use noise::{
-    apply_baro_noise, apply_gnss_noise, apply_imu_noise, apply_mag_noise, DirectNoiseRng,
-    DirectNoiseTier,
+    apply_airspeed_noise, apply_baro_noise, apply_gnss_noise, apply_imu_noise, apply_mag_noise,
+    DirectNoiseRng, DirectNoiseTier,
 };
 
-use aviate_hal_io::{GnssFix, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading};
+use aviate_hal_io::{
+    GnssFix, RawAirspeedReading, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading,
+};
 use world_core::LocalTangentPlane;
 
 /// Simulator-supplied velocity, angular rate, and specific force.
@@ -52,6 +54,9 @@ pub struct DirectSensorRates {
     pub mag_period_us: u64,
     /// Minimum microseconds between GNSS samples (`100_000` = 10 Hz by default).
     pub gnss_period_us: u64,
+    /// Minimum microseconds between airspeed samples. `None` is a vehicle
+    /// without a pitot-static probe: the default.
+    pub airspeed_period_us: Option<u64>,
 }
 
 impl DirectSensorRates {
@@ -62,7 +67,15 @@ impl DirectSensorRates {
             baro_period_us: 0,
             mag_period_us: 0,
             gnss_period_us: 0,
+            airspeed_period_us: None,
         }
+    }
+
+    /// Add a pitot-static probe that supplies a sample each `period_us`.
+    #[must_use]
+    pub const fn with_airspeed(mut self, period_us: u64) -> Self {
+        self.airspeed_period_us = Some(period_us);
+        self
     }
 }
 
@@ -72,6 +85,7 @@ impl Default for DirectSensorRates {
             baro_period_us: 20_000,
             mag_period_us: 10_000,
             gnss_period_us: 100_000,
+            airspeed_period_us: None,
         }
     }
 }
@@ -95,6 +109,9 @@ pub struct DirectStepSample {
     pub mag: Option<RawMagReading>,
     /// Synthesized GNSS sample when the GNSS period elapsed.
     pub gnss: Option<RawGnssReading>,
+    /// Synthesized pitot-static sample when the vehicle has a probe and
+    /// its period elapsed.
+    pub airspeed: Option<RawAirspeedReading>,
 }
 
 /// Stateful `no_std` synthesizer converting [`DirectTruthSample`] streams into HAL readings.
@@ -111,6 +128,7 @@ pub struct DirectSynthesizer {
     last_baro_us: Option<u64>,
     last_mag_us: Option<u64>,
     last_gnss_us: Option<u64>,
+    last_airspeed_us: Option<u64>,
 }
 
 impl DirectSynthesizer {
@@ -139,6 +157,7 @@ impl DirectSynthesizer {
             last_baro_us: None,
             last_mag_us: None,
             last_gnss_us: None,
+            last_airspeed_us: None,
         })
     }
 
@@ -162,6 +181,7 @@ impl DirectSynthesizer {
         self.last_baro_us = None;
         self.last_mag_us = None;
         self.last_gnss_us = None;
+        self.last_airspeed_us = None;
     }
 
     /// Reset step history and reseed the deterministic noise generator.
@@ -253,6 +273,7 @@ impl DirectSynthesizer {
         let baro = self.synthesize_baro(truth.time_us);
         let mag = self.synthesize_mag(truth.time_us, truth.attitude_wxyz);
         let gnss = self.synthesize_gnss(truth.time_us, truth.position_ned_m, ned_vel);
+        let airspeed = self.synthesize_airspeed(truth.time_us, ned_vel);
 
         self.prev = Some(*truth);
         self.prev_ned_vel = Some(ned_vel);
@@ -266,6 +287,7 @@ impl DirectSynthesizer {
             baro,
             mag,
             gnss,
+            airspeed,
         })
     }
 
@@ -319,6 +341,34 @@ impl DirectSynthesizer {
         };
         apply_gnss_noise(&mut gnss, self.noise_tier, &mut self.rng);
         Some(gnss)
+    }
+}
+
+impl DirectSynthesizer {
+    /// Pitot-static sample in still air: the airspeed is the speed over
+    /// the ground, and the probe reads the dynamic pressure of that speed
+    /// in the local atmosphere.
+    fn synthesize_airspeed(
+        &mut self,
+        time_us: u64,
+        vel_ned: [f32; 3],
+    ) -> Option<RawAirspeedReading> {
+        let period_us = self.rates.airspeed_period_us?;
+        if !period_due(self.last_airspeed_us, time_us, period_us) {
+            return None;
+        }
+        self.last_airspeed_us = Some(time_us);
+        let [north, east, down] = vel_ned;
+        let speed_squared = north * north + east * east + down * down;
+        let mut airspeed = RawAirspeedReading {
+            differential_pressure_pa: 0.5
+                * self.environment.air.density_kg_m3 as f32
+                * speed_squared,
+            static_pressure_pa: Some(self.environment.air.pressure_pa as f32),
+            temperature_c: Some(self.environment.air.temperature_c() as f32),
+        };
+        apply_airspeed_noise(&mut airspeed, self.noise_tier, &mut self.rng);
+        Some(airspeed)
     }
 }
 

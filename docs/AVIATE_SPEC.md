@@ -471,6 +471,7 @@ pub struct SensorOverrides {
 - In morphing/configurable aircraft, the role of each physical pressure port (static/dynamic/total) is defined per `ConfigMode`/`SensorConfig`; HAL populates `AirData` accordingly rather than hardcoding roles in `SensorSet` types.
 - For BaroData used in EKF, `air.static_pressure` MUST be `Some`; invalid/missing static pressure is a config/init fault.
 - If both `dynamic_pressure` and `indicated_airspeed` are present, EKF shall treat `dynamic_pressure` as authoritative and may recompute IAS to check consistency; disagreements beyond tolerance raise `FaultCategory::AirspeedFailed`.
+- The fixed-wing control law is the consumer of `SensorSet.airspeeds`. The kernel gives the first valid and healthy airspeed reading to the controller in each cycle. The 15-state estimator has no wind state, so it does not fuse airspeed into velocity.
 
 **Data trust levels:**
 
@@ -992,6 +993,30 @@ not applied to the control loop.
 When FaultCategory::CommandInvalid is raised due to inconsistency, the resulting behavior
 (reject / clamp / freeze) SHALL follow the configured InvalidCommandPolicy and SHALL be
 observable via FaultFlags and ChannelStatus.
+
+**Fixed-wing interpretation of the setpoint:**
+
+A fixed-wing vehicle cannot hold an arbitrary velocity vector. It cannot stop, it cannot fly
+sideways, and its airspeed has a lower limit. The fixed-wing control law reads the `Setpoint`
+fields as follows:
+
+| `ControlMode` | Fields that the law reads | Meaning |
+|---------------|---------------------------|---------|
+| `Rate` | `angular_rate`, `collective_thrust` | Body rates and throttle. |
+| `Attitude` | `attitude`, `collective_thrust` | Bank, pitch, and throttle. The law ignores the yaw of `attitude`. |
+| `AltitudeHold` | `heading` or `attitude`; `altitude` or `vertical_speed` | Heading (or bank) and height (or climb rate) at the cruise airspeed. |
+| `VelocityControl` | `velocity`, `altitude` | The horizontal direction of `velocity` is the course. The horizontal magnitude of `velocity` is the indicated airspeed. The down component of `velocity` is the descent rate, unless `altitude` is set. |
+| `DeviationTracking` | `lateral_deviation`, `vertical_deviation`, `heading`, `velocity` | `heading` is the track course. `lateral_deviation` is positive when the vehicle is right of the track. `vertical_deviation` is positive when the vehicle is above the profile. The horizontal magnitude of `velocity` is the indicated airspeed. |
+| `PositionHold` | None | The fixed-wing controller does not support this mode. The kernel refuses it. |
+
+The airspeed in a setpoint is an airspeed, not a ground speed. In wind, the ground speed differs
+from it by the wind along the course. The course is the track over the ground, so the law turns
+the heading into the wind to hold it. An airspeed below the minimum airspeed of the airframe is
+raised to that minimum.
+
+The law limits each target to the envelope in `Limits` and to the airframe description in
+`FixedWingParams`. When the kernel falls back to `Attitude` because the estimate lost validity,
+the law holds the wings level and holds the cruise airspeed with pitch.
 
 ---
 
@@ -1883,7 +1908,7 @@ monitors and verification tools do not need to infer behavior from actuator outp
 | Feature Combination | Included Vehicle Modules | `thumbv7em-none-eabihf` `.text` (bytes) |
 |---------------------|--------------------------|-----------------------------------------|
 | `--no-default-features` | Core estimator, attitude/rate loops, fault monitor, sanitizer | `57,297` |
-| `--no-default-features --features fw` | Core + fixed-wing TECS, L1, and fixed-wing mixer | `57,297` |
+| `--no-default-features --features fw` | Core + fixed-wing total-energy control, course and track guidance, and fixed-wing mixer | `57,297` |
 | `--no-default-features --features vtol` | Core + fixed-wing + VTOL transition and morphing mixer | `57,297` |
 | `--no-default-features --features spacecraft` | Core + `SpacecraftController` (SAS, RW/RCS, `4.0G` limiter, fin lock) + `SpacecraftMixer` | `57,297` |
 | `--features mc` (default: `mc`, `fw`, `vtol`) | Full multirotor cascade (`position`, `velocity`, `QuadXMixer*`, `desaturate`) + fixed-wing + VTOL | `66,859` |

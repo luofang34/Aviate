@@ -400,6 +400,8 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             let control_flags = VehicleControlMode::from_control_mode(effective_cmd.mode)
                 .with_mode_entry(mode_entry);
             self.state.controller.set_cycle_interval(time.dt_sec);
+            let air = sensors.primary_air_data();
+            self.state.controller.set_air_data(air);
             let controller_step = self.pipeline.controller.step_with_observation(
                 &mut self.state.controller,
                 &state,

@@ -1,8 +1,9 @@
-//! Fixed-wing airframe definitions.
+//! Fixed-wing airframe descriptions.
 //!
-//! Placeholder crate for fixed-wing vehicle airframe descriptors. The
-//! control surfaces, mixer, and flight envelope land here as the
-//! fixed-wing airframe family is implemented.
+//! Each description holds the numbers that the fixed-wing control law of
+//! `aviate-core` needs for one vehicle: its airspeeds, its throttle
+//! points, its envelope limits and its loop tuning. The law holds no
+//! airframe number of its own.
 #![no_std]
 #![forbid(unsafe_code)]
 #![forbid(clippy::panic)]
@@ -10,7 +11,8 @@
 #![forbid(clippy::expect_used)]
 #![deny(missing_docs)]
 
-/// Placeholder fixed-wing airframe definitions.
-pub fn airframe_id() -> &'static str {
-    "fixed-wing"
-}
+pub mod description;
+pub mod models;
+
+pub use description::FixedWingAirframe;
+pub use models::{c172, rascal};

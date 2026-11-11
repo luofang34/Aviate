@@ -82,7 +82,13 @@
 # velocity loop mapped the NED acceleration command straight to
 # roll/pitch without rotating into the heading frame — correct only
 # at yaw 0, anti-corrective past 90° (#110). Never reuse the v1 ID.
-"controller.fixed_wing.v1"  = 0x4354_4C46_5747_5631  # FixedWingController
+"controller.fixed_wing.v2"  = 0x4354_4C46_5747_5632  # FixedWingController
+# Retired: "controller.fixed_wing.v1" = 0x4354_4C46_5747_5631. v1 was a
+# placeholder: it commanded zero roll, pitch and yaw and passed the
+# collective through. v2 is a control law with persistent state:
+# total-energy control of airspeed and height, course guidance into
+# bank, and airspeed-scaled attitude and rate loops. Never reuse the v1
+# ID.
 "controller.vtol.v1"        = 0x4354_4C56_544F_4C31  # VtolController
 "controller.spacecraft.v1"  = 0x4354_4C53_5043_5631  # SpacecraftController
 
@@ -91,6 +97,7 @@
 "mixer.quad_x_x500.v2" = 0x4D49_5851_5835_5632  # QuadXMixerX500
 "mixer.quad_x_x500_reversed_spin.v1" = 0x4D49_5851_5852_5631  # QuadXMixerReversedSpin
 "mixer.spacecraft.v1"  = 0x4D49_5853_5043_5631  # SpacecraftMixer
+"mixer.fixed_wing.v1"  = 0x4D49_5846_5747_5631  # FixedWingMixer
 # Retired: "mixer.quad_x.v1" = 0x4D49_5851_5541_4458 and
 # QuadXMixerX500's pre-registry ID 0x4D49_5851_5435_3030. v1 mixers
 # clamped each motor independently, silently truncating whichever
@@ -113,4 +120,6 @@
 "controller.mock.v1"         = 0x4354_4C4D_4F43_4B00  # MockController
 "mixer.mock.v1"              = 0x4D49_584D_4F43_4B00  # MockMixer
 "sanitizer.mock.v1"          = 0x5341_4E4D_4F43_4B00  # MockSanitizer
-"mixer.xil_direct_fw_passthrough.v1" = 0x5453_5446_574D_4958  # direct_modes_and_determinism::PassthroughFwMixer
+# Retired: "mixer.xil_direct_fw_passthrough.v1" = 0x5453_5446_574D_4958
+# (direct_modes_and_determinism::PassthroughFwMixer). The direct-board
+# test flies the production FixedWingMixer. Never reuse this ID.

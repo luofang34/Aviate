@@ -87,7 +87,9 @@ impl DirectStepSample {
             gnss: self
                 .gnss
                 .map(|reading| DirectSensorSample::new(at, reading)),
-            airspeed: None,
+            airspeed: self
+                .airspeed
+                .map(|reading| DirectSensorSample::new(at, reading)),
             geomagnetic,
         }
     }

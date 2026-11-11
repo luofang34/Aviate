@@ -28,6 +28,9 @@ pub enum MixerGeometry {
     /// reversed (CW on the FR+RL diagonal). Roll and pitch follow
     /// position and are unchanged; only the yaw column flips.
     QuadXX500ReversedSpin,
+    /// Conventional fixed wing: one throttle lane and aileron, elevator
+    /// and rudder lanes centred at half scale.
+    FixedWing,
 }
 
 impl MixerGeometry {
@@ -37,6 +40,7 @@ impl MixerGeometry {
             MixerGeometry::QuadX
             | MixerGeometry::QuadXX500
             | MixerGeometry::QuadXX500ReversedSpin => 4,
+            MixerGeometry::FixedWing => 1,
         }
     }
 
@@ -51,6 +55,7 @@ impl MixerGeometry {
             MixerGeometry::QuadX => "quad-x",
             MixerGeometry::QuadXX500 => "quad-x-x500",
             MixerGeometry::QuadXX500ReversedSpin => "quad-x-x500-reversed-spin",
+            MixerGeometry::FixedWing => "fixed-wing",
         }
     }
 }
@@ -152,6 +157,7 @@ mod tests {
         assert_eq!(MixerGeometry::QuadX.motor_count(), 4);
         assert_eq!(MixerGeometry::QuadXX500.motor_count(), 4);
         assert_eq!(MixerGeometry::QuadXX500ReversedSpin.motor_count(), 4);
+        assert_eq!(MixerGeometry::FixedWing.motor_count(), 1);
     }
 
     #[test]
@@ -162,6 +168,7 @@ mod tests {
         // read against the preset vocabulary it is supposed to match.
         assert_eq!(MixerGeometry::QuadX.as_str(), "quad-x");
         assert_eq!(MixerGeometry::QuadXX500.as_str(), "quad-x-x500");
+        assert_eq!(MixerGeometry::FixedWing.as_str(), "fixed-wing");
         assert_eq!(
             MixerGeometry::QuadXX500ReversedSpin.as_str(),
             "quad-x-x500-reversed-spin"

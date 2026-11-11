@@ -16,6 +16,7 @@ use crate::mixer::{
 };
 
 use super::actuation::{ActuatorCurveKind, MixerGeometry};
+use super::fixed_wing::FixedWingParams;
 use super::ResolvedKernelConfig;
 
 /// FNV-1a 64-bit fold over the entire flight-period configuration.
@@ -65,7 +66,33 @@ pub(super) fn hover_kernel_prefix_hash(cfg: &ResolvedKernelConfig) -> u64 {
     h.feed_separator();
     feed_cascade_gains(&mut h, &cfg.cascade_gains);
     h.feed_separator();
+    // A configuration without a fixed-wing block feeds nothing here, so
+    // its hash is the hash it had before the block existed. A block is
+    // announced by a tag byte and closed by a separator.
+    if let Some(params) = &cfg.fixed_wing {
+        h.feed_u8(FIXED_WING_BLOCK_TAG);
+        feed_fixed_wing(&mut h, params);
+        h.feed_separator();
+    }
     h.finish()
+}
+
+/// Tag byte that opens the fixed-wing block in the canonical encoding.
+const FIXED_WING_BLOCK_TAG: u8 = 0xf1;
+
+/// Canonical identity over exactly the configuration values a
+/// fixed-wing controller copies: every `FixedWingParams` value in
+/// declaration order.
+pub(crate) fn fixed_wing_tuning_identity(params: &FixedWingParams) -> u64 {
+    let mut h = Fnv1a64::new();
+    feed_fixed_wing(&mut h, params);
+    h.finish()
+}
+
+fn feed_fixed_wing(h: &mut Fnv1a64, params: &FixedWingParams) {
+    for value in params.values() {
+        h.feed_f32(value);
+    }
 }
 
 pub(super) fn canonical_hash_from_hover_prefix(
@@ -88,6 +115,7 @@ fn feed_mixer_geometry(h: &mut Fnv1a64, g: MixerGeometry) {
         MixerGeometry::QuadX => 0,
         MixerGeometry::QuadXX500 => 1,
         MixerGeometry::QuadXX500ReversedSpin => 2,
+        MixerGeometry::FixedWing => 3,
     });
 }
 
