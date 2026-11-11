@@ -9,7 +9,7 @@ use aviate_link::mavlink::telemetry::{format_geomagnetic_reference, format_scale
 use aviate_link::mavlink::{
     format_attitude, format_aviate_estimator_status, format_estimator_status,
     format_global_position, format_gps_raw, format_local_position, MavAutopilot, MavMessage,
-    MavModeFlag, MavType,
+    MavModeFlag,
 };
 use aviate_link::telemetry::GeodeticOrigin;
 
@@ -111,7 +111,7 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
             MavModeFlag::HIL_ENABLED.0
         };
         let hb = Heartbeat {
-            mav_type: MavType::Quadrotor as u8,
+            mav_type: self.mav_type as u8,
             autopilot: MavAutopilot::Aviate as u8,
             base_mode,
             custom_mode: 0,
