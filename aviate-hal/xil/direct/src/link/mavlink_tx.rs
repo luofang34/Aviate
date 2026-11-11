@@ -2,9 +2,9 @@
 
 use aviate_core::fault::FaultFlags;
 use aviate_core::sensor::GeomagneticReference;
-use aviate_core::state::StateEstimate;
+use aviate_core::state::{StateEstimate, StateValidFlags};
 use aviate_hal_io::RawGnssReading;
-use aviate_link::mavlink::protocol::{GpsGlobalOrigin, Heartbeat, SysStatus};
+use aviate_link::mavlink::protocol::{GpsGlobalOrigin, Heartbeat, SysStatus, VfrHud};
 use aviate_link::mavlink::telemetry::{format_geomagnetic_reference, format_scaled_pressure};
 use aviate_link::mavlink::{
     format_attitude, format_aviate_estimator_status, format_estimator_status,
@@ -41,6 +41,13 @@ pub(crate) struct DirectTelemetryFrameInput<'a> {
     pub geomagnetic: Option<GeomagneticReference>,
     pub geodetic_origin: GeodeticOrigin,
     pub gnss_fix: Option<&'a RawGnssReading>,
+    /// Indicated airspeed of the last probe sample \[m/s\].
+    pub indicated_airspeed_mps: Option<f32>,
+    /// Commanded throttle, 0 to 1.
+    pub throttle: f32,
+    /// Altitude above mean sea level \[m\], when the height is valid and
+    /// the geoid separation is declared.
+    pub altitude_msl_m: Option<f32>,
 }
 
 impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_CAP> {
@@ -79,6 +86,13 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
         }
         if let (true, Some(fix)) = (emit_pos, input.gnss_fix) {
             self.emit_gps_raw(fix, input.time_boot_ms);
+        }
+        if rate_due(
+            &mut self.last_vfr_hud_us,
+            input.sim_time_us,
+            self.rates.vfr_hud_hz,
+        ) {
+            self.push_mav_message(&MavMessage::VfrHud(vfr_hud(input)));
         }
     }
 
@@ -302,6 +316,43 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
             }
         }
         offset
+    }
+}
+
+/// `VFR_HUD` from the estimate and the air data.
+///
+/// A value the board cannot state is NaN: the airspeed without a probe,
+/// the altitude without a valid height or a declared geoid separation.
+/// The groundspeed is 0 while VELOCITY is invalid and the climb 0 while
+/// HEIGHT is invalid, so a consumer that ignores NaN still reads no motion
+/// from an estimate that does not vouch for it.
+fn vfr_hud(input: &DirectTelemetryFrameInput<'_>) -> VfrHud {
+    let state = input.state;
+    let [north, east, down] = state.velocity_ned.map(|v| v.0);
+    let groundspeed = if state.valid_flags.contains(StateValidFlags::VELOCITY) {
+        libm::hypotf(north, east)
+    } else {
+        0.0
+    };
+    let climb = if state.valid_flags.contains(StateValidFlags::HEIGHT) {
+        -down
+    } else {
+        0.0
+    };
+    let (_, _, yaw) = state.attitude.to_euler();
+    let wrapped = libm::roundf(yaw.to_degrees()) % 360.0;
+    let degrees = if wrapped < 0.0 {
+        wrapped + 360.0
+    } else {
+        wrapped
+    };
+    VfrHud {
+        airspeed: input.indicated_airspeed_mps.unwrap_or(f32::NAN),
+        groundspeed,
+        alt: input.altitude_msl_m.unwrap_or(f32::NAN),
+        climb,
+        heading: (degrees as i16) % 360,
+        throttle: libm::roundf(input.throttle.clamp(0.0, 1.0) * 100.0) as u16,
     }
 }
 

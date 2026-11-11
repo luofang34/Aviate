@@ -106,6 +106,26 @@ With a model or a configured declination, the heading in
 is magnetic. A consumer that shows a magnetic heading subtracts the
 declination from the true heading.
 
+## VFR_HUD
+
+The direct board sends `VFR_HUD` at `vfr_hud_hz` (default 4 Hz) for a host
+that needs the airspeed without a position fix, for example to detect a
+launch.
+
+- `airspeed` is the indicated airspeed of the last probe sample, NaN
+  without a probe.
+- `groundspeed` is the horizontal speed of the estimate while `VELOCITY` is
+  valid and 0 while it is not.
+- `climb` is the estimated climb rate while `HEIGHT` is valid and 0 while
+  it is not.
+- `alt` is the altitude above mean sea level while `HEIGHT` is valid and
+  the host has declared the geoid separation, NaN otherwise.
+
+With GNSS denied, `LOCAL_POSITION_NED` keeps going out. Its `z` is the
+height below the origin datum, and the `HEIGHT` bit of
+`AVIATE_ESTIMATOR_STATUS` authorises it while `POSITION` and `VELOCITY`
+are clear.
+
 ## Global position frames
 
 At the `position_hz` rate, the cycle formatter also sends two standard

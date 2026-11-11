@@ -80,7 +80,7 @@ pub use protocol::{
     estimator_status_flags, gps_fix_type, mav_cmd, mav_result, parse_mavlink, parse_mavlink_frame,
     serialize_mavlink, AviateEstimatorStatus, AviateGeomagneticReference, EstimatorStatus,
     GlobalPositionInt, GpsGlobalOrigin, GpsRawInt, MavAutopilot, MavComponent, MavMessage,
-    MavModeFlag, MavState, MavType, ParsedMavlinkFrame, SetPositionTargetGlobalInt,
+    MavModeFlag, MavState, MavType, ParsedMavlinkFrame, SetPositionTargetGlobalInt, VfrHud,
     FORCE_ARM_DISARM_MAGIC,
 };
 
