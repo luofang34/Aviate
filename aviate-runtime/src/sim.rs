@@ -34,7 +34,7 @@ use log::{error, info, warn};
 use crate::sensor_cache::SensorCache;
 use crate::telemetry::{FrameTx, TelemetryTask};
 
-use aviate_link::mavlink::{MavState, MavlinkCycleFormatter};
+use aviate_link::mavlink::{vehicle_mav_type, MavState, MavlinkCycleFormatter};
 
 use aviate_config::AppConfig;
 use aviate_core::control::Command;
@@ -233,6 +233,8 @@ where
         // visible warning when the ack never arrives.
         let cfg = transport.config().clone();
         let fault_ctrl = aviate_hal_xil::FaultController::new(&cfg).ok();
+        let mut transport = transport;
+        transport.set_vehicle_type(vehicle_mav_type(kernel.cfg().mixer_geometry));
         Self {
             transport,
             fault_ctrl,
@@ -333,13 +335,14 @@ where
         let tx = UdpFrameTx::new(sock, addr);
 
         // Create protocol-specific formatter (from aviate-link)
-        let formatter = match MavlinkCycleFormatter::new(telem_cfg, loop_hz) {
+        let mut formatter = match MavlinkCycleFormatter::new(telem_cfg, loop_hz) {
             Ok(formatter) => formatter,
             Err(e) => {
                 error!("Telemetry disabled: {}", e);
                 return;
             }
         };
+        formatter.set_vehicle_type(vehicle_mav_type(self.kernel.cfg().mixer_geometry));
         // Create protocol-agnostic task (from aviate-runtime)
         self.telemetry = Some(TelemetryTask::new(tx, formatter));
         info!("Telemetry enabled: {} via {}", endpoint, t.protocol);

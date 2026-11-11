@@ -34,3 +34,6 @@ aviate-hal-xil = { path = "../aviate-hal/xil", optional = true }
 world-core = { workspace = true, optional = true }
 world-geomag = { workspace = true, optional = true }
 log = "0.4"
+
+[dev-dependencies]
+aviate-airframe-fixed-wing = { path = "../aviate-airframes/fixed-wing" }

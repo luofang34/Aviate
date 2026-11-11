@@ -206,7 +206,7 @@ impl SitlIO {
 
     pub(super) fn send_heartbeat(&mut self) {
         let heartbeat = Heartbeat {
-            mav_type: MavType::Quadrotor as u8,
+            mav_type: self.mav_type as u8,
             autopilot: MavAutopilot::Aviate as u8,
             base_mode: if self.armed {
                 MavModeFlag::SAFETY_ARMED.0 | MavModeFlag::HIL_ENABLED.0
@@ -247,6 +247,19 @@ impl SitlIO {
     /// Set the MAVLink system state.
     pub fn set_system_status(&mut self, status: MavState) {
         self.system_status = status as u8;
+    }
+
+    /// Set the `MAV_TYPE` advertised in `HEARTBEAT`, normally
+    /// `vehicle_mav_type` of the airframe. Until set it is
+    /// `MAV_TYPE_GENERIC`, which claims no airframe.
+    pub fn set_vehicle_type(&mut self, mav_type: MavType) {
+        self.mav_type = mav_type;
+    }
+
+    /// Return the `MAV_TYPE` advertised in `HEARTBEAT`.
+    #[must_use]
+    pub fn vehicle_type(&self) -> MavType {
+        self.mav_type
     }
 
     /// Return the MAVLink armed state.
