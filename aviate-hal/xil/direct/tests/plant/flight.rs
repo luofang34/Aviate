@@ -174,6 +174,19 @@ impl Flight {
         noise: DirectNoiseTier,
         rates: DirectSensorRates,
     ) -> Self {
+        let mut flight = Self::cruising_disarmed(airframe, model, noise, rates);
+        flight.engage();
+        flight
+    }
+
+    /// As [`Self::cruising`], before the kernel is ready or armed, so the
+    /// test owns the arming path.
+    pub fn cruising_disarmed(
+        airframe: &FixedWingAirframe,
+        model: PlantModel,
+        noise: DirectNoiseTier,
+        rates: DirectSensorRates,
+    ) -> Self {
         Self::cruising_with(airframe, model, noise, rates, Faults::default())
     }
 
@@ -216,9 +229,7 @@ impl Flight {
             step: 0,
             sequence: 0,
             last: DirectActuatorCmd::default(),
-        };
-        flight.engage();
-        flight
+        }
     }
 
     /// A C172 with an airspeed probe at 20 Hz.
