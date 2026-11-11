@@ -21,8 +21,8 @@ pub use board::{
 };
 pub use host_sensors::{DirectHostSensors, DirectSensorSample};
 pub use link::{
-    DirectByteRing, DirectMavlinkEndpoint, DirectTelemetryRates, DEFAULT_RX_RING_BYTES,
-    DEFAULT_TX_RING_BYTES,
+    DirectByteRing, DirectMavlinkEndpoint, DirectTelemetryRates, GeodeticTarget,
+    DEFAULT_RX_RING_BYTES, DEFAULT_TX_RING_BYTES,
 };
 pub use synthesis::{
     DirectEnvironment, DirectMeasuredKinematics, DirectNoiseRng, DirectNoiseTier, DirectOrigin,
