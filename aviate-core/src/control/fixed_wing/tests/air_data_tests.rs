@@ -80,10 +80,11 @@ fn latch_filters_fresh_samples_and_restarts_after_an_outage() {
     assert_eq!(latch.true_rate_mps2, 0.0);
 
     // A second sample 50 ms later moves the value by dt/(tau+dt) = 1/11
-    // of the 11 m/s step, and the rate is that move over the interval.
+    // of the 11 m/s step. That move over the interval is 20 m/s2, and
+    // the rate filter takes 1/11 of it.
     latch.observe(sample(61.0), 0.05, TAU);
     assert!((latch.indicated_mps - 51.0).abs() < 1.0e-3);
-    assert!((latch.true_rate_mps2 - 20.0).abs() < 0.05);
+    assert!((latch.true_rate_mps2 - 20.0 / 11.0).abs() < 0.01);
     assert_eq!(latch.age_s, 0.0);
 
     // Silence ages the latch; past the limit it is not fresh.
@@ -154,4 +155,88 @@ fn a_slow_vehicle_divides_by_the_stall_speed() {
     assert_eq!(air.divisor(&params), params.stall_airspeed.0);
     let fast = Airspeed::resolve(&AirDataLatch::default(), &cruise_state(), &params);
     assert_eq!(fast.divisor(&params), 55.0);
+}
+
+/// A sample of 50 m/s with a static port at `pressure` Pa and 15 C.
+fn with_static(pressure: f32) -> Option<AirSample> {
+    airspeeds_of(&AirData {
+        static_pressure: Some(Pascals(pressure)),
+        temperature: Some(Celsius(15.0)),
+        ..pitot(50.0)
+    })
+}
+
+#[test]
+fn static_port_gives_a_height_scale_from_its_temperature() {
+    // R * T / g at 15 C is 287.05 * 288.15 / 9.81 = 8432 m.
+    let port = with_static(95_000.0)
+        .and_then(|sample| sample.static_air)
+        .expect("static port");
+    assert_eq!(port.pressure_pa, 95_000.0);
+    assert!((port.scale_height_m - 8_432.0).abs() < 2.0);
+
+    // A probe that reports no temperature gets the standard one, and
+    // its true airspeed stays the indicated airspeed.
+    let untempered = airspeeds_of(&AirData {
+        static_pressure: Some(Pascals(70_000.0)),
+        ..pitot(50.0)
+    })
+    .expect("usable sample");
+    let port = untempered.static_air.expect("static port");
+    assert!((port.scale_height_m - 8_432.0).abs() < 2.0);
+    assert_eq!(untempered.true_mps, untempered.indicated_mps);
+
+    // A temperature that is not a number is not used either.
+    let broken = airspeeds_of(&AirData {
+        static_pressure: Some(Pascals(95_000.0)),
+        temperature: Some(Celsius(f32::NAN)),
+        ..pitot(50.0)
+    })
+    .expect("usable sample");
+    assert!(broken
+        .static_air
+        .is_some_and(|port| (port.scale_height_m - 8_432.0).abs() < 2.0));
+
+    assert!(sample(50.0).is_some_and(|sample| sample.static_air.is_none()));
+}
+
+#[test]
+fn pressure_height_follows_the_static_port_through_the_filters() {
+    let mut latch = AirDataLatch::default();
+    assert!(latch.pressure_height(95_000.0).is_none());
+
+    latch.observe(with_static(95_000.0), 0.04, TAU);
+    let (height, climb) = latch.pressure_height(95_000.0).expect("static port in use");
+    assert_eq!((height, climb), (0.0, 0.0));
+
+    // The pressure falls by 12 Pa each second: at 95 kPa and 15 C that
+    // is a climb of 8432 * 12 / 95000 = 1.065 m/s. After twenty filter
+    // time constants the filtered rate has settled on it, and the
+    // height lags the true one by one time constant of climb.
+    let mut pressure = 95_000.0_f32;
+    for _ in 0..250 {
+        pressure -= 12.0 * 0.04;
+        latch.observe(with_static(pressure), 0.04, TAU);
+    }
+    let (height, climb) = latch.pressure_height(95_000.0).expect("static port in use");
+    assert!((climb - 1.065).abs() < 0.02, "climb {climb}");
+    let true_height = 8_432.0 * (95_000.0_f32 / pressure).ln();
+    assert!(
+        (true_height - height - 1.065 * TAU).abs() < 0.1,
+        "height {height}"
+    );
+
+    // A sample without the port ends the pressure height at once.
+    latch.observe(sample(50.0), 0.04, TAU);
+    assert!(latch.pressure_height(95_000.0).is_none());
+    // The port restarts without a rate.
+    latch.observe(with_static(94_000.0), 0.04, TAU);
+    let (_, climb) = latch.pressure_height(95_000.0).expect("static port in use");
+    assert_eq!(climb, 0.0);
+
+    // A stale latch gives no height.
+    for _ in 0..30 {
+        latch.observe(None, 0.04, TAU);
+    }
+    assert!(latch.pressure_height(95_000.0).is_none());
 }

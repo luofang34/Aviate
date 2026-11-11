@@ -39,6 +39,9 @@ pub(super) struct EnergyInputs<'a> {
     pub air: &'a Airspeed,
     pub params: &'a FixedWingParams,
     pub envelope: &'a Envelope,
+    /// Height below the held pressure level \[m\] and climb rate \[m/s\]
+    /// from the static port of the probe, when a level is held.
+    pub pressure_hold: Option<(Scalar, Scalar)>,
     /// Cycle interval \[s\].
     pub dt: Scalar,
 }
@@ -135,8 +138,8 @@ fn throttle_loop(
         return high;
     }
     let Some((climb_demand, climb_rate)) = climb else {
-        // Pitch holds the airspeed; the throttle stays where level
-        // flight needs it.
+        // Pitch holds the airspeed and nothing measures the height: the
+        // throttle stays where level flight needs it.
         memory.throttle_integrator = 0.0;
         return params.cruise_throttle.0;
     };
@@ -218,8 +221,16 @@ pub(super) fn step(memory: &mut EnergyLoopState, inputs: &EnergyInputs<'_>) -> E
 
     let speed = inputs.air.divisor(params);
     let speed_channel = speed_channel(inputs, target, speed);
+    // With the airspeed on pitch, the throttle holds the pressure level
+    // of the probe: that needs no position and no velocity estimate.
+    let throttle_climb = climb.or(inputs.pressure_hold.map(|(below, climb_rate)| {
+        (
+            limit_climb(below / params.height_time_constant.0),
+            climb_rate,
+        )
+    }));
     EnergyCommand {
         pitch: pitch_loop(memory, inputs, climb, &speed_channel, speed),
-        throttle: throttle_loop(memory, inputs, climb, &speed_channel),
+        throttle: throttle_loop(memory, inputs, throttle_climb, &speed_channel),
     }
 }

@@ -1,9 +1,11 @@
 //! Unit tests of the fixed-wing law, one file per concern.
 
-mod air_data;
-mod loops;
-mod runtime;
-mod targets;
+mod air_data_tests;
+mod fallback_tests;
+mod lateral_tests;
+mod loops_tests;
+mod runtime_tests;
+mod targets_tests;
 
 use crate::control::{
     AxisCommand, Command, CommandSource, ConfigMode, ControlMode, Limits, Setpoint,
@@ -14,7 +16,9 @@ use crate::kernel::config::{FixedWingParams, ResolvedKernelConfig};
 use crate::math::{Quaternion, Vector3};
 use crate::sensor::AirData;
 use crate::state::{EstimateQuality, StateEstimate, StateValidFlags};
-use crate::types::{Meters, MetersPerSecond, Pascals, Radians, RadiansPerSecond, Scalar, Seconds};
+use crate::types::{
+    Meters, MetersPerSecond, NormalizedThrust, Pascals, Radians, RadiansPerSecond, Scalar, Seconds,
+};
 
 use super::{FixedWingController, FixedWingRuntimeState};
 use crate::control::runtime::ControllerRuntimeState;
@@ -88,6 +92,82 @@ fn pitot(indicated: Scalar) -> AirData {
             0.5 * super::air_data::SEA_LEVEL_AIR_DENSITY_KGPM3 * indicated * indicated,
         )),
         ..AirData::default()
+    }
+}
+
+pub(super) fn course_command(course: f32) -> Command {
+    command(
+        ControlMode::VelocityControl,
+        Setpoint {
+            velocity: Some([
+                MetersPerSecond(55.0 * course.cos()),
+                MetersPerSecond(55.0 * course.sin()),
+                MetersPerSecond(0.0),
+            ]),
+            ..Setpoint::default()
+        },
+    )
+}
+
+pub(super) fn height_command(height: f32) -> Command {
+    command(
+        ControlMode::VelocityControl,
+        Setpoint {
+            velocity: Some([
+                MetersPerSecond(55.0),
+                MetersPerSecond(0.0),
+                MetersPerSecond(0.0),
+            ]),
+            altitude: Some(Meters(height)),
+            ..Setpoint::default()
+        },
+    )
+}
+
+pub(super) fn climb_command(climb: f32) -> Command {
+    command(
+        ControlMode::VelocityControl,
+        Setpoint {
+            velocity: Some([
+                MetersPerSecond(55.0),
+                MetersPerSecond(0.0),
+                MetersPerSecond(-climb),
+            ]),
+            ..Setpoint::default()
+        },
+    )
+}
+
+pub(super) fn attitude_command(roll: f32, pitch: f32, throttle: f32) -> Command {
+    command(
+        ControlMode::Attitude,
+        Setpoint {
+            attitude: Some(attitude(roll, pitch, 0.0)),
+            collective_thrust: NormalizedThrust(throttle),
+            ..Setpoint::default()
+        },
+    )
+}
+
+pub(super) fn rate_command(roll: f32, pitch: f32, yaw: f32) -> Command {
+    command(
+        ControlMode::Rate,
+        Setpoint {
+            angular_rate: Some([
+                RadiansPerSecond(roll),
+                RadiansPerSecond(pitch),
+                RadiansPerSecond(yaw),
+            ]),
+            collective_thrust: NormalizedThrust(0.5),
+            ..Setpoint::default()
+        },
+    )
+}
+
+pub(super) fn banked(roll: f32) -> StateEstimate {
+    StateEstimate {
+        attitude: attitude(roll, 0.0, 0.0),
+        ..cruise_state()
     }
 }
 

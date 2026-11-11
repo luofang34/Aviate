@@ -107,8 +107,10 @@ pub(super) enum Lateral {
 pub(super) enum Vertical {
     /// Hold a pitch angle \[rad\] with the commanded throttle.
     Pitch(Scalar),
-    /// Hold the airspeed with pitch at cruise throttle. Needs neither
-    /// a height nor a velocity estimate.
+    /// Hold the airspeed with pitch. The throttle holds the pressure
+    /// height of the probe when it has a static port, and the cruise
+    /// throttle when it has none. Needs neither a position nor a
+    /// velocity estimate.
     AirspeedOnPitch,
     /// Hold a climb rate \[m/s\], positive up.
     ClimbRate(Scalar),
@@ -247,11 +249,17 @@ fn attitude_targets(
     if flags.automatic_fallback_from.is_some() {
         // The command was written for a guidance mode that the estimate
         // can no longer support. Its attitude and throttle fields say
-        // nothing, so the law holds the wings level and the airspeed.
+        // nothing, but its course and airspeed still state the intent.
+        // The course needs a velocity estimate, so the law flies it as a
+        // heading, and it holds the airspeed with pitch.
+        let intent = course_and_speed(setpoint);
+        let direction = intent
+            .map(|(course, _speed)| course)
+            .or(setpoint.heading.map(|heading| heading.0));
         return Targets::Flight {
-            lateral: Lateral::WingsLevel,
+            lateral: direction.map_or(Lateral::WingsLevel, Lateral::Heading),
             vertical: Vertical::AirspeedOnPitch,
-            airspeed: cruise,
+            airspeed: intent.map_or(cruise, |(_course, speed)| speed),
             throttle: params.cruise_throttle.0,
         };
     }

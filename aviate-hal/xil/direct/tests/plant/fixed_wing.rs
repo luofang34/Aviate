@@ -25,6 +25,9 @@ pub struct PlantModel {
     zero_lift_drag: f32,
     induced_drag_factor: f32,
     thrust_power_w: f32,
+    /// Exponent of the throttle in the thrust power: an engine gives
+    /// less than half of its power at half of the lever travel.
+    throttle_exponent: f32,
     /// Airspeed below which the propeller thrust stops growing.
     static_thrust_speed_mps: f32,
     /// Airspeed at which the surface rates below are defined, and the
@@ -55,10 +58,15 @@ pub struct PlantModel {
     side_force_per_s: f32,
     /// Roll rate per radian of sideslip.
     dihedral_per_s: f32,
+    /// Yaw acceleration at full throttle from the propeller: negative
+    /// yaws the nose left, as a propeller that turns clockwise from
+    /// behind does.
+    propeller_yaw_per_s2: f32,
 }
 
 impl PlantModel {
-    /// 1043 kg, 16.2 m2, stall at 25 m/s indicated, 95 kW of thrust power.
+    /// 1043 kg, 16.2 m2, stall at 25 m/s indicated, 90 kW of thrust power,
+    /// level at 55 m/s with 0.84 of throttle.
     pub const C172: Self = Self {
         mass_kg: 1043.0,
         wing_area_m2: 16.2,
@@ -67,7 +75,8 @@ impl PlantModel {
         max_lift_coefficient: 1.6,
         zero_lift_drag: 0.032,
         induced_drag_factor: 0.055,
-        thrust_power_w: 95_000.0,
+        thrust_power_w: 90_000.0,
+        throttle_exponent: 2.0,
         static_thrust_speed_mps: 20.0,
         reference_speed_mps: 55.0,
         roll_rate_at_full_aileron_rps: 0.9,
@@ -75,7 +84,7 @@ impl PlantModel {
         pitch_stability_per_s: 2.0,
         rate_response_time_s: 0.15,
         trim_alpha_rad: 0.008,
-        trim_throttle: 0.667,
+        trim_throttle: 0.84,
         trim_elevator: 0.12,
         directional_stability_per_s2: 9.0,
         yaw_damping_per_s: 1.2,
@@ -83,6 +92,7 @@ impl PlantModel {
         adverse_yaw_per_s2: 0.5,
         side_force_per_s: 0.16,
         dihedral_per_s: 0.5,
+        propeller_yaw_per_s2: -0.10,
     };
 
     /// 6.8 kg, 0.98 m2, stall at 9 m/s indicated, 500 W of thrust power.
@@ -95,6 +105,7 @@ impl PlantModel {
         zero_lift_drag: 0.035,
         induced_drag_factor: 0.060,
         thrust_power_w: 500.0,
+        throttle_exponent: 1.0,
         static_thrust_speed_mps: 8.0,
         reference_speed_mps: 22.0,
         roll_rate_at_full_aileron_rps: 2.0,
@@ -110,6 +121,7 @@ impl PlantModel {
         adverse_yaw_per_s2: 1.0,
         side_force_per_s: 0.3,
         dihedral_per_s: 1.0,
+        propeller_yaw_per_s2: -0.20,
     };
 }
 
@@ -266,7 +278,7 @@ impl FixedWingPlant {
             * model.wing_area_m2
             * (model.zero_lift_drag
                 + model.induced_drag_factor * lift_coefficient * lift_coefficient);
-        let thrust = self.engine * throttle * model.thrust_power_w
+        let thrust = self.engine * throttle.powf(model.throttle_exponent) * model.thrust_power_w
             / speed.max(model.static_thrust_speed_mps);
         self.load_factor = lift / weight;
 
@@ -296,7 +308,8 @@ impl FixedWingPlant {
             * authority
             * (model.directional_stability_per_s2 * sideslip + model.rudder_power_per_s2 * rudder
                 - model.adverse_yaw_per_s2 * aileron)
-            - authority * model.yaw_damping_per_s * self.yaw_rate;
+            - authority * model.yaw_damping_per_s * self.yaw_rate
+            + self.engine * throttle * model.propeller_yaw_per_s2;
         self.yaw_rate += dt_s * yaw_acceleration;
 
         let velocity_before = self.velocity_ned();

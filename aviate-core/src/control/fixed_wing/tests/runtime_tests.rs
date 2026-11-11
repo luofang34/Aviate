@@ -1,7 +1,7 @@
 //! Runtime state: kernel hooks, reset and canonical encoding.
 
 use super::super::air_data::AirspeedSource;
-use super::super::{AirSample, FixedWingRuntimeState};
+use super::super::{AirSample, FixedWingRuntimeState, StaticAir};
 use super::{command, cruise_state, pitot, Rig};
 use crate::control::runtime::ControllerRuntimeState;
 use crate::control::{ControlMode, Setpoint};
@@ -94,26 +94,57 @@ fn encoded(runtime: &FixedWingRuntimeState) -> [u8; FixedWingRuntimeState::ENCOD
 
 #[test]
 fn every_persistent_field_is_in_the_canonical_encoding() {
-    let mutations: [fn(&mut FixedWingRuntimeState); 21] = [
+    let mutations: [fn(&mut FixedWingRuntimeState); 31] = [
         |s| s.dt_sec = 0.5,
         |s| s.air_sample = Some(AirSample::default()),
         |s| {
             s.air_sample = Some(AirSample {
                 indicated_mps: 1.0,
-                true_mps: 0.0,
+                ..AirSample::default()
             });
         },
         |s| {
             s.air_sample = Some(AirSample {
-                indicated_mps: 0.0,
                 true_mps: 1.0,
+                ..AirSample::default()
+            });
+        },
+        |s| {
+            s.air_sample = Some(AirSample {
+                static_air: Some(StaticAir::default()),
+                ..AirSample::default()
+            });
+        },
+        |s| {
+            s.air_sample = Some(AirSample {
+                static_air: Some(StaticAir {
+                    pressure_pa: 1.0,
+                    scale_height_m: 0.0,
+                }),
+                ..AirSample::default()
+            });
+        },
+        |s| {
+            s.air_sample = Some(AirSample {
+                static_air: Some(StaticAir {
+                    pressure_pa: 0.0,
+                    scale_height_m: 1.0,
+                }),
+                ..AirSample::default()
             });
         },
         |s| s.air.indicated_mps = 1.0,
         |s| s.air.true_mps = 1.0,
         |s| s.air.true_rate_mps2 = 1.0,
+        |s| s.air.static_pa = 1.0,
+        |s| s.air.static_rate_paps = 1.0,
+        |s| s.air.scale_height_m = 1.0,
         |s| s.air.age_s = 1.0,
         |s| s.air.primed = true,
+        |s| s.air.static_primed = true,
+        |s| s.held_static_pa = Some(0.0),
+        |s| s.held_static_pa = Some(1.0),
+        |s| s.lateral.turn_rate_integrator = 1.0,
         |s| s.energy.throttle_integrator = 1.0,
         |s| s.energy.pitch_integrator = 1.0,
         |s| s.energy.underspeed = true,
@@ -128,7 +159,7 @@ fn every_persistent_field_is_in_the_canonical_encoding() {
         |s| s.targets.airspeed_source = AirspeedSource::Measured,
     ];
     let baseline = encoded(&FixedWingRuntimeState::default());
-    let mut seen = [baseline; 22];
+    let mut seen = [baseline; 32];
     for (index, mutate) in mutations.into_iter().enumerate() {
         let mut runtime = FixedWingRuntimeState::default();
         mutate(&mut runtime);

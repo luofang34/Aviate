@@ -165,3 +165,8 @@ value = "273.15"
 name = "AIRSPEED_STALE_AFTER_S"
 file = "aviate-core/src/control/fixed_wing/air_data.rs"
 value = "1.0"
+
+[[invariant]]
+name = "STANDARD_TEMPERATURE_K"
+file = "aviate-core/src/control/fixed_wing/air_data.rs"
+value = "288.15"

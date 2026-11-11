@@ -1015,8 +1015,24 @@ the heading into the wind to hold it. An airspeed below the minimum airspeed of 
 raised to that minimum.
 
 The law limits each target to the envelope in `Limits` and to the airframe description in
-`FixedWingParams`. When the kernel falls back to `Attitude` because the estimate lost validity,
-the law holds the wings level and holds the cruise airspeed with pitch.
+`FixedWingParams`. A turn that the course, heading, or track loops command uses the route bank
+angle of the airframe. The roll limit in `Limits` applies to a direct bank command.
+
+When the kernel falls back to `Attitude` because the estimate lost validity, the law keeps the
+intent of the command with the sensors that remain. It flies the commanded course as a heading.
+It holds the commanded airspeed with pitch. If the airspeed probe has a static port, the throttle
+holds the pressure level at which the fallback started. If the probe has no static port, the
+throttle stays at the cruise throttle of the airframe.
+
+**Height reference of the setpoint:**
+
+`Setpoint.altitude` and `Setpoint.position` are in the local frame of the origin. `altitude` is
+the height above the plane that is tangent to the ellipsoid at the origin, positive up. It is not
+a height above the ellipsoid. At a distance `d` from the origin, the two heights differ by
+approximately `d² / (2 R)`, where `R` is the Earth radius. This difference is 31 m at 20 km. The
+kernel has no geodetic model. The system that makes the command converts a height above the
+ellipsoid to the local frame. It uses the same tangent plane that converts the GNSS fix to
+`position_ned`.
 
 ---
 

@@ -169,30 +169,57 @@ fn attitude_command_is_bank_pitch_and_throttle() {
 }
 
 #[test]
-fn attitude_after_an_automatic_fallback_ignores_the_stale_setpoint() {
+fn attitude_after_an_automatic_fallback_keeps_course_and_airspeed_as_intent() {
     let params = reference_params();
+    let mut flags = VehicleControlMode::from_control_mode(ControlMode::Attitude);
+    flags.automatic_fallback_from = Some(ControlMode::VelocityControl);
+    let fallback = |setpoint: Setpoint| {
+        flight(Targets::resolve(
+            &command(ControlMode::Attitude, setpoint),
+            &flags,
+            &cruise_state(),
+            &params,
+        ))
+    };
+
+    // A velocity setpoint: its course is flown as a heading, its speed
+    // is held on pitch, and its stale attitude is ignored.
     let guidance = Setpoint {
         velocity: velocity(0.0, 50.0, 0.0),
         attitude: Some(attitude(0.5, 0.2, 0.0)),
+        heading: Some(Radians(-1.0)),
         ..Setpoint::default()
     };
-    let mut flags = VehicleControlMode::from_control_mode(ControlMode::Attitude);
-    flags.automatic_fallback_from = Some(ControlMode::VelocityControl);
-    let targets = Targets::resolve(
-        &command(ControlMode::Attitude, guidance),
-        &flags,
-        &cruise_state(),
-        &params,
-    );
+    let (lateral, vertical, airspeed, throttle) = fallback(guidance);
+    match lateral {
+        Lateral::Heading(heading) => {
+            assert!((heading - core::f32::consts::FRAC_PI_2).abs() < 1.0e-5);
+        }
+        other => panic!("heading expected, got {other:?}"),
+    }
+    assert_eq!(vertical, Vertical::AirspeedOnPitch);
+    assert_eq!(airspeed, 50.0);
+    assert_eq!(throttle, params.cruise_throttle.0);
+
+    // A track course without a velocity: the course as a heading at the
+    // cruise airspeed.
+    let track = Setpoint {
+        heading: Some(Radians(0.6)),
+        lateral_deviation: Some(Meters(40.0)),
+        ..Setpoint::default()
+    };
     assert_eq!(
-        flight(targets),
+        fallback(track),
         (
-            Lateral::WingsLevel,
+            Lateral::Heading(0.6),
             Vertical::AirspeedOnPitch,
             params.cruise_airspeed.0,
             params.cruise_throttle.0
         )
     );
+
+    // No direction in the command: wings level.
+    assert_eq!(fallback(Setpoint::default()).0, Lateral::WingsLevel);
 }
 
 #[test]
