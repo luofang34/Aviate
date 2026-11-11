@@ -57,7 +57,7 @@ use aviate_hal_io::{
     GnssFix, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading, SystemCommand,
 };
 
-use aviate_link::mavlink::MavState;
+use aviate_link::mavlink::{MavState, MavType};
 
 use crate::command_provenance::{MavlinkCommandProvenance, SourceEpochTracker};
 use crate::sim_types::{SimActuatorCmd, SimGnssFix, SimSensorPacket};
@@ -151,6 +151,10 @@ pub struct SitlIO {
     /// Updated by runtime via set_system_status()
     system_status: u8,
 
+    /// `MAV_TYPE` advertised in `HEARTBEAT`; the runner sets it from the
+    /// airframe configuration.
+    mav_type: MavType,
+
     /// The world epoch of the latest sample that stated one.
     world_generation: Option<u32>,
     /// Set when a sample states a new world epoch, until the runner takes it.
@@ -184,6 +188,7 @@ impl SitlIO {
             tx_count: 0,
             actuator_cmd: None,
             system_status: MavState::Boot as u8, // Start in BOOT state
+            mav_type: MavType::Generic,
             world_generation: None,
             generation_changed: false,
         })

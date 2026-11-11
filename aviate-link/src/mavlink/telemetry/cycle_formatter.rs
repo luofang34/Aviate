@@ -1,5 +1,6 @@
 //! MAVLink cycle formatter driving per-iteration telemetry emission.
 
+use super::super::protocol::MavType;
 use super::estimator;
 use super::{format_heartbeat, TelemetryConfig};
 use crate::errors::TelemetryError;
@@ -57,9 +58,18 @@ pub struct MavlinkCycleFormatter {
     sys_id: u8,
     /// MAVLink component ID
     comp_id: u8,
+    /// `MAV_TYPE` advertised in `HEARTBEAT`.
+    mav_type: MavType,
 }
 
 impl MavlinkCycleFormatter {
+    /// Set the `MAV_TYPE` advertised in `HEARTBEAT`, normally
+    /// [`super::vehicle_mav_type`] of the airframe. Until set it is
+    /// `MAV_TYPE_GENERIC`, which claims no airframe.
+    pub fn set_vehicle_type(&mut self, mav_type: MavType) {
+        self.mav_type = mav_type;
+    }
+
     /// Create a new MAVLink cycle formatter
     ///
     /// # Parameters
@@ -117,6 +127,7 @@ impl MavlinkCycleFormatter {
             seq: 0,
             sys_id,
             comp_id,
+            mav_type: MavType::Generic,
         })
     }
 }
@@ -129,6 +140,7 @@ impl TelemetryCycleFormatter for MavlinkCycleFormatter {
         if snapshot.iteration.is_multiple_of(self.heartbeat_div) {
             if let Ok(len) = format_heartbeat(
                 &snapshot.status,
+                self.mav_type,
                 self.sys_id,
                 self.comp_id,
                 &mut self.seq,

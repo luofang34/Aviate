@@ -16,13 +16,13 @@ pub mod link;
 pub mod synthesis;
 
 pub use board::{
-    DirectActuatorCmd, DirectBoardConfig, DirectBoardHal, DirectCommandRefusal, DirectTime,
-    DirectXilBoard, DEFAULT_REBASE_RADIUS_M,
+    DirectActuatorCmd, DirectBoardConfig, DirectBoardHal, DirectCommandRefusal, DirectNavFrame,
+    DirectTime, DirectXilBoard, DEFAULT_REBASE_RADIUS_M,
 };
 pub use host_sensors::{DirectHostSensors, DirectSensorSample};
 pub use link::{
-    DirectByteRing, DirectMavlinkEndpoint, DirectTelemetryRates, DEFAULT_RX_RING_BYTES,
-    DEFAULT_TX_RING_BYTES,
+    DirectByteRing, DirectMavlinkEndpoint, DirectTelemetryRates, GeodeticTarget,
+    DEFAULT_RX_RING_BYTES, DEFAULT_TX_RING_BYTES,
 };
 pub use synthesis::{
     DirectEnvironment, DirectMeasuredKinematics, DirectNoiseRng, DirectNoiseTier, DirectOrigin,

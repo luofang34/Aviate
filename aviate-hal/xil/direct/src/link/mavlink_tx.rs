@@ -9,7 +9,7 @@ use aviate_link::mavlink::telemetry::{format_geomagnetic_reference, format_scale
 use aviate_link::mavlink::{
     format_attitude, format_aviate_estimator_status, format_estimator_status,
     format_global_position, format_gps_raw, format_local_position, MavAutopilot, MavMessage,
-    MavModeFlag, MavType,
+    MavModeFlag,
 };
 use aviate_link::telemetry::GeodeticOrigin;
 
@@ -151,7 +151,7 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
             MavModeFlag::HIL_ENABLED.0
         };
         let hb = Heartbeat {
-            mav_type: MavType::Quadrotor as u8,
+            mav_type: self.mav_type as u8,
             autopilot: MavAutopilot::Aviate as u8,
             base_mode,
             custom_mode: 0,
@@ -356,6 +356,12 @@ fn vfr_hud(input: &DirectTelemetryFrameInput<'_>) -> VfrHud {
     }
 }
 
+/// Whether a stream at `rate_hz` is due at `now_us`.
+///
+/// The schedule advances by whole periods from its first emission, so a
+/// step that does not divide the period still averages the configured
+/// rate. A gap longer than one period restarts the schedule at `now_us`
+/// instead of bursting to catch up.
 fn rate_due(last_us: &mut Option<u64>, now_us: u64, rate_hz: u8) -> bool {
     if rate_hz == 0 {
         return false;
@@ -367,7 +373,12 @@ fn rate_due(last_us: &mut Option<u64>, now_us: u64, rate_hz: u8) -> bool {
             true
         }
         Some(prev_us) if now_us.saturating_sub(prev_us) >= period_us => {
-            *last_us = Some(now_us);
+            let scheduled_us = prev_us.saturating_add(period_us);
+            *last_us = Some(if now_us.saturating_sub(scheduled_us) >= period_us {
+                now_us
+            } else {
+                scheduled_us
+            });
             true
         }
         Some(_) => false,

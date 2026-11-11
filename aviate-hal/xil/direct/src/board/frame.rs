@@ -9,7 +9,9 @@
 //! `LOCAL_POSITION_NED` and local position targets are relative to the
 //! newest `GPS_GLOBAL_ORIGIN`, which the board sends after each move. A
 //! retained target moves with the frame. A height is above the datum
-//! and does not change with the origin.
+//! and does not change with the origin. A `SET_POSITION_TARGET_GLOBAL_INT`
+//! target is geodetic and needs none of this: the board expresses it in
+//! the present frame when it arrives.
 
 use aviate_core::control::Command;
 use aviate_core::ekf::rebase::{FrameShift, NavOrigin};
@@ -28,6 +30,23 @@ use super::DirectXilBoard;
 /// agree within it, and a height target steps by at most 0.08 m at a
 /// rebase.
 pub const DEFAULT_REBASE_RADIUS_M: f64 = 1_000.0;
+
+/// The navigation frame of the board: the origin of every local
+/// quantity it reports or reads.
+///
+/// `LOCAL_POSITION_NED`, the estimate's position and velocity, the
+/// retained setpoint, and local position and velocity targets are all
+/// relative to `origin` and along its north, east and down axes. The
+/// origin starts at the configured origin and moves to the vehicle at
+/// each rebase, so a host reads local quantities against this origin
+/// and not against the configured one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DirectNavFrame {
+    /// Origin of the tangent plane, on the configured datum height.
+    pub origin: GeodeticPosition,
+    /// Number of times the origin has moved since the estimator was seeded.
+    pub rebases: u32,
+}
 
 /// Rows: the north, east and down axes of the tangent plane at
 /// `(latitude, longitude)` in Earth-fixed axes.
@@ -100,6 +119,24 @@ where
         }
     }
 
+    /// The navigation frame that local quantities are relative to.
+    ///
+    /// Read it with every local quantity: after a rebase the origin is
+    /// no longer the configured one. `GPS_GLOBAL_ORIGIN` announces the
+    /// same origin over the link.
+    #[must_use]
+    pub fn navigation_frame(&self) -> DirectNavFrame {
+        let origin = self.frame_origin();
+        DirectNavFrame {
+            origin: GeodeticPosition::wgs84(
+                origin.latitude_deg,
+                origin.longitude_deg,
+                self.config.origin.ellipsoidal_height_m,
+            ),
+            rebases: self.kernel.state.estimator.frame.rebases,
+        }
+    }
+
     /// The configured origin, as a frame origin.
     fn configured_origin(&self) -> NavOrigin {
         NavOrigin {
@@ -167,6 +204,31 @@ where
             to.longitude_deg
         );
         true
+    }
+
+    /// Express a geodetic target in the frame of the estimate. `None`
+    /// without a declared geoid separation, since the target's altitude
+    /// is above mean sea level.
+    pub(super) fn geodetic_in_frame(
+        &self,
+        target: &crate::link::GeodeticTarget,
+    ) -> Option<[f32; 3]> {
+        let separation_m = self.geoid_separation_m?;
+        let origin = self.frame_origin();
+        let plane = LocalTangentPlane::new(GeodeticPosition::wgs84(
+            origin.latitude_deg,
+            origin.longitude_deg,
+            self.config.origin.ellipsoidal_height_m,
+        ))
+        .ok()?;
+        let ned = plane
+            .to_ned(GeodeticPosition::wgs84(
+                target.latitude_deg,
+                target.longitude_deg,
+                target.altitude_msl_m + separation_m,
+            ))
+            .ok()?;
+        Some([ned.north_m, ned.east_m, ned.down_m].map(|c| c as f32))
     }
 
     /// Express a host GNSS fix, reported in the configured frame, in the

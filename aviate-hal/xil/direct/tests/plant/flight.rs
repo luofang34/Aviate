@@ -6,6 +6,7 @@ use aviate_core::control::fixed_wing::{AirspeedSource, FixedWingController};
 use aviate_core::control::{Command, CommandSource, ControlMode, Setpoint};
 use aviate_core::ekf::Estimator;
 use aviate_core::mixer::fixed_wing::FixedWingMixer;
+use aviate_core::sensor::GeomagneticReference;
 use aviate_core::state::StateEstimate;
 use aviate_core::time::{TimeSource, Timestamp};
 use aviate_core::types::{Meters, MetersPerSecond, Radians};
@@ -56,6 +57,8 @@ pub struct Flight {
     pub accel_bias_mps2: [f32; 3],
     /// Pressure-sensor errors of the pitot-static probe, when modelled.
     pub probe_errors: Option<ProbeErrors>,
+    /// Declination that the host supplies; `None` leaves the board's model.
+    pub geomagnetic: Option<GeomagneticReference>,
     step: u64,
     sequence: u32,
     pub last: DirectActuatorCmd,
@@ -177,8 +180,32 @@ impl Flight {
         Self::cruising_with(airframe, model, noise, rates, Faults::default())
     }
 
+    /// As [`Self::cruising`], before the kernel is ready or armed, so the
+    /// test owns the arming path.
+    pub fn cruising_disarmed(
+        airframe: &FixedWingAirframe,
+        model: PlantModel,
+        noise: DirectNoiseTier,
+        rates: DirectSensorRates,
+    ) -> Self {
+        Self::cruising_disarmed_with(airframe, model, noise, rates, Faults::default())
+    }
+
     /// As [`Self::cruising`], with sensor faults from the first step.
     pub fn cruising_with(
+        airframe: &FixedWingAirframe,
+        model: PlantModel,
+        noise: DirectNoiseTier,
+        rates: DirectSensorRates,
+        faults: Faults,
+    ) -> Self {
+        let mut flight = Self::cruising_disarmed_with(airframe, model, noise, rates, faults);
+        flight.engage();
+        flight
+    }
+
+    /// As [`Self::cruising_with`], before the kernel is ready or armed.
+    pub fn cruising_disarmed_with(
         airframe: &FixedWingAirframe,
         model: PlantModel,
         noise: DirectNoiseTier,
@@ -204,7 +231,7 @@ impl Flight {
         .expect("host sensor models");
         let mut plant = FixedWingPlant::cruising(model, START_HEIGHT_M, gravity);
         plant.wind_ne = faults.wind_ne;
-        let mut flight = Self {
+        Self {
             board: DirectXilBoard::new(kernel, config).expect("create board"),
             plant,
             sensors,
@@ -213,12 +240,11 @@ impl Flight {
             gyro_bias_rps: faults.gyro_bias_rps,
             accel_bias_mps2: faults.accel_bias_mps2,
             probe_errors: None,
+            geomagnetic: None,
             step: 0,
             sequence: 0,
             last: DirectActuatorCmd::default(),
-        };
-        flight.engage();
-        flight
+        }
     }
 
     /// A C172 with an airspeed probe at 20 Hz.
@@ -234,7 +260,7 @@ impl Flight {
     pub fn advance(&mut self) {
         let truth = self.curved_truth();
         let mut sensors = match self.sensors.synthesize(&truth) {
-            Some(sample) => sample.host_sensors(None),
+            Some(sample) => sample.host_sensors(self.geomagnetic),
             None => DirectHostSensors {
                 time_us: truth.time_us,
                 ..DirectHostSensors::default()

@@ -153,3 +153,38 @@ fn each_move_announces_the_new_origin() {
     assert_eq!(last.latitude, (newest.latitude_deg * 1e7).round() as i32);
     assert_eq!(last.longitude, (newest.longitude_deg * 1e7).round() as i32);
 }
+
+/// A host reads local quantities against `navigation_frame()`: the
+/// estimate through that origin lands on the vehicle after many moves,
+/// while the same numbers read against the configured origin do not.
+#[test]
+fn local_quantities_are_relative_to_the_navigation_frame() {
+    use world_core::{LocalTangentPlane, Ned};
+
+    let mut flight = c172_flight(DirectNoiseTier::Off);
+    let _ = fly_north(&mut flight, 120);
+    let frame = flight.board.navigation_frame();
+    let estimator = &flight.board.kernel().state.estimator;
+    assert_eq!(frame.rebases, estimator.frame.rebases);
+    assert!(frame.rebases >= 5, "{}", frame.rebases);
+    let estimate = flight.estimate().position_ned.map(|m| f64::from(m.0));
+    let read = |origin| {
+        let plane = LocalTangentPlane::new(origin).expect("origin");
+        let at = plane.to_geodetic(Ned {
+            north_m: estimate[0],
+            east_m: estimate[1],
+            down_m: estimate[2],
+        });
+        let truth = flight.truth_in_estimate_frame();
+        let back = LocalTangentPlane::new(frame.origin)
+            .expect("frame")
+            .to_ned(at)
+            .expect("well formed");
+        (back.north_m - f64::from(truth[0])).hypot(back.east_m - f64::from(truth[1]))
+    };
+    let through_frame = read(frame.origin);
+    let through_configured = read(flight.board.config().origin);
+    println!("error through the frame {through_frame:.2} m, through the configured origin {through_configured:.0} m");
+    assert!(through_frame < 5.0, "{through_frame}");
+    assert!(through_configured > 1_000.0, "{through_configured}");
+}
