@@ -75,8 +75,10 @@ else
 fi
 
 # Environment
+export CARGO_INCREMENTAL=0
+rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR" "$PROF_DIR"
-rm -f "$PROF_DIR"/*.profraw
+find . -name "*.profraw" -delete 2>/dev/null || true
 
 case "$COVERAGE_MODE" in
     block)     export RUSTFLAGS="-C instrument-coverage" ;;
@@ -86,9 +88,13 @@ esac
 export LLVM_PROFILE_FILE="$PROF_DIR/cov-%p-%m.profraw"
 
 # Run Tests
+# Report filtering below keeps only `aviate-core/src/**`; running
+# `-p aviate-core` exercises its unit and integration suites directly
+# without building host SITL/MAVLink crates that cannot contribute to
+# `aviate-core` floors.
 echo ""
 echo "--- Running Tests ---"
-cargo $TOOLCHAIN test --workspace
+cargo $TOOLCHAIN test -p aviate-core
 
 # Merge Profiles
 echo ""
@@ -101,7 +107,7 @@ echo "Generating coverage reports..."
 LLVM_PATH=""
 [[ -d "$NIGHTLY_LLVM" ]] && LLVM_PATH="--llvm-path $NIGHTLY_LLVM"
 
-grcov . \
+grcov "$PROF_DIR/merged.profdata" \
     --binary-path ./target/debug/ \
     --source-dir . \
     --output-type lcov \
@@ -124,7 +130,7 @@ grcov . \
     --output-path "$OUTPUT_DIR/lcov.info"
 
 # Also generate HTML
-grcov . \
+grcov "$PROF_DIR/merged.profdata" \
     --binary-path ./target/debug/ \
     --source-dir . \
     --output-type html \

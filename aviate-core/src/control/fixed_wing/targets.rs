@@ -203,7 +203,7 @@ fn deviation_targets(
     setpoint: &Setpoint,
     state: &StateEstimate,
     params: &FixedWingParams,
-    cruise: Scalar,
+    airspeed: Scalar,
 ) -> Targets {
     let track_course = setpoint
         .heading
@@ -225,24 +225,17 @@ fn deviation_targets(
     Targets::Flight {
         lateral: Lateral::Course(wrap_angle(track_course - intercept)),
         vertical,
-        airspeed: setpoint
-            .airspeed
-            .map(|airspeed| airspeed.0)
-            .or(course_and_speed(setpoint).map(|(_course, speed)| speed))
-            .unwrap_or(cruise),
+        airspeed,
         throttle: params.cruise_throttle.0,
     }
 }
 
 /// Targets for a velocity command: course, airspeed and climb.
-fn velocity_targets(setpoint: &Setpoint, params: &FixedWingParams, cruise: Scalar) -> Targets {
-    let (lateral, airspeed) = match course_and_speed(setpoint) {
-        Some((course, speed)) => (
-            Lateral::Course(course),
-            setpoint.airspeed.map_or(speed, |airspeed| airspeed.0),
-        ),
-        None => (heading_or_bank(setpoint), cruise),
-    };
+fn velocity_targets(setpoint: &Setpoint, params: &FixedWingParams, airspeed: Scalar) -> Targets {
+    let lateral = course_and_speed(setpoint).map_or_else(
+        || heading_or_bank(setpoint),
+        |(course, _speed)| Lateral::Course(course),
+    );
     Targets::Flight {
         lateral,
         vertical: climb_target(setpoint),
@@ -257,6 +250,7 @@ fn attitude_targets(
     flags: &VehicleControlMode,
     params: &FixedWingParams,
     cruise: Scalar,
+    airspeed: Scalar,
 ) -> Targets {
     if flags.automatic_fallback_from.is_some() {
         // The command was written for a guidance mode that the estimate
@@ -264,14 +258,13 @@ fn attitude_targets(
         // nothing, but its course and airspeed still state the intent.
         // The course needs a velocity estimate, so the law flies it as a
         // heading, and it holds the airspeed with pitch.
-        let intent = course_and_speed(setpoint);
-        let direction = intent
+        let direction = course_and_speed(setpoint)
             .map(|(course, _speed)| course)
             .or(setpoint.heading.map(|heading| heading.0));
         return Targets::Flight {
             lateral: direction.map_or(Lateral::WingsLevel, Lateral::Heading),
             vertical: Vertical::AirspeedOnPitch,
-            airspeed: intent.map_or(cruise, |(_course, speed)| speed),
+            airspeed,
             throttle: params.cruise_throttle.0,
         };
     }
@@ -340,10 +333,13 @@ impl Targets {
         params: &FixedWingParams,
     ) -> Self {
         let setpoint = &command.setpoint;
-        // A commanded airspeed replaces the cruise airspeed wherever the
-        // law would fly the cruise airspeed or a speed over the ground.
+        // A commanded airspeed replaces the cruise airspeed and a speed
+        // over the ground wherever the law would fly them.
         let commanded = setpoint.airspeed.map(|airspeed| airspeed.0);
         let cruise = commanded.unwrap_or(params.cruise_airspeed.0);
+        let airspeed = commanded
+            .or_else(|| course_and_speed(setpoint).map(|(_course, speed)| speed))
+            .unwrap_or(params.cruise_airspeed.0);
         match command.mode {
             ControlMode::Rate => Targets::Rates {
                 rates: setpoint
@@ -351,17 +347,17 @@ impl Targets {
                     .map_or([0.0; 3], |rates| rates.map(|rate| rate.0)),
                 throttle: setpoint.collective_thrust.0,
             },
-            ControlMode::Attitude => attitude_targets(setpoint, flags, params, cruise),
+            ControlMode::Attitude => attitude_targets(setpoint, flags, params, cruise, airspeed),
             // A fixed wing cannot hold a position. A caller that asks
             // for it past the capability gate gets a height hold.
             ControlMode::AltitudeHold | ControlMode::PositionHold => Targets::Flight {
                 lateral: heading_or_bank(setpoint),
                 vertical: climb_target(setpoint),
-                airspeed: course_and_speed(setpoint).map_or(cruise, |(_course, speed)| speed),
+                airspeed,
                 throttle: params.cruise_throttle.0,
             },
-            ControlMode::VelocityControl => velocity_targets(setpoint, params, cruise),
-            ControlMode::DeviationTracking => deviation_targets(setpoint, state, params, cruise),
+            ControlMode::VelocityControl => velocity_targets(setpoint, params, airspeed),
+            ControlMode::DeviationTracking => deviation_targets(setpoint, state, params, airspeed),
         }
     }
 }

@@ -70,8 +70,8 @@ impl VehicleController for FixedWingController {
     type RuntimeState = FixedWingRuntimeState;
 
     // Registered in cert/algorithm_id_registry.toml as
-    // "controller.fixed_wing.v3".
-    const ALGORITHM_ID: u64 = 0x4354_4C46_5747_5633; // "CTLFWGV3"
+    // "controller.fixed_wing.v4".
+    const ALGORITHM_ID: u64 = 0x4354_4C46_5747_5634; // "CTLFWGV4"
 
     fn verify_config_binding(
         &self,

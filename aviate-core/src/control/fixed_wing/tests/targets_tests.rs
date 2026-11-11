@@ -16,16 +16,20 @@ fn resolve(mode: ControlMode, setpoint: Setpoint, state: &StateEstimate) -> Targ
     )
 }
 
-fn flight(targets: Targets) -> (Lateral, Vertical, f32, f32) {
+fn flight_targets(targets: Targets) -> Option<(Lateral, Vertical, f32, f32)> {
     match targets {
         Targets::Flight {
             lateral,
             vertical,
             airspeed,
             throttle,
-        } => (lateral, vertical, airspeed, throttle),
-        Targets::Rates { .. } => panic!("flight targets expected"),
+        } => Some((lateral, vertical, airspeed, throttle)),
+        Targets::Rates { .. } => None,
     }
+}
+
+fn flight(targets: Targets) -> (Lateral, Vertical, f32, f32) {
+    flight_targets(targets).expect("flight targets expected")
 }
 
 fn velocity(north: f32, east: f32, down: f32) -> Option<[MetersPerSecond; 3]> {
@@ -36,14 +40,17 @@ fn velocity(north: f32, east: f32, down: f32) -> Option<[MetersPerSecond; 3]> {
     ])
 }
 
-fn assert_course(lateral: Lateral, expected: f32) {
+fn lateral_angle(lateral: Lateral) -> Option<f32> {
     match lateral {
-        Lateral::Course(course) => assert!(
-            wrap_angle(course - expected).abs() < 1.0e-4,
-            "course {course}, expected {expected}"
-        ),
-        other => panic!("course expected, got {other:?}"),
+        Lateral::Bank(angle) | Lateral::Course(angle) | Lateral::Heading(angle) => Some(angle),
+        Lateral::WingsLevel => None,
     }
+}
+
+fn assert_course(lateral: Lateral, expected: f32) {
+    assert!(matches!(lateral, Lateral::Course(_)));
+    let course = lateral_angle(lateral).expect("course angle");
+    assert!(wrap_angle(course - expected).abs() < 1.0e-4);
 }
 
 #[test]
@@ -124,8 +131,10 @@ fn rate_command_passes_rates_and_throttle() {
         collective_thrust: NormalizedThrust(0.4),
         ..Setpoint::default()
     };
+    let resolved = resolve(ControlMode::Rate, rates, &cruise_state());
+    assert_eq!(flight_targets(resolved), None);
     assert_eq!(
-        resolve(ControlMode::Rate, rates, &cruise_state()),
+        resolved,
         Targets::Rates {
             rates: [0.1, -0.2, 0.05],
             throttle: 0.4,
@@ -142,20 +151,19 @@ fn rate_command_passes_rates_and_throttle() {
 
 #[test]
 fn attitude_command_is_bank_pitch_and_throttle() {
+    let commanded_att = attitude(0.3, 0.1, 2.0);
+    let (exp_roll, exp_pitch, _) = commanded_att.to_euler();
     let commanded = Setpoint {
-        attitude: Some(attitude(0.3, 0.1, 2.0)),
+        attitude: Some(commanded_att),
         collective_thrust: NormalizedThrust(0.8),
         ..Setpoint::default()
     };
     let (lateral, vertical, _airspeed, throttle) =
         flight(resolve(ControlMode::Attitude, commanded, &cruise_state()));
-    match (lateral, vertical) {
-        (Lateral::Bank(bank), Vertical::Pitch(pitch)) => {
-            assert!((bank - 0.3).abs() < 1.0e-4);
-            assert!((pitch - 0.1).abs() < 1.0e-4);
-        }
-        other => panic!("bank and pitch expected, got {other:?}"),
-    }
+    assert_eq!(lateral, Lateral::Bank(exp_roll));
+    assert_eq!(vertical, Vertical::Pitch(exp_pitch));
+    assert!((exp_roll - 0.3).abs() < 1.0e-4);
+    assert!((exp_pitch - 0.1).abs() < 1.0e-4);
     assert_eq!(throttle, 0.8);
 
     // No attitude in the command: wings level at the trim pitch.
@@ -191,12 +199,9 @@ fn attitude_after_an_automatic_fallback_keeps_course_and_airspeed_as_intent() {
         ..Setpoint::default()
     };
     let (lateral, vertical, airspeed, throttle) = fallback(guidance);
-    match lateral {
-        Lateral::Heading(heading) => {
-            assert!((heading - core::f32::consts::FRAC_PI_2).abs() < 1.0e-5);
-        }
-        other => panic!("heading expected, got {other:?}"),
-    }
+    assert!(matches!(lateral, Lateral::Heading(_)));
+    let heading = lateral_angle(lateral).expect("heading angle");
+    assert!((heading - core::f32::consts::FRAC_PI_2).abs() < 1.0e-5);
     assert_eq!(vertical, Vertical::AirspeedOnPitch);
     assert_eq!(airspeed, 50.0);
     assert_eq!(throttle, params.cruise_throttle.0);
@@ -220,6 +225,7 @@ fn attitude_after_an_automatic_fallback_keeps_course_and_airspeed_as_intent() {
 
     // No direction in the command: wings level.
     assert_eq!(fallback(Setpoint::default()).0, Lateral::WingsLevel);
+    assert_eq!(lateral_angle(Lateral::WingsLevel), None);
 }
 
 #[test]
@@ -237,16 +243,15 @@ fn height_modes_take_heading_then_bank_then_wings_level() {
     assert_eq!(vertical, Vertical::Height(450.0));
     assert_eq!(airspeed, 55.0);
 
+    let bank_att = attitude(0.2, 0.0, 0.0);
     let banked = Setpoint {
-        attitude: Some(attitude(0.2, 0.0, 0.0)),
+        attitude: Some(bank_att),
         vertical_speed: Some(MetersPerSecond(1.5)),
         ..Setpoint::default()
     };
     let (lateral, vertical, ..) = flight(resolve(ControlMode::AltitudeHold, banked, &state));
-    match lateral {
-        Lateral::Bank(bank) => assert!((bank - 0.2).abs() < 1.0e-4),
-        other => panic!("bank expected, got {other:?}"),
-    }
+    assert_eq!(lateral, Lateral::Bank(bank_att.to_euler().0));
+    assert!((bank_att.to_euler().0 - 0.2).abs() < 1.0e-4);
     // A positive down rate is a descent.
     assert_eq!(vertical, Vertical::ClimbRate(-1.5));
 
@@ -258,6 +263,46 @@ fn height_modes_take_heading_then_bank_then_wings_level() {
     ));
     assert_eq!(lateral, Lateral::WingsLevel);
     assert_eq!(vertical, Vertical::ClimbRate(0.0));
+}
+
+#[test]
+fn commanded_airspeed_replaces_ground_speed_and_cruise_airspeed() {
+    let params = reference_params();
+    let state = cruise_state();
+    let with_velocity = Setpoint {
+        velocity: velocity(0.0, 44.0, 0.0),
+        airspeed: Some(MetersPerSecond(61.0)),
+        altitude: Some(Meters(350.0)),
+        ..Setpoint::default()
+    };
+    for mode in [
+        ControlMode::AltitudeHold,
+        ControlMode::PositionHold,
+        ControlMode::VelocityControl,
+        ControlMode::DeviationTracking,
+    ] {
+        let (_, _, airspeed, _) = flight(resolve(mode, with_velocity.clone(), &state));
+        assert_eq!(airspeed, 61.0);
+    }
+
+    let mut fallback_flags = VehicleControlMode::from_control_mode(ControlMode::Attitude);
+    fallback_flags.automatic_fallback_from = Some(ControlMode::VelocityControl);
+    let (lateral, vertical, airspeed, _) = flight(Targets::resolve(
+        &command(ControlMode::Attitude, with_velocity),
+        &fallback_flags,
+        &state,
+        &params,
+    ));
+    assert!(matches!(lateral, Lateral::Heading(_)));
+    assert_eq!(vertical, Vertical::AirspeedOnPitch);
+    assert_eq!(airspeed, 61.0);
+
+    let cruise_override = Setpoint {
+        airspeed: Some(MetersPerSecond(48.0)),
+        ..Setpoint::default()
+    };
+    let (_, _, airspeed, _) = flight(resolve(ControlMode::AltitudeHold, cruise_override, &state));
+    assert_eq!(airspeed, 48.0);
 }
 
 #[test]

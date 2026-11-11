@@ -1,73 +1,57 @@
-# JSBSim engine update
+# JSBSim and Simulate CI gates
 
-Date: 2026-11-02.
+Date: 2026-11-11.
 
-The CI job uses Pilotage `9296611ee3bab20b925092b63eda26dcce176135`.
-Pilotage PR #886 contains this commit.
-The sidecar uses the Rust `jsbsim 0.2.0` crate by default.
-This dependency requires Rust 1.99 or later.
-The CI job uses the stable toolchain.
-The C++ JSBSim 1.3.3 backend remains available through the `cpp` feature.
+## Scope
 
-## CI behavior
+Continuous Integration (CI) runs two flight-dynamics simulation gates:
 
-The SITL matrix runs the same blocking mission manifest on both engines.
-Each matrix entry has a separate sidecar cache key.
-The Rust entry builds without a C++ JSBSim checkout.
-The C++ entry builds the library and enables the `cpp` feature.
-Each entry selects its engine explicitly at sidecar startup.
-The Rust entry keeps the existing required-check name.
-The CI Success job waits for both entries.
+- `SITL Missions (JSBSim X500)` runs Software-in-the-Loop (SITL) missions through the Pilotage sidecar (`pilotage-jsbsim-sidecar`).
+- `Simulate XIL Gates (JSBSim C172 & X500)` runs Anything-in-the-Loop (XIL) tests from `luofang34/Simulate` against the checked-out Aviate commit.
 
-## Independent checks
+Both gates use the Rust `jsbsim` crate.
+Neither gate builds or links the C++ JSBSim library.
 
-These checks used Aviate main at `971fdd4cadd14789a974957b3b096146225fd337`.
-They used the Pilotage source at the pin above.
-The host was Linux x86-64 with Rust 1.99.1.
+## SITL mission gate
 
-The mission harness built with:
+The `sitl_jsbsim` job checks out `luofang34/Pilotage` at `PILOTAGE_REV` (`9296611ee3bab20b925092b63eda26dcce176135`).
+The sidecar uses `jsbsim 0.2.0` by default.
+The job builds `pilotage-jsbsim-sidecar` without the `cpp` feature and without a C++ JSBSim directory.
+The sidecar starts with `--engine rust` and `--realtime-factor 0` at latitude 47.3977419 degrees, longitude 8.5455938 degrees, heading 0 degrees, and site elevation 488 m.
 
-```sh
-cargo build --release --locked -p aviate-app-sitl-jsbsim-x500 --bin sitl-jsbsim-missions
-```
-
-Each engine served an X500 at latitude 47.3977419, longitude 8.5455938,
-heading 0 degrees, and site elevation 488 m.
-The sidecar used `--realtime-factor 0`.
-The Rust run used no `--jsbsim-root` option.
-The C++ run used `--engine cpp --jsbsim-root DIR`.
-The mission command was:
+The mission harness (`sitl-jsbsim-missions`) runs the blocking manifest:
 
 ```sh
 target/release/sitl-jsbsim-missions blocking
 ```
+
+The six blocking missions are `basic_flight`, `command_timeout`, `gnss_dropout`, `hover_stability`, `numeric_fault_inject`, and `position_hold`.
+The manifest permits three runs per mission and requires two passes.
+
+## Simulate XIL gate
+
+The `simulate-gates` job checks out `luofang34/Simulate` at `SIMULATE_REV` (`eb3201ec906a8740b0bfe1f0c0a62ed60a8e1ec9`).
+The script `simulate/scripts/use-local-siblings.sh` redirects Simulate's `Aviate` git dependencies to the current Aviate workspace.
+The job then runs three test suites in release mode:
+
+```sh
+(cd simulate && cargo test --release -p sim-aviate -p ironbird -p sim-flight-chain)
+```
+
+- `sim-aviate` checks the fixed-wing C172 and multirotor X500 bridges, sensor models, and envelope limits.
+- `ironbird` runs Tier-0, Tier-1, and Tier-2 closed-loop JSBSim flights for the C172 and X500 airframes.
+- `sim-flight-chain` runs the hosted guidance, Aviate controller, and JSBSim C172 flight chain across nominal flight, wind shifts, Global Navigation Satellite System (GNSS) outages, and frame rebases.
+
+## Earlier parity record
+
+Before CI removed the C++ matrix entry on 2026-11-11, a parity review on 2026-11-02 compared `jsbsim 0.2.0` against C++ JSBSim 1.3.3 on Aviate `971fdd4cadd14789a974957b3b096146225fd337`.
 
 | Engine | Missions | Runs | Passed phases |
 | --- | --- | --- | --- |
 | Rust `jsbsim 0.2.0` | 6 passed | 2 passes per mission | 84 |
 | C++ JSBSim 1.3.3 | 6 passed | 2 passes per mission | 84 |
 
-The manifest permits three runs and requires two passes.
-Both engines passed on the first two runs.
-The six missions are `basic_flight`, `command_timeout`, `gnss_dropout`,
-`hover_stability`, `numeric_fault_inject`, and `position_hold`.
-
-The Pilotage sidecar passed 53 tests with the default build and 58 tests
-with `cpp`. These include model-load errors, shared data paths,
-5000-step X500 and Rascal flights, and landing sensor comparisons.
-See Pilotage `docs/jsbsim-rust-review.md` for the full review scope.
-
-## Separate toolchain failure
-
-Aviate PR #377 changes the Release Scripts toolchain from 1.95.0 to 1.120.0.
-Run `41377667765` failed while the action downloaded Rust 1.120.0.
-The distribution server returned HTTP 404 before compilation.
-The JSBSim mission job in that run passed against the old Pilotage pin.
-This update starts from main and does not include that toolchain change.
-
-## Prior claims
-
-Pilotage PR #886 originally reported 96 phases per engine with an older
-Rust dependency and Aviate source. That count was not confirmed here.
-The local logs from this review contain 84 passed phases per engine.
-The earlier PX4 mission reports were not rerun here.
+Pilotage PR #886 earlier reported 96 phases per engine with an older Rust dependency and Aviate commit.
+The 2026-11-02 review did not confirm that phase count.
+The local logs from the 2026-11-02 review recorded 84 passed phases per engine.
+The 2026-11-02 review did not run the earlier PX4 mission reports again.

@@ -387,5 +387,35 @@ fn ground_reset_clears_a_stale_flight_phase() {
     assert_eq!(kernel.state.flight_phase.phase(), FlightPhase::OnGround);
 }
 
+#[test]
+fn fix_tolerant_pre_arm_ignores_position_fix_faults_and_blocks_other_faults() {
+    use aviate_core::fault::FaultFlags;
+    let mut kernel = armed_on_ground();
+    kernel.disarm().expect("grounded disarm");
+    let sensors = valid_sensors();
+    for _ in 0..150 {
+        kernel.init_step(&sensors, timestamp());
+    }
+    assert!(kernel.is_ready());
+
+    // When NO_FAULTS_BUT_FIX is required alongside NO_FAULTS, GNSS loss still blocks.
+    kernel.state.checks.pre_arm.required |= PreArmFlags::NO_FAULTS_BUT_FIX | PreArmFlags::NO_FAULTS;
+    kernel.state.faults = FaultFlags::GNSS0_LOST;
+    assert_eq!(kernel.arm(), Err(ArmError::Faulted));
+
+    // When NO_FAULTS_BUT_FIX replaces NO_FAULTS, GNSS loss is tolerated,
+    // while a non-fix fault still blocks arming.
+    kernel
+        .state
+        .checks
+        .pre_arm
+        .required
+        .remove(PreArmFlags::NO_FAULTS);
+    kernel.state.faults = FaultFlags::IMU0_FAILED;
+    assert_eq!(kernel.arm(), Err(ArmError::Faulted));
+    kernel.state.faults = FaultFlags::GNSS0_LOST;
+    assert_eq!(kernel.arm(), Ok(()));
+}
+
 #[path = "arm_disarm_lifecycle/rearm.rs"]
 mod rearm;

@@ -156,21 +156,24 @@ fn canonical_hash_distinguishes_fault_table() {
 fn canonical_hash_distinguishes_mixer_geometry() {
     // #140: the declared mixer geometry must be lockstep-visible —
     // two channels resolved for different geometries may not agree.
-    let quad_x = ResolvedKernelConfig {
-        mixer_geometry: MixerGeometry::QuadX,
-        ..Default::default()
-    };
-    let x500 = ResolvedKernelConfig {
-        mixer_geometry: MixerGeometry::QuadXX500,
-        ..Default::default()
-    };
-    let reversed = ResolvedKernelConfig {
-        mixer_geometry: MixerGeometry::QuadXX500ReversedSpin,
-        ..Default::default()
-    };
-    assert_ne!(quad_x.canonical_hash(), x500.canonical_hash());
-    assert_ne!(x500.canonical_hash(), reversed.canonical_hash());
-    assert_ne!(quad_x.canonical_hash(), reversed.canonical_hash());
+    let geometries = [
+        MixerGeometry::QuadX,
+        MixerGeometry::QuadXX500,
+        MixerGeometry::QuadXX500ReversedSpin,
+        MixerGeometry::FixedWing,
+    ];
+    let hashes: [u64; 4] = core::array::from_fn(|i| {
+        let cfg = ResolvedKernelConfig {
+            mixer_geometry: geometries[i],
+            ..Default::default()
+        };
+        cfg.canonical_hash()
+    });
+    for i in 0..hashes.len() {
+        for j in (i + 1)..hashes.len() {
+            assert_ne!(hashes[i], hashes[j]);
+        }
+    }
 }
 
 #[test]
