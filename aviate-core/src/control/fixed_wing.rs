@@ -2,10 +2,9 @@
 //! course guidance into bank, coordinated-turn attitude loops and
 //! airspeed-scaled body-rate loops.
 //!
-//! Every airframe number comes from
-//! [`FixedWingParams`](crate::kernel::config::FixedWingParams) in the
-//! resolved configuration; persistent state lives in
-//! `KernelState.controller` as a [`FixedWingRuntimeState`].
+//! Every airframe number comes from [`FixedWingParams`] in the resolved
+//! configuration; persistent state lives in `KernelState.controller` as a
+//! [`FixedWingRuntimeState`].
 
 pub mod air_data;
 mod attitude;
