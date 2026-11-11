@@ -16,6 +16,10 @@ pub enum DirectCommandRefusal {
     /// The vehicle does not let an external commander request this mode.
     /// A multirotor keeps its height hold for the kernel's own descent.
     ModeNotCommandable(ControlMode),
+    /// A geodetic target states its altitude above mean sea level, and the
+    /// host has not declared the geoid separation that turns it into a
+    /// height above the ellipsoid.
+    GeoidSeparationUnknown,
 }
 
 /// Command ingress state machine enforcing `#133` setpoint freshness semantics.

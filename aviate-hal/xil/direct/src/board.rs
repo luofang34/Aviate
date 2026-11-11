@@ -1,5 +1,6 @@
 //! In-process `no_std` XIL board driving [`aviate_core::DefaultAviateKernel`].
 
+mod commands;
 mod frame;
 mod host;
 mod ingress;

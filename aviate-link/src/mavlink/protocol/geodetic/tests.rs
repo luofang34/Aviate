@@ -120,3 +120,43 @@ fn gps_global_origin_matches_pymavlink_both_ways() {
     };
     assert_eq!(parsed, Some(global_origin()));
 }
+
+// SET_POSITION_TARGET_GLOBAL_INT from system 42, component 191, seq=7.
+const PYMAVLINK_SET_POSITION_TARGET_GLOBAL_INT: &[u8] = &[
+    0xFD, 0x35, 0x00, 0x00, 0x07, 0x2A, 0xBF, 0x56, 0x00, 0x00, 0x40, 0xE2, 0x01, 0x00, 0x30, 0x11,
+    0x57, 0x17, 0x20, 0xE4, 0xFB, 0xD2, 0x00, 0x40, 0x9C, 0x43, 0x00, 0x00, 0xC0, 0x3F, 0x00, 0x00,
+    0x00, 0xC0, 0x00, 0x00, 0x80, 0x3E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x40, 0x3F, 0x00, 0x00, 0x00, 0x00, 0xF8, 0x0D, 0x01, 0x01, 0x05, 0x4F,
+    0xFA,
+];
+
+fn global_target() -> SetPositionTargetGlobalInt {
+    SetPositionTargetGlobalInt {
+        time_boot_ms: 123_456,
+        lat_int: 391_582_000,
+        lon_int: -755_244_000,
+        alt: 312.5,
+        vx: 1.5,
+        vy: -2.0,
+        vz: 0.25,
+        yaw: 0.75,
+        type_mask: 0x0DF8,
+        target_system: 1,
+        target_component: 1,
+        coordinate_frame: 5,
+        ..SetPositionTargetGlobalInt::default()
+    }
+}
+
+#[test]
+fn set_position_target_global_int_matches_pymavlink_both_ways() {
+    let mut buf = [0u8; 128];
+    let message = MavMessage::SetPositionTargetGlobalInt(global_target());
+    let len = serialize_mavlink(&message, 7, 42, 191, &mut buf).unwrap_or_default();
+    assert_eq!(&buf[..len], PYMAVLINK_SET_POSITION_TARGET_GLOBAL_INT);
+    let parsed = match parse_mavlink(PYMAVLINK_SET_POSITION_TARGET_GLOBAL_INT) {
+        Ok((MavMessage::SetPositionTargetGlobalInt(m), _, _)) => Some(m),
+        _ => None,
+    };
+    assert_eq!(parsed, Some(global_target()));
+}

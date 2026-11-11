@@ -9,7 +9,9 @@
 //! `LOCAL_POSITION_NED` and local position targets are relative to the
 //! newest `GPS_GLOBAL_ORIGIN`, which the board sends after each move. A
 //! retained target moves with the frame. A height is above the datum
-//! and does not change with the origin.
+//! and does not change with the origin. A `SET_POSITION_TARGET_GLOBAL_INT`
+//! target is geodetic and needs none of this: the board expresses it in
+//! the present frame when it arrives.
 
 use aviate_core::control::Command;
 use aviate_core::ekf::rebase::{FrameShift, NavOrigin};
@@ -167,6 +169,31 @@ where
             to.longitude_deg
         );
         true
+    }
+
+    /// Express a geodetic target in the frame of the estimate. `None`
+    /// without a declared geoid separation, since the target's altitude
+    /// is above mean sea level.
+    pub(super) fn geodetic_in_frame(
+        &self,
+        target: &crate::link::GeodeticTarget,
+    ) -> Option<[f32; 3]> {
+        let separation_m = self.geoid_separation_m?;
+        let origin = self.frame_origin();
+        let plane = LocalTangentPlane::new(GeodeticPosition::wgs84(
+            origin.latitude_deg,
+            origin.longitude_deg,
+            self.config.origin.ellipsoidal_height_m,
+        ))
+        .ok()?;
+        let ned = plane
+            .to_ned(GeodeticPosition::wgs84(
+                target.latitude_deg,
+                target.longitude_deg,
+                target.altitude_msl_m + separation_m,
+            ))
+            .ok()?;
+        Some([ned.north_m, ned.east_m, ned.down_m].map(|c| c as f32))
     }
 
     /// Express a host GNSS fix, reported in the configured frame, in the

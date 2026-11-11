@@ -6,7 +6,8 @@ use aviate_core::types::{Meters, MetersPerSecond, NormalizedThrust, Radians};
 use aviate_hal_io::SystemCommand;
 use aviate_link::mavlink::protocol::{
     attitude_target_typemask, position_target_typemask, CommandLong, MavHeader, SetAttitudeTarget,
-    SetPositionTargetLocalNed, MAVLINK_IFLAG_SIGNED, MAVLINK_SIGNATURE_LEN, MAVLINK_STX_V2,
+    SetPositionTargetGlobalInt, SetPositionTargetLocalNed, MAVLINK_IFLAG_SIGNED,
+    MAVLINK_SIGNATURE_LEN, MAVLINK_STX_V2,
 };
 use aviate_link::mavlink::{
     mav_cmd, mav_result, parse_mavlink_frame, LocalAddress, MavMessage, FORCE_ARM_DISARM_MAGIC,
@@ -69,6 +70,13 @@ pub(super) enum InboundAction {
     },
     Airspeed {
         request: AirspeedRequest,
+        sender: Sender,
+    },
+    /// A position target whose local position the board fills in from
+    /// `target` in its present frame.
+    EnqueueGeodetic {
+        command: SystemCommand,
+        target: super::GeodeticTarget,
         sender: Sender,
     },
     ImmediateAck {
@@ -156,6 +164,19 @@ fn map_message(message: MavMessage, header: MavHeader, local: LocalAddress) -> I
             match map_attitude_target(&target, header.seq) {
                 Some(cmd) => InboundAction::Enqueue {
                     command: SystemCommand::FlightControl(cmd),
+                    sender,
+                },
+                None => InboundAction::Ignore,
+            }
+        }
+        MavMessage::SetPositionTargetGlobalInt(target) => {
+            if !local.accepts(target.target_system, target.target_component) {
+                return InboundAction::Ignore;
+            }
+            match map_global_target(&target, header.seq) {
+                Some((command, geodetic)) => InboundAction::EnqueueGeodetic {
+                    command: SystemCommand::FlightControl(command),
+                    target: geodetic,
                     sender,
                 },
                 None => InboundAction::Ignore,
@@ -319,6 +340,57 @@ fn map_position_target(set_pos: &SetPositionTargetLocalNed, seq: u8) -> Option<C
         sequence: u32::from(seq),
         source: CommandSource::Gcs,
     })
+}
+
+/// A geodetic position hold, with an optional velocity and yaw. Only an
+/// altitude above mean sea level (`MAV_FRAME_GLOBAL_INT`) is read; the
+/// position is left for the board to express in its present frame.
+fn map_global_target(
+    set_pos: &SetPositionTargetGlobalInt,
+    seq: u8,
+) -> Option<(Command, super::GeodeticTarget)> {
+    if set_pos.coordinate_frame != SetPositionTargetGlobalInt::FRAME_GLOBAL_INT {
+        return None;
+    }
+    let mask = set_pos.type_mask;
+    let velocity_active = vector_active(mask, VELOCITY_MASK)?;
+    let unsupported = mask & !KNOWN_POSITION_MASK != 0
+        || mask & POSITION_MASK != 0
+        || mask & ACCELERATION_MASK != ACCELERATION_MASK
+        || mask & position_target_typemask::FORCE_SET != 0
+        || mask & position_target_typemask::YAW_RATE_IGNORE == 0;
+    if unsupported || !set_pos.alt.is_finite() {
+        return None;
+    }
+    let yaw_active = mask & position_target_typemask::YAW_IGNORE == 0;
+    if velocity_active && !all_finite(&[set_pos.vx, set_pos.vy, set_pos.vz]) {
+        return None;
+    }
+    if yaw_active && !set_pos.yaw.is_finite() {
+        return None;
+    }
+    let target = super::GeodeticTarget {
+        latitude_deg: f64::from(set_pos.lat_int) * 1.0e-7,
+        longitude_deg: f64::from(set_pos.lon_int) * 1.0e-7,
+        altitude_msl_m: f64::from(set_pos.alt),
+    };
+    let command = Command {
+        mode: ControlMode::PositionHold,
+        setpoint: Setpoint {
+            velocity: velocity_active.then_some([
+                MetersPerSecond(set_pos.vx),
+                MetersPerSecond(set_pos.vy),
+                MetersPerSecond(set_pos.vz),
+            ]),
+            heading: yaw_active.then_some(Radians(set_pos.yaw)),
+            ..Setpoint::default()
+        },
+        config_mode_request: None,
+        sensor_overrides: None,
+        sequence: u32::from(seq),
+        source: CommandSource::Gcs,
+    };
+    Some((command, target))
 }
 
 /// Height hold on a heading: `z` is the local NED down coordinate, so
