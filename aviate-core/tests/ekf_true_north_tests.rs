@@ -3,17 +3,19 @@
 //! A magnetometer measures magnetic heading. Where magnetic north lies
 //! `D` east of true north, a filter that fuses that heading as yaw is off
 //! by `D` — about 12° in parts of the world at 51° N. Every case below
-//! drives the real `Estimator::observe` path with a stationary IMU and a
-//! physically consistent magnetometer reading, and reads the converged
-//! yaw.
+//! drives the real `Estimator::observe` path with a stationary IMU, a
+//! physically consistent magnetometer reading and a GNSS fix at rest,
+//! and reads the converged yaw. The fix holds roll and pitch: the
+//! heading measurement also sees them, so without any aiding a heading
+//! error could be read as a tilt.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
 use aviate_core::ekf::{Ekf, EkfConfig, EkfState, Estimator};
 use aviate_core::math::{Quaternion, Vector3};
 use aviate_core::sensor::{
-    GeomagneticReference, GeomagneticSource, ImuData, MagData, SensorHealth, SensorReading,
-    SensorSet,
+    GeomagneticReference, GeomagneticSource, GnssData, GnssFix, GnssHealth, ImuData, MagData,
+    SensorHealth, SensorReading, SensorSet,
 };
 use aviate_core::time::{TimeSource, Timestamp};
 use aviate_core::types::{
@@ -76,9 +78,15 @@ fn stationary_sensors(geomagnetic: Option<GeomagneticReference>) -> SensorSet {
     let mag = reading(MagData {
         field_ut: mag_body(TRUE_YAW_DEG.to_radians()),
     });
+    let at_rest = reading(GnssData {
+        position_ned: [Meters(0.0); 3],
+        velocity_ned: [MetersPerSecond(0.0); 3],
+        fix: GnssFix::ThreeD,
+        health: GnssHealth::Good,
+    });
     SensorSet {
         imus: [imu, SensorReading::default(), SensorReading::default()],
-        gnss: [SensorReading::default(), SensorReading::default()],
+        gnss: [at_rest, SensorReading::default()],
         mags: [mag, SensorReading::default()],
         baros: [SensorReading::default(), SensorReading::default()],
         airspeeds: [SensorReading::default(), SensorReading::default()],

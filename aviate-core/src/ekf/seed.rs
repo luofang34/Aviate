@@ -5,8 +5,16 @@ use super::{EkfState, IDX_AB, IDX_ATT, IDX_GB, IDX_POS, IDX_VEL, STATE_DIM};
 use crate::math::{Matrix, Quaternion, Vector3};
 use crate::types::{Meters, MetersPerSecond, Scalar};
 
-/// Initial covariance: position/velocity/attitude blocks start loose
-/// (0.1), bias blocks start at realistic MEMS scales — gyro
+/// Variance of roll and pitch of a seed from the accelerometer at rest
+/// \[rad²\]: 3 degrees at one standard deviation, the tilt that an
+/// accelerometer bias of 0.2 m/s² and a small motion give. The heading
+/// update sees roll and pitch through the levelled field; with a loose
+/// tilt prior it would explain a heading error as tilt.
+const SEED_TILT_VAR_RAD2: Scalar = 0.0027;
+
+/// Initial covariance: position, velocity and heading start loose
+/// (0.1), roll and pitch at the accelerometer tilt
+/// (`SEED_TILT_VAR_RAD2`), bias blocks at realistic MEMS scales — gyro
 /// (0.02 rad/s)², accel (0.2 m/s²)². Seeding the gyro-bias variance
 /// at 0.1 (σ ≈ 0.32 rad/s, ~30× a real bias) invites the filter to
 /// explain early attitude motion as bias: with oscillating flight
@@ -14,6 +22,8 @@ use crate::types::{Meters, MetersPerSecond, Scalar};
 /// predict integrates the phantom rate (the #123 pump).
 pub(super) fn initial_covariance() -> Matrix<STATE_DIM, STATE_DIM> {
     let mut p = Matrix::identity().mul_scalar(0.1);
+    p.set(IDX_ATT, IDX_ATT, SEED_TILT_VAR_RAD2);
+    p.set(IDX_ATT + 1, IDX_ATT + 1, SEED_TILT_VAR_RAD2);
     for i in 0..3 {
         p.set(IDX_GB + i, IDX_GB + i, 4e-4);
         p.set(IDX_AB + i, IDX_AB + i, 0.04);

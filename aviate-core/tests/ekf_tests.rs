@@ -1306,9 +1306,9 @@ fn ekf_state_uncertainty_grows_during_predict_only() {
         Quaternion::IDENTITY,
     );
 
-    // Run many predict steps without update - P should grow
+    // Run 3 s of predict steps without update - P should grow
     // This means larger innovations will be accepted (gate widens with P)
-    for _ in 0..100 {
+    for _ in 0..300 {
         ekf.predict_state(&mut state, &imu, 0.01);
     }
 

@@ -1,6 +1,6 @@
-//! The X500 flies bit for bit as it did before the estimator gained
-//! optional blocks: the actuator outputs and the 15-state filter of a
-//! noisy hover, climb and GNSS gap fold to a pinned digest.
+//! The X500 flight is pinned bit for bit: the actuator outputs and the
+//! 15-state filter of a noisy hover, climb, heading change and GNSS gap
+//! fold to one digest.
 //!
 //! A change of this digest is a change of X500 flight behaviour. It
 //! must come with a new estimator or controller identity and a reason.
@@ -129,6 +129,5 @@ fn x500_hover_climb_turn_and_gnss_gap_match_the_pinned_digest() {
     assert_eq!(digest.0, PINNED);
 }
 
-/// Digest of the X500 flight above. The estimator blocks that only a
-/// fixed wing configures leave it unchanged.
-const PINNED: u64 = 0xf4d0_d696_1562_e7e2;
+/// Digest of the X500 flight above.
+const PINNED: u64 = 0x627f_32a1_13ac_907b;

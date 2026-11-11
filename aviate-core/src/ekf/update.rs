@@ -271,20 +271,14 @@ impl Ekf {
             return; // COV:EXCL(DEFENSIVE: weight 0.01-0.1 rejected by earlier check)
         };
 
-        // With air-data aiding the vehicle flies long banked turns with no
-        // position fix. The heading then also measures roll and pitch
-        // through the estimated attitude that levels the field, and the
-        // joint update corrects all three with the gyro bias. Without
-        // that path a gyro bias drives the tilt off in each turn. The
-        // configuration decides this at construction.
-        if self.has_air_aiding() {
-            let field_nav = state.quat.rotate_vector(Vector3::new(mag_x, mag_y, mag_z));
-            if let Some(measurement) = heading_measurement(field_nav, innov, r_effective) {
-                self.fuse_joint(state, &measurement);
-            }
-            return;
+        // The heading comes from the field levelled by the estimated roll
+        // and pitch, so it also measures them. The joint update corrects
+        // heading, tilt and gyro bias together; a heading-only update
+        // leaves a gyro bias to drive the tilt off in every turn.
+        let field_nav = state.quat.rotate_vector(Vector3::new(mag_x, mag_y, mag_z));
+        if let Some(measurement) = heading_measurement(field_nav, innov, r_effective) {
+            self.fuse_joint(state, &measurement);
         }
-        self.heading_update(state, innov, r_effective);
     }
 }
 

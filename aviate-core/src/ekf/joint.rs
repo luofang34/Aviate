@@ -133,7 +133,7 @@ impl Ekf {
     }
 }
 
-/// Heading measurement for a filter that fuses its heading jointly.
+/// Magnetometer heading as a joint measurement.
 ///
 /// The heading comes from the magnetometer field rotated into the
 /// navigation frame by the estimated attitude. A roll or pitch error
