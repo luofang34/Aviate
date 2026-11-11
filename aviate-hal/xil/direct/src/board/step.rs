@@ -361,7 +361,6 @@ where
             },
         );
     }
-
 }
 
 /// Replace the HAL stamp of `reading` with the reported measurement time.

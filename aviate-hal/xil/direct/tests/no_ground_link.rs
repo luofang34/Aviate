@@ -43,6 +43,7 @@ const RATES: DirectTelemetryRates = DirectTelemetryRates {
     attitude_hz: 25,
     position_hz: 5,
     estimator_status_hz: 5,
+    vfr_hud_hz: 4,
 };
 
 fn frame(message: &MavMessage, seq: u8) -> Vec<u8> {

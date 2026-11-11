@@ -174,9 +174,7 @@ impl Flight {
         noise: DirectNoiseTier,
         rates: DirectSensorRates,
     ) -> Self {
-        let mut flight = Self::cruising_disarmed(airframe, model, noise, rates);
-        flight.engage();
-        flight
+        Self::cruising_with(airframe, model, noise, rates, Faults::default())
     }
 
     /// As [`Self::cruising`], before the kernel is ready or armed, so the
@@ -187,11 +185,24 @@ impl Flight {
         noise: DirectNoiseTier,
         rates: DirectSensorRates,
     ) -> Self {
-        Self::cruising_with(airframe, model, noise, rates, Faults::default())
+        Self::cruising_disarmed_with(airframe, model, noise, rates, Faults::default())
     }
 
     /// As [`Self::cruising`], with sensor faults from the first step.
     pub fn cruising_with(
+        airframe: &FixedWingAirframe,
+        model: PlantModel,
+        noise: DirectNoiseTier,
+        rates: DirectSensorRates,
+        faults: Faults,
+    ) -> Self {
+        let mut flight = Self::cruising_disarmed_with(airframe, model, noise, rates, faults);
+        flight.engage();
+        flight
+    }
+
+    /// As [`Self::cruising_with`], before the kernel is ready or armed.
+    pub fn cruising_disarmed_with(
         airframe: &FixedWingAirframe,
         model: PlantModel,
         noise: DirectNoiseTier,
@@ -217,7 +228,7 @@ impl Flight {
         .expect("host sensor models");
         let mut plant = FixedWingPlant::cruising(model, START_HEIGHT_M, gravity);
         plant.wind_ne = faults.wind_ne;
-        let mut flight = Self {
+        Self {
             board: DirectXilBoard::new(kernel, config).expect("create board"),
             plant,
             sensors,
