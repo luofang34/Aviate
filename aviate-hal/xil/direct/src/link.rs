@@ -13,7 +13,7 @@ use aviate_link::mavlink::{
     mav_cmd, mav_result, serialize_mavlink, LocalAddress, MavMessage, MavState,
 };
 
-use mavlink_rx::{next_inbound_action, InboundAction};
+use mavlink_rx::{next_inbound_action, InboundAction, Sender};
 
 /// Default inbound MAVLink RX byte ring capacity.
 pub const DEFAULT_RX_RING_BYTES: usize = 2048;
@@ -22,6 +22,18 @@ pub const DEFAULT_RX_RING_BYTES: usize = 2048;
 pub const DEFAULT_TX_RING_BYTES: usize = 8192;
 
 const COMMAND_QUEUE_CAP: usize = 16;
+/// MAVLink system ID that ground stations use by convention.
+const GROUND_STATION_SYSTEM_ID: u8 = 255;
+/// MAVLink component ID that addresses every component of a system.
+const ALL_COMPONENTS: u8 = 0;
+
+/// A queued command and the link address that sent it, when it came
+/// over the link.
+#[derive(Debug, Clone)]
+struct QueuedCommand {
+    command: SystemCommand,
+    sender: Option<Sender>,
+}
 pub(crate) const MAX_FRAME_BUF: usize = 280;
 
 /// Outbound MAVLink stream rates in Hertz (`0` disables a stream).
@@ -59,9 +71,12 @@ pub struct DirectMavlinkEndpoint<
 > {
     rx_ring: DirectByteRing<RX_CAP>,
     tx_ring: DirectByteRing<TX_CAP>,
-    cmd_queue: [Option<SystemCommand>; COMMAND_QUEUE_CAP],
+    cmd_queue: [Option<QueuedCommand>; COMMAND_QUEUE_CAP],
     cmd_head: usize,
     cmd_len: usize,
+    /// Sender of the command that `poll_command` returned last. Its
+    /// acknowledgement goes back to this address.
+    ack_target: Option<Sender>,
     sys_id: u8,
     comp_id: u8,
     seq: u8,
@@ -85,6 +100,7 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
             cmd_queue: [const { None }; COMMAND_QUEUE_CAP],
             cmd_head: 0,
             cmd_len: 0,
+            ack_target: None,
             sys_id,
             comp_id,
             seq: 0,
@@ -142,12 +158,16 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
     ///
     /// Returns `true` if queued, or `false` when the 16-slot command FIFO is full.
     pub fn enqueue_command(&mut self, cmd: SystemCommand) -> bool {
+        self.enqueue(cmd, None)
+    }
+
+    fn enqueue(&mut self, command: SystemCommand, sender: Option<Sender>) -> bool {
         if self.cmd_len >= COMMAND_QUEUE_CAP {
             return false;
         }
         let tail = (self.cmd_head.wrapping_add(self.cmd_len)) % COMMAND_QUEUE_CAP;
         if let Some(slot) = self.cmd_queue.get_mut(tail) {
-            *slot = Some(cmd);
+            *slot = Some(QueuedCommand { command, sender });
         }
         self.cmd_len = self.cmd_len.wrapping_add(1);
         true
@@ -159,13 +179,15 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
         if self.cmd_len == 0 {
             return None;
         }
-        let cmd = self.cmd_queue.get_mut(self.cmd_head).and_then(Option::take);
+        let queued = self.cmd_queue.get_mut(self.cmd_head).and_then(Option::take);
         self.cmd_head = (self.cmd_head.wrapping_add(1)) % COMMAND_QUEUE_CAP;
         self.cmd_len = self.cmd_len.saturating_sub(1);
         if self.cmd_len == 0 {
             self.cmd_head = 0;
         }
-        cmd
+        let queued = queued?;
+        self.ack_target = queued.sender;
+        Some(queued.command)
     }
 
     /// Update the armed flag advertised in `HEARTBEAT`.
@@ -184,6 +206,7 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
         self.cmd_queue = [const { None }; COMMAND_QUEUE_CAP];
         self.cmd_head = 0;
         self.cmd_len = 0;
+        self.ack_target = None;
         self.armed = false;
         self.mav_state = MavState::Boot;
         self.last_heartbeat_us = None;
@@ -213,7 +236,7 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
             ),
             CommandOutcome::DisarmRejected(_) => (mav_result::DENIED, 0),
         };
-        self.emit_command_ack(mav_command, result, detail);
+        self.emit_command_ack(mav_command, result, detail, self.ack_target);
     }
 
     fn decode_inbound_frames(&mut self) {
@@ -226,25 +249,38 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
                 break;
             };
             match action {
-                InboundAction::Enqueue(cmd) => {
-                    let _ = self.enqueue_command(cmd);
+                InboundAction::Enqueue { command, sender } => {
+                    let _ = self.enqueue(command, Some(sender));
                 }
-                InboundAction::ImmediateAck { command, result } => {
-                    self.emit_command_ack(command, result, 0);
+                InboundAction::ImmediateAck {
+                    command,
+                    result,
+                    sender,
+                } => {
+                    self.emit_command_ack(command, result, 0, Some(sender));
                 }
                 InboundAction::Ignore => {}
             }
         }
     }
 
-    fn emit_command_ack(&mut self, command: u16, result: u8, detail: i32) {
+    /// Acknowledge `command` to the system and component that sent it.
+    ///
+    /// A command that came through the typed entry has no sender on the
+    /// link. Its acknowledgement goes to the ground-station system, all
+    /// components.
+    fn emit_command_ack(&mut self, command: u16, result: u8, detail: i32, to: Option<Sender>) {
+        let to = to.unwrap_or(Sender {
+            system: GROUND_STATION_SYSTEM_ID,
+            component: ALL_COMPONENTS,
+        });
         let ack = CommandAck {
             command,
             result,
             progress: 0,
             result_param2: detail,
-            target_system: 255,
-            target_component: 0,
+            target_system: to.system,
+            target_component: to.component,
         };
         self.push_mav_message(&MavMessage::CommandAck(ack));
     }

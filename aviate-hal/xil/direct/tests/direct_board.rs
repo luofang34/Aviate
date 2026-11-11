@@ -242,6 +242,8 @@ fn drain_and_count_telemetry<C, M>(
                 if ack.command == mav_cmd::COMPONENT_ARM_DISARM
                     && ack.result == mav_result::ACCEPTED =>
             {
+                // The arm frame came from system 255, component 190.
+                assert_eq!((ack.target_system, ack.target_component), (255, 190));
                 counts.arm_ack_accepted += 1;
             }
             _ => {}
@@ -382,4 +384,81 @@ fn world_reset_generation_and_reset_with_kernel_disarm_and_reconverge() {
     board.send_command(SystemCommand::Arm);
     let after_swap = board.step_truth(&plant.truth(step_gen2 * dt_us, 2, step_gen2));
     assert!(after_swap.armed);
+}
+
+fn acks_in(
+    board: &mut DirectXilBoard<
+        impl aviate_core::control::VehicleController,
+        impl aviate_core::mixer::Mixer,
+    >,
+) -> Vec<(u16, u8, u8, u8)> {
+    let mut buf = [0_u8; 4096];
+    let n = board.pop_mavlink_tx(&mut buf);
+    let mut acks = Vec::new();
+    let mut cursor = 0_usize;
+    while cursor < n {
+        let parsed = parse_mavlink_frame(&buf[cursor..n]).expect("valid outbound frame");
+        cursor += parsed.consumed;
+        if let MavMessage::CommandAck(ack) = parsed.message {
+            acks.push((
+                ack.command,
+                ack.result,
+                ack.target_system,
+                ack.target_component,
+            ));
+        }
+    }
+    acks
+}
+
+#[test]
+fn command_ack_goes_back_to_the_sender_of_the_command() {
+    let cfg = test_config(DirectNoiseTier::Off, 5);
+    let mut board =
+        DirectXilBoard::new(build_x500_kernel().expect("build X500 kernel"), cfg).expect("board");
+    let plant = QuadX500Plant::new_on_pad(cfg.origin);
+    let command_from = |system: u8, component: u8, command: u16| {
+        let msg = MavMessage::CommandLong(CommandLong {
+            param1: 1.0,
+            command,
+            target_system: 1,
+            target_component: 1,
+            ..CommandLong::default()
+        });
+        let mut buf = [0_u8; 280];
+        let len = serialize_mavlink(&msg, 0, system, component, &mut buf).expect("serialize");
+        (buf, len)
+    };
+
+    // Two commanders in one step: an arm request, which the board
+    // refuses before it is ready, and a command it does not support.
+    let (arm, arm_len) = command_from(42, 7, mav_cmd::COMPONENT_ARM_DISARM);
+    const UNSUPPORTED_COMMAND: u16 = 31_000;
+    let (other, other_len) = command_from(200, 3, UNSUPPORTED_COMMAND);
+    assert_eq!(board.push_mavlink_rx(&arm[..arm_len]), arm_len);
+    assert_eq!(board.push_mavlink_rx(&other[..other_len]), other_len);
+    let _ = board.step_truth(&plant.truth(0, 0, 0));
+    let _ = board.step_truth(&plant.truth(2_500, 0, 1));
+
+    let acks = acks_in(&mut board);
+    let arm_ack = acks
+        .iter()
+        .find(|ack| ack.0 == mav_cmd::COMPONENT_ARM_DISARM)
+        .expect("arm acknowledgement");
+    assert_ne!(arm_ack.1, mav_result::ACCEPTED, "the board is not ready");
+    assert_eq!((arm_ack.2, arm_ack.3), (42, 7));
+    let other_ack = acks
+        .iter()
+        .find(|ack| ack.0 == UNSUPPORTED_COMMAND)
+        .expect("acknowledgement of the unsupported command");
+    assert_eq!(other_ack.1, mav_result::UNSUPPORTED);
+    assert_eq!((other_ack.2, other_ack.3), (200, 3));
+
+    // A typed command has no sender on the link: its acknowledgement
+    // goes to the ground-station system, all components.
+    board.send_command(aviate_hal_io::SystemCommand::Arm);
+    let _ = board.step_truth(&plant.truth(5_000, 0, 2));
+    let acks = acks_in(&mut board);
+    assert_eq!(acks.len(), 1);
+    assert_eq!((acks[0].2, acks[0].3), (255, 0));
 }
