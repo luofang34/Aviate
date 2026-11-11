@@ -36,9 +36,23 @@ const KNOWN_POSITION_MASK: u16 = POSITION_MASK
     | position_target_typemask::YAW_IGNORE
     | position_target_typemask::YAW_RATE_IGNORE;
 
+/// System and component that sent an inbound frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Sender {
+    pub(super) system: u8,
+    pub(super) component: u8,
+}
+
 pub(super) enum InboundAction {
-    Enqueue(SystemCommand),
-    ImmediateAck { command: u16, result: u8 },
+    Enqueue {
+        command: SystemCommand,
+        sender: Sender,
+    },
+    ImmediateAck {
+        command: u16,
+        result: u8,
+        sender: Sender,
+    },
     Ignore,
 }
 
@@ -106,14 +120,21 @@ pub(super) fn next_inbound_action<const N: usize>(
 }
 
 fn map_message(message: MavMessage, header: MavHeader, local: LocalAddress) -> InboundAction {
+    let sender = Sender {
+        system: header.sysid,
+        component: header.compid,
+    };
     match message {
-        MavMessage::CommandLong(cmd) => map_command_long(&cmd, local),
+        MavMessage::CommandLong(cmd) => map_command_long(&cmd, local, sender),
         MavMessage::SetAttitudeTarget(target) => {
             if !local.accepts(target.target_system, target.target_component) {
                 return InboundAction::Ignore;
             }
             match map_attitude_target(&target, header.seq) {
-                Some(cmd) => InboundAction::Enqueue(SystemCommand::FlightControl(cmd)),
+                Some(cmd) => InboundAction::Enqueue {
+                    command: SystemCommand::FlightControl(cmd),
+                    sender,
+                },
                 None => InboundAction::Ignore,
             }
         }
@@ -122,7 +143,10 @@ fn map_message(message: MavMessage, header: MavHeader, local: LocalAddress) -> I
                 return InboundAction::Ignore;
             }
             match map_position_target(&target, header.seq) {
-                Some(cmd) => InboundAction::Enqueue(SystemCommand::FlightControl(cmd)),
+                Some(cmd) => InboundAction::Enqueue {
+                    command: SystemCommand::FlightControl(cmd),
+                    sender,
+                },
                 None => InboundAction::Ignore,
             }
         }
@@ -130,29 +154,29 @@ fn map_message(message: MavMessage, header: MavHeader, local: LocalAddress) -> I
     }
 }
 
-fn map_command_long(cmd: &CommandLong, local: LocalAddress) -> InboundAction {
+fn map_command_long(cmd: &CommandLong, local: LocalAddress, sender: Sender) -> InboundAction {
     if !local.accepts(cmd.target_system, cmd.target_component) {
         return InboundAction::Ignore;
     }
+    let refuse = |result: u8| InboundAction::ImmediateAck {
+        command: cmd.command,
+        result,
+        sender,
+    };
     if cmd.command != mav_cmd::COMPONENT_ARM_DISARM {
-        return InboundAction::ImmediateAck {
-            command: cmd.command,
-            result: mav_result::UNSUPPORTED,
-        };
+        return refuse(mav_result::UNSUPPORTED);
     }
     let forced = cmd.param2 == FORCE_ARM_DISARM_MAGIC;
-    if cmd.param1 == 1.0 {
-        InboundAction::Enqueue(SystemCommand::Arm)
+    let command = if cmd.param1 == 1.0 {
+        SystemCommand::Arm
     } else if cmd.param1 == 0.0 && forced {
-        InboundAction::Enqueue(SystemCommand::EmergencyTerminate)
+        SystemCommand::EmergencyTerminate
     } else if cmd.param1 == 0.0 {
-        InboundAction::Enqueue(SystemCommand::Disarm)
+        SystemCommand::Disarm
     } else {
-        InboundAction::ImmediateAck {
-            command: cmd.command,
-            result: mav_result::DENIED,
-        }
-    }
+        return refuse(mav_result::DENIED);
+    };
+    InboundAction::Enqueue { command, sender }
 }
 
 fn map_attitude_target(set_att: &SetAttitudeTarget, seq: u8) -> Option<Command> {
