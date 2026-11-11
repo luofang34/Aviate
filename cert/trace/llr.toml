@@ -2350,3 +2350,104 @@ verification_methods = ["test"]
 modules = ["aviate-core/src/ekf/accel_clip.rs", "aviate-core/src/ekf/predict.rs"]
 derived = false
 traces_to = ["80d94e93-b4a8-4f69-8426-31395eabb89c"]
+
+[[requirements]]
+uid = "336ed2e9-9a4b-4a24-8940-1e05443dc2a7"
+id = "LLR-EST-213"
+title = "The navigation frame moves to the vehicle by a rigid rebase"
+owner = "aviate-core@aviate"
+description = """
+`EkfState::rebase(shift)` SHALL express the filter in the frame that
+`shift` leads to by the rigid map `new = R (old - o)`: position by the
+map, velocity and attitude by the rotation `R`, the position, velocity
+and attitude covariance blocks by `R` (`T P Tᵀ`), and, with air-data
+aiding, the wind and its blocks by the horizontal part of `R`. The
+biases are in body axes and SHALL stay. The barometer datum SHALL stay.
+The rebase SHALL count itself in `EkfState::frame.rebases` and record
+the new origin in `EkfState::frame.origin`. A measurement taken after
+the rebase in the new frame SHALL see the innovation and the
+innovation variance it would have seen in the old frame.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf/rebase.rs"]
+derived = false
+traces_to = ["80d94e93-b4a8-4f69-8426-31395eabb89c"]
+
+[[requirements]]
+uid = "eaa72043-0393-4d0c-b54b-8794301969f5"
+id = "LLR-EST-214"
+title = "The magnetometer heading corrects heading, tilt and gyro bias together"
+owner = "aviate-core@aviate"
+description = """
+`update_mag_state` SHALL form the heading from the body field levelled
+by the estimated roll and pitch, add the supplied declination, and fuse
+the innovation through the joint update with a Jacobian over the
+heading and the tilt states (`heading_measurement`), so that one sample
+corrects heading, roll, pitch and the gyro bias together. It SHALL
+apply to every airframe.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf/update.rs", "aviate-core/src/ekf/joint.rs"]
+derived = false
+traces_to = ["c3f236b1-ea09-43ea-95e6-b98734433c10"]
+
+[[requirements]]
+uid = "3def065b-779e-4bb8-b30d-5a1d008c7141"
+id = "LLR-EST-215"
+title = "Air-data aiding bounds the velocity without a position fix"
+owner = "aviate-core@aviate"
+description = """
+With air-data aiding configured, the filter SHALL carry two horizontal
+wind states beside the 15-state covariance and SHALL fuse, on each
+usable pitot-static sample, the true airspeed as the magnitude of the
+velocity relative to the air mass and a zero sideslip as its component
+along the body lateral axis, through the joint update. Without the
+configuration the filter SHALL never touch the wind block, so its
+arithmetic is that of the 15-state filter.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/ekf/air_aiding.rs", "aviate-core/src/ekf/joint.rs"]
+derived = false
+traces_to = ["1a16d9c8-7632-4aee-9b23-3bcbfe74036d"]
+
+[[requirements]]
+uid = "df4574a8-fdd6-43d7-95cb-c1aaf01eec0e"
+id = "LLR-CTL-209"
+title = "Fixed-wing targets: course, heading and commanded airspeed"
+owner = "aviate-core@aviate"
+description = """
+`Targets::resolve` SHALL map a fixed-wing command to lateral, vertical
+and airspeed targets. In AltitudeHold and PositionHold the lateral
+target SHALL be the commanded heading, else the course of a horizontal
+velocity setpoint flown as a heading, else the commanded bank, else
+wings level. In VelocityControl the lateral target SHALL be the course
+of the velocity setpoint over the ground. A commanded airspeed
+(`Setpoint::airspeed`) SHALL replace the cruise airspeed and a speed
+over the ground wherever the law would fly them.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/control/fixed_wing/targets.rs", "aviate-core/src/control/fixed_wing/lateral.rs"]
+derived = false
+traces_to = ["745ef567-19ed-4953-9342-323bd2c8a320"]
+
+[[requirements]]
+uid = "08a5c434-1340-4fd3-a44d-cc5081a5cfbe"
+id = "LLR-CTL-210"
+title = "Fixed-wing validity needs and the fallback that keeps the command's intent"
+owner = "aviate-core@aviate"
+description = """
+`FixedWingController::required_validity` SHALL require nothing for
+Rate, ATTITUDE for Attitude, ATTITUDE and HEIGHT for AltitudeHold, and
+VELOCITY in addition for VelocityControl, and VELOCITY and POSITION in
+addition for PositionHold and DeviationTracking. A height or climb-rate
+target SHALL be flown only while HEIGHT is valid, and otherwise the
+airspeed SHALL be held on pitch. After an automatic fallback the law
+SHALL fly the commanded course as a heading, hold the commanded
+airspeed with pitch, and hold with the throttle the static-port
+pressure level at which the fallback started; a probe without a static
+port SHALL keep the cruise throttle.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/control/fixed_wing.rs", "aviate-core/src/control/fixed_wing/targets.rs", "aviate-core/src/control/fixed_wing/air_data.rs"]
+derived = false
+traces_to = ["745ef567-19ed-4953-9342-323bd2c8a320"]

@@ -1010,3 +1010,20 @@ for an unsatisfied pre-arm gate would have been reported accepted.
 """
 verification_methods = ["test"]
 traces_to = ["c925725e-29bf-40e1-b0d5-2e257ed02819"]
+
+[[requirements]]
+uid = "745ef567-19ed-4953-9342-323bd2c8a320"
+id = "HLR-CTL-205"
+title = "A fixed wing flies the commanded course or heading, height and airspeed"
+owner = "aviate-core@aviate"
+description = """
+The fixed-wing control law SHALL fly the lateral, vertical and airspeed
+targets of the command it is given: a course over the ground or a
+heading, a height or a climb rate, and an indicated airspeed. When the
+estimate cannot support a target the law SHALL fly the nearest target
+the estimate supports, keeping the intent of the command, and SHALL
+never close a loop on a part of the estimate that the estimator does
+not grade valid.
+"""
+verification_methods = ["test"]
+traces_to = ["6f3eb555-3636-48b4-90f2-5d11abfcaa54"]
