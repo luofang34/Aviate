@@ -12,10 +12,8 @@ use aviate_core::types::{Meters, MetersPerSecond, Radians, Seconds};
 use aviate_core::ChannelId;
 use aviate_hal_io::{ActuatorDriver, BoardHal, FakeActuator, RawBaroReading, MAX_ACTUATOR_OUTPUTS};
 use aviate_link::mavlink::MavState;
-use aviate_link::telemetry::GeodeticOrigin;
 
 use crate::host_sensors::DirectHostSensors;
-use crate::link::DirectTelemetryFrameInput;
 use crate::synthesis::DirectTruthSample;
 
 use super::ingress::{
@@ -364,43 +362,6 @@ where
         );
     }
 
-    fn emit_cycle_telemetry(
-        &mut self,
-        sim_time_us: u64,
-        time_boot_ms: u32,
-        estimate: &aviate_core::state::StateEstimate,
-        geomag: GeomagneticReference,
-    ) {
-        let frame = self.frame_origin();
-        let origin_msl_m =
-            self.config.origin.ellipsoidal_height_m - self.geoid_separation_m.unwrap_or(0.0);
-        let origin = GeodeticOrigin {
-            latitude_deg: frame.latitude_deg,
-            longitude_deg: frame.longitude_deg,
-            altitude_msl_m: origin_msl_m as f32,
-        };
-        if self.geoid_separation_m.is_some() && !self.origin_announced {
-            self.endpoint.emit_global_origin(
-                origin.latitude_deg,
-                origin.longitude_deg,
-                origin_msl_m,
-                u64::from(time_boot_ms) * 1_000,
-            );
-            self.origin_announced = true;
-        }
-        let input = DirectTelemetryFrameInput {
-            sim_time_us,
-            time_boot_ms,
-            faults: self.kernel.state.faults,
-            state: estimate,
-            baro_pressure_pa: self.sensor_cache.baro_pressure_pa,
-            baro_temperature_c: self.sensor_cache.baro_temperature_c,
-            geomagnetic: Some(geomag),
-            geodetic_origin: origin,
-            gnss_fix: self.last_gnss_raw.as_ref(),
-        };
-        self.endpoint.emit_telemetry(&input);
-    }
 }
 
 /// Replace the HAL stamp of `reading` with the reported measurement time.
