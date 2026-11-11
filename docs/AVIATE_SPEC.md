@@ -1009,6 +1009,11 @@ fields as follows:
 | `DeviationTracking` | `lateral_deviation`, `vertical_deviation`, `heading`, `velocity` | `heading` is the track course. `lateral_deviation` is positive when the vehicle is right of the track. `vertical_deviation` is positive when the vehicle is above the profile. The horizontal magnitude of `velocity` is the indicated airspeed. |
 | `PositionHold` | None | The fixed-wing controller does not support this mode. The kernel refuses it. |
 
+The airspeed in a setpoint is an airspeed, not a ground speed. In wind, the ground speed differs
+from it by the wind along the course. The course is the track over the ground, so the law turns
+the heading into the wind to hold it. An airspeed below the minimum airspeed of the airframe is
+raised to that minimum.
+
 The law limits each target to the envelope in `Limits` and to the airframe description in
 `FixedWingParams`. When the kernel falls back to `Attitude` because the estimate lost validity,
 the law holds the wings level and holds the cruise airspeed with pitch.

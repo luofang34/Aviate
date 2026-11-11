@@ -117,8 +117,8 @@ OWNERSHIP=(
     'aviate-core/src/mixer/spacecraft.rs|mixer/mixer.spacecraft.v1'
     'aviate-core/src/mixer/fixed_wing.rs|mixer/mixer.fixed_wing.v1'
     'aviate-core/src/mixer/desaturate.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1'
-    'aviate-core/src/mixer.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,mixer/mixer.spacecraft.v1,mixer/mixer.fixed_wing.v1,sanitizer/sanitizer.group_aware.v1'
-    'aviate-core/src/mixer/|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,mixer/mixer.spacecraft.v1,mixer/mixer.fixed_wing.v1,sanitizer/sanitizer.group_aware.v1'
+    'aviate-core/src/mixer.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,mixer/mixer.spacecraft.v1,sanitizer/sanitizer.group_aware.v1'
+    'aviate-core/src/mixer/|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,mixer/mixer.spacecraft.v1,sanitizer/sanitizer.group_aware.v1'
 )
 
 # Pinned production aggregate identity hashes. These are the same
