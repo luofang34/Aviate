@@ -67,6 +67,15 @@ pub trait ControllerRuntimeState:
     /// time must validate the interval before it stores the value.
     fn set_cycle_interval(&mut self, _interval: crate::types::Seconds) {}
 
+    /// Offer the air data of this cycle to the controller.
+    ///
+    /// The kernel calls this method once before each controller step,
+    /// after [`Self::set_cycle_interval`]. `None` means that no airspeed
+    /// sensor is usable in this cycle. The default does not change
+    /// runtime state: a controller that does not fly on air data
+    /// ignores the lane.
+    fn set_air_data(&mut self, _air: Option<&crate::sensor::AirData>) {}
+
     /// Return the runtime state to its post-construction baseline.
     /// Equivalent to `*self = Self::default()` for simple cases;
     /// implementors with allocated buffers may zero-fill in place.

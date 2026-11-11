@@ -1,6 +1,8 @@
 //! Deterministic `no_std` Gaussian sensor noise tiers and generator.
 
-use aviate_hal_io::{RawBaroReading, RawGnssReading, RawImuReading, RawMagReading};
+use aviate_hal_io::{
+    RawAirspeedReading, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading,
+};
 use world_core::{GeodeticPosition, LocalTangentPlane, Ned};
 
 /// Additive Gaussian sensor noise grade for [`super::DirectSynthesizer`].
@@ -175,6 +177,21 @@ pub fn apply_baro_noise(
         return;
     }
     baro.pressure_pa += rng.next_normal() * tier.baro_sigma_pa();
+}
+
+/// Add tier-matched Gaussian pressure noise to `airspeed` in place.
+///
+/// The differential-pressure sensor of a pitot-static probe has the
+/// noise of a pressure sensor, so the barometer figure applies.
+pub fn apply_airspeed_noise(
+    airspeed: &mut RawAirspeedReading,
+    tier: DirectNoiseTier,
+    rng: &mut DirectNoiseRng,
+) {
+    if tier == DirectNoiseTier::Off {
+        return;
+    }
+    airspeed.differential_pressure_pa += rng.next_normal() * tier.baro_sigma_pa();
 }
 
 /// Add tier-matched Gaussian magnetic field noise to `mag` in place.

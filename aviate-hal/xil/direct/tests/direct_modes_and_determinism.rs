@@ -3,17 +3,13 @@
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
 use aviate_app_sitl_gazebo_x500_kernel::build_x500_kernel;
-use aviate_core::control::fixed_wing::FixedWingController;
-use aviate_core::control::{
-    AxisCommand, Command, CommandSource, ConfigMode, ControlMode, Setpoint,
-};
+use aviate_core::control::{Command, CommandSource, ControlMode, Setpoint};
 use aviate_core::ekf::Ekf;
 use aviate_core::kernel::builder::AviateKernelBuilder;
-use aviate_core::kernel::config::{MixerGeometry, ResolvedKernelConfig};
 use aviate_core::math::Quaternion;
-use aviate_core::mixer::{ActuatorCmd, Mixer, ModeConfig, Sanitizer, MAX_ACTUATORS};
+use aviate_core::mixer::Sanitizer;
 use aviate_core::time::{TimeSource, Timestamp};
-use aviate_core::types::{Meters, Normalized, NormalizedThrust};
+use aviate_core::types::{Meters, NormalizedThrust};
 use aviate_hal_io::SystemCommand;
 use aviate_link::mavlink::protocol::CommandLong;
 use aviate_link::mavlink::{mav_cmd, serialize_mavlink, MavMessage, FORCE_ARM_DISARM_MAGIC};
@@ -38,32 +34,6 @@ fn test_config(noise: DirectNoiseTier, noise_seed: u64) -> DirectBoardConfig {
     }
 }
 
-struct PassthroughFwMixer;
-
-impl Mixer for PassthroughFwMixer {
-    const ALGORITHM_ID: u64 = 0x5453_5446_574D_4958;
-    const GEOMETRY: MixerGeometry = MixerGeometry::QuadX;
-
-    fn mix(&self, axis: &AxisCommand) -> ActuatorCmd {
-        let mut outputs = [Normalized(0.0); MAX_ACTUATORS];
-        outputs[0] = Normalized(axis.collective.0.clamp(0.0, 1.0));
-        outputs[1] = Normalized(0.5 + 0.5 * axis.roll.0);
-        outputs[2] = Normalized(0.5 + 0.5 * axis.pitch.0);
-        outputs[3] = Normalized(0.5 + 0.5 * axis.yaw.0);
-        ActuatorCmd {
-            outputs,
-            active_mask: 0b1111,
-            sequence: 0,
-            timestamp: Timestamp {
-                ticks: 0,
-                source: TimeSource::Internal,
-            },
-            fallback_mask: 0,
-            sanitized: false,
-        }
-    }
-}
-
 fn cruise_truth(step: u64, dt_us: u64, gravity_mps2: f32) -> DirectTruthSample {
     let x_m = (step as f32) * (dt_us as f32 * 1.0e-6) * 18.0;
     DirectTruthSample {
@@ -82,22 +52,18 @@ fn cruise_truth(step: u64, dt_us: u64, gravity_mps2: f32) -> DirectTruthSample {
 
 #[test]
 fn fixed_wing_controller_steps_through_direct_board() {
-    assert_eq!(aviate_airframe_fixed_wing::airframe_id(), "fixed-wing");
-
-    let cfg_kernel = ResolvedKernelConfig {
-        mixer_geometry: MixerGeometry::QuadX,
-        mode_config: ModeConfig {
-            mode: ConfigMode::Cruise,
-            groups: &[],
-        },
-        ..ResolvedKernelConfig::default()
-    };
+    let airframe = aviate_airframe_fixed_wing::c172();
     let kernel = AviateKernelBuilder::new()
         .estimator(Ekf::default())
-        .controller(FixedWingController)
-        .mixer(PassthroughFwMixer)
+        .controller(airframe.controller().expect("valid description"))
+        .mixer(aviate_airframe_fixed_wing::FixedWingAirframe::mixer(|| {
+            Timestamp {
+                ticks: 0,
+                source: TimeSource::Internal,
+            }
+        }))
         .sanitizer(Sanitizer)
-        .config(cfg_kernel)
+        .config(airframe.kernel_config())
         .build()
         .expect("build fixed-wing kernel");
 

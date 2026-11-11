@@ -221,6 +221,8 @@ impl Mixer for QuadXMixerReversedSpin {
 mod actuators;
 #[cfg(feature = "mc")]
 mod desaturate;
+#[cfg(feature = "fw")]
+pub mod fixed_wing;
 mod replicable;
 mod sanitizer_impl;
 #[cfg(feature = "spacecraft")]

@@ -164,13 +164,16 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn identity_hash_differs_across_algorithm_bundles() {
         // Swap the controller type from MultirotorController → FixedWingController.
         use crate::control::fixed_wing::FixedWingController;
         let multirotor = make_pipeline().algorithm_identity_hash();
-        let fixed_wing =
-            KernelPipeline::new(Ekf::default(), FixedWingController, fake_mixer(), Sanitizer)
-                .algorithm_identity_hash();
+        let controller =
+            FixedWingController::new(crate::kernel::config::fixed_wing::tests::reference_params())
+                .expect("reference parameters are valid");
+        let fixed_wing = KernelPipeline::new(Ekf::default(), controller, fake_mixer(), Sanitizer)
+            .algorithm_identity_hash();
         assert_ne!(
             multirotor, fixed_wing,
             "swapping the controller type must change the identity hash"

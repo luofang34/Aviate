@@ -3,7 +3,7 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 use aviate_core::checks::PreArmFlags;
-use aviate_core::control::fixed_wing::FixedWingController;
+use aviate_core::control::fixed_wing::{FixedWingController, FixedWingRuntimeState};
 use aviate_core::control::multirotor::{MultirotorController, MultirotorRuntimeState};
 use aviate_core::control::runtime::{ControllerRuntimeState, NoControllerState};
 use aviate_core::control::vtol::VtolController;
@@ -26,6 +26,9 @@ use aviate_core::types::{
     Meters, MetersPerSecond, MetersPerSecondSquared, NormalizedThrust, RadiansPerSecond, Seconds,
 };
 use aviate_core::ChannelId;
+
+#[path = "fixtures/fixed_wing.rs"]
+mod fixed_wing_fixture;
 
 #[derive(Clone, Debug, Default)]
 struct FixedEstimatorState(StateEstimate);
@@ -332,8 +335,78 @@ fn axis_bits(command: AxisCommand) -> [u32; 4] {
 }
 
 #[test]
-fn fixed_wing_default_interval_hook_preserves_output() {
-    assert_default_interval_hook_preserves_output(FixedWingController);
+fn fixed_wing_runtime_takes_only_a_valid_cycle_interval() {
+    let mut runtime = FixedWingRuntimeState::default();
+    runtime.set_cycle_interval(Seconds(0.004));
+    assert_eq!(runtime.dt_sec, 0.004);
+    for invalid in [0.0, -0.004, f32::NAN, f32::INFINITY] {
+        runtime.set_cycle_interval(Seconds(invalid));
+        assert_eq!(runtime.dt_sec, 0.0, "interval {invalid} must not be stored");
+        runtime.set_cycle_interval(Seconds(0.004));
+    }
+}
+
+#[test]
+fn fixed_wing_integrators_advance_by_the_cycle_interval() {
+    let controller =
+        FixedWingController::new(fixed_wing_fixture::reference_params()).expect("valid block");
+    // A level vehicle with a commanded roll rate: the roll-rate error
+    // is constant, so the integrator grows by gain * error * interval.
+    let command = Command {
+        mode: ControlMode::Rate,
+        setpoint: Setpoint {
+            angular_rate: Some([
+                RadiansPerSecond(0.2),
+                RadiansPerSecond(0.0),
+                RadiansPerSecond(0.0),
+            ]),
+            ..Setpoint::default()
+        },
+        ..direct_command()
+    };
+    let flags = VehicleControlMode::from_control_mode(command.mode);
+    let limits = ResolvedKernelConfig::default().limits;
+    let roll_i = controller.params().rate_i[0];
+    // The rate integrators run only at flying speed.
+    let cruising = StateEstimate {
+        velocity_ned: [
+            MetersPerSecond(55.0),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ],
+        ..estimate()
+    };
+
+    let mut untimed = FixedWingRuntimeState::default();
+    controller.step(
+        &mut untimed,
+        &cruising,
+        &command,
+        &flags,
+        ConfigMode::Cruise,
+        &limits,
+    );
+    assert_eq!(
+        untimed.rates.integrators[0], 0.0,
+        "no interval, no integration"
+    );
+
+    let mut timed = FixedWingRuntimeState::default();
+    timed.set_cycle_interval(Seconds(0.01));
+    controller.step(
+        &mut timed,
+        &cruising,
+        &command,
+        &flags,
+        ConfigMode::Cruise,
+        &limits,
+    );
+    let expected = roll_i * 0.2 * 0.01;
+    assert!(
+        (timed.rates.integrators[0] - expected).abs() < 1.0e-7,
+        "integrator {} after one 10 ms cycle, expected {expected}",
+        timed.rates.integrators[0]
+    );
 }
 
 #[test]

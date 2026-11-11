@@ -145,3 +145,23 @@ value = "0.02"
 name = "RCS_VEL_KP"
 file = "aviate-core/src/control/spacecraft.rs"
 value = "2.5"
+
+[[invariant]]
+name = "SEA_LEVEL_AIR_DENSITY_KGPM3"
+file = "aviate-core/src/control/fixed_wing/air_data.rs"
+value = "1.225"
+
+[[invariant]]
+name = "DRY_AIR_GAS_CONSTANT_JPKGK"
+file = "aviate-core/src/control/fixed_wing/air_data.rs"
+value = "287.05"
+
+[[invariant]]
+name = "CELSIUS_TO_KELVIN_OFFSET"
+file = "aviate-core/src/control/fixed_wing/air_data.rs"
+value = "273.15"
+
+[[invariant]]
+name = "AIRSPEED_STALE_AFTER_S"
+file = "aviate-core/src/control/fixed_wing/air_data.rs"
+value = "1.0"

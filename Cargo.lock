@@ -101,6 +101,9 @@ dependencies = [
 [[package]]
 name = "aviate-airframe-fixed-wing"
 version = "0.1.3"
+dependencies = [
+ "aviate-core",
+]
 
 [[package]]
 name = "aviate-airframe-multirotor"

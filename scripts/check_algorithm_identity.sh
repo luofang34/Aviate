@@ -76,13 +76,14 @@ PROD_SECTIONS='estimator controller mixer sanitizer'
 IMPL_MAP=(
     'estimator|ekf.basic-15state.v7|Ekf|aviate-core/src/ekf/scalar.rs'
     'controller|controller.multirotor.v4|MultirotorController|aviate-core/src/control/multirotor.rs'
-    'controller|controller.fixed_wing.v1|FixedWingController|aviate-core/src/control/fixed_wing.rs'
+    'controller|controller.fixed_wing.v2|FixedWingController|aviate-core/src/control/fixed_wing.rs'
     'controller|controller.vtol.v1|VtolController|aviate-core/src/control/vtol.rs'
     'controller|controller.spacecraft.v1|SpacecraftController|aviate-core/src/control/spacecraft.rs'
     'mixer|mixer.quad_x.v2|QuadXMixer|aviate-core/src/mixer.rs'
     'mixer|mixer.quad_x_x500.v2|QuadXMixerX500|aviate-core/src/mixer.rs'
     'mixer|mixer.quad_x_x500_reversed_spin.v1|QuadXMixerReversedSpin|aviate-core/src/mixer.rs'
     'mixer|mixer.spacecraft.v1|SpacecraftMixer|aviate-core/src/mixer/spacecraft.rs'
+    'mixer|mixer.fixed_wing.v1|FixedWingMixer|aviate-core/src/mixer/fixed_wing.rs'
     'sanitizer|sanitizer.group_aware.v1|Sanitizer|aviate-core/src/mixer/sanitizer_impl.rs'
 )
 
@@ -106,16 +107,18 @@ OWNERSHIP=(
     'aviate-core/src/control/vehicle_control_mode.rs|controller/controller.multirotor.v4'
     'aviate-core/src/control/rate.rs|controller/controller.multirotor.v4'
     'aviate-core/src/control/velocity.rs|controller/controller.multirotor.v4'
-    'aviate-core/src/control/fixed_wing.rs|controller/controller.fixed_wing.v1'
+    'aviate-core/src/control/fixed_wing.rs|controller/controller.fixed_wing.v2'
+    'aviate-core/src/control/fixed_wing/|controller/controller.fixed_wing.v2'
     'aviate-core/src/control/vtol.rs|controller/controller.vtol.v1'
     'aviate-core/src/control/spacecraft.rs|controller/controller.spacecraft.v1'
-    'aviate-core/src/control.rs|controller/controller.multirotor.v4,controller/controller.fixed_wing.v1,controller/controller.vtol.v1,controller/controller.spacecraft.v1'
-    'aviate-core/src/control/|controller/controller.multirotor.v4,controller/controller.fixed_wing.v1,controller/controller.vtol.v1,controller/controller.spacecraft.v1'
+    'aviate-core/src/control.rs|controller/controller.multirotor.v4,controller/controller.fixed_wing.v2,controller/controller.vtol.v1,controller/controller.spacecraft.v1'
+    'aviate-core/src/control/|controller/controller.multirotor.v4,controller/controller.fixed_wing.v2,controller/controller.vtol.v1,controller/controller.spacecraft.v1'
     'aviate-core/src/mixer/sanitizer_impl.rs|sanitizer/sanitizer.group_aware.v1'
     'aviate-core/src/mixer/spacecraft.rs|mixer/mixer.spacecraft.v1'
+    'aviate-core/src/mixer/fixed_wing.rs|mixer/mixer.fixed_wing.v1'
     'aviate-core/src/mixer/desaturate.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1'
-    'aviate-core/src/mixer.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,mixer/mixer.spacecraft.v1,sanitizer/sanitizer.group_aware.v1'
-    'aviate-core/src/mixer/|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,mixer/mixer.spacecraft.v1,sanitizer/sanitizer.group_aware.v1'
+    'aviate-core/src/mixer.rs|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,mixer/mixer.spacecraft.v1,mixer/mixer.fixed_wing.v1,sanitizer/sanitizer.group_aware.v1'
+    'aviate-core/src/mixer/|mixer/mixer.quad_x.v2,mixer/mixer.quad_x_x500.v2,mixer/mixer.quad_x_x500_reversed_spin.v1,mixer/mixer.spacecraft.v1,mixer/mixer.fixed_wing.v1,sanitizer/sanitizer.group_aware.v1'
 )
 
 # Pinned production aggregate identity hashes. These are the same
@@ -696,6 +699,7 @@ fixture_init() {
         aviate-core/src/control/spacecraft.rs \
         aviate-core/src/mixer.rs \
         aviate-core/src/mixer/spacecraft.rs \
+        aviate-core/src/mixer/fixed_wing.rs \
         aviate-core/src/mixer/sanitizer_impl.rs; do
         mkdir -p "$FIXTURE/$(dirname "$f")"
         cp "$REPO_ROOT/$f" "$FIXTURE/$f"
@@ -957,10 +961,10 @@ self_test() {
     # can catch it.
     fixture_branch s-id-swap
     replace_in "$REGISTRY" '4354_4C56_544F_4C31' 'SWAP_PLACEHOLDER'
-    replace_in "$REGISTRY" '4354_4C46_5747_5631' '4354_4C56_544F_4C31'
-    replace_in "$REGISTRY" 'SWAP_PLACEHOLDER' '4354_4C46_5747_5631'
-    replace_in aviate-core/src/control/vtol.rs '4354_4C56_544F_4C31' '4354_4C46_5747_5631'
-    replace_in aviate-core/src/control/fixed_wing.rs '4354_4C46_5747_5631' '4354_4C56_544F_4C31'
+    replace_in "$REGISTRY" '4354_4C46_5747_5632' '4354_4C56_544F_4C31'
+    replace_in "$REGISTRY" 'SWAP_PLACEHOLDER' '4354_4C46_5747_5632'
+    replace_in aviate-core/src/control/vtol.rs '4354_4C56_544F_4C31' '4354_4C46_5747_5632'
+    replace_in aviate-core/src/control/fixed_wing.rs '4354_4C46_5747_5632' '4354_4C56_544F_4C31'
     fixture_commit 'vtol and fixed_wing swap numeric IDs'
     expect_msg fail 'unrotated: controller/controller.vtol.v1' \
         'two entries swapping numeric IDs is not a rotation'

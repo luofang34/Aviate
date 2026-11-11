@@ -137,3 +137,13 @@ pub struct SensorSet {
     /// configured value is available; yaw is then magnetic.
     pub geomagnetic: Option<GeomagneticReference>,
 }
+
+impl SensorSet {
+    /// Air data of the first airspeed sensor that is valid and healthy.
+    pub fn primary_air_data(&self) -> Option<&AirData> {
+        self.airspeeds
+            .iter()
+            .find(|reading| reading.valid && reading.health == SensorHealth::Good)
+            .map(|reading| &reading.value.air)
+    }
+}

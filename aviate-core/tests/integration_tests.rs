@@ -2,7 +2,12 @@
 #![forbid(unsafe_code)]
 
 #[cfg(test)]
+#[path = "fixtures/fixed_wing.rs"]
+mod fixed_wing_fixture;
+
+#[cfg(test)]
 mod tests {
+    use crate::fixed_wing_fixture;
     use aviate_core::control::attitude::AttitudeController;
     use aviate_core::control::cascade_gains::CascadeGains;
     use aviate_core::control::rate::{RateController, RateLoopState};
@@ -402,7 +407,12 @@ mod tests {
         use aviate_core::checks::PreArmFlags;
         use aviate_core::control::fixed_wing::FixedWingController;
         use aviate_core::control::{CommandSource, ConfigMode, ControlMode, Setpoint};
-        use aviate_core::mixer::{ModeConfig, QuadXMixer};
+        use aviate_core::kernel::config::MixerGeometry;
+        use aviate_core::mixer::fixed_wing::{
+            neutral_outputs, FixedWingMixer, AILERON_LANE, ELEVATOR_LANE, RUDDER_LANE,
+            THROTTLE_LANE,
+        };
+        use aviate_core::mixer::ModeConfig;
 
         fn dummy_time() -> Timestamp {
             Timestamp {
@@ -410,14 +420,7 @@ mod tests {
                 source: TimeSource::Internal,
             }
         }
-        let mixer = QuadXMixer {
-            timestamp_source: dummy_time,
-        };
-
-        let mode_config = ModeConfig {
-            mode: ConfigMode::Cruise,
-            groups: &[],
-        };
+        let params = fixed_wing_fixture::reference_params();
 
         // Use minimal pre-arm requirements for testing
         // Note: Don't require NO_FAULTS since we're not providing GPS (ALL_GNSS_LOST expected)
@@ -429,16 +432,24 @@ mod tests {
 
         let mut kernel = aviate_core::kernel::builder::AviateKernelBuilder::new()
             .estimator(Ekf::default())
-            .controller(FixedWingController)
-            .mixer(mixer)
+            .controller(FixedWingController::new(params).expect("valid block"))
+            .mixer(FixedWingMixer {
+                timestamp_source: dummy_time,
+            })
             .sanitizer(Sanitizer)
             .pre_arm_required(test_required)
             .config(aviate_core::kernel::config::ResolvedKernelConfig {
-                mode_config,
+                mode_config: ModeConfig {
+                    mode: ConfigMode::Cruise,
+                    groups: &[],
+                },
+                mixer_geometry: MixerGeometry::FixedWing,
+                safe_output: neutral_outputs(),
+                fixed_wing: Some(params),
                 ..Default::default()
             })
             .build()
-            .expect("checked construction must accept the stub binding");
+            .expect("the controller copies the block that the configuration holds");
 
         // Init EKF
         kernel.state.estimator.init(
@@ -454,6 +465,7 @@ mod tests {
         let cmd = Command {
             mode: ControlMode::Attitude,
             setpoint: Setpoint {
+                attitude: Some(Quaternion::IDENTITY),
                 collective_thrust: NormalizedThrust(0.5),
                 ..Default::default()
             },
@@ -480,14 +492,24 @@ mod tests {
             kernel.state.checks.pre_arm.missing()
         );
 
+        // A disarmed fixed wing holds idle throttle and centred surfaces.
+        let disarmed = kernel.step_test(dummy_time_delta(), &cmd, &valid_sensors, 0);
+        assert_eq!(disarmed.outputs, neutral_outputs());
+
         assert!(kernel.arm().is_ok(), "Failed to arm");
 
         let act_cmd = kernel.step_test(dummy_time_delta(), &cmd, &valid_sensors, 0);
 
-        // FwController currently outputs 0 R/P/Y and passes collective.
-        // So QuadXMixer should still produce 0.5 on motors.
-        for i in 0..4 {
-            assert!((act_cmd.outputs[i].0 - 0.5).abs() < 1e-5);
+        // A level vehicle at rest with a level attitude command: the
+        // throttle is the commanded one and no surface has an error to
+        // work against, so each stays within 1 % of neutral.
+        assert!((act_cmd.outputs[THROTTLE_LANE].0 - 0.5).abs() < 1e-5);
+        for lane in [AILERON_LANE, ELEVATOR_LANE, RUDDER_LANE] {
+            assert!(
+                (act_cmd.outputs[lane].0 - 0.5).abs() < 0.01,
+                "lane {lane} at {}",
+                act_cmd.outputs[lane].0
+            );
         }
     }
 
