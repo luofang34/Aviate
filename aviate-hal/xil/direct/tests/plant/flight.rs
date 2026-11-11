@@ -4,12 +4,12 @@
 use aviate_airframe_fixed_wing::{c172, FixedWingAirframe};
 use aviate_core::control::fixed_wing::{AirspeedSource, FixedWingController};
 use aviate_core::control::{Command, CommandSource, ControlMode, Setpoint};
-use aviate_core::ekf::Ekf;
-use aviate_core::kernel::builder::AviateKernelBuilder;
+use aviate_core::ekf::Estimator;
 use aviate_core::mixer::fixed_wing::FixedWingMixer;
-use aviate_core::mixer::Sanitizer;
+use aviate_core::sensor::GeomagneticReference;
+use aviate_core::state::StateEstimate;
 use aviate_core::time::{TimeSource, Timestamp};
-use aviate_core::types::{Meters, MetersPerSecond};
+use aviate_core::types::{Meters, MetersPerSecond, Radians};
 use aviate_hal_io::SystemCommand;
 use aviate_xil_direct::{
     DirectActuatorCmd, DirectBoardConfig, DirectHostSensors, DirectNoiseTier, DirectOrigin,
@@ -17,8 +17,11 @@ use aviate_xil_direct::{
 };
 use world_core::{normal_gravity, DecimalYear, GeodeticPosition};
 
+#[path = "earth.rs"]
+mod earth;
 #[path = "fixed_wing.rs"]
 mod fixed_wing_plant;
+use earth::Earth;
 pub use fixed_wing_plant::{FixedWingPlant, PlantModel};
 
 const DT_US: u64 = 4_000;
@@ -44,10 +47,18 @@ pub struct Flight {
     pub board: Board,
     pub plant: FixedWingPlant,
     sensors: DirectSynthesizer,
+    /// The curved Earth that the host models report against.
+    earth: Earth,
     /// The GNSS receiver supplies no sample.
     pub gnss_silent: bool,
+    /// Constant bias of the gyroscope in body axes \[rad/s\].
+    pub gyro_bias_rps: [f32; 3],
+    /// Constant bias of the accelerometer in body axes \[m/s²\].
+    pub accel_bias_mps2: [f32; 3],
     /// Pressure-sensor errors of the pitot-static probe, when modelled.
     pub probe_errors: Option<ProbeErrors>,
+    /// Declination that the host supplies; `None` leaves the board's model.
+    pub geomagnetic: Option<GeomagneticReference>,
     step: u64,
     sequence: u32,
     pub last: DirectActuatorCmd,
@@ -141,6 +152,21 @@ pub struct Extremes {
     pub throttle_deviation: f32,
     /// Standard deviation of the elevator lane over the segment.
     pub elevator_deviation: f32,
+    /// Largest error of the estimated roll, pitch and heading \[rad\].
+    pub max_attitude_error: [f32; 3],
+}
+
+/// Sensor faults that are present from the first step of a flight.
+#[derive(Clone, Copy, Default)]
+pub struct Faults {
+    /// The GNSS receiver never supplies a sample.
+    pub no_gnss: bool,
+    /// Constant bias of the gyroscope in body axes \[rad/s\].
+    pub gyro_bias_rps: [f32; 3],
+    /// Constant bias of the accelerometer in body axes \[m/s²\].
+    pub accel_bias_mps2: [f32; 3],
+    /// Wind over the ground, north and east \[m/s\].
+    pub wind_ne: [f32; 2],
 }
 
 impl Flight {
@@ -151,9 +177,7 @@ impl Flight {
         noise: DirectNoiseTier,
         rates: DirectSensorRates,
     ) -> Self {
-        let mut flight = Self::cruising_disarmed(airframe, model, noise, rates);
-        flight.engage();
-        flight
+        Self::cruising_with(airframe, model, noise, rates, Faults::default())
     }
 
     /// As [`Self::cruising`], before the kernel is ready or armed, so the
@@ -164,14 +188,31 @@ impl Flight {
         noise: DirectNoiseTier,
         rates: DirectSensorRates,
     ) -> Self {
-        let kernel = AviateKernelBuilder::new()
-            .estimator(Ekf::default())
-            .controller(airframe.controller().expect("valid description"))
-            .mixer(FixedWingAirframe::mixer(ts))
-            .sanitizer(Sanitizer)
-            .config(airframe.kernel_config())
-            .build()
-            .expect("build fixed-wing kernel");
+        Self::cruising_disarmed_with(airframe, model, noise, rates, Faults::default())
+    }
+
+    /// As [`Self::cruising`], with sensor faults from the first step.
+    pub fn cruising_with(
+        airframe: &FixedWingAirframe,
+        model: PlantModel,
+        noise: DirectNoiseTier,
+        rates: DirectSensorRates,
+        faults: Faults,
+    ) -> Self {
+        let mut flight = Self::cruising_disarmed_with(airframe, model, noise, rates, faults);
+        flight.engage();
+        flight
+    }
+
+    /// As [`Self::cruising_with`], before the kernel is ready or armed.
+    pub fn cruising_disarmed_with(
+        airframe: &FixedWingAirframe,
+        model: PlantModel,
+        noise: DirectNoiseTier,
+        rates: DirectSensorRates,
+        faults: Faults,
+    ) -> Self {
+        let kernel = airframe.kernel(ts).expect("build fixed-wing kernel");
         let config = DirectBoardConfig {
             origin: GeodeticPosition::wgs84(39.1582, -75.5244, 15.0),
             epoch: DecimalYear(2026.5),
@@ -188,12 +229,18 @@ impl Flight {
             config.noise_seed,
         )
         .expect("host sensor models");
+        let mut plant = FixedWingPlant::cruising(model, START_HEIGHT_M, gravity);
+        plant.wind_ne = faults.wind_ne;
         Self {
             board: DirectXilBoard::new(kernel, config).expect("create board"),
-            plant: FixedWingPlant::cruising(model, START_HEIGHT_M, gravity),
+            plant,
             sensors,
-            gnss_silent: false,
+            earth: Earth::new(config.origin),
+            gnss_silent: faults.no_gnss,
+            gyro_bias_rps: faults.gyro_bias_rps,
+            accel_bias_mps2: faults.accel_bias_mps2,
             probe_errors: None,
+            geomagnetic: None,
             step: 0,
             sequence: 0,
             last: DirectActuatorCmd::default(),
@@ -211,9 +258,9 @@ impl Flight {
     }
 
     pub fn advance(&mut self) {
-        let truth = self.plant.truth(self.step * DT_US, self.step);
+        let truth = self.curved_truth();
         let mut sensors = match self.sensors.synthesize(&truth) {
-            Some(sample) => sample.host_sensors(None),
+            Some(sample) => sample.host_sensors(self.geomagnetic),
             None => DirectHostSensors {
                 time_us: truth.time_us,
                 ..DirectHostSensors::default()
@@ -221,6 +268,25 @@ impl Flight {
         };
         if self.gnss_silent {
             sensors.gnss = None;
+        }
+        self.add_transport_rate(&mut sensors);
+        if let Some(imu) = sensors.imu.as_mut() {
+            for (rate, bias) in imu.reading.gyro.iter_mut().zip(self.gyro_bias_rps) {
+                *rate += bias;
+            }
+            for (force, bias) in imu.reading.accel.iter_mut().zip(self.accel_bias_mps2) {
+                *force += bias;
+            }
+        }
+        // The host models know only the velocity over the ground; the
+        // probe measures the velocity through the air.
+        if let Some(airspeed) = sensors.airspeed.as_mut() {
+            let squared = |v: [f32; 3]| v.iter().map(|c| c * c).sum::<f32>();
+            let ground = squared(self.plant.ground_velocity_ned());
+            if ground > 1.0 {
+                airspeed.reading.differential_pressure_pa *=
+                    squared(self.plant.velocity_ned()) / ground;
+            }
         }
         if let (Some(errors), Some(airspeed)) =
             (self.probe_errors.as_mut(), sensors.airspeed.as_mut())
@@ -246,7 +312,11 @@ impl Flight {
     /// Fly hands-off until the kernel is ready, then arm it.
     fn engage(&mut self) {
         while !self.board.is_ready() {
-            assert!(self.step < 1_000, "kernel not ready after 4 s");
+            assert!(
+                self.step < 1_500,
+                "kernel not ready after 6 s: {:?}",
+                self.board.kernel().state.checks.pre_arm.missing()
+            );
             self.advance();
         }
         self.board.send_command(SystemCommand::Arm);
@@ -289,6 +359,7 @@ impl Flight {
             mean_rudder: 0.5,
             throttle_deviation: 0.0,
             elevator_deviation: 0.0,
+            max_attitude_error: [0.0; 3],
         };
         let mut rudder_sum = 0.0_f32;
         let (mut throttle, mut elevator) = (Spread::default(), Spread::default());
@@ -311,6 +382,13 @@ impl Flight {
             seen.max_climb = seen.max_climb.max(climb);
             seen.max_sink = seen.max_sink.max(-climb);
             seen.max_sideslip = seen.max_sideslip.max(self.plant.sideslip().abs());
+            for (worst, error) in seen
+                .max_attitude_error
+                .iter_mut()
+                .zip(self.attitude_error())
+            {
+                *worst = worst.max(error.abs());
+            }
             rudder_sum += self.last.outputs[3];
             throttle.add(self.last.outputs[0]);
             elevator.add(self.last.outputs[2]);
@@ -323,8 +401,96 @@ impl Flight {
         seen
     }
 
+    /// The plant's truth on the curved Earth for the host models: the
+    /// position and velocity in the configured plane, which the models
+    /// read as plane coordinates (GNSS, and the barometer through the
+    /// height above the ellipsoid). Attitude and body kinematics stay
+    /// relative to the local level, as an IMU and a magnetometer see them.
+    fn curved_truth(&self) -> aviate_xil_direct::DirectTruthSample {
+        let plant = &self.plant;
+        let mut truth = plant.truth(self.step * DT_US, self.step);
+        let at = self
+            .earth
+            .position(plant.pos_ned[0], plant.pos_ned[1], plant.height());
+        truth.position_ned_m = self.earth.plane_position(at);
+        if let Some(measured) = truth.measured.as_mut() {
+            measured.velocity_ned_mps = self.earth.plane_vector(at, plant.ground_velocity_ned());
+        }
+        truth
+    }
+
+    /// The gyroscope also measures the turn of the local level as the
+    /// vehicle moves over the ellipsoid (the transport rate).
+    fn add_transport_rate(&self, sensors: &mut DirectHostSensors) {
+        let plant = &self.plant;
+        let at = self
+            .earth
+            .position(plant.pos_ned[0], plant.pos_ned[1], plant.height());
+        if let Some(imu) = sensors.imu.as_mut() {
+            let transport = self.earth.transport_rate_body(
+                at,
+                plant.ground_velocity_ned(),
+                plant.attitude_wxyz(),
+            );
+            for (rate, extra) in imu.reading.gyro.iter_mut().zip(transport) {
+                *rate += extra;
+            }
+        }
+    }
+
+    /// The true position in the frame of the estimate.
+    pub fn truth_in_estimate_frame(&self) -> [f32; 3] {
+        let plant = &self.plant;
+        let at = self
+            .earth
+            .position(plant.pos_ned[0], plant.pos_ned[1], plant.height());
+        let frame = self.board.kernel().state.estimator.frame;
+        let origin = frame.origin.map_or(
+            (
+                self.board.config().origin.latitude_deg,
+                self.board.config().origin.longitude_deg,
+            ),
+            |o| (o.latitude_deg, o.longitude_deg),
+        );
+        self.earth.position_in_frame(at, origin)
+    }
+
+    /// The estimate that the kernel flies on.
+    pub fn estimate(&self) -> StateEstimate {
+        let kernel = self.board.kernel();
+        kernel
+            .pipeline()
+            .estimator
+            .estimate(&kernel.state.estimator)
+    }
+
+    /// Estimated minus true roll, pitch and heading \[rad\].
+    pub fn attitude_error(&self) -> [f32; 3] {
+        let (roll, pitch, yaw) = self.estimate().attitude.to_euler();
+        [
+            wrap(roll - self.plant.roll),
+            wrap(pitch - self.plant.pitch),
+            wrap(yaw - self.plant.heading),
+        ]
+    }
+
     pub fn airspeed_source(&self) -> AirspeedSource {
         self.board.kernel().state.controller.targets.airspeed_source
+    }
+}
+
+/// Heading, airspeed and height: the command of a flight without a
+/// position fix.
+pub fn heading_speed_height(heading_rad: f32, airspeed: f32, height: f32) -> Setpoint {
+    Setpoint {
+        heading: Some(Radians(heading_rad)),
+        altitude: Some(Meters(height)),
+        velocity: Some([
+            MetersPerSecond(airspeed),
+            MetersPerSecond(0.0),
+            MetersPerSecond(0.0),
+        ]),
+        ..Setpoint::default()
     }
 }
 

@@ -1,6 +1,7 @@
 //! Rascal 110 class small unmanned aeroplane.
 
 use aviate_core::control::Limits;
+use aviate_core::ekf::air_aiding::AirAidingConfig;
 use aviate_core::kernel::config::FixedWingParams;
 use aviate_core::types::{
     Meters, MetersPerSecond, NormalizedThrust, Radians, RadiansPerSecond, Seconds,
@@ -63,6 +64,13 @@ pub fn rascal() -> FixedWingAirframe {
             max_airspeed: None,
             max_load_factor: 3.0,
             min_load_factor: 0.0,
+        },
+        air_aiding: AirAidingConfig {
+            meas_noise_tas: 1.0,
+            sideslip_sigma: 0.05,
+            wind_prior_var: 64.0,
+            process_noise_wind: 0.05,
+            min_true_airspeed: 7.0,
         },
     }
 }

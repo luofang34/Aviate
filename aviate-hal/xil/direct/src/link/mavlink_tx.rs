@@ -4,7 +4,7 @@ use aviate_core::fault::FaultFlags;
 use aviate_core::sensor::GeomagneticReference;
 use aviate_core::state::StateEstimate;
 use aviate_hal_io::RawGnssReading;
-use aviate_link::mavlink::protocol::{Heartbeat, SysStatus};
+use aviate_link::mavlink::protocol::{GpsGlobalOrigin, Heartbeat, SysStatus};
 use aviate_link::mavlink::telemetry::{format_geomagnetic_reference, format_scaled_pressure};
 use aviate_link::mavlink::{
     format_attitude, format_aviate_estimator_status, format_estimator_status,
@@ -80,6 +80,32 @@ impl<const RX_CAP: usize, const TX_CAP: usize> DirectMavlinkEndpoint<RX_CAP, TX_
         if let (true, Some(fix)) = (emit_pos, input.gnss_fix) {
             self.emit_gps_raw(fix, input.time_boot_ms);
         }
+    }
+
+    /// Encode `GPS_GLOBAL_ORIGIN`: the geodetic point at the origin of
+    /// `LOCAL_POSITION_NED`, its altitude above mean sea level.
+    pub(crate) fn emit_global_origin(
+        &mut self,
+        latitude_deg: f64,
+        longitude_deg: f64,
+        altitude_msl_m: f64,
+        time_us: u64,
+    ) {
+        let to_i32 = |value: f64| {
+            let rounded = libm::round(value);
+            if rounded.is_finite() && rounded.abs() < f64::from(i32::MAX) {
+                rounded as i32
+            } else {
+                0
+            }
+        };
+        let origin = GpsGlobalOrigin {
+            latitude: to_i32(latitude_deg * 1.0e7),
+            longitude: to_i32(longitude_deg * 1.0e7),
+            altitude: to_i32(altitude_msl_m * 1.0e3),
+            time_usec: time_us,
+        };
+        self.push_mav_message(&MavMessage::GpsGlobalOrigin(origin));
     }
 
     fn emit_gps_raw(&mut self, fix: &RawGnssReading, time_boot_ms: u32) {

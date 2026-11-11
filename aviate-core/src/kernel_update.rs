@@ -347,10 +347,10 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             ControlLawV1::Backup => ModeEntryDecision::Granted(command.mode),
             ControlLawV1::Direct => ModeEntryDecision::Granted(ControlMode::AltitudeHold),
             ControlLawV1::Primary | ControlLawV1::Alternate => {
-                crate::control::gate_controller_mode_entry(
+                crate::control::gate_vehicle_mode_entry(
+                    &self.pipeline.controller,
                     constrained_cmd.mode,
                     state.valid_flags,
-                    self.pipeline.controller.supports_mode(constrained_cmd.mode),
                 )
             }
         };

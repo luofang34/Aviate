@@ -21,6 +21,15 @@ const VELOCITY_MASK: u16 = position_target_typemask::VX_IGNORE
 const ACCELERATION_MASK: u16 = position_target_typemask::AX_IGNORE
     | position_target_typemask::AY_IGNORE
     | position_target_typemask::AZ_IGNORE;
+/// A height and a heading: `z` and `yaw` active, everything else ignored
+/// (type mask 2555). The direct board flies it as a fixed-wing height
+/// hold; this bridge serves multirotor SITL apps, whose height hold is
+/// the kernel's own descent and not a command.
+const HEIGHT_HEADING_MASK: u16 = position_target_typemask::X_IGNORE
+    | position_target_typemask::Y_IGNORE
+    | VELOCITY_MASK
+    | ACCELERATION_MASK
+    | position_target_typemask::YAW_RATE_IGNORE;
 const KNOWN_POSITION_MASK: u16 = POSITION_MASK
     | VELOCITY_MASK
     | ACCELERATION_MASK
@@ -76,6 +85,11 @@ pub enum MavlinkCommandMappingError {
     /// The position target has no complete position or velocity vector.
     #[error("SET_POSITION_TARGET_LOCAL_NED has no position or velocity vector")]
     MissingPositionOrVelocity,
+    #[error(
+        "SET_POSITION_TARGET_LOCAL_NED height-and-heading target (type mask {type_mask:#06x}) \
+         is a fixed-wing command; this SITL bridge serves multirotors"
+    )]
+    HeightHeadingNotCommandable { type_mask: u16 },
 }
 
 /// Convert a supported MAVLink attitude target to an Aviate command.
@@ -174,6 +188,9 @@ fn validate_position_mask(
         });
     }
     let type_mask = target.type_mask;
+    if type_mask == HEIGHT_HEADING_MASK {
+        return Err(MavlinkCommandMappingError::HeightHeadingNotCommandable { type_mask });
+    }
     let position_active = vector_is_active(type_mask, POSITION_MASK)
         .ok_or(MavlinkCommandMappingError::PartialPositionVector { type_mask })?;
     let velocity_active = vector_is_active(type_mask, VELOCITY_MASK)

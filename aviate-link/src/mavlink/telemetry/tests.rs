@@ -35,9 +35,9 @@ fn quality_and_validity_are_lossless() {
         };
 
         assert_eq!(status.time_usec, 17_000);
-        // 0x0F pins the AVIATE_STATE_VALID_FLAGS wire encoding of "all
-        // four dimensions valid" independently of internal bit layout.
-        assert_eq!(status.valid_flags, 0x0F);
+        // 0x3F pins the AVIATE_STATE_VALID_FLAGS wire encoding of "all
+        // six dimensions valid" independently of internal bit layout.
+        assert_eq!(status.valid_flags, 0x3F);
         assert_eq!(status.quality, wire_quality);
     }
 }
@@ -61,8 +61,8 @@ fn every_internal_validity_flag_has_a_distinct_wire_bit() {
         count += 1;
     }
     // One wire bit per aviate.xml AVIATE_STATE_VALID_FLAGS entry.
-    assert_eq!(count, 4);
-    assert_eq!(seen, 0x0F);
+    assert_eq!(count, 6);
+    assert_eq!(seen, 0x3F);
 }
 
 #[test]
@@ -360,7 +360,7 @@ fn emitted_valid_flags_never_carry_unknown_bits() {
     for bits in 0..=u8::MAX {
         let flags = StateValidFlags::from_bits_truncate(bits);
         let wire = estimator::wire_valid_flags(flags);
-        assert_eq!(wire & !0x0F, 0, "unknown wire bit for internal {bits:#04x}");
+        assert_eq!(wire & !0x3F, 0, "unknown wire bit for internal {bits:#04x}");
     }
 }
 

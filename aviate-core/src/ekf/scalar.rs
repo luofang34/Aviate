@@ -1,11 +1,10 @@
-//! Scalar EKF update kernel and heading specialization.
+//! Scalar EKF update kernel for a measurement of one filter state.
 //!
-//! `scalar_update` is the workhorse used by `update_gnss` and
-//! `update_baro`; `heading_update` is a yaw-specific variant used by
-//! `update_mag` after it has resolved the heading innovation. Both
-//! live here to keep the `impl Ekf` block under the 500-line cap per
-//! file. Phase 4: methods take `&self` (algorithm tuning) and `&mut
-//! state: &mut EkfState` (filter state).
+//! `scalar_update` serves `update_gnss` and `update_baro`. A
+//! measurement with a Jacobian over several states, the magnetometer
+//! heading among them, uses the joint update of `ekf/joint.rs`.
+//! Methods take `&self` (algorithm tuning) and `&mut state: &mut
+//! EkfState` (filter state).
 
 use super::{Ekf, EkfState, IDX_AB, IDX_ATT, IDX_GB, IDX_POS, IDX_VEL, STATE_DIM};
 use crate::math::{Matrix, Quaternion, Vector3};
@@ -15,7 +14,7 @@ use crate::types::{Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSe
 /// fusion. Sequential f32 rank-1 updates on a 15×15 matrix accumulate
 /// round-off that can push a variance to zero or slightly negative;
 /// flooring keeps P positive-definite so gains stay meaningful.
-const COV_VAR_FLOOR: Scalar = 1e-9;
+pub(super) const COV_VAR_FLOOR: Scalar = 1e-9;
 
 // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; the fn body below is exercised by the covariance-PSD tests)
 /// Joseph-stabilized rank-1 covariance update for a scalar observation
@@ -57,7 +56,7 @@ impl Ekf {
     /// bias beyond tens of mrad/s (gyro) or a few dm/s² (accel) is
     /// the filter mis-attributing vehicle motion to bias; letting it
     /// stand hands predict a phantom rate to integrate every cycle.
-    fn clamp_biases(&self, state: &mut EkfState) {
+    pub(super) fn clamp_biases(&self, state: &mut EkfState) {
         let g = self.config.gyro_bias_limit;
         state.gyro_bias.x = RadiansPerSecond(state.gyro_bias.x.0.clamp(-g, g));
         state.gyro_bias.y = RadiansPerSecond(state.gyro_bias.y.0.clamp(-g, g));
@@ -66,92 +65,6 @@ impl Ekf {
         state.accel_bias.x = MetersPerSecondSquared(state.accel_bias.x.0.clamp(-a, a));
         state.accel_bias.y = MetersPerSecondSquared(state.accel_bias.y.0.clamp(-a, a));
         state.accel_bias.z = MetersPerSecondSquared(state.accel_bias.z.0.clamp(-a, a));
-    }
-
-    /// Internal: Update yaw/heading using scalar observation.
-    ///
-    /// H = [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, ..., 0] (observes z-component of attitude error)
-    pub(crate) fn heading_update(&self, state: &mut EkfState, innov: Scalar, r_noise: Scalar) {
-        let state_idx = IDX_ATT + 2; // Yaw error state
-
-        // Innovation variance
-        let s = state.p_cov.get(state_idx, state_idx) + r_noise;
-        if s < 1e-9 {
-            return; // COV:EXCL(DEFENSIVE: prevent division by zero)
-        }
-        // COV:EXCL(phantom DA: grcov attributes a phantom region to this line after the early return above)
-        // Innovation gating. `innov` is finite here (mag field is
-        // validated in `update_mag_state`), so the ordinary comparison
-        // is safe.
-        let gate_sq = self.config.innovation_gate * self.config.innovation_gate;
-        if (innov * innov) / s > gate_sq {
-            return; // Reject measurement
-        }
-
-        // Kalman gain
-        let k_gain_factor = 1.0 / s;
-        let mut k_vector = [0.0; STATE_DIM];
-        for (i, val) in k_vector.iter_mut().enumerate().take(STATE_DIM) {
-            *val = state.p_cov.get(i, state_idx) * k_gain_factor;
-        }
-
-        // Update position states
-        state.pos.x = Meters(state.pos.x.0 + k_vector[IDX_POS] * innov);
-        state.pos.y = Meters(state.pos.y.0 + k_vector[IDX_POS + 1] * innov);
-        state.pos.z = Meters(state.pos.z.0 + k_vector[IDX_POS + 2] * innov);
-
-        // Update velocity states
-        state.vel.x = MetersPerSecond(state.vel.x.0 + k_vector[IDX_VEL] * innov);
-        state.vel.y = MetersPerSecond(state.vel.y.0 + k_vector[IDX_VEL + 1] * innov);
-        state.vel.z = MetersPerSecond(state.vel.z.0 + k_vector[IDX_VEL + 2] * innov);
-
-        // Update attitude. The attitude-error state is GLOBAL
-        // (nav-frame): the predict Jacobians are dVel/dAtt = -[R·a]×
-        // and dAtt/dGyroBias = -R·dt with no -[ω]× term in the
-        // attitude block — all the global-convention forms. A global
-        // δθ applies as q ← δq ⊗ q (left multiply). Right-multiplying
-        // would apply the correction about BODY axes, which only
-        // coincides with the global frame while the attitude is near
-        // identity: at 90° of yaw a horizontal correction lands on
-        // the wrong axis, and past 180° it lands sign-flipped —
-        // anti-corrective, so sustained-yaw flight diverges the
-        // filter (the #123 crash signature).
-        let d_ang = Vector3::new(
-            k_vector[IDX_ATT] * innov,
-            k_vector[IDX_ATT + 1] * innov,
-            k_vector[IDX_ATT + 2] * innov,
-        ); // COV:EXCL(phantom DA: grcov attributes a debug-info region to this non-executable line)
-        let dq_small = state.sanitize_quat(Quaternion::new(
-            1.0,
-            d_ang.x * 0.5,
-            d_ang.y * 0.5,
-            d_ang.z * 0.5,
-        ));
-        let new_quat = dq_small.mul(&state.quat);
-        state.quat = state.sanitize_quat(new_quat);
-
-        // Gyro bias is NOT updated from the heading (mag) scalar
-        // measurement. The Kalman correlation between yaw attitude
-        // error and gyro-bias-Z is non-zero after a few predict
-        // ticks, so without this exclusion a stationary vehicle's
-        // first big mag innovation (the cold-start yaw mismatch)
-        // routes part of itself into the gyro-bias-Z state; the
-        // very next predict step then integrates that phantom bias
-        // as a real angular rate and the vehicle spins after
-        // takeoff. The mag observation only constrains yaw — gyro
-        // bias should be observed by motion, not heading.
-        let _ = (k_vector[IDX_GB], k_vector[IDX_GB + 1], k_vector[IDX_GB + 2]);
-
-        // Update accel bias
-        state.accel_bias.x =
-            MetersPerSecondSquared(state.accel_bias.x.0 + k_vector[IDX_AB] * innov);
-        state.accel_bias.y =
-            MetersPerSecondSquared(state.accel_bias.y.0 + k_vector[IDX_AB + 1] * innov);
-        state.accel_bias.z =
-            MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
-        self.clamp_biases(state);
-
-        joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
     }
 
     // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; the accepted/rejected return path is exercised by the aiding-freshness tests)
@@ -230,9 +143,15 @@ impl Ekf {
             MetersPerSecondSquared(state.accel_bias.z.0 + k_vector[IDX_AB + 2] * innov);
         self.clamp_biases(state);
 
-        // Attitude update (linearized error). Global (nav-frame)
-        // error state ⇒ left multiply — see the frame-convention
-        // note in `heading_update`.
+        // Attitude update (linearized error). The attitude-error state is
+        // GLOBAL (nav-frame): the predict Jacobians are dVel/dAtt = -[R·a]×
+        // and dAtt/dGyroBias = -R·dt with no -[ω]× term in the attitude
+        // block. A global δθ applies as q ← δq ⊗ q (left multiply).
+        // Right-multiplying would apply the correction about BODY axes,
+        // which only coincides with the global frame near identity: at
+        // 90° of yaw a horizontal correction lands on the wrong axis, and
+        // past 180° it is sign-flipped, so sustained-yaw flight diverges
+        // the filter (the #123 crash signature).
         let d_ang = Vector3 {
             x: k_vector[IDX_ATT] * innov,
             y: k_vector[IDX_ATT + 1] * innov,
@@ -247,6 +166,9 @@ impl Ekf {
         let new_quat = dq_small.mul(&state.quat);
         state.quat = state.sanitize_quat(new_quat);
 
+        state
+            .air
+            .follow_state_update(state_idx, &k_vector, s, innov);
         joseph_scalar_cov_update(&mut state.p_cov, &k_vector, state_idx, r_noise);
         true
         // COV:EXCL_STOP
@@ -265,11 +187,12 @@ impl super::Estimator for Ekf {
     type RuntimeState = EkfState;
 
     // Registered in cert/algorithm_id_registry.toml as
-    // "ekf.basic-15state.v7" — a cycle with a non-finite IMU sample or
-    // dt fuses no aiding (LLR-EST-204). Same 15-state shape as v6, so
-    // the identity is what keeps a v6 image from matching a v7 one at
-    // the lockstep gate.
-    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4638; // "ETIMEKF8"
+    // "ekf.basic-15state.v8": the magnetometer heading is fused with its
+    // tilt Jacobian, an air-data block is present when the configuration
+    // declares it, and the navigation frame moves by a rigid rebase. The
+    // 15-state core keeps its shape, so the identity is what keeps a v7
+    // image from matching a v8 one at the lockstep gate.
+    const ALGORITHM_ID: u64 = 0x4554_494D_454B_4639; // "ETIMEKF9"
 
     fn observe(
         &self,
@@ -306,16 +229,15 @@ impl super::Estimator for Ekf {
             Ekf::predict_state(self, state, &primary_imu.value, dt);
         }
 
-        if let Some(o) = overrides {
-            if let Some(gnss_health) = o.gnss_force_state {
-                let mut primary_gnss_reading = sensors.gnss[0];
-                primary_gnss_reading.health = match gnss_health {
-                    crate::sensor::GnssHealth::Good => crate::sensor::SensorHealth::Good,
-                    crate::sensor::GnssHealth::Suspect => crate::sensor::SensorHealth::Degraded,
-                    crate::sensor::GnssHealth::Lost => crate::sensor::SensorHealth::Failed,
-                };
-                Ekf::update_gnss_state(self, state, &primary_gnss_reading);
-            }
+        // An override block without a GNSS override leaves GNSS as it is.
+        if let Some(gnss_health) = overrides.and_then(|o| o.gnss_force_state) {
+            let mut primary_gnss_reading = sensors.gnss[0];
+            primary_gnss_reading.health = match gnss_health {
+                crate::sensor::GnssHealth::Good => crate::sensor::SensorHealth::Good,
+                crate::sensor::GnssHealth::Suspect => crate::sensor::SensorHealth::Degraded,
+                crate::sensor::GnssHealth::Lost => crate::sensor::SensorHealth::Failed,
+            };
+            Ekf::update_gnss_state(self, state, &primary_gnss_reading);
         } else {
             let primary_gnss = &sensors.gnss[0];
             if primary_gnss.valid && primary_gnss.health == crate::sensor::SensorHealth::Good {
@@ -333,6 +255,12 @@ impl super::Estimator for Ekf {
             let declination = sensors.geomagnetic.map_or(0.0, |g| g.declination.0);
             Ekf::update_mag_state(self, state, primary_mag, declination);
         }
+
+        self.fuse_air_data(state, sensors, dt);
+    }
+
+    fn rebase(&self, state: &mut EkfState, shift: &super::rebase::FrameShift) {
+        state.rebase(shift);
     }
 
     fn estimate(&self, state: &EkfState) -> crate::state::StateEstimate {

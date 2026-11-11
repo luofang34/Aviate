@@ -41,6 +41,10 @@ pub mod aviate_state_valid_flags {
     pub const POSITION: u8 = 4;
     /// The local NED velocity estimate is valid.
     pub const VELOCITY: u8 = 8;
+    /// The height above the origin datum and the vertical speed are valid.
+    pub const HEIGHT: u8 = 16;
+    /// The velocity relative to the air mass is valid.
+    pub const AIRSPEED: u8 = 32;
 }
 
 /// Standard MAVLink `ESTIMATOR_STATUS` (message 230).

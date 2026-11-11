@@ -28,7 +28,7 @@ use crate::control::{
     VehicleControlMode, VehicleController,
 };
 use crate::kernel::config::{FixedWingParams, FixedWingParamsError, ResolvedKernelConfig};
-use crate::state::StateEstimate;
+use crate::state::{StateEstimate, StateValidFlags};
 use crate::types::{NormalizedSigned, NormalizedThrust, Scalar};
 
 use air_data::Airspeed;
@@ -94,6 +94,27 @@ impl VehicleController for FixedWingController {
     /// A fixed wing cannot hold a position: every other mode is flown.
     fn supports_mode(&self, mode: ControlMode) -> bool {
         mode != ControlMode::PositionHold
+    }
+
+    /// A fixed wing holds a heading, a height and an airspeed on
+    /// attitude, barometer and airspeed alone. Only a course over the
+    /// ground needs a velocity, and only a track needs a position.
+    fn required_validity(&self, mode: ControlMode) -> StateValidFlags {
+        let attitude = StateValidFlags::ATTITUDE;
+        let height = attitude | StateValidFlags::HEIGHT;
+        match mode {
+            ControlMode::Rate => StateValidFlags::empty(),
+            ControlMode::Attitude => attitude,
+            ControlMode::AltitudeHold => height,
+            ControlMode::VelocityControl => height | StateValidFlags::VELOCITY,
+            ControlMode::PositionHold | ControlMode::DeviationTracking => {
+                height | StateValidFlags::VELOCITY | StateValidFlags::POSITION
+            }
+        }
+    }
+
+    fn flies_airspeed_target(&self) -> bool {
+        true
     }
 
     fn step(

@@ -85,6 +85,14 @@ impl Estimator for MockEstimator {
         state.initialized = true;
     }
 
+    // A fixed test estimate has no navigation frame to move.
+    fn rebase(
+        &self,
+        _state: &mut Self::RuntimeState,
+        _shift: &aviate_core::ekf::rebase::FrameShift,
+    ) {
+    }
+
     fn estimate(&self, state: &MockEstimatorRuntime) -> aviate_core::state::StateEstimate {
         // Project the mock's tiny runtime onto the kernel-facing
         // `StateEstimate` summary. Quality is `Good` once the mock

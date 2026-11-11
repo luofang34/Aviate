@@ -126,3 +126,33 @@ fn fallback_without_any_airspeed_holds_the_trim_pitch() {
     assert_eq!(rig.runtime.targets.pitch, reference_params().trim_pitch.0);
     assert_eq!(output.collective.0, reference_params().cruise_throttle.0);
 }
+
+#[test]
+fn gnss_loss_falls_back_to_a_heading_and_a_height_on_the_barometer() {
+    use crate::control::{gate_vehicle_mode_entry, ModeEntryDecision};
+    let controller = super::controller();
+    let without_fix = StateValidFlags::ATTITUDE
+        | StateValidFlags::ANGULAR_RATE
+        | StateValidFlags::HEIGHT
+        | StateValidFlags::AIRSPEED;
+    assert!(matches!(
+        gate_vehicle_mode_entry(&controller, ControlMode::VelocityControl, without_fix),
+        ModeEntryDecision::FallenBack {
+            effective: ControlMode::AltitudeHold,
+            ..
+        }
+    ));
+    assert_eq!(
+        gate_vehicle_mode_entry(&controller, ControlMode::AltitudeHold, without_fix),
+        ModeEntryDecision::Granted(ControlMode::AltitudeHold)
+    );
+    // Without the barometer the height is gone too: attitude is left.
+    let attitude_only = StateValidFlags::ATTITUDE | StateValidFlags::ANGULAR_RATE;
+    assert!(matches!(
+        gate_vehicle_mode_entry(&controller, ControlMode::AltitudeHold, attitude_only),
+        ModeEntryDecision::FallenBack {
+            effective: ControlMode::Attitude,
+            ..
+        }
+    ));
+}

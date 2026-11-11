@@ -54,6 +54,12 @@ pub fn wire_valid_flags(flags: StateValidFlags) -> u8 {
     if flags.contains(StateValidFlags::VELOCITY) {
         wire |= aviate_state_valid_flags::VELOCITY;
     }
+    if flags.contains(StateValidFlags::HEIGHT) {
+        wire |= aviate_state_valid_flags::HEIGHT;
+    }
+    if flags.contains(StateValidFlags::AIRSPEED) {
+        wire |= aviate_state_valid_flags::AIRSPEED;
+    }
     wire
 }
 

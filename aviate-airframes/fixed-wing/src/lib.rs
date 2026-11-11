@@ -14,5 +14,5 @@
 pub mod description;
 pub mod models;
 
-pub use description::FixedWingAirframe;
+pub use description::{FixedWingAirframe, FixedWingKernelError};
 pub use models::{c172, rascal};

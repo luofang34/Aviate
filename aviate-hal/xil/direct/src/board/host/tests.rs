@@ -346,5 +346,7 @@ fn estimator_seed_without_any_fix_is_at_rest_after_the_wait() {
     assert!(!board.ekf_initialized);
     let _ = board.step_sensors(&imu_and_mag(2_002_500));
     assert!(board.ekf_initialized);
-    assert_eq!(board.kernel().state.estimator.vel.x.0, 0.0);
+    // The first heading update reaches the velocity through the
+    // covariance only by round-off.
+    assert!(board.kernel().state.estimator.vel.x.0.abs() < 1.0e-6);
 }

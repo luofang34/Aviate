@@ -1,6 +1,7 @@
 use crate::time::Timestamp;
 use crate::types::{
-    Celsius, Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Pascals, RadiansPerSecond,
+    Celsius, Meters, MetersPerSecond, MetersPerSecondSquared, Microtesla, Pascals,
+    RadiansPerSecond, Scalar,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -136,6 +137,74 @@ pub struct SensorSet {
     /// The local declination, `None` when neither a model nor a
     /// configured value is available; yaw is then magnetic.
     pub geomagnetic: Option<GeomagneticReference>,
+}
+
+/// Air density at sea level in the standard atmosphere \[kg/m³\].
+/// Indicated airspeed is defined against this density.
+pub const SEA_LEVEL_AIR_DENSITY_KGPM3: Scalar = 1.225;
+
+/// Specific gas constant of dry air \[J/(kg·K)\].
+pub const DRY_AIR_GAS_CONSTANT_JPKGK: Scalar = 287.05;
+
+/// Offset from degrees Celsius to kelvin.
+pub const CELSIUS_TO_KELVIN_OFFSET: Scalar = 273.15;
+
+/// Air temperature at sea level in the standard atmosphere \[K\]. Stands
+/// in for the temperature of a probe that reports none.
+pub const STANDARD_TEMPERATURE_K: Scalar = 288.15;
+
+/// Airspeeds and static port of one pitot-static sample.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PitotStatic {
+    /// Indicated airspeed \[m/s\]: the dynamic pressure at sea-level density.
+    pub indicated_mps: Scalar,
+    /// True airspeed \[m/s\]. Equal to the indicated airspeed when the
+    /// probe gives no static pressure with a temperature.
+    pub true_mps: Scalar,
+    /// Static pressure \[Pa\] and air temperature \[K\], when the probe has
+    /// a static port. The temperature is the standard one when the probe
+    /// reports none.
+    pub static_port: Option<(Scalar, Scalar)>,
+}
+
+impl AirData {
+    /// Airspeeds from the pressures of this sample, or `None` when it
+    /// carries no usable dynamic pressure.
+    ///
+    /// The pressures are the authoritative source: the derived airspeed
+    /// fields of the sample are not read.
+    pub fn pitot_static(&self) -> Option<PitotStatic> {
+        let dynamic_pa = self.dynamic_pressure.map(|pressure| pressure.0)?;
+        if !dynamic_pa.is_finite() {
+            return None;
+        }
+        // A negative reading is sensor noise about zero airspeed.
+        let indicated = libm::sqrtf(2.0 * dynamic_pa.max(0.0) / SEA_LEVEL_AIR_DENSITY_KGPM3);
+        let static_port = self
+            .static_pressure
+            .map(|pressure| pressure.0)
+            .filter(|pressure| pressure.is_finite() && *pressure > 0.0)
+            .map(|pressure| {
+                let kelvin = self
+                    .temperature
+                    .map(|temperature| temperature.0 + CELSIUS_TO_KELVIN_OFFSET)
+                    .filter(|kelvin| kelvin.is_finite() && *kelvin > 0.0)
+                    .unwrap_or(STANDARD_TEMPERATURE_K);
+                (pressure, kelvin)
+            });
+        // Density from the static port, when the probe reports a
+        // temperature with it.
+        let density = static_port
+            .filter(|_| self.temperature.is_some())
+            .map_or(SEA_LEVEL_AIR_DENSITY_KGPM3, |(pressure, kelvin)| {
+                pressure / (DRY_AIR_GAS_CONSTANT_JPKGK * kelvin)
+            });
+        Some(PitotStatic {
+            indicated_mps: indicated,
+            true_mps: indicated * libm::sqrtf(SEA_LEVEL_AIR_DENSITY_KGPM3 / density),
+            static_port,
+        })
+    }
 }
 
 impl SensorSet {

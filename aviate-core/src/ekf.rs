@@ -40,27 +40,32 @@
 //!     and the `get_estimate()` validity/quality derivation.
 //!   - `ekf/imu_gap.rs` — covariance widening for cycles predict skipped.
 //!   - `ekf/accel_clip.rs` — covariance widening for clipped accel samples.
+//!   - `ekf/joint.rs`, `ekf/air_aiding.rs`, `ekf/seed.rs` — joint updates
+//!     (heading, air data), the optional wind states, and the seeds.
 //!
 //! Submodules carry no re-exports to sidestep rustc's coverage
 //! phantom-DA issue (see `aviate-core/src/lib.rs` for context); every
 //! `aviate_core::ekf::Ekf::X` still resolves from the parent module.
 
 mod accel_clip;
+pub mod air_aiding;
 mod imu_gap;
+mod joint;
+mod lifecycle;
 mod predict;
+pub mod rebase;
 mod replicable;
 pub mod runtime;
 mod scalar;
+pub mod seed;
 mod update;
 mod validity;
 
 use crate::control::SensorOverrides;
 use crate::ekf::runtime::EstimatorRuntimeState;
-use crate::math::{Matrix, Quaternion, Vector3, QUAT_NORM_EPS};
+use crate::math::{Matrix, Quaternion, Vector3};
 use crate::sensor::SensorSet;
 use crate::state::StateEstimate;
-#[cfg(feature = "test-hooks")]
-use crate::state::StateValidFlags;
 use crate::types::{Meters, MetersPerSecond, MetersPerSecondSquared, RadiansPerSecond, Scalar};
 
 /// State estimator contract (LLR-EST-110, LLR-EST-111, LLR-STATE-105).
@@ -147,6 +152,13 @@ pub trait Estimator {
     /// `StateEstimate` projection, so they ignore the call. EKF-shape
     /// estimators (`Ekf`, future MEKF) override to forward the
     /// injection into their concrete state.
+    /// Express the runtime state in a new navigation frame.
+    ///
+    /// The host moves the frame origin to the vehicle when the vehicle
+    /// is far from it. The change is rigid; an implementation moves
+    /// every frame-referenced quantity and nothing else.
+    fn rebase(&self, state: &mut Self::RuntimeState, shift: &rebase::FrameShift);
+
     #[cfg(feature = "test-hooks")]
     fn inject_state(&self, state: &mut Self::RuntimeState, est: &StateEstimate) {
         let _ = (state, est);
@@ -201,6 +213,8 @@ pub struct EkfConfig {
     pub mag_field_min: Scalar,
     /// Maximum valid field strength \[μT\] (default 70.0)
     pub mag_field_max: Scalar,
+    /// Air-data aiding; `None` for a vehicle that can fly sideways.
+    pub air_aiding: Option<air_aiding::AirAidingConfig>,
 }
 
 impl Default for EkfConfig {
@@ -228,6 +242,7 @@ impl Default for EkfConfig {
             mag_inclination_limit: 0.95,       // Stop fusion
             mag_field_min: 20.0,               // μT
             mag_field_max: 70.0,               // μT
+            air_aiding: None,
         }
     }
 }
@@ -304,166 +319,12 @@ pub struct EkfState {
     /// Length \[s\] of the current run of clipped accelerometer
     /// samples, which `ekf/accel_clip.rs` widens the covariance for.
     pub accel_clip_s: Scalar,
+    /// Wind states and their covariance blocks (`ekf/air_aiding.rs`).
+    pub air: air_aiding::AirAidingState,
+    /// The navigation frame of the estimate (`ekf/rebase.rs`).
+    pub frame: rebase::NavFrame,
 }
 // COV:EXCL_STOP
-
-/// Initial covariance: position/velocity/attitude blocks start loose
-/// (0.1), bias blocks start at realistic MEMS scales — gyro
-/// (0.02 rad/s)², accel (0.2 m/s²)². Seeding the gyro-bias variance
-/// at 0.1 (σ ≈ 0.32 rad/s, ~30× a real bias) invites the filter to
-/// explain early attitude motion as bias: with oscillating flight
-/// the GNSS cross-terms walk the bias state to whole rad/s and
-/// predict integrates the phantom rate (the #123 pump).
-fn initial_covariance() -> Matrix<STATE_DIM, STATE_DIM> {
-    let mut p = Matrix::identity().mul_scalar(0.1);
-    for i in 0..3 {
-        p.set(IDX_GB + i, IDX_GB + i, 4e-4);
-        p.set(IDX_AB + i, IDX_AB + i, 0.04);
-    }
-    p
-}
-
-impl EkfState {
-    /// Construct a fresh state with the initial-uncertainty
-    /// covariance from `initial_covariance`. All other fields are
-    /// zero / identity.
-    pub fn new() -> Self {
-        Self {
-            quat: Quaternion::IDENTITY,
-            pos: Vector3::new(Meters(0.0), Meters(0.0), Meters(0.0)),
-            vel: Vector3::new(
-                MetersPerSecond(0.0),
-                MetersPerSecond(0.0),
-                MetersPerSecond(0.0),
-            ),
-            gyro_bias: Vector3::new(
-                RadiansPerSecond(0.0),
-                RadiansPerSecond(0.0),
-                RadiansPerSecond(0.0),
-            ),
-            accel_bias: Vector3::new(
-                MetersPerSecondSquared(0.0),
-                MetersPerSecondSquared(0.0),
-                MetersPerSecondSquared(0.0),
-            ),
-            last_gyro_body: Vector3::new(
-                RadiansPerSecond(0.0),
-                RadiansPerSecond(0.0),
-                RadiansPerSecond(0.0),
-            ),
-            p_cov: initial_covariance(),
-            initialized: false,
-            quat_fault: false,
-            baro_ref: None,
-            baro_ref_var: 0.0,
-            gnss_pos_age_s: validity::AGE_SATURATION_S,
-            gnss_vel_age_s: validity::AGE_SATURATION_S,
-            baro_age_s: validity::AGE_SATURATION_S,
-            imu_age_s: 0.0,
-            accel_clip_s: 0.0,
-        }
-    }
-
-    /// Seed pos/vel/quat and clear bias states; mark initialized.
-    /// Any prior numeric-fault latch is cleared on init (INV-27).
-    pub fn init(&mut self, pos: Vector3<Meters>, vel: Vector3<MetersPerSecond>, quat: Quaternion) {
-        self.pos = pos;
-        self.vel = vel;
-        self.quat = quat;
-        self.gyro_bias = Vector3::new(
-            RadiansPerSecond(0.0), // COV:EXCL_BR(inlined-callee fold)
-            RadiansPerSecond(0.0),
-            RadiansPerSecond(0.0),
-        );
-        self.accel_bias = Vector3::new(
-            MetersPerSecondSquared(0.0),
-            MetersPerSecondSquared(0.0),
-            MetersPerSecondSquared(0.0),
-        );
-        self.p_cov = initial_covariance();
-        self.initialized = true;
-        self.quat_fault = false;
-        // A fresh init/arm re-latches the baro datum on the next
-        // accepted sample so field elevation is captured at the
-        // current site rather than a stale reference.
-        self.baro_ref = None;
-        self.baro_ref_var = 0.0;
-        // A fresh init/arm has no aiding history yet — any fusion
-        // accepted before this init() call must not make the new
-        // filter look pre-aided.
-        self.gnss_pos_age_s = validity::AGE_SATURATION_S;
-        self.gnss_vel_age_s = validity::AGE_SATURATION_S;
-        self.baro_age_s = validity::AGE_SATURATION_S;
-        self.imu_age_s = 0.0;
-        self.accel_clip_s = 0.0;
-    }
-
-    /// Whether `init()` has run successfully since construction or `reset()`.
-    pub fn is_initialized(&self) -> bool {
-        self.initialized
-    }
-
-    /// Whether a numeric fault has latched (INV-27 quaternion normalization).
-    pub fn has_numeric_fault(&self) -> bool {
-        self.quat_fault
-    }
-    // COV:EXCL_START(phantom DA: grcov attributes a debug-info region onto this doc comment; reset() is exercised by the ground-reset tests)
-    /// Ground reset — clear all filter state to a factory
-    /// un-initialized posture. Caller (kernel `ground_reset`) is
-    /// responsible for ensuring the vehicle is on the ground and
-    /// disarmed.
-    // COV:EXCL_STOP
-    pub fn reset(&mut self) {
-        *self = Self::new();
-    }
-
-    /// INV-27: Normalize quaternion and validate result.
-    /// Returns IDENTITY and sets quat_fault if normalization fails.
-    pub(crate) fn sanitize_quat(&mut self, q: Quaternion) -> Quaternion {
-        let q = q.normalize();
-        // COV:EXCL_START(DEFENSIVE: INV-27 numerical-corruption guard;
-        // is_normalized(QUAT_NORM_EPS) fails only when the normalize()
-        // output is NaN/Inf, which requires a corrupted input quaternion.
-        // Not reachable from finite sensor paths.)
-        if !q.is_normalized(QUAT_NORM_EPS) {
-            self.quat_fault = true;
-            Quaternion::IDENTITY
-        } else {
-            q
-        }
-        // COV:EXCL_STOP
-    }
-
-    // COV:EXCL_START(phantom DA: grcov attributes non-executable coverage
-    // regions onto the doc-comment and `#[cfg(feature = "test-hooks")]`
-    // attribute lines; the fn body below stays covered by test-hooks exercises.)
-    /// Inject state for testing (spec §20 test-hooks).
-    ///
-    /// Directly sets the EKF internal state from an external
-    /// `StateEstimate`. Only available with the `test-hooks` feature
-    /// enabled.
-    #[cfg(feature = "test-hooks")]
-    // COV:EXCL_STOP
-    pub fn set_state(&mut self, state: &StateEstimate) {
-        self.quat = state.attitude;
-        self.last_gyro_body = Vector3 {
-            x: state.angular_velocity[0],
-            y: state.angular_velocity[1],
-            z: state.angular_velocity[2],
-        };
-        self.pos = Vector3 {
-            x: state.position_ned[0],
-            y: state.position_ned[1],
-            z: state.position_ned[2],
-        };
-        self.vel = Vector3 {
-            x: state.velocity_ned[0],
-            y: state.velocity_ned[1],
-            z: state.velocity_ned[2],
-        };
-        self.initialized = state.valid_flags.contains(StateValidFlags::all());
-    }
-}
 
 impl EstimatorRuntimeState for EkfState {
     fn reset(&mut self) {

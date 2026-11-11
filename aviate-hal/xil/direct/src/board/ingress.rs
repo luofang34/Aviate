@@ -10,6 +10,18 @@ use aviate_core::InitState;
 use aviate_hal_io::SystemCommand;
 use aviate_link::mavlink::MavState;
 
+/// Why the board dropped a flight command that came over the link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirectCommandRefusal {
+    /// The vehicle does not let an external commander request this mode.
+    /// A multirotor keeps its height hold for the kernel's own descent.
+    ModeNotCommandable(ControlMode),
+    /// A geodetic target states its altitude above mean sea level, and the
+    /// host has not declared the geoid separation that turns it into a
+    /// height above the ellipsoid.
+    GeoidSeparationUnknown,
+}
+
 /// Command ingress state machine enforcing `#133` setpoint freshness semantics.
 #[derive(Debug, Clone, Default)]
 pub(super) struct DirectCommandIngress {
@@ -23,6 +35,14 @@ impl DirectCommandIngress {
         if let SystemCommand::FlightControl(flight) = cmd {
             self.setpoint = Some(flight.clone());
             self.setpoint_rx_us = Some(now_us);
+        }
+    }
+
+    /// Move the retained setpoint into a new navigation frame. Its age
+    /// stays: the command is the same command, in other coordinates.
+    pub(super) fn rebase(&mut self, shift: &aviate_core::ekf::rebase::FrameShift) {
+        if let Some(command) = self.setpoint.as_mut() {
+            super::frame::rebase_command(command, shift);
         }
     }
 

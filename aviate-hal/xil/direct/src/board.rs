@@ -1,5 +1,7 @@
 //! In-process `no_std` XIL board driving [`aviate_core::DefaultAviateKernel`].
 
+mod commands;
+mod frame;
 mod host;
 mod ingress;
 mod step;
@@ -21,6 +23,8 @@ use crate::synthesis::{
     DirectNoiseTier, DirectOrigin, DirectSensorRates, DirectSynthesisError, DirectSynthesizer,
 };
 
+pub use frame::{DirectNavFrame, DEFAULT_REBASE_RADIUS_M};
+pub use ingress::DirectCommandRefusal;
 use ingress::{default_failsafe_command, DirectCommandIngress, DirectSensorCache};
 
 /// Simulation clock in microseconds implementing [`TimeSource`] and [`TimeHal`].
@@ -141,10 +145,26 @@ where
     seed_wait_since_us: Option<u64>,
     /// Time of the last [`Self::step_sensors`] call in this generation.
     host_clock_us: Option<u64>,
+    /// Static pressure at the origin: the datum of the pressure height
+    /// of a seed without a fix.
+    origin_pressure_pa: f32,
     /// Declination from the geomagnetic model at the origin.
     origin_declination_rad: f32,
     /// Declination from the geomagnetic model at the last GNSS fix.
     model_declination_rad: f32,
+    /// Distance from the frame origin at which the origin moves to the
+    /// vehicle \[m\].
+    rebase_radius_m: f64,
+    /// Map from the configured frame to the frame of the estimate, once
+    /// the origin has moved.
+    frame_map: Option<aviate_core::ekf::rebase::FrameShift>,
+    /// Why the last refused link command was dropped.
+    last_refusal: Option<DirectCommandRefusal>,
+    /// Height of the geoid above the WGS-84 ellipsoid at the origin \[m\],
+    /// when the host declares it.
+    geoid_separation_m: Option<f64>,
+    /// Whether `GPS_GLOBAL_ORIGIN` went out for the present origin.
+    origin_announced: bool,
 }
 
 impl<C, M> DirectXilBoard<C, M>
@@ -174,8 +194,10 @@ where
             FakeActuator::new(),
         );
         let mut endpoint = DirectMavlinkEndpoint::new(config.sys_id, config.comp_id);
+        endpoint.set_airspeed_commandable(kernel.pipeline().controller.flies_airspeed_target());
         endpoint.set_vehicle_type(vehicle_mav_type(kernel.cfg().mixer_geometry));
         let origin_declination_rad = synthesizer.environment().declination_rad();
+        let origin_pressure_pa = synthesizer.environment().air.pressure_pa as f32;
         Ok(Self {
             config,
             kernel,
@@ -192,14 +214,22 @@ where
             ekf_initialized: false,
             seed_wait_since_us: None,
             host_clock_us: None,
+            origin_pressure_pa,
             origin_declination_rad,
             model_declination_rad: origin_declination_rad,
+            rebase_radius_m: frame::DEFAULT_REBASE_RADIUS_M,
+            frame_map: None,
+            last_refusal: None,
+            geoid_separation_m: None,
+            origin_announced: false,
         })
     }
 
     /// Replace the active kernel and reset all sensor, link, and lifecycle state.
     pub fn reset_with_kernel(&mut self, mut kernel: DefaultAviateKernel<C, M>) {
         kernel.state.checks.pre_arm.update_throttle(true);
+        self.endpoint
+            .set_airspeed_commandable(kernel.pipeline().controller.flies_airspeed_target());
         self.endpoint
             .set_vehicle_type(vehicle_mav_type(kernel.cfg().mixer_geometry));
         self.kernel = kernel;
@@ -262,6 +292,35 @@ where
         self.synthesizer.set_rates(rates);
     }
 
+    /// Declare the static pressure at the origin.
+    ///
+    /// A board that starts without a position fix takes its height from
+    /// the barometer, as the pressure height above this pressure. The
+    /// default is the pressure of the standard atmosphere at the height
+    /// of the origin.
+    pub fn set_origin_pressure(&mut self, pressure_pa: f32) {
+        self.origin_pressure_pa = pressure_pa;
+    }
+
+    /// Declare the height of the geoid above the WGS-84 ellipsoid at the
+    /// origin \[m\].
+    ///
+    /// MAVLink altitudes in `GPS_GLOBAL_ORIGIN` and `GLOBAL_POSITION_INT`
+    /// are above mean sea level, but the origin is configured with an
+    /// ellipsoidal height. With the separation the board gives mean sea
+    /// level and announces the origin. Without it the board does not send
+    /// `GPS_GLOBAL_ORIGIN`, because it cannot state its altitude, and the
+    /// altitude of `GLOBAL_POSITION_INT` is the ellipsoidal height.
+    pub fn set_geoid_separation(&mut self, separation_m: f64) {
+        self.geoid_separation_m = Some(separation_m).filter(|value| value.is_finite());
+        self.origin_announced = false;
+    }
+
+    /// Send `GPS_GLOBAL_ORIGIN` again with the next telemetry.
+    pub fn announce_origin(&mut self) {
+        self.origin_announced = false;
+    }
+
     /// Configure outbound MAVLink telemetry stream rates.
     pub fn set_telemetry_rates(&mut self, rates: DirectTelemetryRates) {
         self.endpoint.set_rates(rates);
@@ -271,6 +330,13 @@ where
     #[must_use]
     pub const fn last_effective_command(&self) -> &Command {
         &self.last_effective_command
+    }
+
+    /// Why the board dropped the last refused flight command from the
+    /// link, if it dropped one.
+    #[must_use]
+    pub const fn last_command_refusal(&self) -> Option<DirectCommandRefusal> {
+        self.last_refusal
     }
 
     /// Return `true` when the kernel has reached [`InitState::Ready`].

@@ -26,6 +26,12 @@
       <entry value="8" name="AVIATE_STATE_VALID_VELOCITY">
         <description>The local NED velocity estimate is valid.</description>
       </entry>
+      <entry value="16" name="AVIATE_STATE_VALID_HEIGHT">
+        <description>The height above the origin datum and the vertical speed are valid. A barometer gives them without a horizontal position fix.</description>
+      </entry>
+      <entry value="32" name="AVIATE_STATE_VALID_AIRSPEED">
+        <description>The velocity relative to the air mass is valid and aided by an airspeed sensor.</description>
+      </entry>
     </enum>
     <enum name="AVIATE_GEOMAGNETIC_SOURCE">
       <entry value="0" name="AVIATE_GEOMAGNETIC_SOURCE_NONE">

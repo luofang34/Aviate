@@ -210,6 +210,14 @@ impl Estimator for FixedEstimator {
     ) {
     }
 
+    // A fixed test estimate has no navigation frame to move.
+    fn rebase(
+        &self,
+        _state: &mut Self::RuntimeState,
+        _shift: &aviate_core::ekf::rebase::FrameShift,
+    ) {
+    }
+
     fn estimate(&self, state: &Self::RuntimeState) -> StateEstimate {
         state.0.clone()
     }

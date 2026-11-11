@@ -276,8 +276,12 @@ fn aviate_xml_wire_facts_match_rust_constants() {
     assert!(xml.contains("value=\"2\" name=\"AVIATE_STATE_VALID_ANGULAR_RATE\""));
     assert!(xml.contains("value=\"4\" name=\"AVIATE_STATE_VALID_POSITION\""));
     assert!(xml.contains("value=\"8\" name=\"AVIATE_STATE_VALID_VELOCITY\""));
+    assert!(xml.contains("value=\"16\" name=\"AVIATE_STATE_VALID_HEIGHT\""));
+    assert!(xml.contains("value=\"32\" name=\"AVIATE_STATE_VALID_AIRSPEED\""));
     assert_eq!(aviate_state_valid_flags::ATTITUDE, 1);
     assert_eq!(aviate_state_valid_flags::ANGULAR_RATE, 2);
     assert_eq!(aviate_state_valid_flags::POSITION, 4);
     assert_eq!(aviate_state_valid_flags::VELOCITY, 8);
+    assert_eq!(aviate_state_valid_flags::HEIGHT, 16);
+    assert_eq!(aviate_state_valid_flags::AIRSPEED, 32);
 }

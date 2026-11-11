@@ -79,8 +79,9 @@ pub use protocol::{
     aviate_estimate_quality, aviate_geomagnetic_source, aviate_state_valid_flags,
     estimator_status_flags, gps_fix_type, mav_cmd, mav_result, parse_mavlink, parse_mavlink_frame,
     serialize_mavlink, AviateEstimatorStatus, AviateGeomagneticReference, EstimatorStatus,
-    GlobalPositionInt, GpsRawInt, MavAutopilot, MavComponent, MavMessage, MavModeFlag, MavState,
-    MavType, ParsedMavlinkFrame, FORCE_ARM_DISARM_MAGIC,
+    GlobalPositionInt, GpsGlobalOrigin, GpsRawInt, MavAutopilot, MavComponent, MavMessage,
+    MavModeFlag, MavState, MavType, ParsedMavlinkFrame, SetPositionTargetGlobalInt,
+    FORCE_ARM_DISARM_MAGIC,
 };
 
 // Re-export link implementations

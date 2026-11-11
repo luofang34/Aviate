@@ -34,7 +34,9 @@ pub use estimator_status::{
     aviate_estimate_quality, aviate_state_valid_flags, estimator_status_flags,
     AviateEstimatorStatus, EstimatorStatus,
 };
-pub use geodetic::{gps_fix_type, GlobalPositionInt, GpsRawInt};
+pub use geodetic::{
+    gps_fix_type, GlobalPositionInt, GpsGlobalOrigin, GpsRawInt, SetPositionTargetGlobalInt,
+};
 pub use geomagnetic::{aviate_geomagnetic_source, AviateGeomagneticReference};
 
 // ============================================================================
@@ -139,6 +141,7 @@ pub mod mav_cmd {
     pub const NAV_LAND: u16 = 21;
     pub const NAV_TAKEOFF: u16 = 22;
     pub const DO_SET_MODE: u16 = 176;
+    pub const DO_CHANGE_SPEED: u16 = 178;
     pub const COMPONENT_ARM_DISARM: u16 = 400;
 }
 
@@ -520,6 +523,7 @@ pub enum MavMessage {
     AttitudeQuaternion(AttitudeQuaternion),
     LocalPositionNed(LocalPositionNed),
     GlobalPositionInt(GlobalPositionInt),
+    GpsGlobalOrigin(GpsGlobalOrigin),
     GpsRawInt(GpsRawInt),
     ScaledPressure(ScaledPressure),
     EstimatorStatus(EstimatorStatus),
@@ -527,6 +531,7 @@ pub enum MavMessage {
     AviateGeomagneticReference(AviateGeomagneticReference),
     SetAttitudeTarget(SetAttitudeTarget),
     SetPositionTargetLocalNed(SetPositionTargetLocalNed),
+    SetPositionTargetGlobalInt(SetPositionTargetGlobalInt),
     CommandLong(CommandLong),
     CommandAck(CommandAck),
     RcChannelsOverride(RcChannelsOverride),
@@ -546,6 +551,7 @@ impl MavMessage {
             MavMessage::AttitudeQuaternion(_) => AttitudeQuaternion::MSG_ID,
             MavMessage::LocalPositionNed(_) => LocalPositionNed::MSG_ID,
             MavMessage::GlobalPositionInt(_) => GlobalPositionInt::MSG_ID,
+            MavMessage::GpsGlobalOrigin(_) => GpsGlobalOrigin::MSG_ID,
             MavMessage::GpsRawInt(_) => GpsRawInt::MSG_ID,
             MavMessage::ScaledPressure(_) => ScaledPressure::MSG_ID,
             MavMessage::EstimatorStatus(_) => EstimatorStatus::MSG_ID,
@@ -553,6 +559,7 @@ impl MavMessage {
             MavMessage::AviateGeomagneticReference(_) => AviateGeomagneticReference::MSG_ID,
             MavMessage::SetAttitudeTarget(_) => SetAttitudeTarget::MSG_ID,
             MavMessage::SetPositionTargetLocalNed(_) => SetPositionTargetLocalNed::MSG_ID,
+            MavMessage::SetPositionTargetGlobalInt(_) => SetPositionTargetGlobalInt::MSG_ID,
             MavMessage::CommandLong(_) => CommandLong::MSG_ID,
             MavMessage::CommandAck(_) => CommandAck::MSG_ID,
             MavMessage::RcChannelsOverride(_) => RcChannelsOverride::MSG_ID,
@@ -786,6 +793,7 @@ fn parse_message_payload(msg_id: u32, payload: &[u8]) -> Result<MavMessage, Pars
         AttitudeQuaternion::MSG_ID => parse_attitude_quaternion(payload),
         LocalPositionNed::MSG_ID => parse_local_position_ned(payload),
         GlobalPositionInt::MSG_ID => geodetic::parse_global_position_int(payload),
+        GpsGlobalOrigin::MSG_ID => geodetic::parse_gps_global_origin(payload),
         GpsRawInt::MSG_ID => geodetic::parse_gps_raw_int(payload),
         ScaledPressure::MSG_ID => parse_scaled_pressure(payload),
         EstimatorStatus::MSG_ID => estimator_status::parse_estimator_status(payload),
@@ -795,6 +803,9 @@ fn parse_message_payload(msg_id: u32, payload: &[u8]) -> Result<MavMessage, Pars
         }
         SetAttitudeTarget::MSG_ID => parse_set_attitude_target(payload),
         SetPositionTargetLocalNed::MSG_ID => parse_set_position_target_local_ned(payload),
+        SetPositionTargetGlobalInt::MSG_ID => {
+            geodetic::parse_set_position_target_global_int(payload)
+        }
         CommandLong::MSG_ID => parse_command_long(payload),
         CommandAck::MSG_ID => parse_command_ack(payload),
         RcChannelsOverride::MSG_ID => parse_rc_channels_override(payload),
@@ -1203,12 +1214,14 @@ fn get_crc_extra(msg_id: u32) -> u8 {
         31 => 246,                                       // ATTITUDE_QUATERNION
         32 => 185,                                       // LOCAL_POSITION_NED
         33 => GlobalPositionInt::CRC_EXTRA,              // GLOBAL_POSITION_INT
+        49 => GpsGlobalOrigin::CRC_EXTRA,                // GPS_GLOBAL_ORIGIN
         69 => 243,                                       // MANUAL_CONTROL
         70 => 124,                                       // RC_CHANNELS_OVERRIDE
         76 => 152,                                       // COMMAND_LONG
         77 => 143,                                       // COMMAND_ACK
         82 => 49,                                        // SET_ATTITUDE_TARGET
         84 => 143,                                       // SET_POSITION_TARGET_LOCAL_NED
+        86 => SetPositionTargetGlobalInt::CRC_EXTRA,     // SET_POSITION_TARGET_GLOBAL_INT
         230 => EstimatorStatus::CRC_EXTRA,               // ESTIMATOR_STATUS
         253 => 83,                                       // STATUSTEXT
         20_000 => AviateEstimatorStatus::CRC_EXTRA,      // AVIATE_ESTIMATOR_STATUS
@@ -1229,6 +1242,7 @@ fn declared_payload_len(msg_id: u32) -> Option<usize> {
         AttitudeQuaternion::MSG_ID => Some(AttitudeQuaternion::PAYLOAD_LEN),
         LocalPositionNed::MSG_ID => Some(LocalPositionNed::PAYLOAD_LEN),
         GlobalPositionInt::MSG_ID => Some(GlobalPositionInt::PAYLOAD_LEN),
+        GpsGlobalOrigin::MSG_ID => Some(GpsGlobalOrigin::PAYLOAD_LEN),
         GpsRawInt::MSG_ID => Some(GpsRawInt::PAYLOAD_LEN),
         ScaledPressure::MSG_ID => Some(ScaledPressure::PAYLOAD_LEN),
         EstimatorStatus::MSG_ID => Some(EstimatorStatus::PAYLOAD_LEN),
@@ -1240,6 +1254,7 @@ fn declared_payload_len(msg_id: u32) -> Option<usize> {
         CommandAck::MSG_ID => Some(CommandAck::PAYLOAD_LEN),
         SetAttitudeTarget::MSG_ID => Some(SetAttitudeTarget::PAYLOAD_LEN),
         SetPositionTargetLocalNed::MSG_ID => Some(SetPositionTargetLocalNed::PAYLOAD_LEN),
+        SetPositionTargetGlobalInt::MSG_ID => Some(SetPositionTargetGlobalInt::PAYLOAD_LEN),
         Statustext::MSG_ID => Some(Statustext::PAYLOAD_LEN),
         _ => None,
     }
@@ -1278,6 +1293,9 @@ pub fn serialize_mavlink(
         MavMessage::GlobalPositionInt(m) => {
             geodetic::serialize_global_position_int(m, seq, sys_id, comp_id, buf)
         }
+        MavMessage::GpsGlobalOrigin(m) => {
+            geodetic::serialize_gps_global_origin(m, seq, sys_id, comp_id, buf)
+        }
         MavMessage::GpsRawInt(m) => geodetic::serialize_gps_raw_int(m, seq, sys_id, comp_id, buf),
         MavMessage::ScaledPressure(m) => serialize_scaled_pressure(m, seq, sys_id, comp_id, buf),
         MavMessage::EstimatorStatus(m) => {
@@ -1294,6 +1312,9 @@ pub fn serialize_mavlink(
         }
         MavMessage::SetPositionTargetLocalNed(m) => {
             serialize_set_position_target_local_ned(m, seq, sys_id, comp_id, buf)
+        }
+        MavMessage::SetPositionTargetGlobalInt(m) => {
+            geodetic::serialize_set_position_target_global_int(m, seq, sys_id, comp_id, buf)
         }
         MavMessage::CommandLong(m) => serialize_command_long(m, seq, sys_id, comp_id, buf),
         MavMessage::CommandAck(m) => serialize_command_ack(m, seq, sys_id, comp_id, buf),

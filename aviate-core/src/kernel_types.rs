@@ -23,6 +23,16 @@ pub const CRITICAL_FAULTS: FaultFlags = FaultFlags::ALL_IMU_FAILED
     .union(FaultFlags::NUMERIC_ERROR)
     .union(FaultFlags::ESTIMATOR_DIVERGED);
 
+/// Faults that only say a position fix is missing. A vehicle that can
+/// fly without a fix (a fixed wing on attitude, barometer and airspeed)
+/// may arm with them; every other fault still refuses the arm.
+pub const POSITION_FIX_FAULTS: FaultFlags = FaultFlags::GNSS0_LOST
+    .union(FaultFlags::GNSS1_LOST)
+    .union(FaultFlags::ALL_GNSS_LOST)
+    .union(FaultFlags::POSITION_LOST)
+    .union(FaultFlags::VELOCITY_LOST)
+    .union(FaultFlags::POSITION_UNCERTAIN);
+
 /// Default command timeout in milliseconds
 pub const DEFAULT_COMMAND_TIMEOUT_MS: u32 = 500;
 

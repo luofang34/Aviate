@@ -6,6 +6,7 @@
 //! changes, and they share the precondition vocabulary and the
 //! flight-period teardown.
 
+use crate::checks::PreArmFlags;
 use crate::control::{ControlLawV1, VehicleController};
 use crate::ekf::Estimator;
 use crate::kernel::{AviateKernelImpl, InitState};
@@ -26,7 +27,18 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         // Faults first: a latched fault also holds the init state short
         // of Ready (pre-arm NO_FAULTS), and `NotReady` would hide that
         // only a ground reset can clear it.
-        if !self.state.faults.is_empty() {
+        //
+        // A vehicle whose pre-arm set tolerates a missing position fix
+        // (a fixed wing) is held back by every other fault.
+        let required = self.state.checks.pre_arm.required;
+        let fix_tolerant = required.contains(PreArmFlags::NO_FAULTS_BUT_FIX)
+            && !required.contains(PreArmFlags::NO_FAULTS);
+        let blocking = if fix_tolerant {
+            self.state.faults - crate::kernel_types::POSITION_FIX_FAULTS
+        } else {
+            self.state.faults
+        };
+        if !blocking.is_empty() {
             return Err(ArmError::Faulted);
         }
         if self.state.init_state != InitState::Ready {

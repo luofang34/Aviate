@@ -1,9 +1,9 @@
 //! Geodetic-position MAVLink message layouts.
 
 use super::{
-    read_i16_le, read_i32_le, read_u16_le, read_u32_le, read_u64_le, write_crc, write_header,
-    write_i16_le, write_i32_le, write_u16_le, write_u32_le, write_u64_le, MavHeader, MavMessage,
-    ParseError,
+    read_f32_le, read_i16_le, read_i32_le, read_u16_le, read_u32_le, read_u64_le, write_crc,
+    write_f32_le, write_header, write_i16_le, write_i32_le, write_u16_le, write_u32_le,
+    write_u64_le, MavHeader, MavMessage, ParseError,
 };
 
 /// Standard MAVLink `GPS_FIX_TYPE` values.
@@ -98,6 +98,203 @@ impl GpsRawInt {
     pub const PAYLOAD_LEN: usize = 52;
     /// CRC extra from the MAVLink common dialect.
     pub const CRC_EXTRA: u8 = 24;
+}
+
+/// Standard MAVLink `GPS_GLOBAL_ORIGIN` (message 49): the geodetic
+/// point at the origin of the local NED frame of `LOCAL_POSITION_NED`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct GpsGlobalOrigin {
+    /// Latitude, degrees × 1e7.
+    pub latitude: i32,
+    /// Longitude, degrees × 1e7.
+    pub longitude: i32,
+    /// Altitude above mean sea level, millimeters.
+    pub altitude: i32,
+    /// Time since system boot, in microseconds (extension field).
+    pub time_usec: u64,
+}
+
+impl GpsGlobalOrigin {
+    /// MAVLink common message ID.
+    pub const MSG_ID: u32 = 49;
+    /// Wire payload length: 12 base bytes plus the 8-byte extension.
+    pub const PAYLOAD_LEN: usize = 20;
+    /// CRC extra from the MAVLink common dialect.
+    pub const CRC_EXTRA: u8 = 39;
+}
+
+/// Standard MAVLink `SET_POSITION_TARGET_GLOBAL_INT` (message 86): a
+/// position, velocity and yaw target in geodetic coordinates. The
+/// target is free of any local frame, so it stays right across a move
+/// of the local origin.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct SetPositionTargetGlobalInt {
+    /// Time since system boot, in milliseconds.
+    pub time_boot_ms: u32,
+    /// Latitude, degrees × 1e7.
+    pub lat_int: i32,
+    /// Longitude, degrees × 1e7.
+    pub lon_int: i32,
+    /// Altitude, meters, in the datum that `coordinate_frame` names.
+    pub alt: f32,
+    /// North velocity, m/s.
+    pub vx: f32,
+    /// East velocity, m/s.
+    pub vy: f32,
+    /// Down velocity, m/s.
+    pub vz: f32,
+    /// North acceleration or force.
+    pub afx: f32,
+    /// East acceleration or force.
+    pub afy: f32,
+    /// Down acceleration or force.
+    pub afz: f32,
+    /// Yaw, radians.
+    pub yaw: f32,
+    /// Yaw rate, radians per second.
+    pub yaw_rate: f32,
+    /// `POSITION_TARGET_TYPEMASK` bits of the ignored fields.
+    pub type_mask: u16,
+    /// Target system.
+    pub target_system: u8,
+    /// Target component.
+    pub target_component: u8,
+    /// `MAV_FRAME` of the altitude.
+    pub coordinate_frame: u8,
+}
+
+impl SetPositionTargetGlobalInt {
+    /// MAVLink common message ID.
+    pub const MSG_ID: u32 = 86;
+    /// Wire payload length.
+    pub const PAYLOAD_LEN: usize = 53;
+    /// CRC extra from the MAVLink common dialect.
+    pub const CRC_EXTRA: u8 = 5;
+    /// `MAV_FRAME_GLOBAL_INT`: the altitude is above mean sea level.
+    pub const FRAME_GLOBAL_INT: u8 = 5;
+}
+
+pub(super) fn parse_set_position_target_global_int(
+    payload: &[u8],
+) -> Result<MavMessage, ParseError> {
+    if payload.len() < SetPositionTargetGlobalInt::PAYLOAD_LEN {
+        return Err(ParseError::InvalidPayload);
+    }
+    let byte = |offset: usize| payload.get(offset).copied().unwrap_or(0);
+    Ok(MavMessage::SetPositionTargetGlobalInt(
+        SetPositionTargetGlobalInt {
+            time_boot_ms: read_u32_le(payload, 0),
+            lat_int: read_i32_le(payload, 4),
+            lon_int: read_i32_le(payload, 8),
+            alt: read_f32_le(payload, 12),
+            vx: read_f32_le(payload, 16),
+            vy: read_f32_le(payload, 20),
+            vz: read_f32_le(payload, 24),
+            afx: read_f32_le(payload, 28),
+            afy: read_f32_le(payload, 32),
+            afz: read_f32_le(payload, 36),
+            yaw: read_f32_le(payload, 40),
+            yaw_rate: read_f32_le(payload, 44),
+            type_mask: read_u16_le(payload, 48),
+            target_system: byte(50),
+            target_component: byte(51),
+            coordinate_frame: byte(52),
+        },
+    ))
+}
+
+pub(super) fn serialize_set_position_target_global_int(
+    msg: &SetPositionTargetGlobalInt,
+    seq: u8,
+    sys_id: u8,
+    comp_id: u8,
+    buf: &mut [u8],
+) -> Option<usize> {
+    if buf.len() < MavHeader::SIZE + SetPositionTargetGlobalInt::PAYLOAD_LEN + 2 {
+        return None;
+    }
+    let offset = write_header(
+        buf,
+        SetPositionTargetGlobalInt::PAYLOAD_LEN as u8,
+        seq,
+        sys_id,
+        comp_id,
+        SetPositionTargetGlobalInt::MSG_ID,
+    );
+    write_u32_le(buf, offset, msg.time_boot_ms);
+    write_i32_le(buf, offset + 4, msg.lat_int);
+    write_i32_le(buf, offset + 8, msg.lon_int);
+    for (index, value) in [
+        msg.alt,
+        msg.vx,
+        msg.vy,
+        msg.vz,
+        msg.afx,
+        msg.afy,
+        msg.afz,
+        msg.yaw,
+        msg.yaw_rate,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        write_f32_le(buf, offset + 12 + 4 * index, value);
+    }
+    write_u16_le(buf, offset + 48, msg.type_mask);
+    let tail = [
+        msg.target_system,
+        msg.target_component,
+        msg.coordinate_frame,
+    ];
+    for (slot, value) in buf.iter_mut().skip(offset + 50).zip(tail) {
+        *slot = value;
+    }
+    Some(write_crc(
+        buf,
+        offset + SetPositionTargetGlobalInt::PAYLOAD_LEN,
+        SetPositionTargetGlobalInt::CRC_EXTRA,
+    ))
+}
+
+pub(super) fn parse_gps_global_origin(payload: &[u8]) -> Result<MavMessage, ParseError> {
+    if payload.len() < GpsGlobalOrigin::PAYLOAD_LEN {
+        return Err(ParseError::InvalidPayload);
+    }
+    Ok(MavMessage::GpsGlobalOrigin(GpsGlobalOrigin {
+        latitude: read_i32_le(payload, 0),
+        longitude: read_i32_le(payload, 4),
+        altitude: read_i32_le(payload, 8),
+        time_usec: read_u64_le(payload, 12),
+    }))
+}
+
+pub(super) fn serialize_gps_global_origin(
+    msg: &GpsGlobalOrigin,
+    seq: u8,
+    sys_id: u8,
+    comp_id: u8,
+    buf: &mut [u8],
+) -> Option<usize> {
+    if buf.len() < MavHeader::SIZE + GpsGlobalOrigin::PAYLOAD_LEN + 2 {
+        return None;
+    }
+    let offset = write_header(
+        buf,
+        GpsGlobalOrigin::PAYLOAD_LEN as u8,
+        seq,
+        sys_id,
+        comp_id,
+        GpsGlobalOrigin::MSG_ID,
+    );
+    write_i32_le(buf, offset, msg.latitude);
+    write_i32_le(buf, offset + 4, msg.longitude);
+    write_i32_le(buf, offset + 8, msg.altitude);
+    write_u64_le(buf, offset + 12, msg.time_usec);
+    Some(write_crc(
+        buf,
+        offset + GpsGlobalOrigin::PAYLOAD_LEN,
+        GpsGlobalOrigin::CRC_EXTRA,
+    ))
 }
 
 pub(super) fn parse_global_position_int(payload: &[u8]) -> Result<MavMessage, ParseError> {

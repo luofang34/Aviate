@@ -92,6 +92,14 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
         &self.pipeline
     }
 
+    /// Express the estimator state in a new navigation frame (see
+    /// [`crate::ekf::rebase`]). The host calls this between cycles.
+    pub fn rebase_navigation_frame(&mut self, shift: &crate::ekf::rebase::FrameShift) {
+        self.pipeline
+            .estimator
+            .rebase(&mut self.state.estimator, shift);
+    }
+
     /// Read the resolved configuration the binding check verified.
     /// There is no mutable counterpart: a post-build config edit would
     /// desynchronize the canonical hash and the verified controller

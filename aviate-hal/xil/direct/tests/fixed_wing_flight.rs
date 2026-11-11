@@ -10,6 +10,7 @@ use aviate_core::types::{Meters, MetersPerSecond, Radians};
 use aviate_xil_direct::{DirectNoiseTier, DirectSensorRates};
 
 #[path = "plant/flight.rs"]
+#[allow(dead_code)]
 mod flight;
 use flight::{course_speed_height, wrap, FixedWingPlant, Flight, PlantModel, ProbeErrors};
 
@@ -304,10 +305,12 @@ fn gnss_loss_falls_back_to_heading_airspeed_and_pressure_level() {
     assert!(flight.plant.roll > 20.0_f32.to_radians());
     flight.gnss_silent = true;
     // The estimator holds velocity validity for 5 s after the last fix.
+    // Then the height stays valid on the barometer, so the mode falls
+    // back to a heading and a height.
     let _ = flight.fly(8.0, VELOCITY, level(2.0, 50.0, 300.0));
     assert_eq!(
         flight.board.last_effective_command().mode,
-        ControlMode::Attitude
+        ControlMode::AltitudeHold
     );
     let level_at_fallback = flight.plant.height();
     let _recover = flight.fly(20.0, VELOCITY, level(2.0, 50.0, 300.0));
@@ -334,7 +337,7 @@ fn gnss_loss_falls_back_to_heading_airspeed_and_pressure_level() {
 }
 
 #[test]
-fn gnss_loss_without_a_probe_holds_trim_attitude_and_cruise_throttle() {
+fn gnss_loss_without_a_probe_holds_trim_pitch_and_the_height_on_the_barometer() {
     let mut flight = Flight::cruising(
         &c172(),
         PlantModel::C172,
@@ -347,14 +350,18 @@ fn gnss_loss_without_a_probe_holds_trim_attitude_and_cruise_throttle() {
     let seen = flight.fly(40.0, VELOCITY, level(0.0, 55.0, 300.0));
     assert_eq!(
         flight.board.last_effective_command().mode,
-        ControlMode::Attitude
+        ControlMode::AltitudeHold
     );
     assert_eq!(flight.airspeed_source(), AirspeedSource::Assumed);
-    // Nothing measures the airspeed now. The trim pitch and the cruise
-    // throttle of the airframe description keep it well above the stall.
+    // Nothing measures the airspeed now. The trim pitch of the airframe
+    // description keeps it well above the stall, and the throttle holds
+    // the commanded height on the barometer.
     assert!(seen.max_bank < 2.0_f32.to_radians(), "{seen:?}");
     assert!(seen.min_indicated > 45.0, "{seen:?}");
-    assert!((flight.last.outputs[0] - 0.84).abs() < 1.0e-6);
+    assert!(
+        seen.min_height > 298.0 && seen.max_height < 302.0,
+        "{seen:?}"
+    );
 }
 
 #[test]

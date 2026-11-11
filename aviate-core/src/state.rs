@@ -8,6 +8,12 @@ bitflags::bitflags! {
         const ANGULAR_RATE = 0x02;
         const POSITION = 0x04;
         const VELOCITY = 0x08;
+        /// Height above the origin datum and vertical speed are usable.
+        /// A barometer gives them without a position fix.
+        const HEIGHT = 0x10;
+        /// The velocity relative to the air mass is aided by an
+        /// airspeed sensor.
+        const AIRSPEED = 0x20;
     }
 }
 

@@ -116,6 +116,26 @@ pub fn gate_controller_mode_entry(
     gate_mode_entry(requested, valid)
 }
 
+/// Gate a mode against the capability and the validity needs of `controller`.
+///
+/// The fallback rungs are the same for every vehicle; a rung that the
+/// controller does not support is skipped, and each rung is judged by
+/// the validity that this controller needs for it.
+pub fn gate_vehicle_mode_entry<V: crate::control::VehicleController>(
+    controller: &V,
+    requested: ControlMode,
+    valid: StateValidFlags,
+) -> ModeEntryDecision {
+    if !controller.supports_mode(requested) {
+        return ModeEntryDecision::Unsupported { requested };
+    }
+    gate_with(requested, valid, |mode| {
+        controller
+            .supports_mode(mode)
+            .then(|| controller.required_validity(mode))
+    })
+}
+
 /// Gate a commanded mode's entry against current estimator validity.
 ///
 /// Walks the fallback rungs from most to least demanding, skipping
@@ -125,13 +145,25 @@ pub fn gate_controller_mode_entry(
 /// satisfies. Deterministic, allocation-free, and bounded by the
 /// fixed rung count — at most three comparisons.
 pub fn gate_mode_entry(requested: ControlMode, valid: StateValidFlags) -> ModeEntryDecision {
-    let required = requested.required_validity();
+    gate_with(requested, valid, |mode| Some(mode.required_validity()))
+}
+
+/// The gate with the validity need of each mode supplied by the caller;
+/// `None` marks a mode that is not available as a rung.
+fn gate_with(
+    requested: ControlMode,
+    valid: StateValidFlags,
+    required_of: impl Fn(ControlMode) -> Option<StateValidFlags>,
+) -> ModeEntryDecision {
+    let required = required_of(requested).unwrap_or_else(|| requested.required_validity());
     let missing = required - valid;
     if missing.is_empty() {
         return ModeEntryDecision::Granted(requested);
     }
     for &rung in &FALLBACK_RUNGS {
-        let rung_required = rung.required_validity();
+        let Some(rung_required) = required_of(rung) else {
+            continue;
+        };
         let strictly_less_demanding = required.contains(rung_required) && rung_required != required;
         if strictly_less_demanding && valid.contains(rung_required) {
             return ModeEntryDecision::FallenBack {

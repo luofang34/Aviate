@@ -385,13 +385,19 @@ fn vertical_target_falls_back_with_the_validity_of_the_estimate() {
         vertical_with(StateValidFlags::all(), &hold),
         Vertical::Height(500.0)
     );
-    // Without a position the height is unknown: hold level flight.
+    // The height channel needs no horizontal position or velocity:
+    // the barometer gives it.
+    assert_eq!(
+        vertical_with(attitude_only | StateValidFlags::HEIGHT, &hold),
+        Vertical::Height(500.0)
+    );
+    // Without a height channel the height and the climb rate are
+    // unknown, whatever else is valid: hold the airspeed, which needs
+    // neither.
     assert_eq!(
         vertical_with(attitude_only | StateValidFlags::VELOCITY, &hold),
-        Vertical::ClimbRate(0.0)
+        Vertical::AirspeedOnPitch
     );
-    // Without a velocity the climb rate is unknown too: hold the
-    // airspeed, which needs neither.
     assert_eq!(
         vertical_with(attitude_only, &hold),
         Vertical::AirspeedOnPitch
@@ -405,7 +411,7 @@ fn vertical_target_falls_back_with_the_validity_of_the_estimate() {
         Vertical::AirspeedOnPitch
     );
     assert_eq!(
-        vertical_with(attitude_only | StateValidFlags::VELOCITY, &descend),
+        vertical_with(attitude_only | StateValidFlags::HEIGHT, &descend),
         Vertical::ClimbRate(-3.0)
     );
 

@@ -3,25 +3,13 @@
 
 use crate::control::law_invariants::STANDARD_GRAVITY_MPS2;
 use crate::kernel::config::FixedWingParams;
-use crate::sensor::AirData;
+use crate::sensor::{AirData, DRY_AIR_GAS_CONSTANT_JPKGK};
 use crate::state::{StateEstimate, StateValidFlags};
 #[allow(unused_imports)] // FloatExt supplies the no_std math methods
 use crate::types::FloatExt;
 use crate::types::Scalar;
 
 use super::runtime_state::AirSample;
-
-/// Air density at sea level in the standard atmosphere \[kg/m³\].
-/// Indicated airspeed is defined against this density, so it converts
-/// a dynamic pressure to an indicated airspeed for every airframe.
-pub const SEA_LEVEL_AIR_DENSITY_KGPM3: Scalar = 1.225;
-
-/// Specific gas constant of dry air \[J/(kg·K)\]. Gives the air density
-/// at the probe from its static pressure and temperature.
-pub const DRY_AIR_GAS_CONSTANT_JPKGK: Scalar = 287.05;
-
-/// Offset from degrees Celsius to kelvin.
-pub const CELSIUS_TO_KELVIN_OFFSET: Scalar = 273.15;
 
 /// Age \[s\] at which the law stops flying on the last airspeed sample.
 /// A pitot-static sensor supplies a sample at least each 100 ms, so ten
@@ -30,17 +18,7 @@ pub const CELSIUS_TO_KELVIN_OFFSET: Scalar = 273.15;
 /// stall protection on a number that no longer describes the airflow.
 pub const AIRSPEED_STALE_AFTER_S: Scalar = 1.0;
 
-const _: () = assert!(SEA_LEVEL_AIR_DENSITY_KGPM3 > 0.0);
-const _: () = assert!(DRY_AIR_GAS_CONSTANT_JPKGK > 0.0);
 const _: () = assert!(AIRSPEED_STALE_AFTER_S > 0.0);
-
-/// Air temperature at sea level in the standard atmosphere \[K\]. Stands
-/// in for the temperature of a probe that reports none: the pressure
-/// height is used only as a difference over minutes, where an error of
-/// 30 K in this value changes the height scale by a tenth.
-pub const STANDARD_TEMPERATURE_K: Scalar = 288.15;
-
-const _: () = assert!(STANDARD_TEMPERATURE_K > 0.0);
 
 /// Static port of one pitot-static sample.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -75,44 +53,17 @@ pub struct AirDataLatch {
     pub static_primed: bool,
 }
 
-/// Static port of one sample, when it gives a usable pressure.
-fn static_of(air: &AirData) -> Option<StaticAir> {
-    let pressure_pa = air
-        .static_pressure
-        .map(|pressure| pressure.0)
-        .filter(|pressure| pressure.is_finite() && *pressure > 0.0)?;
-    let kelvin = air
-        .temperature
-        .map(|temperature| temperature.0 + CELSIUS_TO_KELVIN_OFFSET)
-        .filter(|kelvin| kelvin.is_finite() && *kelvin > 0.0)
-        .unwrap_or(STANDARD_TEMPERATURE_K);
-    Some(StaticAir {
-        pressure_pa,
-        scale_height_m: DRY_AIR_GAS_CONSTANT_JPKGK * kelvin / STANDARD_GRAVITY_MPS2,
-    })
-}
-
 /// Indicated and true airspeed from one pitot-static sample, or `None`
 /// when the sample carries no usable dynamic pressure.
 pub(super) fn airspeeds_of(air: &AirData) -> Option<AirSample> {
-    let dynamic_pa = air.dynamic_pressure.map(|pressure| pressure.0)?;
-    if !dynamic_pa.is_finite() {
-        return None;
-    }
-    // A negative reading is sensor noise about zero airspeed.
-    let indicated = (2.0 * dynamic_pa.max(0.0) / SEA_LEVEL_AIR_DENSITY_KGPM3).sqrt();
-    let static_air = static_of(air);
-    // Density from the static port, when the probe reports a temperature
-    // with it. Without both, true airspeed is taken as indicated airspeed.
-    let density = static_air
-        .filter(|_| air.temperature.is_some())
-        .map_or(SEA_LEVEL_AIR_DENSITY_KGPM3, |port| {
-            port.pressure_pa / (STANDARD_GRAVITY_MPS2 * port.scale_height_m)
-        });
+    let probe = air.pitot_static()?;
     Some(AirSample {
-        indicated_mps: indicated,
-        true_mps: indicated * (SEA_LEVEL_AIR_DENSITY_KGPM3 / density).sqrt(),
-        static_air,
+        indicated_mps: probe.indicated_mps,
+        true_mps: probe.true_mps,
+        static_air: probe.static_port.map(|(pressure_pa, kelvin)| StaticAir {
+            pressure_pa,
+            scale_height_m: DRY_AIR_GAS_CONSTANT_JPKGK * kelvin / STANDARD_GRAVITY_MPS2,
+        }),
     })
 }
 

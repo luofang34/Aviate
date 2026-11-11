@@ -1306,9 +1306,9 @@ fn ekf_state_uncertainty_grows_during_predict_only() {
         Quaternion::IDENTITY,
     );
 
-    // Run many predict steps without update - P should grow
+    // Run 3 s of predict steps without update - P should grow
     // This means larger innovations will be accepted (gate widens with P)
-    for _ in 0..100 {
+    for _ in 0..300 {
         ekf.predict_state(&mut state, &imu, 0.01);
     }
 
@@ -2775,4 +2775,28 @@ fn ekf_quality_degrades_when_baro_goes_stale_even_with_fresh_gnss() {
         EstimateQuality::Degraded,
         "stale baro backs Good off to Degraded despite fresh GNSS"
     );
+}
+
+/// An override block that does not override GNSS leaves GNSS fusion as
+/// it is: the estimate with an empty block is the estimate without one.
+#[test]
+fn an_override_block_without_a_gnss_override_still_fuses_gnss() {
+    use aviate_core::control::SensorOverrides;
+    use aviate_core::state::StateValidFlags;
+
+    let ekf = Ekf::new(EkfConfig::default());
+    let sensors = make_valid_sensor_set();
+    let empty = SensorOverrides {
+        gnss_force_state: None,
+    };
+    let mut plain = init_stationary_at_origin();
+    let mut with_block = init_stationary_at_origin();
+    for _ in 0..50 {
+        ekf.observe(&mut plain, &sensors, None, 0.01);
+        ekf.observe(&mut with_block, &sensors, Some(&empty), 0.01);
+    }
+    let (a, b) = (plain.get_estimate(), with_block.get_estimate());
+    assert_eq!(a.position_ned, b.position_ned);
+    assert_eq!(a.velocity_ned, b.velocity_ned);
+    assert!(b.valid_flags.contains(StateValidFlags::POSITION));
 }
