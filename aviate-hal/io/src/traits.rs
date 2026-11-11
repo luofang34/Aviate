@@ -35,6 +35,9 @@ pub use actuator::{
     MAX_ACTUATOR_OUTPUTS,
 };
 
+use aviate_core::sensor::{AirData, AirspeedData};
+use aviate_core::types::{Celsius, Pascals};
+
 use crate::error::SensorResult;
 
 /// Time source for timestamps
@@ -244,6 +247,44 @@ impl GnssDriver for () {
 }
 
 // ============================================================================
+// Airspeed Sensor
+// ============================================================================
+
+/// Raw pitot-static reading.
+///
+/// The differential pressure is the measured quantity. A consumer
+/// derives airspeed from it; the reading does not carry an airspeed.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct RawAirspeedReading {
+    /// Pitot pressure minus static pressure in Pascals.
+    pub differential_pressure_pa: f32,
+    /// Static pressure at the probe in Pascals when the probe supplies it.
+    pub static_pressure_pa: Option<f32>,
+    /// Outside air temperature in Celsius when the probe supplies it.
+    pub temperature_c: Option<f32>,
+}
+
+impl RawAirspeedReading {
+    /// Convert the reading to the air-data type that the core consumes.
+    ///
+    /// The derived airspeed fields stay empty: the pressures are the
+    /// authoritative source.
+    #[must_use]
+    pub fn air_data(&self) -> AirspeedData {
+        AirspeedData {
+            air: AirData {
+                static_pressure: self.static_pressure_pa.map(Pascals),
+                dynamic_pressure: Some(Pascals(self.differential_pressure_pa)),
+                total_pressure: None,
+                temperature: self.temperature_c.map(Celsius),
+                indicated_airspeed: None,
+                true_airspeed: None,
+            },
+        }
+    }
+}
+
+// ============================================================================
 // Calibration Data
 // ============================================================================
 
@@ -397,6 +438,31 @@ mod tests {
 
         let alt = reading.altitude_m();
         assert!((alt - 1000.0).abs() < 50.0); // Within 50m of 1000m
+    }
+
+    #[test]
+    fn airspeed_reading_keeps_pressures_authoritative() {
+        let reading = RawAirspeedReading {
+            differential_pressure_pa: 1_850.0,
+            static_pressure_pa: Some(95_000.0),
+            temperature_c: Some(8.5),
+        };
+        let air = reading.air_data().air;
+        assert_eq!(air.dynamic_pressure.map(|p| p.0), Some(1_850.0));
+        assert_eq!(air.static_pressure.map(|p| p.0), Some(95_000.0));
+        assert_eq!(air.temperature.map(|t| t.0), Some(8.5));
+        assert!(air.indicated_airspeed.is_none());
+        assert!(air.true_airspeed.is_none());
+        assert!(air.total_pressure.is_none());
+
+        let bare = RawAirspeedReading {
+            differential_pressure_pa: 12.0,
+            ..RawAirspeedReading::default()
+        };
+        let air = bare.air_data().air;
+        assert_eq!(air.dynamic_pressure.map(|p| p.0), Some(12.0));
+        assert!(air.static_pressure.is_none());
+        assert!(air.temperature.is_none());
     }
 
     #[test]

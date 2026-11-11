@@ -1,5 +1,6 @@
 //! In-process `no_std` XIL board driving [`aviate_core::DefaultAviateKernel`].
 
+mod host;
 mod ingress;
 mod step;
 mod triad;
@@ -67,7 +68,8 @@ impl TimeHal for DirectTime {
 /// Concrete [`BoardHal`] composition used by [`DirectXilBoard`].
 pub type DirectBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, DirectTime, FakeActuator>;
 
-/// Normalized actuator command returned by [`DirectXilBoard::step_truth`].
+/// Normalized actuator command returned by [`DirectXilBoard::step_truth`] and
+/// [`DirectXilBoard::step_sensors`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DirectActuatorCmd {
     /// Simulation timestamp in microseconds when this command was produced.
@@ -127,6 +129,12 @@ where
     active_generation: Option<u32>,
     boot_anchor_us: Option<u64>,
     ekf_initialized: bool,
+    /// Time of the last [`Self::step_sensors`] call in this generation.
+    host_clock_us: Option<u64>,
+    /// Declination from the geomagnetic model at the origin.
+    origin_declination_rad: f32,
+    /// Declination from the geomagnetic model at the last GNSS fix.
+    model_declination_rad: f32,
 }
 
 impl<C, M> DirectXilBoard<C, M>
@@ -156,6 +164,7 @@ where
             FakeActuator::new(),
         );
         let endpoint = DirectMavlinkEndpoint::new(config.sys_id, config.comp_id);
+        let origin_declination_rad = synthesizer.environment().declination_rad();
         Ok(Self {
             config,
             kernel,
@@ -170,6 +179,9 @@ where
             active_generation: None,
             boot_anchor_us: None,
             ekf_initialized: false,
+            host_clock_us: None,
+            origin_declination_rad,
+            model_declination_rad: origin_declination_rad,
         })
     }
 
@@ -269,7 +281,7 @@ where
         self.endpoint.pop_tx(buf)
     }
 
-    /// Enqueue a typed [`SystemCommand`] for execution on the next [`Self::step_truth`] call.
+    /// Enqueue a typed [`SystemCommand`] for execution on the next step call.
     pub fn send_command(&mut self, cmd: SystemCommand) {
         let _ = self.endpoint.enqueue_command(cmd);
     }

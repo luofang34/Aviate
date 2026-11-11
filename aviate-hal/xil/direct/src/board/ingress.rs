@@ -2,8 +2,8 @@
 
 use aviate_core::control::{Command, CommandSource, ControlMode, Setpoint};
 use aviate_core::sensor::{
-    BaroData, GeomagneticReference, GnssData, GnssHealth, ImuData, MagData, SensorReading,
-    SensorSet,
+    AirspeedData, BaroData, GeomagneticReference, GnssData, GnssHealth, ImuData, MagData,
+    SensorReading, SensorSet,
 };
 use aviate_core::types::{Microtesla, NormalizedThrust};
 use aviate_core::InitState;
@@ -44,19 +44,21 @@ impl DirectCommandIngress {
 
 /// Cached sensor readings preserving health across decimated aiding-sensor intervals.
 ///
-/// On intermediate high-rate IMU ticks where barometer, magnetometer, or GNSS did not emit a new
-/// measurement, the cached reading keeps `valid = true` and `health = SensorHealth::Good` so
-/// pre-arm and runtime health monitors see live sensors, while its payload value signals no new
-/// scalar fusion to `Ekf::observe`.
+/// On intermediate high-rate IMU ticks where barometer, magnetometer, GNSS, or airspeed did not
+/// emit a new measurement, the cached reading keeps `valid = true` and `health = SensorHealth::Good`
+/// so pre-arm and runtime health monitors see live sensors, while its payload value signals no new
+/// measurement to the consumer.
 #[derive(Debug, Clone, Default)]
 pub(super) struct DirectSensorCache {
     pub(super) imu: Option<SensorReading<ImuData>>,
     pub(super) baro: Option<SensorReading<BaroData>>,
     pub(super) mag: Option<SensorReading<MagData>>,
     pub(super) gnss: Option<SensorReading<GnssData>>,
+    pub(super) airspeed: Option<SensorReading<AirspeedData>>,
     pub(super) baro_fresh: bool,
     pub(super) mag_fresh: bool,
     pub(super) gnss_fresh: bool,
+    pub(super) airspeed_fresh: bool,
     pub(super) baro_pressure_pa: Option<f32>,
     pub(super) baro_temperature_c: f32,
 }
@@ -67,6 +69,7 @@ impl DirectSensorCache {
         self.baro_fresh = false;
         self.mag_fresh = false;
         self.gnss_fresh = false;
+        self.airspeed_fresh = false;
     }
 
     /// Store a newly read barometer sample.
@@ -91,6 +94,12 @@ impl DirectSensorCache {
     pub(super) fn record_gnss(&mut self, reading: SensorReading<GnssData>) {
         self.gnss = Some(reading);
         self.gnss_fresh = true;
+    }
+
+    /// Store a newly supplied airspeed sample.
+    pub(super) fn record_airspeed(&mut self, reading: SensorReading<AirspeedData>) {
+        self.airspeed = Some(reading);
+        self.airspeed_fresh = true;
     }
 
     /// Build the [`SensorSet`] for the current kernel step.
@@ -122,6 +131,15 @@ impl DirectSensorCache {
             }
             None => SensorReading::default(),
         };
+        let airspeed0 = match self.airspeed {
+            Some(mut airspeed) => {
+                if !self.airspeed_fresh {
+                    airspeed.value.air.dynamic_pressure = None;
+                }
+                airspeed
+            }
+            None => SensorReading::default(),
+        };
         SensorSet {
             imus: [
                 self.imu.unwrap_or_default(),
@@ -131,7 +149,7 @@ impl DirectSensorCache {
             gnss: [gnss0, SensorReading::default()],
             mags: [mag0, SensorReading::default()],
             baros: [baro0, SensorReading::default()],
-            airspeeds: [SensorReading::default(), SensorReading::default()],
+            airspeeds: [airspeed0, SensorReading::default()],
             geometry: None,
             geomagnetic,
         }

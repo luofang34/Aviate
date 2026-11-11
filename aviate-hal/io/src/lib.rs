@@ -151,8 +151,9 @@ pub use fake::{FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag, FakeSensorSet
 pub use time_hal::{Sample, TimeHal};
 pub use traits::{
     ActuatorDriver, ActuatorErrorFlags, ActuatorStatus, ActuatorTelemetry, BaroDriver, GnssDriver,
-    GnssFix, ImuCalibration, ImuDriver, MagCalibration, MagDriver, RawActuatorCmd, RawBaroReading,
-    RawGnssReading, RawImuReading, RawMagReading, TimeSource, MAX_ACTUATOR_OUTPUTS,
+    GnssFix, ImuCalibration, ImuDriver, MagCalibration, MagDriver, RawActuatorCmd,
+    RawAirspeedReading, RawBaroReading, RawGnssReading, RawImuReading, RawMagReading, TimeSource,
+    MAX_ACTUATOR_OUTPUTS,
 };
 pub use transport_hal::{SystemState, TransportHal, TransportStatus};
 pub use watchdog_hal::{FakeWatchdog, WatchdogHal};
