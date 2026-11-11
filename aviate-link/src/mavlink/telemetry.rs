@@ -75,6 +75,7 @@ impl Default for TelemetryConfig {
     }
 }
 
+use aviate_core::kernel::config::MixerGeometry;
 use aviate_core::mixer::ActuatorCmd;
 use aviate_core::state::StateEstimate;
 use aviate_core::ChannelStatus;
@@ -88,6 +89,20 @@ use super::protocol::{
 use crate::errors::{TelemetryError, TelemetryResult};
 use crate::telemetry::TelemetryBackend;
 
+/// `MAV_TYPE` that a ground station or host sees in `HEARTBEAT` for a
+/// vehicle with `geometry`.
+///
+/// The match is exhaustive, so a new geometry needs a decision here
+/// before it can build.
+pub const fn vehicle_mav_type(geometry: MixerGeometry) -> MavType {
+    match geometry {
+        MixerGeometry::QuadX | MixerGeometry::QuadXX500 | MixerGeometry::QuadXX500ReversedSpin => {
+            MavType::Quadrotor
+        }
+        MixerGeometry::FixedWing => MavType::FixedWing,
+    }
+}
+
 /// Pure helper - format heartbeat message (safe for high-DAL)
 ///
 /// ## DO-178C Contract
@@ -100,6 +115,7 @@ use crate::telemetry::TelemetryBackend;
 /// ## Parameters
 ///
 /// - `status`: Channel status to encode
+/// - `mav_type`: Vehicle type, from [`vehicle_mav_type`] of the airframe
 /// - `sys_id`: MAVLink system ID (1-255)
 /// - `comp_id`: MAVLink component ID (1-255)
 /// - `seq`: Sequence counter (auto-incremented)
@@ -111,13 +127,14 @@ use crate::telemetry::TelemetryBackend;
 /// - `Err(TelemetryError::Protocol)`: Serialization failed
 pub fn format_heartbeat(
     _status: &ChannelStatus,
+    mav_type: MavType,
     sys_id: u8,
     comp_id: u8,
     seq: &mut u8,
     buf: &mut [u8],
 ) -> TelemetryResult<usize> {
     let heartbeat = Heartbeat {
-        mav_type: MavType::Quadrotor as u8,
+        mav_type: mav_type as u8,
         autopilot: MavAutopilot::Generic as u8,
         base_mode: MavModeFlag::SAFETY_ARMED.0, // TODO: derive from status
         custom_mode: 0,                         // Future: map from control mode
@@ -321,6 +338,8 @@ pub struct MavlinkTelemetry<T: FrameTx> {
     comp_id: u8,
     /// Sequence counter (wraps at 256)
     seq: u8,
+    /// `MAV_TYPE` advertised in `HEARTBEAT`.
+    mav_type: MavType,
 }
 
 impl<T: FrameTx> MavlinkTelemetry<T> {
@@ -337,7 +356,15 @@ impl<T: FrameTx> MavlinkTelemetry<T> {
             sys_id,
             comp_id,
             seq: 0,
+            mav_type: MavType::Generic,
         }
+    }
+
+    /// Set the `MAV_TYPE` advertised in `HEARTBEAT`, normally
+    /// [`vehicle_mav_type`] of the airframe. Until set it is
+    /// `MAV_TYPE_GENERIC`, which claims no airframe.
+    pub fn set_vehicle_type(&mut self, mav_type: MavType) {
+        self.mav_type = mav_type;
     }
 
     /// Get mutable reference to transport (for configuration)
@@ -349,7 +376,14 @@ impl<T: FrameTx> MavlinkTelemetry<T> {
 impl<T: FrameTx> TelemetryBackend for MavlinkTelemetry<T> {
     fn send_status(&mut self, status: &ChannelStatus) -> TelemetryResult<()> {
         let mut buf = [0u8; 256];
-        let len = format_heartbeat(status, self.sys_id, self.comp_id, &mut self.seq, &mut buf)?;
+        let len = format_heartbeat(
+            status,
+            self.mav_type,
+            self.sys_id,
+            self.comp_id,
+            &mut self.seq,
+            &mut buf,
+        )?;
         self.tx
             .try_send(&buf[..len])
             .map_err(TelemetryError::Transport)
