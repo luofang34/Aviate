@@ -3,12 +3,17 @@
 #![allow(clippy::expect_used)]
 
 use aviate_core::checks::DegradationReason;
+use aviate_core::control::fixed_wing::FixedWingController;
 use aviate_core::control::multirotor::MultirotorController;
 use aviate_core::ekf::Ekf;
 use aviate_core::fault::FaultFlags;
 use aviate_core::kernel::builder::AviateKernelBuilder;
+use aviate_core::kernel::config::{FixedWingParams, MixerGeometry, ResolvedKernelConfig};
+use aviate_core::mixer::fixed_wing::FixedWingMixer;
 use aviate_core::mixer::{QuadXMixer, Sanitizer};
 use aviate_core::time::{TimeSource, Timestamp};
+use aviate_core::types::{MetersPerSecond, NormalizedThrust, Radians, Seconds};
+use aviate_core::DefaultAviateKernel;
 use aviate_core::InitState;
 use aviate_hal_io::{BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use aviate_hal_xil::{SimImuData, SimMagData, SimSensorPacket, SitlIO, XilConfig, XilNetConfig};
@@ -175,6 +180,58 @@ fn board_hal() -> super::super::SitlBoardHal {
     )
 }
 
+/// A light single-engine aeroplane, built from the core types alone: the
+/// runtime picks no airframe, so its tests do not depend on an airframe
+/// crate.
+fn fixed_wing_kernel() -> DefaultAviateKernel<FixedWingController, FixedWingMixer> {
+    let params = FixedWingParams {
+        stall_airspeed: MetersPerSecond(25.0),
+        min_airspeed: MetersPerSecond(33.0),
+        cruise_airspeed: MetersPerSecond(55.0),
+        max_airspeed: MetersPerSecond(65.0),
+        min_throttle: NormalizedThrust(0.0),
+        cruise_throttle: NormalizedThrust(0.65),
+        max_throttle: NormalizedThrust(1.0),
+        max_climb_rate: MetersPerSecond(2.5),
+        max_sink_rate: MetersPerSecond(5.0),
+        trim_pitch: Radians(0.02),
+        height_time_constant: Seconds(5.0),
+        speed_time_constant: Seconds(5.0),
+        energy_rate_p: 0.05,
+        energy_rate_i: 0.02,
+        balance_rate_p: 0.5,
+        balance_rate_i: 0.2,
+        route_bank_angle: Radians(0.44),
+        course_time_constant: Seconds(5.0),
+        course_integral_time: Seconds(20.0),
+        track_lookahead_time: Seconds(8.0),
+        max_intercept_angle: Radians(0.785),
+        roll_time_constant: Seconds(0.5),
+        pitch_time_constant: Seconds(0.5),
+        rate_p: [0.4, 0.6, 0.5],
+        rate_i: [0.2, 0.4, 0.1],
+        rate_ff: [0.8, 1.0, 0.5],
+        rate_integrator_limit: 0.3,
+        airspeed_scale_min: 0.5,
+        airspeed_scale_max: 2.0,
+        airspeed_filter_time_constant: Seconds(0.5),
+    };
+    AviateKernelBuilder::new()
+        .estimator(Ekf::default())
+        .controller(FixedWingController::new(params).expect("valid fixed-wing parameters"))
+        .mixer(FixedWingMixer {
+            timestamp_source: timestamp,
+        })
+        .sanitizer(Sanitizer)
+        .config(ResolvedKernelConfig {
+            mixer_geometry: MixerGeometry::FixedWing,
+            fixed_wing: Some(params),
+            ..ResolvedKernelConfig::default()
+        })
+        .build()
+        .expect("valid fixed-wing kernel")
+}
+
 /// The heartbeat names the airframe of the kernel configuration: a host
 /// that checks the vehicle type refuses a rotorcraft report for a
 /// configured fixed wing.
@@ -184,17 +241,6 @@ fn the_heartbeat_type_follows_the_airframe_configuration() {
 
     assert_eq!(runner().transport.vehicle_type(), MavType::Quadrotor);
 
-    let c172 = aviate_airframe_fixed_wing::c172();
-    let kernel = AviateKernelBuilder::new()
-        .estimator(Ekf::default())
-        .controller(c172.controller().expect("valid description"))
-        .mixer(aviate_airframe_fixed_wing::FixedWingAirframe::mixer(
-            timestamp,
-        ))
-        .sanitizer(Sanitizer)
-        .config(c172.kernel_config())
-        .build()
-        .expect("valid fixed-wing kernel");
-    let fixed_wing = SitlRunner::new(transport(), board_hal(), kernel);
+    let fixed_wing = SitlRunner::new(transport(), board_hal(), fixed_wing_kernel());
     assert_eq!(fixed_wing.transport.vehicle_type(), MavType::FixedWing);
 }
