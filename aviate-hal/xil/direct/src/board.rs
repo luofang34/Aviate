@@ -21,7 +21,7 @@ use crate::synthesis::{
     DirectNoiseTier, DirectOrigin, DirectSensorRates, DirectSynthesisError, DirectSynthesizer,
 };
 
-pub use frame::DEFAULT_REBASE_RADIUS_M;
+pub use frame::{DirectNavFrame, DEFAULT_REBASE_RADIUS_M};
 pub use ingress::DirectCommandRefusal;
 use ingress::{default_failsafe_command, DirectCommandIngress, DirectSensorCache};
 

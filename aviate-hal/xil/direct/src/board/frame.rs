@@ -29,6 +29,23 @@ use super::DirectXilBoard;
 /// rebase.
 pub const DEFAULT_REBASE_RADIUS_M: f64 = 1_000.0;
 
+/// The navigation frame of the board: the origin of every local
+/// quantity it reports or reads.
+///
+/// `LOCAL_POSITION_NED`, the estimate's position and velocity, the
+/// retained setpoint, and local position and velocity targets are all
+/// relative to `origin` and along its north, east and down axes. The
+/// origin starts at the configured origin and moves to the vehicle at
+/// each rebase, so a host reads local quantities against this origin
+/// and not against the configured one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DirectNavFrame {
+    /// Origin of the tangent plane, on the configured datum height.
+    pub origin: GeodeticPosition,
+    /// Number of times the origin has moved since the estimator was seeded.
+    pub rebases: u32,
+}
+
 /// Rows: the north, east and down axes of the tangent plane at
 /// `(latitude, longitude)` in Earth-fixed axes.
 fn plane_axes(latitude_deg: f64, longitude_deg: f64) -> [[f64; 3]; 3] {
@@ -97,6 +114,24 @@ where
     pub fn set_rebase_radius(&mut self, radius_m: f64) {
         if radius_m.is_finite() && radius_m > 0.0 {
             self.rebase_radius_m = radius_m;
+        }
+    }
+
+    /// The navigation frame that local quantities are relative to.
+    ///
+    /// Read it with every local quantity: after a rebase the origin is
+    /// no longer the configured one. `GPS_GLOBAL_ORIGIN` announces the
+    /// same origin over the link.
+    #[must_use]
+    pub fn navigation_frame(&self) -> DirectNavFrame {
+        let origin = self.frame_origin();
+        DirectNavFrame {
+            origin: GeodeticPosition::wgs84(
+                origin.latitude_deg,
+                origin.longitude_deg,
+                self.config.origin.ellipsoidal_height_m,
+            ),
+            rebases: self.kernel.state.estimator.frame.rebases,
         }
     }
 
