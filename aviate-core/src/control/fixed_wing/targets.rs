@@ -269,9 +269,57 @@ fn attitude_targets(
     }
 }
 
+impl Vertical {
+    /// The target that the present estimate can support.
+    ///
+    /// A height needs a valid position and a climb rate needs a valid
+    /// velocity. The kernel can hand over a command whose mode the gate
+    /// did not check against the estimate, so the law checks here: it
+    /// must not close a loop on a number that the estimator disowns.
+    fn supported_by(self, valid: StateValidFlags) -> Self {
+        let level = match self {
+            Vertical::Height(_) if !valid.contains(StateValidFlags::POSITION) => {
+                Vertical::ClimbRate(0.0)
+            }
+            other => other,
+        };
+        match level {
+            Vertical::ClimbRate(_) | Vertical::Height(_)
+                if !valid.contains(StateValidFlags::VELOCITY) =>
+            {
+                Vertical::AirspeedOnPitch
+            }
+            other => other,
+        }
+    }
+}
+
 impl Targets {
-    /// Read `command` as fixed-wing targets.
+    /// Read `command` as fixed-wing targets that the estimate supports.
     pub(super) fn resolve(
+        command: &Command,
+        flags: &VehicleControlMode,
+        state: &StateEstimate,
+        params: &FixedWingParams,
+    ) -> Self {
+        match Self::requested(command, flags, state, params) {
+            Targets::Flight {
+                lateral,
+                vertical,
+                airspeed,
+                throttle,
+            } => Targets::Flight {
+                lateral,
+                vertical: vertical.supported_by(state.valid_flags),
+                airspeed,
+                throttle,
+            },
+            rates @ Targets::Rates { .. } => rates,
+        }
+    }
+
+    /// Read `command` as fixed-wing targets.
+    fn requested(
         command: &Command,
         flags: &VehicleControlMode,
         state: &StateEstimate,

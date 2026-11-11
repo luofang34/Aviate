@@ -338,3 +338,55 @@ fn angles_wrap_into_half_a_turn() {
     assert!((wrap_angle(-3.0 * PI / 2.0) - PI / 2.0).abs() < 1.0e-5);
     assert!(wrap_angle(0.25).abs() - 0.25 < 1.0e-6);
 }
+
+#[test]
+fn vertical_target_falls_back_with_the_validity_of_the_estimate() {
+    let hold = Setpoint {
+        altitude: Some(Meters(500.0)),
+        ..Setpoint::default()
+    };
+    let vertical_with = |valid: StateValidFlags, setpoint: &Setpoint| {
+        let state = StateEstimate {
+            valid_flags: valid,
+            ..cruise_state()
+        };
+        flight(resolve(ControlMode::AltitudeHold, setpoint.clone(), &state)).1
+    };
+    let attitude_only = StateValidFlags::ATTITUDE | StateValidFlags::ANGULAR_RATE;
+
+    assert_eq!(
+        vertical_with(StateValidFlags::all(), &hold),
+        Vertical::Height(500.0)
+    );
+    // Without a position the height is unknown: hold level flight.
+    assert_eq!(
+        vertical_with(attitude_only | StateValidFlags::VELOCITY, &hold),
+        Vertical::ClimbRate(0.0)
+    );
+    // Without a velocity the climb rate is unknown too: hold the
+    // airspeed, which needs neither.
+    assert_eq!(
+        vertical_with(attitude_only, &hold),
+        Vertical::AirspeedOnPitch
+    );
+    let descend = Setpoint {
+        vertical_speed: Some(MetersPerSecond(3.0)),
+        ..Setpoint::default()
+    };
+    assert_eq!(
+        vertical_with(attitude_only, &descend),
+        Vertical::AirspeedOnPitch
+    );
+    assert_eq!(
+        vertical_with(attitude_only | StateValidFlags::VELOCITY, &descend),
+        Vertical::ClimbRate(-3.0)
+    );
+
+    // A direct pitch command needs no estimate beyond attitude.
+    let state = StateEstimate {
+        valid_flags: attitude_only,
+        ..cruise_state()
+    };
+    let (_, vertical, ..) = flight(resolve(ControlMode::Attitude, Setpoint::default(), &state));
+    assert_eq!(vertical, Vertical::Pitch(reference_params().trim_pitch.0));
+}
