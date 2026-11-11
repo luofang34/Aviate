@@ -38,6 +38,14 @@ fn holds_cruise_airspeed_height_and_course_with_sensor_noise() {
     assert!(seen.max_bank < 1.0_f32.to_radians(), "{seen:?}");
     assert!(wrap(flight.plant.course).abs() < 0.5_f32.to_radians());
     assert_eq!(flight.airspeed_source(), AirspeedSource::Measured);
+    // The aeroplane needs 0.12 of up elevator to hold its trim. The
+    // pitch-rate integrator finds it: the lane sits at 0.5 + 0.5 * 0.12.
+    assert!(
+        (flight.last.outputs[2] - 0.56).abs() < 0.01,
+        "elevator {}",
+        flight.last.outputs[2]
+    );
+    assert!(seen.max_sideslip < 0.5_f32.to_radians(), "{seen:?}");
 }
 
 #[test]
@@ -94,31 +102,46 @@ fn height_steps_follow_the_climb_and_sink_limits() {
 fn course_step_turns_inside_the_bank_and_load_limits() {
     let mut flight = Flight::c172_with_probe(DirectNoiseTier::Off);
     let east = core::f32::consts::FRAC_PI_2;
+    // Settle first: the law has to find the elevator trim of the aeroplane.
+    let _settle = flight.fly(10.0, VELOCITY, level(0.0, 55.0, 300.0));
     let entry = flight.fly(4.0, VELOCITY, level(east, 55.0, 300.0));
-    // In the established right turn the rudder is into the turn and the
-    // elevator holds the nose up.
     assert!(
         flight.plant.roll > 40.0_f32.to_radians(),
         "{}",
         flight.plant.roll
     );
+    // The roll into the turn drags the nose outward: adverse yaw from
+    // the ailerons, before the fin and the rudder catch up.
+    assert!(entry.max_sideslip < 5.0_f32.to_radians(), "{entry:?}");
+
+    // In the established right turn the rudder is into the turn, the
+    // elevator holds the nose up, and the turn is coordinated.
+    let established = flight.fly(3.0, VELOCITY, level(east, 55.0, 300.0));
+    assert!(established.mean_rudder > 0.505, "{established:?}");
     assert!(
-        flight.last.outputs[3] > 0.51,
-        "rudder {}",
-        flight.last.outputs[3]
+        established.max_sideslip < 1.5_f32.to_radians(),
+        "{established:?}"
     );
     assert!(
-        flight.last.outputs[2] > 0.52,
+        flight.last.outputs[2] > 0.58,
         "elevator {}",
         flight.last.outputs[2]
     );
-    let rest = flight.fly(36.0, VELOCITY, level(east, 55.0, 300.0));
+    let rest = flight.fly(33.0, VELOCITY, level(east, 55.0, 300.0));
+    assert!(rest.max_sideslip < 1.5_f32.to_radians(), "{rest:?}");
 
-    for seen in [entry, rest] {
+    // A level 45 degree turn is 1.41 g. The pitch loop overshoots while
+    // the bank builds, so the entry peaks higher; every segment stays
+    // inside the 2.5 g limit of the airframe.
+    assert!(
+        established.max_load > 1.3 && established.max_load < 1.6,
+        "{established:?}"
+    );
+    for seen in [entry, established, rest] {
         // 45 degrees is the configured bank limit; 1 degree is the
-        // overshoot of the roll loop. A level 45 degree turn is 1.41 g.
+        // overshoot of the roll loop.
         assert!(seen.max_bank < 46.0_f32.to_radians(), "{seen:?}");
-        assert!(seen.max_load < 1.5, "{seen:?}");
+        assert!(seen.max_load < 2.5, "{seen:?}");
         assert!(
             seen.min_height > 296.0 && seen.max_height < 304.0,
             "{seen:?}"

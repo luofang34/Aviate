@@ -64,6 +64,9 @@ pub struct Extremes {
     pub max_height: f32,
     pub max_climb: f32,
     pub max_sink: f32,
+    pub max_sideslip: f32,
+    /// Mean rudder lane over the segment.
+    pub mean_rudder: f32,
 }
 
 impl Flight {
@@ -187,7 +190,10 @@ impl Flight {
             max_height: f32::MIN,
             max_climb: f32::MIN,
             max_sink: f32::MIN,
+            max_sideslip: 0.0,
+            mean_rudder: 0.5,
         };
+        let mut rudder_sum = 0.0_f32;
         let steps = (seconds / DT_S).round() as u64;
         for local in 0..steps {
             if local % SETPOINT_REFRESH_STEPS == 0 {
@@ -206,6 +212,11 @@ impl Flight {
             seen.max_height = seen.max_height.max(self.plant.height());
             seen.max_climb = seen.max_climb.max(climb);
             seen.max_sink = seen.max_sink.max(-climb);
+            seen.max_sideslip = seen.max_sideslip.max(self.plant.sideslip().abs());
+            rudder_sum += self.last.outputs[3];
+        }
+        if steps > 0 {
+            seen.mean_rudder = rudder_sum / steps as f32;
         }
         seen
     }

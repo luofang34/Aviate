@@ -4,8 +4,10 @@
 //! must handle: a lift curve with a stall, a drag polar, a propeller whose
 //! thrust falls with airspeed, first-order roll and pitch rate responses
 //! whose authority grows with airspeed, pitch stability about a trim angle
-//! of attack, and coordinated turns. It has no sideslip and no wind, so
-//! the rudder moves nothing and the heading is the course.
+//! of attack that needs a constant elevator deflection, and a yaw axis
+//! with sideslip: directional stability, yaw damping, rudder power,
+//! adverse yaw from the ailerons, side force and roll from sideslip.
+//! There is no wind.
 //!
 //! Two parameter sets exist: a Cessna 172 class aeroplane and a Rascal
 //! 110 class small unmanned aeroplane.
@@ -39,6 +41,20 @@ pub struct PlantModel {
     trim_alpha_rad: f32,
     /// Throttle for level flight at the reference speed.
     pub trim_throttle: f32,
+    /// Elevator, in the pilot's sense, that holds the trim angle of attack.
+    pub trim_elevator: f32,
+    /// Yaw acceleration per radian of sideslip at the reference speed.
+    directional_stability_per_s2: f32,
+    /// Yaw acceleration per rad/s of yaw rate at the reference speed.
+    yaw_damping_per_s: f32,
+    /// Yaw acceleration at full rudder at the reference speed.
+    rudder_power_per_s2: f32,
+    /// Yaw acceleration against the turn at full aileron at the reference speed.
+    adverse_yaw_per_s2: f32,
+    /// Course rate per radian of sideslip at the reference speed.
+    side_force_per_s: f32,
+    /// Roll rate per radian of sideslip.
+    dihedral_per_s: f32,
 }
 
 impl PlantModel {
@@ -60,6 +76,13 @@ impl PlantModel {
         rate_response_time_s: 0.15,
         trim_alpha_rad: 0.008,
         trim_throttle: 0.667,
+        trim_elevator: 0.12,
+        directional_stability_per_s2: 9.0,
+        yaw_damping_per_s: 1.2,
+        rudder_power_per_s2: 2.3,
+        adverse_yaw_per_s2: 0.5,
+        side_force_per_s: 0.16,
+        dihedral_per_s: 0.5,
     };
 
     /// 6.8 kg, 0.98 m2, stall at 9 m/s indicated, 500 W of thrust power.
@@ -80,6 +103,13 @@ impl PlantModel {
         rate_response_time_s: 0.08,
         trim_alpha_rad: 0.0067,
         trim_throttle: 0.49,
+        trim_elevator: 0.08,
+        directional_stability_per_s2: 25.0,
+        yaw_damping_per_s: 3.0,
+        rudder_power_per_s2: 6.0,
+        adverse_yaw_per_s2: 1.0,
+        side_force_per_s: 0.3,
+        dihedral_per_s: 1.0,
     };
 }
 
@@ -93,6 +123,8 @@ pub struct FixedWingPlant {
     pub path_angle: f32,
     /// Course in radians from north, positive to the east.
     pub course: f32,
+    /// Heading in radians from north, positive to the east.
+    pub heading: f32,
     /// Bank angle in radians, positive right wing down.
     pub roll: f32,
     /// Pitch angle in radians, positive nose up.
@@ -124,6 +156,7 @@ impl FixedWingPlant {
             airspeed: model.reference_speed_mps,
             path_angle: 0.0,
             course: 0.0,
+            heading: 0.0,
             roll: 0.0,
             pitch: model.trim_alpha_rad,
             load_factor: 1.0,
@@ -156,11 +189,18 @@ impl FixedWingPlant {
         ]
     }
 
+    /// Sideslip in radians: positive when the airflow comes from the
+    /// right of the nose, which is when the course is right of the heading.
+    pub fn sideslip(&self) -> f32 {
+        let slip = self.course - self.heading;
+        slip.sin().atan2(slip.cos())
+    }
+
     fn attitude_wxyz(&self) -> [f32; 4] {
-        // ZYX Euler angles; the heading is the course.
+        // ZYX Euler angles.
         let (sr, cr) = (0.5 * self.roll).sin_cos();
         let (sp, cp) = (0.5 * self.pitch).sin_cos();
-        let (sy, cy) = (0.5 * self.course).sin_cos();
+        let (sy, cy) = (0.5 * self.heading).sin_cos();
         [
             cy * cp * cr + sy * sp * sr,
             cy * cp * sr - sy * sp * cr,
@@ -196,19 +236,22 @@ impl FixedWingPlant {
 
     /// Integrate for `dt_s` seconds under `cmd`.
     ///
-    /// A disarmed board commands nothing: the plant then flies with
-    /// neutral surfaces and trim throttle, as a pilot would hold it.
+    /// A disarmed board commands nothing: the plant then flies with the
+    /// trim throttle and trim elevator and with neutral aileron and rudder,
+    /// as a pilot would hold it.
     pub fn step(&mut self, cmd: &DirectActuatorCmd, dt_s: f32) {
-        let (throttle, aileron, elevator) = if cmd.armed {
+        let model = self.model;
+        let surface = |lane: usize| (2.0 * cmd.outputs[lane] - 1.0).clamp(-1.0, 1.0);
+        let (throttle, aileron, elevator, rudder) = if cmd.armed {
             (
                 cmd.outputs[0].clamp(0.0, 1.0),
-                (2.0 * cmd.outputs[1] - 1.0).clamp(-1.0, 1.0),
-                (2.0 * cmd.outputs[2] - 1.0).clamp(-1.0, 1.0),
+                surface(1),
+                surface(2),
+                surface(3),
             )
         } else {
-            (self.model.trim_throttle, 0.0, 0.0)
+            (model.trim_throttle, 0.0, model.trim_elevator, 0.0)
         };
-        let model = self.model;
         let g = self.gravity_mps2;
         let weight = model.mass_kg * g;
         let speed = self.airspeed.max(0.2 * model.reference_speed_mps);
@@ -227,28 +270,42 @@ impl FixedWingPlant {
             / speed.max(model.static_thrust_speed_mps);
         self.load_factor = lift / weight;
 
+        // Surface and stability moments grow with dynamic pressure; the
+        // rate that a deflection holds, and the damping, grow with airspeed.
+        let authority = speed / model.reference_speed_mps;
+        let sideslip = self.sideslip();
+
         let speed_rate = (thrust - drag) / model.mass_kg - g * self.path_angle.sin();
         let path_rate =
             (lift * self.roll.cos() - weight * self.path_angle.cos()) / (model.mass_kg * speed);
-        let course_rate = lift * self.roll.sin() / (model.mass_kg * speed * self.path_angle.cos());
+        // The side force of the fuselage and fin turns the velocity toward the nose.
+        let course_rate = lift * self.roll.sin() / (model.mass_kg * speed * self.path_angle.cos())
+            - model.side_force_per_s * authority * sideslip;
 
-        // Surface authority grows with airspeed.
-        let authority = speed / model.reference_speed_mps;
         let turn_pitch_rate = course_rate * self.pitch.cos() * self.roll.sin();
-        let roll_rate_target = model.roll_rate_at_full_aileron_rps * authority * aileron;
-        let pitch_rate_target = model.pitch_rate_at_full_elevator_rps * authority * elevator
-            - model.pitch_stability_per_s * (alpha - model.trim_alpha_rad)
-            + turn_pitch_rate;
+        let roll_rate_target = model.roll_rate_at_full_aileron_rps * authority * aileron
+            - model.dihedral_per_s * sideslip;
+        let pitch_rate_target =
+            model.pitch_rate_at_full_elevator_rps * authority * (elevator - model.trim_elevator)
+                - model.pitch_stability_per_s * (alpha - model.trim_alpha_rad)
+                + turn_pitch_rate;
         let blend = dt_s / model.rate_response_time_s;
         self.roll_rate += blend * (roll_rate_target - self.roll_rate);
         self.pitch_rate += blend * (pitch_rate_target - self.pitch_rate);
-        // No sideslip: the heading rate is the course rate.
-        self.yaw_rate = (course_rate * self.pitch.cos() - self.pitch_rate * self.roll.sin())
-            / self.roll.cos().max(0.3);
+        let yaw_acceleration = authority
+            * authority
+            * (model.directional_stability_per_s2 * sideslip + model.rudder_power_per_s2 * rudder
+                - model.adverse_yaw_per_s2 * aileron)
+            - authority * model.yaw_damping_per_s * self.yaw_rate;
+        self.yaw_rate += dt_s * yaw_acceleration;
 
         let velocity_before = self.velocity_ned();
-        self.roll += dt_s * (self.roll_rate + self.pitch.sin() * course_rate);
-        self.pitch += dt_s * (self.pitch_rate * self.roll.cos() - self.yaw_rate * self.roll.sin());
+        let (sin_roll, cos_roll) = self.roll.sin_cos();
+        let heading_rate =
+            (self.pitch_rate * sin_roll + self.yaw_rate * cos_roll) / self.pitch.cos();
+        self.roll += dt_s * (self.roll_rate + self.pitch.sin() * heading_rate);
+        self.pitch += dt_s * (self.pitch_rate * cos_roll - self.yaw_rate * sin_roll);
+        self.heading += dt_s * heading_rate;
         self.airspeed += dt_s * speed_rate;
         self.path_angle += dt_s * path_rate;
         self.course += dt_s * course_rate;
