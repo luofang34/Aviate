@@ -61,9 +61,9 @@ repository = "https://github.com/luofang34/Aviate"
 [workspace.dependencies]
 # World models (luofang34/world, AGPL-3.0-or-later): no_std, libm only.
 # Pinned by rev so a build always links the reviewed model.
-world-core = { git = "https://github.com/luofang34/world", rev = "df649f71aa2c07666cdbade4882f5eb601512381" }
-world-geomag = { git = "https://github.com/luofang34/world", rev = "df649f71aa2c07666cdbade4882f5eb601512381" }
-world-atmosphere = { git = "https://github.com/luofang34/world", rev = "df649f71aa2c07666cdbade4882f5eb601512381" }
+world-core = { git = "https://github.com/luofang34/world", rev = "8f09edf87317bc4981d19d9a5258c9d863d1fb2c" }
+world-geomag = { git = "https://github.com/luofang34/world", rev = "8f09edf87317bc4981d19d9a5258c9d863d1fb2c" }
+world-atmosphere = { git = "https://github.com/luofang34/world", rev = "8f09edf87317bc4981d19d9a5258c9d863d1fb2c" }
 
 [workspace.metadata]
 description = "Aviate workspace — see docs/AVIATE_SPEC.md and docs/AVIATE_LANGUAGE_PROFILE.md for constraints."
