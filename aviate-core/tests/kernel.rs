@@ -505,9 +505,9 @@ fn kernel_outputs_safe_when_not_armed() {
     let output = kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Should output safe values (0.0) when not armed
-    for i in 0..4 {
+    for (i, out) in output.outputs.iter().enumerate().take(4) {
         assert!(
-            (output.outputs[i].0).abs() < 1e-5,
+            (out.0).abs() < 1e-5,
             "Motor {} should be 0 when not armed",
             i
         );
@@ -549,9 +549,9 @@ fn kernel_outputs_control_when_armed() {
     let output = kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
     // Should output ~0.5 on all motors with zero R/P/Y
-    for i in 0..4 {
+    for (i, out) in output.outputs.iter().enumerate().take(4) {
         assert!(
-            (output.outputs[i].0 - 0.5).abs() < 0.1,
+            (out.0 - 0.5).abs() < 0.1,
             "Motor {} should be ~0.5 when armed with 0.5 thrust",
             i
         );
@@ -1806,12 +1806,12 @@ fn fault_state_outputs_safe_values() {
     let output = kernel.step_test(dummy_time_delta(), &cmd, &sensors, 0);
 
     // All outputs should be safe (0.0) in fault state
-    for i in 0..4 {
+    for (i, out) in output.outputs.iter().enumerate().take(4) {
         assert!(
-            output.outputs[i].0.abs() < 1e-5,
+            out.0.abs() < 1e-5,
             "Motor {} should be 0 in fault state (got {})",
             i,
-            output.outputs[i].0
+            out.0
         );
     }
 }

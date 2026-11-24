@@ -182,9 +182,9 @@ impl ActuatorState {
 
     /// Check if all active actuators (by mask) are healthy
     pub fn all_healthy(&self, active_mask: u16) -> bool {
-        for i in 0..MAX_ACTUATORS {
+        for (i, health) in self.health.iter().enumerate() {
             if (active_mask & (1 << i)) != 0 {
-                match self.health[i] {
+                match *health {
                     ActuatorHealth::Good | ActuatorHealth::Unknown => {}
                     ActuatorHealth::Degraded | ActuatorHealth::Failed | ActuatorHealth::Stuck => {
                         return false;
@@ -213,8 +213,8 @@ impl ActuatorState {
     /// Count actuators with a specific health status
     pub fn count_by_health(&self, health: ActuatorHealth, active_mask: u16) -> usize {
         let mut count = 0;
-        for i in 0..MAX_ACTUATORS {
-            if (active_mask & (1 << i)) != 0 && self.health[i] == health {
+        for (i, actual) in self.health.iter().enumerate() {
+            if (active_mask & (1 << i)) != 0 && *actual == health {
                 count += 1;
             }
         }

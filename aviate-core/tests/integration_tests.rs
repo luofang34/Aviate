@@ -363,11 +363,8 @@ mod tests {
         // Before arming: Expect safe output (0.0)
         let safe_sensors = valid_test_sensors();
         let act_cmd_safe = kernel.step_test(dummy_time_delta(), &cmd, &safe_sensors, 0);
-        for i in 0..4 {
-            assert!(
-                (act_cmd_safe.outputs[i].0).abs() < 1e-5,
-                "Should be zero when disarmed"
-            );
+        for out in act_cmd_safe.outputs.iter().take(4) {
+            assert!((out.0).abs() < 1e-5, "Should be zero when disarmed");
         }
 
         // Provide valid sensor data and set throttle low
@@ -394,11 +391,8 @@ mod tests {
         let act_cmd = kernel.step_test(dummy_time_delta(), &cmd, &valid_sensors, 0);
 
         // QuadXMixer with 0 R/P/Y should output collective on all 4 motors
-        for i in 0..4 {
-            assert!(
-                (act_cmd.outputs[i].0 - 0.5).abs() < 1e-5,
-                "Should be 0.5 when armed"
-            );
+        for out in act_cmd.outputs.iter().take(4) {
+            assert!((out.0 - 0.5).abs() < 1e-5, "Should be 0.5 when armed");
         }
     }
 

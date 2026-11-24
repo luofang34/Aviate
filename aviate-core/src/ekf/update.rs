@@ -219,8 +219,8 @@ impl Ekf {
         // validity gate. A NaN component would otherwise pass the field
         // and inclination checks (every NaN comparison is false) and
         // poison the yaw state.
-        for c in 0..3 {
-            if !mag.field_ut[c].0.is_finite() {
+        for component in &mag.field_ut {
+            if !component.0.is_finite() {
                 return;
             }
         }

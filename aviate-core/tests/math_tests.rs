@@ -286,9 +286,9 @@ fn matrix_mat_mul() {
 #[test]
 fn matrix_zero_all_zeros() {
     let m = Matrix::<3, 3>::zero();
-    for r in 0..3 {
-        for c in 0..3 {
-            assert_eq!(m.data[r][c], 0.0);
+    for row in &m.data {
+        for v in row {
+            assert_eq!(*v, 0.0);
         }
     }
 }
@@ -296,12 +296,12 @@ fn matrix_zero_all_zeros() {
 #[test]
 fn matrix_identity() {
     let m = Matrix::<3, 3>::identity();
-    for r in 0..3 {
-        for c in 0..3 {
+    for (r, row) in m.data.iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
             if r == c {
-                assert_eq!(m.data[r][c], 1.0);
+                assert_eq!(*v, 1.0);
             } else {
-                assert_eq!(m.data[r][c], 0.0);
+                assert_eq!(*v, 0.0);
             }
         }
     }
