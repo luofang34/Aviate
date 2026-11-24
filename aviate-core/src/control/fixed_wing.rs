@@ -71,8 +71,8 @@ impl VehicleController for FixedWingController {
     type RuntimeState = FixedWingRuntimeState;
 
     // Registered in cert/algorithm_id_registry.toml as
-    // "controller.fixed_wing.v4".
-    const ALGORITHM_ID: u64 = 0x4354_4C46_5747_5634; // "CTLFWGV4"
+    // "controller.fixed_wing.v5".
+    const ALGORITHM_ID: u64 = 0x4354_4C46_5747_5635; // "CTLFWGV5"
 
     fn verify_config_binding(
         &self,
@@ -188,6 +188,7 @@ impl VehicleController for FixedWingController {
 
         let [roll, pitch, yaw] =
             attitude::rate_loop(&mut runtime.rates, demand, state, &air, params, dt);
+        runtime.release_memory_without_authority();
         AxisCommand {
             roll: NormalizedSigned(roll),
             pitch: NormalizedSigned(pitch),
@@ -202,7 +203,8 @@ impl FixedWingRuntimeState {
     /// while the airspeed is on pitch and the probe has a static port.
     ///
     /// The level is the one the vehicle is at when the airspeed goes on
-    /// pitch; any other vertical target releases it.
+    /// pitch; any other vertical target releases it, and so does a cycle
+    /// without actuator authority.
     fn pressure_hold(&mut self, vertical: Vertical) -> Option<(Scalar, Scalar)> {
         if vertical != Vertical::AirspeedOnPitch {
             self.held_static_pa = None;

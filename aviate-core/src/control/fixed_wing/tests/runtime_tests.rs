@@ -6,7 +6,9 @@ use super::{command, cruise_state, pitot, Rig};
 use crate::control::runtime::ControllerRuntimeState;
 use crate::control::{ControlMode, Setpoint};
 use crate::replicable::Replicable;
-use crate::sensor::{AirData, AirspeedData, SensorHealth, SensorReading, SensorSet, MAX_AIRSPEED};
+use crate::sensor::{
+    ActuatorAuthority, AirData, AirspeedData, SensorHealth, SensorReading, SensorSet, MAX_AIRSPEED,
+};
 use crate::types::Seconds;
 
 #[test]
@@ -94,7 +96,7 @@ fn encoded(runtime: &FixedWingRuntimeState) -> [u8; FixedWingRuntimeState::ENCOD
 
 #[test]
 fn every_persistent_field_is_in_the_canonical_encoding() {
-    let mutations: [fn(&mut FixedWingRuntimeState); 31] = [
+    let mutations: [fn(&mut FixedWingRuntimeState); 32] = [
         |s| s.dt_sec = 0.5,
         |s| s.air_sample = Some(AirSample::default()),
         |s| {
@@ -157,9 +159,10 @@ fn every_persistent_field_is_in_the_canonical_encoding() {
         |s| s.targets.rates[1] = 1.0,
         |s| s.targets.rates[2] = 1.0,
         |s| s.targets.airspeed_source = AirspeedSource::Measured,
+        |s| s.actuator_authority = ActuatorAuthority::Absent,
     ];
     let baseline = encoded(&FixedWingRuntimeState::default());
-    let mut seen = [baseline; 32];
+    let mut seen = [baseline; 33];
     for (index, mutate) in mutations.into_iter().enumerate() {
         let mut runtime = FixedWingRuntimeState::default();
         mutate(&mut runtime);
@@ -209,6 +212,7 @@ fn the_kernel_offers_the_first_usable_airspeed_sensor() {
         airspeeds,
         geometry: None,
         geomagnetic: None,
+        actuator_authority: ActuatorAuthority::Available,
     };
     let pressure_of = |sensors: &SensorSet| {
         sensors

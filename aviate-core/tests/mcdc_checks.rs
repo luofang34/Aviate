@@ -173,6 +173,7 @@ fn sensor_set_healthy() -> SensorSet {
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
         geomagnetic: None,
+        actuator_authority: aviate_core::sensor::ActuatorAuthority::Available,
     }
 }
 
@@ -460,6 +461,7 @@ fn in_flight_status_update_from_sensors_clears_on_failed() {
         airspeeds: [SensorReading::default(); 2],
         geometry: None,
         geomagnetic: None,
+        actuator_authority: aviate_core::sensor::ActuatorAuthority::Available,
     };
 
     status.update_from_sensors(&empty_sensors);

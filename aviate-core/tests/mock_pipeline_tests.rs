@@ -243,6 +243,7 @@ fn make_sensors() -> SensorSet {
         airspeeds: core::array::from_fn(|_| SensorReading::<AirspeedData>::default()),
         geometry: None,
         geomagnetic: None,
+        actuator_authority: aviate_core::sensor::ActuatorAuthority::Available,
     }
 }
 

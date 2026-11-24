@@ -291,6 +291,7 @@ mod tests {
             airspeeds: [SensorReading::default(), SensorReading::default()],
             geometry: None,
             geomagnetic: None,
+            actuator_authority: aviate_core::sensor::ActuatorAuthority::Available,
         }
     }
 

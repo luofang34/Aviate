@@ -172,6 +172,7 @@ impl DirectSensorCache {
             airspeeds: [airspeed0, SensorReading::default()],
             geometry: None,
             geomagnetic,
+            actuator_authority: aviate_core::sensor::ActuatorAuthority::Available,
         }
     }
 }

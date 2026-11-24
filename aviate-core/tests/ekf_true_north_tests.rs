@@ -92,6 +92,7 @@ fn stationary_sensors(geomagnetic: Option<GeomagneticReference>) -> SensorSet {
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
         geomagnetic,
+        actuator_authority: aviate_core::sensor::ActuatorAuthority::Available,
     }
 }
 
