@@ -169,8 +169,8 @@ mod tests {
         let cmd = mixer.mix(&axis);
 
         // All motors should be 0.5
-        for i in 0..4 {
-            assert!((cmd.outputs[i].0 - 0.5).abs() < 1e-5);
+        for out in cmd.outputs.iter().take(4) {
+            assert!((out.0 - 0.5).abs() < 1e-5);
         }
     }
 
@@ -393,8 +393,8 @@ mod tests {
         );
 
         // All channels should be zero (critical failure fallback)
-        for i in 0..4 {
-            assert_eq!(cmd.outputs[i].0, 0.0, "Channel {} should be 0.0", i);
+        for (i, out) in cmd.outputs.iter().enumerate().take(4) {
+            assert_eq!(out.0, 0.0, "Channel {} should be 0.0", i);
         }
     }
 
