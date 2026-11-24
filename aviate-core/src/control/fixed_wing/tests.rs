@@ -1,6 +1,7 @@
 //! Unit tests of the fixed-wing law, one file per concern.
 
 mod air_data_tests;
+mod authority_tests;
 mod fallback_tests;
 mod lateral_tests;
 mod loops_tests;
@@ -14,7 +15,7 @@ use crate::control::{
 use crate::kernel::config::fixed_wing::tests::reference_params;
 use crate::kernel::config::{FixedWingParams, ResolvedKernelConfig};
 use crate::math::{Quaternion, Vector3};
-use crate::sensor::AirData;
+use crate::sensor::{ActuatorAuthority, AirData};
 use crate::state::{EstimateQuality, StateEstimate, StateValidFlags};
 use crate::types::{
     Meters, MetersPerSecond, NormalizedThrust, Pascals, Radians, RadiansPerSecond, Scalar, Seconds,
@@ -180,6 +181,9 @@ struct Rig {
     probe: Option<Scalar>,
     /// The kernel selected an automatic fallback from this mode.
     fallback_from: Option<ControlMode>,
+    /// Authority that the kernel reports, or `None` for a kernel that
+    /// does not use the lane.
+    authority: Option<ActuatorAuthority>,
 }
 
 impl Rig {
@@ -194,6 +198,7 @@ impl Rig {
             limits: limits(),
             probe: Some(55.0),
             fallback_from: None,
+            authority: None,
         }
     }
 
@@ -201,6 +206,9 @@ impl Rig {
         self.runtime.set_cycle_interval(Seconds(DT));
         let air = self.probe.map(pitot);
         self.runtime.set_air_data(air.as_ref());
+        if let Some(authority) = self.authority {
+            self.runtime.set_actuator_authority(authority);
+        }
         let mut flags = VehicleControlMode::from_control_mode(command.mode);
         flags.automatic_fallback_from = self.fallback_from;
         self.controller.step(

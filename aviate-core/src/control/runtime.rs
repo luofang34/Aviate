@@ -76,6 +76,16 @@ pub trait ControllerRuntimeState:
     /// ignores the lane.
     fn set_air_data(&mut self, _air: Option<&crate::sensor::AirData>) {}
 
+    /// Tell the controller whether its actuator outputs move the
+    /// vehicle in this cycle.
+    ///
+    /// The kernel calls this method once before each controller step,
+    /// after [`Self::set_air_data`]. The default does not change runtime
+    /// state: a controller that keeps no memory of a tracking error, or
+    /// whose installation cannot disconnect its actuators, ignores the
+    /// lane.
+    fn set_actuator_authority(&mut self, _authority: crate::sensor::ActuatorAuthority) {}
+
     /// Return the runtime state to its post-construction baseline.
     /// Equivalent to `*self = Self::default()` for simple cases;
     /// implementors with allocated buffers may zero-fill in place.

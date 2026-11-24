@@ -6,7 +6,7 @@ use crate::kernel::config::fixed_wing::tests::reference_params;
 use crate::state::StateValidFlags;
 
 /// Air data of a probe with a static port: 55 m/s at `pressure` Pa, 15 C.
-fn probe_at(pressure: f32) -> crate::sensor::AirData {
+pub(super) fn probe_at(pressure: f32) -> crate::sensor::AirData {
     crate::sensor::AirData {
         static_pressure: Some(crate::types::Pascals(pressure)),
         temperature: Some(crate::types::Celsius(15.0)),
@@ -15,7 +15,10 @@ fn probe_at(pressure: f32) -> crate::sensor::AirData {
 }
 
 /// One fallback cycle with the given air data.
-fn fallback_cycle(rig: &mut Rig, air: &crate::sensor::AirData) -> crate::control::AxisCommand {
+pub(super) fn fallback_cycle(
+    rig: &mut Rig,
+    air: &crate::sensor::AirData,
+) -> crate::control::AxisCommand {
     use crate::control::runtime::ControllerRuntimeState;
     use crate::control::{ConfigMode, VehicleControlMode, VehicleController};
     let demand = attitude_command(0.0, 0.0, 0.0);

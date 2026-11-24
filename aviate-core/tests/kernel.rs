@@ -218,6 +218,7 @@ fn make_valid_sensors() -> SensorSet {
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
         geomagnetic: None,
+        actuator_authority: aviate_core::sensor::ActuatorAuthority::Available,
     }
 }
 
@@ -795,6 +796,7 @@ fn make_imu_only_sensors() -> SensorSet {
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
         geomagnetic: None,
+        actuator_authority: aviate_core::sensor::ActuatorAuthority::Available,
     }
 }
 
@@ -833,6 +835,7 @@ fn make_failed_imu_sensors() -> SensorSet {
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
         geomagnetic: None,
+        actuator_authority: aviate_core::sensor::ActuatorAuthority::Available,
     }
 }
 
@@ -851,6 +854,7 @@ fn kernel_stays_in_sensor_init_with_no_sensors() {
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
         geomagnetic: None,
+        actuator_authority: aviate_core::sensor::ActuatorAuthority::Available,
     };
 
     // Run many iterations - should never progress past SensorInit

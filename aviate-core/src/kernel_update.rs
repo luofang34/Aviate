@@ -402,6 +402,8 @@ impl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer>
             self.state.controller.set_cycle_interval(time.dt_sec);
             let air = sensors.primary_air_data();
             self.state.controller.set_air_data(air);
+            let authority = sensors.actuator_authority;
+            self.state.controller.set_actuator_authority(authority);
             let controller_step = self.pipeline.controller.step_with_observation(
                 &mut self.state.controller,
                 &state,

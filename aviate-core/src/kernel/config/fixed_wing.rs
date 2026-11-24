@@ -67,7 +67,11 @@ pub struct FixedWingParams {
     pub rate_p: [Scalar; 3],
     /// Surface deflection rate for each rad/s of body-rate error.
     pub rate_i: [Scalar; 3],
-    /// Surface deflection for each rad/s of body-rate demand.
+    /// Surface deflection for each rad/s of body-rate demand at the
+    /// cruise airspeed and sea-level density. The value that makes the vehicle hold the demand
+    /// without feedback is the inverse of the body rate that a unit
+    /// deflection holds. A larger value takes the vehicle above the
+    /// body-rate limits of the envelope, which bound the demand.
     pub rate_ff: [Scalar; 3],
     /// Largest surface deflection that a rate integrator holds.
     pub rate_integrator_limit: Scalar,

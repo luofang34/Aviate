@@ -167,6 +167,8 @@ pub struct Faults {
     pub accel_bias_mps2: [f32; 3],
     /// Wind over the ground, north and east \[m/s\].
     pub wind_ne: [f32; 2],
+    /// Height of the start above the origin \[m\]; `None` is 300 m.
+    pub height_m: Option<f32>,
 }
 
 impl Flight {
@@ -229,7 +231,8 @@ impl Flight {
             config.noise_seed,
         )
         .expect("host sensor models");
-        let mut plant = FixedWingPlant::cruising(model, START_HEIGHT_M, gravity);
+        let height = faults.height_m.unwrap_or(START_HEIGHT_M);
+        let mut plant = FixedWingPlant::cruising(model, height, gravity);
         plant.wind_ne = faults.wind_ne;
         Self {
             board: DirectXilBoard::new(kernel, config).expect("create board"),
@@ -339,7 +342,8 @@ impl Flight {
         assert!(self.board.is_armed(), "arm refused");
     }
 
-    fn send(&mut self, mode: ControlMode, setpoint: Setpoint) {
+    /// Send one flight command to the board.
+    pub fn send(&mut self, mode: ControlMode, setpoint: Setpoint) {
         self.sequence += 1;
         self.board
             .send_command(SystemCommand::FlightControl(Command {

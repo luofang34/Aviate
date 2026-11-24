@@ -176,6 +176,7 @@ fn air_aiding_fuses_pitot_propagates_wind_and_tracks_validity() {
         airspeeds: [SensorReading::default(); 2],
         geometry: None,
         geomagnetic: None,
+        actuator_authority: crate::sensor::ActuatorAuthority::Available,
     };
     let pitot_pa = |tas: Scalar| 0.5 * SEA_LEVEL_AIR_DENSITY_KGPM3 * tas * tas;
     let sensors_with_pitot = |dyn_pa: Option<Scalar>, gnss_good: bool| {

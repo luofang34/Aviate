@@ -2,7 +2,7 @@
 
 use crate::control::runtime::ControllerRuntimeState;
 use crate::replicable::{copy_into, Replicable};
-use crate::sensor::AirData;
+use crate::sensor::{ActuatorAuthority, AirData};
 use crate::types::{Scalar, Seconds};
 
 use super::air_data::{airspeeds_of, AirDataLatch, AirspeedSource, StaticAir};
@@ -56,6 +56,26 @@ pub struct FixedWingRuntimeState {
     pub rates: RateLoopState,
     /// Targets of the last cycle.
     pub targets: FlightTargets,
+    /// Whether the actuator outputs of the next cycle move the vehicle.
+    pub actuator_authority: ActuatorAuthority,
+}
+
+impl FixedWingRuntimeState {
+    /// Release the control memory after a cycle without actuator authority.
+    ///
+    /// The vehicle does not answer a command that does not reach its
+    /// actuators, so the error of that cycle says nothing about the trim
+    /// of the vehicle and a level that the law took is not the level
+    /// that the pilot flies. The air-data memory is measurement memory
+    /// and stays.
+    pub(super) fn release_memory_without_authority(&mut self) {
+        if self.actuator_authority == ActuatorAuthority::Absent {
+            self.held_static_pa = None;
+            self.lateral = LateralLoopState::default();
+            self.energy = EnergyLoopState::default();
+            self.rates = RateLoopState::default();
+        }
+    }
 }
 
 impl ControllerRuntimeState for FixedWingRuntimeState {
@@ -69,6 +89,10 @@ impl ControllerRuntimeState for FixedWingRuntimeState {
 
     fn set_air_data(&mut self, air: Option<&AirData>) {
         self.air_sample = air.and_then(airspeeds_of);
+    }
+
+    fn set_actuator_authority(&mut self, authority: ActuatorAuthority) {
+        self.actuator_authority = authority;
     }
 
     fn reset(&mut self) {
@@ -85,10 +109,10 @@ const fn source_tag(source: AirspeedSource) -> u8 {
 }
 
 impl Replicable for FixedWingRuntimeState {
-    // 24 f32 lanes and 7 one-byte tags. Every persistent field must
+    // 24 f32 lanes and 8 one-byte tags. Every persistent field must
     // appear here: an omitted field lets two lockstep channels diverge
     // in hidden state while they compare byte-equal.
-    const ENCODED_LEN: usize = 103;
+    const ENCODED_LEN: usize = 104;
 
     fn encode_canonical(&self, buf: &mut [u8]) -> usize {
         let sample = self.air_sample.unwrap_or_default();
@@ -129,6 +153,7 @@ impl Replicable for FixedWingRuntimeState {
             u8::from(self.held_static_pa.is_some()),
             u8::from(self.energy.underspeed),
             source_tag(self.targets.airspeed_source),
+            u8::from(self.actuator_authority == ActuatorAuthority::Absent),
         ];
         let mut written = 0_usize;
         for lane in lanes {
