@@ -58,8 +58,8 @@ impl<const R: usize, const C: usize> Matrix<R, C> {
 impl<const N: usize> Matrix<N, N> {
     pub fn identity() -> Self {
         let mut m = Self::zero();
-        for i in 0..N {
-            m.data[i][i] = 1.0;
+        for (i, row) in m.data.iter_mut().enumerate() {
+            row[i] = 1.0;
         }
         m
     }
@@ -80,10 +80,10 @@ impl<const N: usize> Matrix<N, N> {
     /// sequential f32 rank-1 updates can otherwise drive a variance to
     /// zero or slightly negative, after which Kalman gains diverge.
     pub fn floor_diagonal(&mut self, floor: Scalar) {
-        for i in 0..N {
-            let d = self.data[i][i];
+        for (i, row) in self.data.iter_mut().enumerate() {
+            let d = row[i];
             if !d.is_finite() || d < floor {
-                self.data[i][i] = floor;
+                row[i] = floor;
             }
         }
     }

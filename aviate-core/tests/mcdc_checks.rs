@@ -1000,8 +1000,8 @@ fn transition_status_with_custom_limits() {
 #[test]
 fn actuator_state_new_all_unknown() {
     let state = ActuatorState::new();
-    for i in 0..MAX_ACTUATORS {
-        assert_eq!(state.health[i], ActuatorHealth::Unknown);
+    for health in state.health.iter().take(MAX_ACTUATORS) {
+        assert_eq!(*health, ActuatorHealth::Unknown);
     }
 }
 
@@ -1051,14 +1051,14 @@ fn actuator_state_update_commanded() {
         ..Default::default()
     };
     // Set first 8 outputs
-    for i in 0..8 {
-        cmd.outputs[i] = Normalized((i as f32 + 1.0) * 0.1);
+    for (i, out) in cmd.outputs.iter_mut().enumerate().take(8) {
+        *out = Normalized((i as f32 + 1.0) * 0.1);
     }
 
     state.update_commanded(&cmd, ts);
 
-    for i in 0..8 {
-        assert!((state.commanded[i].0 - (i as f32 + 1.0) * 0.1).abs() < 1e-6);
+    for (i, c) in state.commanded.iter().enumerate().take(8) {
+        assert!((c.0 - (i as f32 + 1.0) * 0.1).abs() < 1e-6);
     }
 }
 
