@@ -778,7 +778,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      SIMULATE_REV: eb3201ec906a8740b0bfe1f0c0a62ed60a8e1ec9
+      SIMULATE_REV: 0619a5e3f5465093e957bec628804c901761b9b4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
