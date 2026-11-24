@@ -108,6 +108,7 @@ fn course_step_turns_at_the_route_bank_inside_the_load_limit() {
     let east = core::f32::consts::FRAC_PI_2;
     // Settle first: the law has to find the elevator trim of the aeroplane.
     let _settle = flight.fly(10.0, VELOCITY, level(0.0, 55.0, 300.0));
+    let level_elevator = flight.last.outputs[2];
     let entry = flight.fly(4.0, VELOCITY, level(east, 55.0, 300.0));
     // The roll into the turn drags the nose outward: adverse yaw from
     // the ailerons, before the fin and the rudder catch up.
@@ -125,9 +126,11 @@ fn course_step_turns_at_the_route_bank_inside_the_load_limit() {
         established.max_sideslip < 1.5_f32.to_radians(),
         "{established:?}"
     );
+    // The 0.10 g of the turn needs 0.007 rad more angle of attack, which
+    // is 0.0066 of elevator on this aeroplane: 0.0033 of the lane.
     assert!(
-        flight.last.outputs[2] > 0.565,
-        "elevator {}",
+        flight.last.outputs[2] > level_elevator + 0.002,
+        "elevator {} after {level_elevator}",
         flight.last.outputs[2]
     );
     assert!(

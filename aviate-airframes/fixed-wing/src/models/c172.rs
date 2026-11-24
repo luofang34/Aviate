@@ -14,6 +14,20 @@ use crate::description::FixedWingAirframe;
 /// The airspeeds follow the published speeds of the type: 48 KCAS stall,
 /// 127 KIAS maximum structural cruise. The loop tuning is a first value
 /// for a simulated vehicle of this class and has no flight evidence.
+///
+/// The roll and pitch feedforward are the inverse of the body rate that
+/// a unit deflection holds at the cruise airspeed. The stability
+/// derivatives of the JSBSim Cessna 172 models give these rates:
+///
+/// - Roll: `(Clda / -Clp) * (2 V / b) * travel` with `Clda` = 0.229,
+///   `Clp` = -0.484, b = 11.0 m and 0.3054 rad of aileron travel is
+///   1.445 rad/s, so the feedforward is 0.69.
+/// - Pitch: a steady pull-up holds `Mde * travel / (-Mq - Ma / Za)`
+///   = 1.31 rad/s with 0.4887 rad of up elevator, so the feedforward is
+///   0.77. The pitch rate leads the angle of attack: after a step of the
+///   demand it is above the demand by 0.23 of the step for a short time.
+///
+/// The yaw feedforward and the feedback gains have no such source.
 #[must_use]
 pub fn c172() -> FixedWingAirframe {
     FixedWingAirframe {
@@ -45,7 +59,7 @@ pub fn c172() -> FixedWingAirframe {
             pitch_time_constant: Seconds(0.5),
             rate_p: [0.4, 0.6, 0.5],
             rate_i: [0.2, 0.4, 0.0],
-            rate_ff: [1.0, 1.0, 0.5],
+            rate_ff: [0.69, 0.77, 0.5],
             rate_integrator_limit: 0.3,
             airspeed_scale_min: 0.5,
             airspeed_scale_max: 2.0,

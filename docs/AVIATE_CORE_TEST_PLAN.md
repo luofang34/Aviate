@@ -45,6 +45,7 @@ abbreviate the HLR rows. `scripts/check_test_plan_sync.py`
 | `HLR-CTL-204` | Authority limits under saturation | LLR-CTL-204, LLR-CTL-206, LLR-CTL-207, LLR-CTL-208 | TST-CTL-204, TST-CTL-206, TST-CTL-207, TST-CTL-208 |
 | `HLR-CTL-205` | Fixed-wing course, heading, height and airspeed | LLR-CTL-209, LLR-CTL-210 | TST-CTL-209, TST-CTL-210 |
 | `HLR-CTL-206` | Fixed wing without actuator authority | LLR-CTL-211, LLR-CTL-212 | TST-CTL-211, TST-CTL-212 |
+| `HLR-CTL-207` | Fixed wing holds the bounded body-rate demand | LLR-CTL-213 | TST-CTL-213 |
 | `HLR-MIX-201` | Actuator outputs inside [0.0, 1.0] | LLR-MIX-201 | TST-MIX-201 |
 | `HLR-MIX-202` | QuadX zero-command symmetry | LLR-MIX-202 | TST-MIX-202 |
 | `HLR-MIX-203` | Sanitizer safe-pattern fallback | LLR-MIX-203, LLR-MIX-204 | TST-MIX-203, TST-MIX-204 |

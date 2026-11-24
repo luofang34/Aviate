@@ -36,11 +36,18 @@ pub struct PlantModel {
     pub reference_speed_mps: f32,
     /// Roll rate at full aileron at the reference speed.
     roll_rate_at_full_aileron_rps: f32,
-    /// Pitch rate at full elevator at the reference speed.
+    /// Pitch rate that full up elevator asks for at the reference speed,
+    /// before the angle of attack answers.
     pitch_rate_at_full_elevator_rps: f32,
-    /// Pitch rate per radian of angle of attack away from trim.
+    /// Travel of the elevator down as a fraction of its travel up.
+    down_elevator_travel: f32,
+    /// Pitch rate per radian of angle of attack away from trim at the
+    /// reference speed.
     pitch_stability_per_s: f32,
-    rate_response_time_s: f32,
+    /// Time constant of the roll mode at the reference speed.
+    roll_response_time_s: f32,
+    /// Time constant of the pitch-rate response at the reference speed.
+    pitch_response_time_s: f32,
     /// Angle of attack that the vehicle holds with the elevator at neutral.
     trim_alpha_rad: f32,
     /// Throttle for level flight at the reference speed.
@@ -68,6 +75,29 @@ pub struct PlantModel {
 impl PlantModel {
     /// 1043 kg, 16.2 m2, stall at 25 m/s indicated, 90 kW of thrust power,
     /// level at 55 m/s with 0.84 of throttle.
+    ///
+    /// The roll and pitch responses come from the stability derivatives
+    /// of the JSBSim Cessna 172 models, at 55 m/s and sea-level density
+    /// with 1111 kg, S = 16.17 m2, b = 11.0 m, c = 1.494 m,
+    /// Ixx = 1450 kg m2 and Iyy = 1885 kg m2:
+    ///
+    /// - Roll: `Clda` = 0.229, `Clp` = -0.484, aileron travel 0.3054 rad.
+    ///   Full aileron holds `(Clda / -Clp) * (2 V / b) * travel`
+    ///   = 1.445 rad/s. The roll mode has the time constant
+    ///   `Ixx / (q S b * b / (2 V) * -Clp)` = 0.091 s.
+    /// - Pitch: `Cma` = -0.90, `Cmq` = -12.4, `Cmadot` = -7.27,
+    ///   `Cmde` = -1.122 at the tail, where the slipstream raises the
+    ///   dynamic pressure 1.22 times, `CLa` = 5.35, elevator travel
+    ///   0.4887 rad up and 0.4014 rad down. With the angle of attack on
+    ///   `d(alpha)/dt = q - Za * alpha`, `Za = q S CLa / (m V)` = 2.62 /s,
+    ///   the pitch rate is a first-order response with the time constant
+    ///   `1 / -(Mq + Madot)` = 0.158 s toward
+    ///   `2.50 * elevator - 2.40 * alpha`. A steady pull-up holds
+    ///   `2.50 / (1 + 2.40 / Za)` = 1.31 rad/s for each unit of up
+    ///   elevator.
+    ///
+    /// The trim elevator, the lift and drag figures and the yaw-axis
+    /// figures are class values without a source.
     pub const C172: Self = Self {
         mass_kg: 1043.0,
         wing_area_m2: 16.2,
@@ -80,10 +110,12 @@ impl PlantModel {
         throttle_exponent: 2.0,
         static_thrust_speed_mps: 20.0,
         reference_speed_mps: 55.0,
-        roll_rate_at_full_aileron_rps: 0.9,
-        pitch_rate_at_full_elevator_rps: 0.5,
-        pitch_stability_per_s: 2.0,
-        rate_response_time_s: 0.15,
+        roll_rate_at_full_aileron_rps: 1.445,
+        pitch_rate_at_full_elevator_rps: 2.50,
+        down_elevator_travel: 0.821,
+        pitch_stability_per_s: 2.40,
+        roll_response_time_s: 0.091,
+        pitch_response_time_s: 0.158,
         trim_alpha_rad: 0.008,
         trim_throttle: 0.84,
         trim_elevator: 0.12,
@@ -111,8 +143,10 @@ impl PlantModel {
         reference_speed_mps: 22.0,
         roll_rate_at_full_aileron_rps: 2.0,
         pitch_rate_at_full_elevator_rps: 1.2,
+        down_elevator_travel: 1.0,
         pitch_stability_per_s: 3.0,
-        rate_response_time_s: 0.08,
+        roll_response_time_s: 0.08,
+        pitch_response_time_s: 0.08,
         trim_alpha_rad: 0.0067,
         trim_throttle: 0.49,
         trim_elevator: 0.08,
@@ -188,6 +222,11 @@ impl FixedWingPlant {
             accel_ned: [0.0; 3],
             gravity_mps2,
         }
+    }
+
+    /// Body pitch rate in radians per second.
+    pub fn pitch_rate(&self) -> f32 {
+        self.pitch_rate
     }
 
     /// Height above the origin in meters.
@@ -312,13 +351,22 @@ impl FixedWingPlant {
         let turn_pitch_rate = course_rate * self.pitch.cos() * self.roll.sin();
         let roll_rate_target = model.roll_rate_at_full_aileron_rps * authority * aileron
             - model.dihedral_per_s * sideslip;
-        let pitch_rate_target =
-            model.pitch_rate_at_full_elevator_rps * authority * (elevator - model.trim_elevator)
-                - model.pitch_stability_per_s * (alpha - model.trim_alpha_rad)
-                + turn_pitch_rate;
-        let blend = dt_s / model.rate_response_time_s;
-        self.roll_rate += blend * (roll_rate_target - self.roll_rate);
-        self.pitch_rate += blend * (pitch_rate_target - self.pitch_rate);
+        let elevator_travel = if elevator < 0.0 {
+            model.down_elevator_travel
+        } else {
+            1.0
+        };
+        let pitch_rate_target = model.pitch_rate_at_full_elevator_rps
+            * authority
+            * (elevator_travel * elevator - model.trim_elevator)
+            - model.pitch_stability_per_s * authority * (alpha - model.trim_alpha_rad)
+            + turn_pitch_rate;
+        // The damping moments grow with airspeed, so the responses
+        // quicken with it.
+        let roll_blend = (dt_s * authority / model.roll_response_time_s).min(1.0);
+        let pitch_blend = (dt_s * authority / model.pitch_response_time_s).min(1.0);
+        self.roll_rate += roll_blend * (roll_rate_target - self.roll_rate);
+        self.pitch_rate += pitch_blend * (pitch_rate_target - self.pitch_rate);
         let yaw_acceleration = authority
             * authority
             * (model.directional_stability_per_s2 * sideslip + model.rudder_power_per_s2 * rudder
