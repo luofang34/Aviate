@@ -124,6 +124,7 @@ pub struct DirectBoardConfig {
 /// `HEARTBEAT` or a stream request, so an embedded host only sends
 /// commands. The one liveness rule is the kernel's setpoint refresh
 /// timeout, which is about commands, not the link.
+#[derive(Clone)]
 pub struct DirectXilBoard<C, M>
 where
     C: aviate_core::control::VehicleController,

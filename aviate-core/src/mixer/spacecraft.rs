@@ -24,6 +24,7 @@ pub const SPACECRAFT_ACTIVE_MASK: u16 = 0x7FFF;
 /// Fifteen-channel spacecraft mixer allocating main throttle, 2-axis TVC,
 /// 3-axis aerodynamic fins, 3-axis reaction wheels, 3-axis rotational RCS,
 /// and 3-axis translational RCS.
+#[derive(Clone)]
 pub struct SpacecraftMixer {
     /// Timestamp provider for emitted [`ActuatorCmd`] packets.
     pub timestamp_source: fn() -> Timestamp,

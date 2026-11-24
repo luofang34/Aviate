@@ -48,6 +48,7 @@ pub trait EnvelopeProtector {
     ) -> (Setpoint, ProtectionStatus);
 }
 
+#[derive(Clone)]
 pub struct SimpleEnvelopeProtector;
 
 impl EnvelopeProtector for SimpleEnvelopeProtector {

@@ -94,7 +94,7 @@ use crate::traits::{
 /// Receives accelerometer and gyroscope data from external source
 /// (e.g., HIL_SENSOR MAVLink message). Supports fault injection for testing
 /// when the `xil-fault` feature is enabled.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct FakeImu {
     /// Buffered reading (None if no data available)
     reading: Option<RawImuReading>,
@@ -238,7 +238,7 @@ impl ImuDriver for FakeImu {
 /// Receives pressure and temperature data from external source
 /// (e.g., HIL_SENSOR MAVLink message). Supports fault injection for testing
 /// when the `xil-fault` feature is enabled.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct FakeBaro {
     /// Buffered reading
     reading: Option<RawBaroReading>,
@@ -369,7 +369,7 @@ impl BaroDriver for FakeBaro {
 /// Receives magnetic field data from external source
 /// (e.g., HIL_SENSOR MAVLink message). Supports fault injection for testing
 /// when the `xil-fault` feature is enabled.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct FakeMag {
     /// Buffered reading
     reading: Option<RawMagReading>,
@@ -500,7 +500,7 @@ impl MagDriver for FakeMag {
 /// Receives position and velocity data from external source
 /// (e.g., HIL_GPS MAVLink message). Supports fault injection for testing
 /// when the `xil-fault` feature is enabled.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct FakeGnss {
     /// Buffered reading
     reading: Option<RawGnssReading>,
@@ -660,7 +660,7 @@ impl GnssDriver for FakeGnss {
 /// - Testing EKF motor-based velocity estimation
 /// - Validating motor health monitoring logic
 /// - Simulating ESC telemetry scenarios
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FakeActuator {
     /// Buffered command (None if no new command)
     cmd: Option<RawActuatorCmd>,

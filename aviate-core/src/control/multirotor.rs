@@ -173,6 +173,7 @@ impl crate::replicable::Replicable for MultirotorRuntimeState {
     }
 }
 
+#[derive(Clone)]
 pub struct MultirotorController {
     /// Canonical identity over the gains and hover seed this
     /// controller copied at construction; the builder compares it

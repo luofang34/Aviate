@@ -258,6 +258,16 @@ impl Flight {
     }
 
     pub fn advance(&mut self) {
+        let sensors = self.next_sensors();
+        let cmd = self.board.step_sensors(&sensors);
+        self.apply(cmd);
+    }
+
+    /// The sensor samples of the next step, before the board sees them.
+    ///
+    /// A test that steps two boards on the same samples calls this, steps
+    /// the boards itself, and gives the command to [`Self::apply`].
+    pub fn next_sensors(&mut self) -> DirectHostSensors {
         let truth = self.curved_truth();
         let mut sensors = match self.sensors.synthesize(&truth) {
             Some(sample) => sample.host_sensors(self.geomagnetic),
@@ -297,7 +307,12 @@ impl Flight {
                 *static_pa += errors.static_pa(time_s);
             }
         }
-        self.last = self.board.step_sensors(&sensors);
+        sensors
+    }
+
+    /// Move the plant one step under `cmd`.
+    pub fn apply(&mut self, cmd: DirectActuatorCmd) {
+        self.last = cmd;
         self.plant.step(&self.last, DT_S);
         self.step += 1;
     }

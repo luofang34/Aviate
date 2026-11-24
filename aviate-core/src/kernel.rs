@@ -33,6 +33,7 @@ use crate::mixer::{ActuatorSanitizer, Mixer, Sanitizer};
 
 pub use crate::kernel_types::InitState;
 
+#[derive(Clone)]
 pub struct AviateKernelImpl<E: Estimator, V: VehicleController, M: Mixer, S: ActuatorSanitizer> {
     /// Algorithm-identity bundle (estimator, controller, mixer,
     /// sanitizer, protector). See `kernel/pipeline.rs`.

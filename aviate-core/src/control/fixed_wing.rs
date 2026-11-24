@@ -37,6 +37,7 @@ use targets::Vertical;
 use targets::{Envelope, Targets};
 
 /// Fixed-wing controller for one airframe description.
+#[derive(Clone)]
 pub struct FixedWingController {
     params: FixedWingParams,
     /// Canonical identity over `params`; the builder compares it against
