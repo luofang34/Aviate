@@ -90,7 +90,14 @@
 # velocity loop mapped the NED acceleration command straight to
 # roll/pitch without rotating into the heading frame — correct only
 # at yaw 0, anti-corrective past 90° (#110). Never reuse the v1 ID.
-"controller.fixed_wing.v5"  = 0x4354_4C46_5747_5635  # FixedWingController
+"controller.fixed_wing.v6"  = 0x4354_4C46_5747_5636  # FixedWingController
+# Retired: "controller.fixed_wing.v5" = 0x4354_4C46_5747_5635. v5 scaled
+# the rate feedforward of each axis with the indicated airspeed. The
+# roll rate and the yaw rate that a deflection holds grow with the true
+# airspeed, so at altitude v5 took the vehicle above its roll-rate
+# demand. v6 scales the roll and yaw feedforward with the true airspeed
+# and keeps the indicated airspeed for the pitch feedforward and for
+# each feedback term. Never reuse the v5 ID.
 # Retired: "controller.fixed_wing.v4" = 0x4354_4C46_5747_5634. v4 did
 # not know whether its outputs moved the vehicle. While a servo clutch
 # or an output switch disconnected the actuators, its integrators ran

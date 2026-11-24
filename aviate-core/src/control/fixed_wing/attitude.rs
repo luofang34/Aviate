@@ -68,7 +68,7 @@ pub(super) fn limit_rates(demand: [Scalar; 3], envelope: &Envelope) -> [Scalar; 
 
 /// Gains and conditions that all three rate axes share in one cycle.
 struct AxisContext {
-    /// Gain scale for the present airspeed.
+    /// Gain scale for the present indicated airspeed.
     scale: Scalar,
     /// Whether the integrators run.
     integrating: bool,
@@ -76,6 +76,8 @@ struct AxisContext {
     dt: Scalar,
 }
 
+/// `feedforward` is the deflection that holds `demand` in this cycle:
+/// the feedforward gain with its airspeed scale.
 fn axis(
     integrator: &mut Scalar,
     demand: Scalar,
@@ -85,11 +87,10 @@ fn axis(
 ) -> Scalar {
     let (proportional, integral, feedforward) = gains;
     let error = demand - rate;
-    // Surface moment grows with the square of airspeed and the rate that
-    // a deflection holds grows with airspeed: feedback scales twice and
-    // feedforward once.
-    let unlimited = feedforward * demand * context.scale
-        + (proportional * error + *integrator) * context.scale * context.scale;
+    // Surface moment grows with dynamic pressure, which is the square of
+    // the indicated airspeed: feedback scales twice with it.
+    let unlimited =
+        feedforward * demand + (proportional * error + *integrator) * context.scale * context.scale;
     let output = unlimited.clamp(-1.0, 1.0);
     if context.integrating && (unlimited - output) * error <= 0.0 {
         *integrator = (*integrator + integral * error * context.dt)
@@ -108,9 +109,21 @@ pub(super) fn rate_loop(
     dt: Scalar,
 ) -> [Scalar; 3] {
     let stall = params.stall_airspeed.0;
+    let scale_at = |airspeed: Scalar| {
+        (params.cruise_airspeed.0 / airspeed.max(stall))
+            .clamp(params.airspeed_scale_min, params.airspeed_scale_max)
+    };
+    // The rate that a deflection holds is the surface moment divided by
+    // the moment that resists a unit of rate. In roll and yaw that is
+    // the damping moment, which grows with dynamic pressure divided by
+    // true airspeed: the rate grows with true airspeed. In pitch most of
+    // it is the stability of the angle of attack that the rate needs,
+    // which dynamic pressure does not change: the rate grows with
+    // dynamic pressure divided by true airspeed, and the indicated
+    // airspeed is the nearer single scale.
+    let damped = scale_at(air.true_speed);
     let context = AxisContext {
-        scale: (params.cruise_airspeed.0 / air.indicated.max(stall))
-            .clamp(params.airspeed_scale_min, params.airspeed_scale_max),
+        scale: scale_at(air.indicated),
         // Below the stall speed the vehicle is on the ground or not
         // flying: an integrator would only store the error of that state.
         integrating: air.indicated >= stall,
@@ -128,21 +141,21 @@ pub(super) fn rate_loop(
             roll_memory,
             roll_demand,
             roll_rate.0,
-            (roll_p, roll_i, roll_ff),
+            (roll_p, roll_i, roll_ff * damped),
             &context,
         ),
         axis(
             pitch_memory,
             pitch_demand,
             pitch_rate.0,
-            (pitch_p, pitch_i, pitch_ff),
+            (pitch_p, pitch_i, pitch_ff * context.scale),
             &context,
         ),
         axis(
             yaw_memory,
             yaw_demand,
             yaw_rate.0,
-            (yaw_p, yaw_i, yaw_ff),
+            (yaw_p, yaw_i, yaw_ff * damped),
             &context,
         ),
     ]
