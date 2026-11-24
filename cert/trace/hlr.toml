@@ -1027,3 +1027,24 @@ not grade valid.
 """
 verification_methods = ["test"]
 traces_to = ["6f3eb555-3636-48b4-90f2-5d11abfcaa54"]
+
+[[requirements]]
+uid = "fa075024-0c1a-4060-8724-5bc40332224c"
+id = "HLR-CTL-206"
+title = "A fixed wing keeps no control memory while its outputs do not move the vehicle"
+owner = "aviate-core@aviate"
+description = """
+The installation reports in each cycle whether the actuator outputs of
+the controller move the vehicle (`ActuatorAuthority`). A servo clutch or
+an output switch can disconnect the actuators while the kernel stays
+armed. While the outputs do not move the vehicle, the fixed-wing control
+law SHALL continue to give its targets and its command. It SHALL keep no
+memory of a tracking error and no level that it took by itself, because
+the vehicle does not answer its command. The first command after
+authority returns SHALL be the command of a law that has only its
+air-data memory. An installation that reports nothing SHALL have
+authority. A controller that does not use the report SHALL not change
+with it.
+"""
+verification_methods = ["test"]
+traces_to = ["6f3eb555-3636-48b4-90f2-5d11abfcaa54"]

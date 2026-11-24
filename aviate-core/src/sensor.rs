@@ -119,6 +119,22 @@ pub struct GeomagneticReference {
     pub source: GeomagneticSource,
 }
 
+/// Whether the actuator outputs of the controller move the vehicle.
+///
+/// The installation reports this discrete. A servo clutch or an output
+/// switch can disconnect the actuators from the controller while the
+/// kernel stays armed: a pilot then flies the vehicle by hand. An
+/// installation without such a device always reports
+/// [`ActuatorAuthority::Available`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ActuatorAuthority {
+    /// The actuator outputs move the vehicle.
+    #[default]
+    Available,
+    /// The actuator outputs do not reach the vehicle.
+    Absent,
+}
+
 // Stub for geometry state needed by SensorSet
 #[derive(Clone, Debug)]
 pub struct GeometryState {
@@ -137,6 +153,8 @@ pub struct SensorSet {
     /// The local declination, `None` when neither a model nor a
     /// configured value is available; yaw is then magnetic.
     pub geomagnetic: Option<GeomagneticReference>,
+    /// Whether the actuator outputs of this cycle reach the vehicle.
+    pub actuator_authority: ActuatorAuthority,
 }
 
 /// Air density at sea level in the standard atmosphere \[kg/m³\].

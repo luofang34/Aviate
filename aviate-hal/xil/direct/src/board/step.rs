@@ -102,7 +102,8 @@ where
         self.maybe_rebase();
         self.feed_and_read_sensors(sensors_in);
         self.maybe_initialize_ekf(geomag.declination.0, time_us);
-        let sensors = self.sensor_cache.to_sensor_set(Some(geomag));
+        let mut sensors = self.sensor_cache.to_sensor_set(Some(geomag));
+        sensors.actuator_authority = self.actuator_authority;
 
         if !self.kernel.is_ready() {
             let ts = Timestamp {

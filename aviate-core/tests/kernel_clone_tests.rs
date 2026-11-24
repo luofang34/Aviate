@@ -126,6 +126,7 @@ fn sensors(cycle: u32) -> SensorSet {
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
         geomagnetic: None,
+        actuator_authority: aviate_core::sensor::ActuatorAuthority::Available,
     }
 }
 

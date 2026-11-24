@@ -1987,3 +1987,46 @@ the cruise throttle without a static port, and that a GNSS loss falls
 back to a heading and a height on the barometer. Witnesses LLR-CTL-210.
 """
 traces_to = ["08a5c434-1340-4fd3-a44d-cc5081a5cfbe"]
+
+[[tests]]
+uid = "f9223dca-84ad-4c09-8d03-51ab72fb97e4"
+id = "TST-CTL-211"
+title = "the kernel and the direct board give the actuator authority to the law"
+test_selectors = ["the_kernel_gives_the_authority_of_each_cycle_to_the_fixed_wing_law", "a_fixed_wing_kernel_without_authority_still_gives_its_command", "a_multirotor_kernel_does_not_change_with_the_authority", "the_board_reports_authority_until_the_host_declares_its_loss", "released_servos_leave_no_control_memory_in_the_law", "a_host_that_declares_nothing_winds_the_law_up_and_one_that_does_gets_a_fresh_law"]
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/actuator_authority_tests.rs` steps a fixed-wing
+kernel with and without authority in the sensor set and reads the
+runtime state of the law. It also steps two multirotor kernels, one
+with authority and one without, and compares their outputs bit for bit.
+`aviate-hal/xil/direct/tests/actuator_authority.rs` flies the C172 plant
+by hand for 6 s while the command asks for a turn and a climb. With the
+release declared on the board, the law holds no control memory in each
+cycle and the board continues to return the command. Without the
+declaration, the roll-rate memory goes to its limit and the first
+aileron command after the servos engage again is larger. A reset of the
+world does not change the value that the host declared.
+These tests verify LLR-CTL-211.
+"""
+traces_to = ["70a2ecd1-1a4c-4950-96a3-8a8654a01263"]
+
+[[tests]]
+uid = "a460727c-9992-4e10-a85d-4993c3a7ee28"
+id = "TST-CTL-212"
+title = "fixed-wing control memory without actuator authority"
+test_selectors = ["control::fixed_wing::tests::authority_tests::authority_is_available_until_the_kernel_reports_its_loss", "control::fixed_wing::tests::authority_tests::integrators_fill_with_authority_and_stay_empty_without_it", "control::fixed_wing::tests::authority_tests::the_cycle_that_loses_authority_releases_the_memory_that_was_there", "control::fixed_wing::tests::authority_tests::the_first_cycle_with_authority_is_that_of_fresh_control_memory", "control::fixed_wing::tests::authority_tests::a_pressure_level_is_not_held_without_authority", "control::fixed_wing::tests::authority_tests::a_kernel_that_reports_no_authority_lane_flies_as_with_authority", "control::fixed_wing::tests::runtime_tests::every_persistent_field_is_in_the_canonical_encoding"]
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/src/control/fixed_wing/tests/authority_tests.rs` steps the
+law for 6 s with a course error, a climb error and a rate error on each
+axis. With authority each of the six integrators fills. Without
+authority each cycle ends with empty control memory, and the law
+continues to give its targets and its command. The first cycle after
+authority returns is equal bit for bit, in command and in runtime state,
+to the cycle of a law that has only the same air-data memory; the
+underspeed latch and the held pressure level do not stay. A law that
+receives no report is equal bit for bit to a law with authority.
+`runtime_tests.rs` checks that the authority is in the canonical
+encoding. These tests verify LLR-CTL-212.
+"""
+traces_to = ["2c39f20c-eff8-4784-9fa6-0deb5b162681"]

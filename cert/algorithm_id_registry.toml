@@ -90,7 +90,13 @@
 # velocity loop mapped the NED acceleration command straight to
 # roll/pitch without rotating into the heading frame — correct only
 # at yaw 0, anti-corrective past 90° (#110). Never reuse the v1 ID.
-"controller.fixed_wing.v4"  = 0x4354_4C46_5747_5634  # FixedWingController
+"controller.fixed_wing.v5"  = 0x4354_4C46_5747_5635  # FixedWingController
+# Retired: "controller.fixed_wing.v4" = 0x4354_4C46_5747_5634. v4 did
+# not know whether its outputs moved the vehicle. While a servo clutch
+# or an output switch disconnected the actuators, its integrators ran
+# to their limits and its held pressure level went stale. v5 releases
+# that control memory in each cycle without actuator authority and
+# carries the authority in its runtime state. Never reuse the v4 ID.
 # Retired: "controller.fixed_wing.v3" = 0x4354_4C46_5747_5633. In
 # AltitudeHold, PositionHold, and automatic Attitude fallback, v3 let
 # the ground speed from Setpoint::velocity overwrite Setpoint::airspeed.

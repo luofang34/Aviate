@@ -129,6 +129,7 @@ fn sensors() -> SensorSet {
         airspeeds: core::array::from_fn(|_| SensorReading::default()),
         geometry: None,
         geomagnetic: None,
+        actuator_authority: aviate_core::sensor::ActuatorAuthority::Available,
     };
     sensors.imus[0] = SensorReading {
         value: ImuData {

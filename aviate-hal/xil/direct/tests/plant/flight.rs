@@ -339,7 +339,8 @@ impl Flight {
         assert!(self.board.is_armed(), "arm refused");
     }
 
-    fn send(&mut self, mode: ControlMode, setpoint: Setpoint) {
+    /// Send one flight command to the board.
+    pub fn send(&mut self, mode: ControlMode, setpoint: Setpoint) {
         self.sequence += 1;
         self.board
             .send_command(SystemCommand::FlightControl(Command {

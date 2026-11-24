@@ -2484,9 +2484,62 @@ airspeed SHALL be held on pitch. After an automatic fallback the law
 SHALL fly the commanded course as a heading, hold the commanded
 airspeed with pitch, and hold with the throttle the static-port
 pressure level at which the fallback started; a probe without a static
-port SHALL keep the cruise throttle.
+port SHALL keep the cruise throttle. A cycle without actuator authority
+releases the level (LLR-CTL-212).
 """
 verification_methods = ["test"]
 modules = ["aviate-core/src/control/fixed_wing.rs", "aviate-core/src/control/fixed_wing/targets.rs", "aviate-core/src/control/fixed_wing/air_data.rs"]
 derived = false
 traces_to = ["745ef567-19ed-4953-9342-323bd2c8a320"]
+
+[[requirements]]
+uid = "70a2ecd1-1a4c-4950-96a3-8a8654a01263"
+id = "LLR-CTL-211"
+title = "The actuator authority of a cycle goes from the sensor set to the controller"
+owner = "aviate-core@aviate"
+description = """
+`SensorSet::actuator_authority` SHALL carry the report of the
+installation for one cycle. The default value of `ActuatorAuthority`
+SHALL be `Available`. `AviateKernelImpl::update` SHALL give the value to
+`ControllerRuntimeState::set_actuator_authority` one time before each
+controller step, after `set_air_data`. The default implementation of
+the method SHALL not change runtime state. The multirotor, VTOL and
+spacecraft controllers use the default implementation.
+
+`DirectXilBoard::set_actuator_authority` SHALL store the value that the
+host declares. The board SHALL put the stored value in the sensor set of
+each later kernel cycle. A reset of the world SHALL not change the
+stored value. A board on which the host declares nothing SHALL report
+`Available`.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/sensor.rs", "aviate-core/src/control/runtime.rs", "aviate-core/src/kernel_update.rs", "aviate-hal/xil/direct/src/board.rs", "aviate-hal/xil/direct/src/board/step.rs"]
+derived = false
+traces_to = ["fa075024-0c1a-4060-8724-5bc40332224c"]
+
+[[requirements]]
+uid = "2c39f20c-eff8-4784-9fa6-0deb5b162681"
+id = "LLR-CTL-212"
+title = "The fixed-wing law releases its control memory in a cycle without actuator authority"
+owner = "aviate-core@aviate"
+description = """
+`FixedWingRuntimeState` SHALL store the value that
+`set_actuator_authority` gives and SHALL include it in its canonical
+encoding. `FixedWingController::step` SHALL compute the targets and the
+axis command of each cycle from the memory that the cycle starts with.
+At the end of a step with `ActuatorAuthority::Absent`, the law SHALL set
+`lateral`, `energy` and `rates` to their default values and SHALL set
+`held_static_pa` to `None`. The law SHALL keep the air-data memory
+(`air`), the cycle interval and the targets of the cycle.
+
+The memory that the law releases is control memory: the six integrators,
+the underspeed latch and the pressure level of LLR-CTL-210. The level
+that LLR-CTL-210 holds is then the level at which authority returns.
+The law releases the memory and does not hold it, because the trim and
+the level of the vehicle can change without limit while a pilot flies
+it. LLR-CTL-101 resets controller memory for the same reason.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/control/fixed_wing.rs", "aviate-core/src/control/fixed_wing/runtime_state.rs"]
+derived = false
+traces_to = ["fa075024-0c1a-4060-8724-5bc40332224c"]

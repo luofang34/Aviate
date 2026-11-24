@@ -56,6 +56,7 @@ fn sensors(pos: [f32; 3], vel: [f32; 3], accel: [f32; 3]) -> SensorSet {
         airspeeds: [SensorReading::default(), SensorReading::default()],
         geometry: None,
         geomagnetic: None,
+        actuator_authority: aviate_core::sensor::ActuatorAuthority::Available,
     }
 }
 

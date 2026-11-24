@@ -9,6 +9,7 @@ mod telemetry;
 mod triad;
 
 use aviate_core::control::Command;
+use aviate_core::sensor::ActuatorAuthority;
 use aviate_core::{DefaultAviateKernel, InitState};
 use aviate_hal_io::{
     BoardHal, FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag, RawGnssReading, SystemCommand,
@@ -167,6 +168,8 @@ where
     geoid_separation_m: Option<f64>,
     /// Whether `GPS_GLOBAL_ORIGIN` went out for the present origin.
     origin_announced: bool,
+    /// Whether the host connects the actuator outputs to the vehicle.
+    actuator_authority: ActuatorAuthority,
 }
 
 impl<C, M> DirectXilBoard<C, M>
@@ -224,6 +227,7 @@ where
             last_refusal: None,
             geoid_separation_m: None,
             origin_announced: false,
+            actuator_authority: ActuatorAuthority::Available,
         })
     }
 
@@ -316,6 +320,26 @@ where
     pub fn set_geoid_separation(&mut self, separation_m: f64) {
         self.geoid_separation_m = Some(separation_m).filter(|value| value.is_finite());
         self.origin_announced = false;
+    }
+
+    /// Declare whether the actuator outputs of the board move the vehicle.
+    ///
+    /// This is the discrete of a servo clutch or an output switch. Each
+    /// later kernel cycle gives the value to the controller, until the
+    /// host declares another value: a reset of the world does not
+    /// change it. Call this method before a step to
+    /// change the value for that step. With
+    /// [`ActuatorAuthority::Absent`] the board still returns the
+    /// actuator command of each step, which a host can show as a flight
+    /// director. The default is [`ActuatorAuthority::Available`].
+    pub fn set_actuator_authority(&mut self, authority: ActuatorAuthority) {
+        self.actuator_authority = authority;
+    }
+
+    /// Return the actuator authority that the next kernel cycle uses.
+    #[must_use]
+    pub const fn actuator_authority(&self) -> ActuatorAuthority {
+        self.actuator_authority
     }
 
     /// Send `GPS_GLOBAL_ORIGIN` again with the next telemetry.
