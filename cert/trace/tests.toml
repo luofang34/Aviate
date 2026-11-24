@@ -2030,3 +2030,22 @@ receives no report is equal bit for bit to a law with authority.
 encoding. These tests verify LLR-CTL-212.
 """
 traces_to = ["2c39f20c-eff8-4784-9fa6-0deb5b162681"]
+
+[[tests]]
+uid = "f63459c6-868c-4e7d-8515-1db1af081961"
+id = "TST-CTL-213"
+title = "C172 bank and pitch steps inside the rate limits; identified feedforward"
+test_selectors = ["a_bank_step_of_40_degrees_stays_inside_the_roll_rate_limit", "a_pitch_step_stays_inside_the_pitch_rate_and_load_limits", "the_rate_feedforward_is_the_inverse_of_the_response_of_the_aeroplane"]
+owner = "aviate-core@aviate"
+description = """
+`aviate-hal/xil/direct/tests/fixed_wing_rate_envelope.rs` flies the C172
+plant, which has the roll and pitch response of the JSBSim Cessna 172
+derivatives. With the autopilot engaged, bank steps of 40 degrees and
+pitch steps of 0.22 rad are measured for peak body rate, rise time,
+overshoot and load factor against the limits of HLR-CTL-207. An
+open-loop test steps the aileron and the elevator of the plant and
+checks that the feedforward times the measured rate for each unit of
+deflection is one, inside 5 % for roll and 8 % for pitch.
+These tests verify LLR-CTL-213.
+"""
+traces_to = ["9ace69e9-7da4-4480-a166-a63e4b86842f"]

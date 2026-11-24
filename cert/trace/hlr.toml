@@ -1048,3 +1048,30 @@ with it.
 """
 verification_methods = ["test"]
 traces_to = ["6f3eb555-3636-48b4-90f2-5d11abfcaa54"]
+
+[[requirements]]
+uid = "d9b9bf98-ceb5-43a5-a9f4-d0e55861fca3"
+id = "HLR-CTL-207"
+title = "A fixed wing holds the body-rate demand that the envelope bounds"
+owner = "aviate-core@aviate"
+description = """
+The rate limits of the envelope (`max_roll_rate`, `max_pitch_rate`,
+`max_yaw_rate`) bound the body-rate demand of the fixed-wing control
+law. The load-factor limits also bound the pitch-rate demand. The law
+does not limit the body rate that the vehicle reaches. The vehicle
+stays inside the limits only if it holds the demand. Therefore, with
+the autopilot engaged:
+
+  - On a bank step of 40 degrees or more, the roll rate SHALL not be
+    more than 1.05 times `max_roll_rate`.
+  - On a pitch step that takes the pitch-rate demand to its bound, the
+    pitch rate SHALL not be more than 1.30 times the demand and not
+    more than 1.10 times `max_pitch_rate`. The pitch rate of an
+    aeroplane leads its angle of attack, which is the cause of the
+    larger margin. The load factor SHALL stay inside the load-factor
+    limits.
+  - The attitude SHALL reach the target with an overshoot of less than
+    3 % of the step.
+"""
+verification_methods = ["test"]
+traces_to = ["6f3eb555-3636-48b4-90f2-5d11abfcaa54"]

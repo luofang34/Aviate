@@ -2543,3 +2543,34 @@ verification_methods = ["test"]
 modules = ["aviate-core/src/control/fixed_wing.rs", "aviate-core/src/control/fixed_wing/runtime_state.rs"]
 derived = false
 traces_to = ["fa075024-0c1a-4060-8724-5bc40332224c"]
+
+[[requirements]]
+uid = "9ace69e9-7da4-4480-a166-a63e4b86842f"
+id = "LLR-CTL-213"
+title = "The rate feedforward of an airframe is the inverse of its body-rate response"
+owner = "aviate-core@aviate"
+description = """
+`FixedWingParams::rate_ff` is the surface deflection for each rad/s of
+body-rate demand at the cruise airspeed. For roll and pitch, the
+airframe description SHALL give the inverse of the body rate that a
+unit deflection holds at the cruise airspeed, so that the feedforward
+holds the demand and the feedback corrects only errors.
+
+The Cessna 172 description SHALL use the stability derivatives of the
+JSBSim Cessna 172 models at 55 m/s and sea-level density:
+
+  - Roll: full aileron holds `(Clda / -Clp) * (2 V / b) * travel`
+    = 1.445 rad/s, with `Clda` = 0.229, `Clp` = -0.484, b = 11.0 m and
+    0.3054 rad of travel. The feedforward is 0.69.
+  - Pitch: full up elevator holds `Mde * travel / (-Mq - Ma / Za)`
+    = 1.31 rad/s in a steady pull-up, with `Cmde` = -1.122 at 1.22
+    times the free-stream dynamic pressure, `Cmq` = -12.4, `Cma` =
+    -0.90, `CLa` = 5.35 and 0.4887 rad of travel. The feedforward is
+    0.77.
+
+The yaw feedforward and the feedback gains are not derived from data.
+"""
+verification_methods = ["test"]
+modules = ["aviate-core/src/kernel/config/fixed_wing.rs", "aviate-airframes/fixed-wing/src/models/c172.rs"]
+derived = false
+traces_to = ["d9b9bf98-ceb5-43a5-a9f4-d0e55861fca3"]
