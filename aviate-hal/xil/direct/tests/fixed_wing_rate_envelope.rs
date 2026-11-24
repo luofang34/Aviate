@@ -9,12 +9,12 @@ use aviate_core::control::{ControlMode, Setpoint};
 use aviate_core::math::{Quaternion, Vector3};
 use aviate_core::types::{Meters, MetersPerSecond, NormalizedThrust};
 use aviate_hal_io::MAX_ACTUATOR_OUTPUTS;
-use aviate_xil_direct::{DirectActuatorCmd, DirectNoiseTier};
+use aviate_xil_direct::{DirectActuatorCmd, DirectNoiseTier, DirectSensorRates};
 
 #[path = "plant/flight.rs"]
 #[allow(dead_code)]
 mod flight;
-use flight::{course_speed_height, FixedWingPlant, Flight, PlantModel, DT_S};
+use flight::{course_speed_height, Faults, FixedWingPlant, Flight, PlantModel, DT_S};
 
 /// Steps between two flight commands: 0.1 s.
 const COMMAND_STEPS: u64 = 25;
@@ -122,6 +122,14 @@ fn step_response(
     }
 }
 
+/// A bank angle at 55 m/s indicated and `height` metres.
+fn bank_at(roll: f32, height: f32) -> Setpoint {
+    Setpoint {
+        altitude: Some(Meters(height)),
+        ..bank(roll)
+    }
+}
+
 /// A bank angle with the height and the airspeed of the cruise.
 fn bank(roll: f32) -> Setpoint {
     Setpoint {
@@ -190,6 +198,46 @@ fn a_bank_step_of_40_degrees_stays_inside_the_roll_rate_limit() {
         // 40 degrees at the rate limit take 1.4 s; 80 % of that is the
         // rise time of a response that holds the limit.
         assert!(seen.rise_time < 1.6, "{seen:?}");
+        assert!(seen.overshoot < 0.03, "{seen:?}");
+        assert!(seen.final_error < 0.03, "{seen:?}");
+    }
+}
+
+#[test]
+fn a_bank_step_at_3000_m_stays_inside_the_roll_rate_limit() {
+    let limit = c172().limits.max_roll_rate.0;
+    let height = 3_000.0;
+    let mut flight = Flight::cruising_with(
+        &c172(),
+        PlantModel::C172,
+        DirectNoiseTier::Off,
+        DirectSensorRates::default().with_airspeed(50_000),
+        Faults {
+            height_m: Some(height),
+            ..Faults::default()
+        },
+    );
+    let _settle = flight.fly(40.0, ControlMode::VelocityControl, |_| {
+        course_speed_height(0.0, 55.0, height)
+    });
+    // The true airspeed is 1.16 times the indicated one: a deflection
+    // holds 1.16 times the roll rate of sea level.
+    let ratio = flight.plant.airspeed / flight.plant.indicated_airspeed();
+    assert!((ratio - 1.16).abs() < 0.01, "{ratio}");
+    assert!((flight.plant.indicated_airspeed() - 55.0).abs() < 1.0);
+    for target in [0.7_f32, 0.0] {
+        let seen = step_response(
+            &mut flight,
+            6.0,
+            ControlMode::AltitudeHold,
+            bank_at(target, height),
+            Axis::Roll,
+            target,
+        );
+        println!("bank step to {target} at {height} m: {seen:?}");
+        assert!((seen.peak_demand - limit).abs() < 1.0e-6, "{seen:?}");
+        assert!(seen.peak_rate <= ROLL_RATE_MARGIN * limit, "{seen:?}");
+        assert!(seen.peak_rate >= 0.9 * limit, "{seen:?}");
         assert!(seen.overshoot < 0.03, "{seen:?}");
         assert!(seen.final_error < 0.03, "{seen:?}");
     }

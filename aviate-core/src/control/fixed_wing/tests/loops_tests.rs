@@ -292,6 +292,51 @@ fn surface_gains_follow_the_airspeed() {
 }
 
 #[test]
+fn feedforward_follows_the_true_airspeed_in_roll_and_yaw_only() {
+    use crate::control::runtime::ControllerRuntimeState;
+    use crate::control::{ConfigMode, VehicleControlMode, VehicleController};
+    let demand = rate_command(0.1, 0.1, 0.1);
+    let surfaces_in = |air: &crate::sensor::AirData| {
+        let mut rig = Rig::new();
+        rig.runtime.set_cycle_interval(crate::types::Seconds(DT));
+        rig.runtime.set_air_data(Some(air));
+        let output = rig.controller.step(
+            &mut rig.runtime,
+            &cruise_state(),
+            &demand,
+            &VehicleControlMode::from_control_mode(demand.mode),
+            ConfigMode::Cruise,
+            &rig.limits,
+        );
+        [output.roll.0, output.pitch.0, output.yaw.0]
+    };
+    let near = |surfaces: [f32; 3], expected: [f32; 3]| {
+        surfaces
+            .iter()
+            .zip(expected)
+            .all(|(surface, expected)| (surface - expected).abs() < 1.0e-3)
+    };
+
+    // At sea level the two airspeeds are equal. Feedforward 0.8, 1.0 and
+    // 0.5 and feedback 0.4, 0.6 and 0.5 on a 0.1 rad/s demand.
+    let sea_level = surfaces_in(&super::pitot(55.0));
+    assert!(near(sea_level, [0.12, 0.16, 0.10]), "{sea_level:?}");
+
+    // A quarter of the sea-level density at the same indicated airspeed:
+    // the true airspeed is twice the indicated one. A deflection then
+    // holds twice the roll rate and twice the yaw rate, so their
+    // feedforward is half. The pitch feedforward and each feedback term
+    // stay.
+    let thin_air = crate::sensor::AirData {
+        static_pressure: Some(crate::types::Pascals(25_331.25)),
+        temperature: Some(crate::types::Celsius(15.0)),
+        ..super::pitot(55.0)
+    };
+    let high = surfaces_in(&thin_air);
+    assert!(near(high, [0.08, 0.16, 0.075]), "{high:?}");
+}
+
+#[test]
 fn rate_integrators_run_in_flight_and_stop_at_their_limit() {
     let mut rig = Rig::new();
     let _ = rig.run(10, &cruise_state(), &rate_command(0.5, 0.0, 0.0));

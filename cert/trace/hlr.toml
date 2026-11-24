@@ -1063,7 +1063,8 @@ stays inside the limits only if it holds the demand. Therefore, with
 the autopilot engaged:
 
   - On a bank step of 40 degrees or more, the roll rate SHALL not be
-    more than 1.05 times `max_roll_rate`.
+    more than 1.05 times `max_roll_rate`, near sea level and at
+    3000 m.
   - On a pitch step that takes the pitch-rate demand to its bound, the
     pitch rate SHALL not be more than 1.30 times the demand and not
     more than 1.10 times `max_pitch_rate`. The pitch rate of an
