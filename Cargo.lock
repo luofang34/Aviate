@@ -2266,7 +2266,7 @@ checksum = "2ee1708bef14716a11bae175f579062d4554d95be2c6829f518df847b7b3fdd0"
 [[package]]
 name = "world-atmosphere"
 version = "0.1.0"
-source = "git+https://github.com/luofang34/world?rev=075e2cafee7fa3dc044f28d750f6b1094d5c5ab2#075e2cafee7fa3dc044f28d750f6b1094d5c5ab2"
+source = "git+https://github.com/luofang34/world?rev=df649f71aa2c07666cdbade4882f5eb601512381#df649f71aa2c07666cdbade4882f5eb601512381"
 dependencies = [
  "libm",
  "world-core",
@@ -2275,7 +2275,7 @@ dependencies = [
 [[package]]
 name = "world-core"
 version = "0.1.0"
-source = "git+https://github.com/luofang34/world?rev=075e2cafee7fa3dc044f28d750f6b1094d5c5ab2#075e2cafee7fa3dc044f28d750f6b1094d5c5ab2"
+source = "git+https://github.com/luofang34/world?rev=df649f71aa2c07666cdbade4882f5eb601512381#df649f71aa2c07666cdbade4882f5eb601512381"
 dependencies = [
  "libm",
 ]
@@ -2283,7 +2283,7 @@ dependencies = [
 [[package]]
 name = "world-geomag"
 version = "0.1.0"
-source = "git+https://github.com/luofang34/world?rev=075e2cafee7fa3dc044f28d750f6b1094d5c5ab2#075e2cafee7fa3dc044f28d750f6b1094d5c5ab2"
+source = "git+https://github.com/luofang34/world?rev=df649f71aa2c07666cdbade4882f5eb601512381#df649f71aa2c07666cdbade4882f5eb601512381"
 dependencies = [
  "libm",
  "world-core",
