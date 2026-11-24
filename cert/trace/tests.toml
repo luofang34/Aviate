@@ -588,6 +588,39 @@ down LLR-STATE-109's Clone + Debug derives on `KernelState`:
 traces_to = ["d6e0121d-38ec-42bd-a872-8469100e433b"]
 
 [[tests]]
+uid = "1fc10e77-fe02-4bd6-b0ad-e80e8b5549c4"
+id = "TST-STATE-110"
+title = "a clone of the kernel or of the board continues bit for bit"
+test_selectors = ["multirotor_kernel_clone_continues_bit_identically", "fixed_wing_kernel_clone_continues_bit_identically", "mixer_clones_mix_bit_identically", "stateless_component_clones_step_identically", "kernel_object_graph_is_clone", "clone_of_fake_board_hal_is_an_independent_snapshot", "a_fixed_wing_board_clone_continues_and_rewinds_bit_identically", "a_multirotor_board_clone_continues_and_rewinds_bit_identically", "the_board_object_graph_is_clone"]
+owner = "aviate-core@aviate"
+description = """
+`aviate-core/tests/kernel_clone_tests.rs` arms a multirotor kernel and a
+fixed-wing kernel and steps each with samples that change. The test
+makes a clone, steps the kernel and the clone with the same inputs, and
+compares the actuator outputs and the canonical state bytes in each
+cycle. The test then assigns the clone to the kernel and replays the
+same cycles. The file also makes a clone of each mixer and of the
+components without state, and compares the outputs of the clone with
+the outputs of the original. `kernel_object_graph_is_clone` does not
+compile when a type in the kernel stops being `Clone`.
+
+`aviate-hal/io/src/board_hal/tests.rs` makes a clone of a `BoardHal`
+that holds fake drivers with buffered samples. The test reads the
+samples from the original and then from the clone.
+
+`aviate-hal/xil/direct/tests/board_snapshot.rs` flies a fixed-wing
+board on host samples and a multirotor board on noisy samples that the
+board makes from the truth. The commands come in as MAVLink bytes. The
+snapshot holds one half of a link frame and downlink bytes that are not
+sent. The test compares the actuator command, the downlink bytes and
+the canonical state bytes of the board and of the clone in each cycle,
+and then replays the same inputs from the snapshot.
+
+These tests verify LLR-STATE-110.
+"""
+traces_to = ["ad45d3b2-543b-43a7-849e-8548a50686ed"]
+
+[[tests]]
 uid = "37bbf94f-18cd-4705-ac2a-85df1674e44d"
 id = "TST-CFG-104"
 title = "kernel::config::tests::canonical_hash_*"

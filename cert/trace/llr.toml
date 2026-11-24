@@ -768,6 +768,45 @@ derived = false
 traces_to = ["589cfa68-0179-4683-a787-0c90a54440df"]
 
 [[requirements]]
+uid = "ad45d3b2-543b-43a7-849e-8548a50686ed"
+id = "LLR-STATE-110"
+title = "The kernel and the board that holds it derive Clone for a full snapshot"
+owner = "aviate-core@aviate"
+description = """
+`AviateKernelImpl<E, V, M, S>` and `KernelPipeline<E, V, M, S>` SHALL
+derive `Clone`. The derive has a `Clone` bound on each type parameter.
+Each production pipeline component SHALL implement `Clone`: `Ekf`,
+`MultirotorController`, `FixedWingController`, `VtolController`,
+`SpacecraftController`, `QuadXMixer`, `QuadXMixerX500`,
+`QuadXMixerReversedSpin`, `FixedWingMixer`, `SpacecraftMixer`,
+`Sanitizer` and `SimpleEnvelopeProtector`.
+
+`BoardHal<I, B, M, G, T, A>` SHALL derive `Clone`. The fake drivers
+`FakeImu`, `FakeBaro`, `FakeMag`, `FakeGnss` and `FakeActuator` SHALL
+derive `Clone`. `DirectXilBoard<C, M>` SHALL derive `Clone`.
+
+A clone SHALL hold all the state of the original. A clone SHALL NOT
+share mutable state with the original. A clone and the original share
+only data that does not change: the `&'static` slice
+`ModeConfig::groups` and the `fn() -> Timestamp` pointer of a mixer.
+When a clone and the original receive
+the same inputs, they SHALL give the same actuator outputs, the same
+downlink bytes and the same canonical state bytes (LLR-REPL-104), bit
+for bit, in each cycle.
+
+A simulator host uses a clone as a snapshot. The host keeps a clone of
+the board at one cycle. To continue from that cycle, the host assigns
+the clone to the board.
+
+A clone copies the `fn() -> Timestamp` pointer of a mixer. State that
+the function reads is not in the snapshot.
+"""
+verification_methods = ["test", "review"]
+modules = ["aviate-core/src/kernel.rs", "aviate-core/src/kernel/pipeline.rs", "aviate-core/src/control/multirotor.rs", "aviate-core/src/control/fixed_wing.rs", "aviate-core/src/control/vtol.rs", "aviate-core/src/control/envelope.rs", "aviate-core/src/mixer.rs", "aviate-core/src/mixer/actuators.rs", "aviate-core/src/mixer/fixed_wing.rs", "aviate-core/src/mixer/spacecraft.rs", "aviate-hal/io/src/board_hal.rs", "aviate-hal/io/src/fake.rs", "aviate-hal/xil/direct/src/board.rs"]
+derived = false
+traces_to = ["589cfa68-0179-4683-a787-0c90a54440df"]
+
+[[requirements]]
 uid = "4bfb0a51-2c8a-4780-baec-8962197ce503"
 id = "LLR-CFG-104"
 title = "ResolvedKernelConfig::canonical_hash covers every flight-period field"

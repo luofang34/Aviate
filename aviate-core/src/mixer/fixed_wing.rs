@@ -29,6 +29,7 @@ pub const ELEVATOR_LANE: usize = 2;
 pub const RUDDER_LANE: usize = 3;
 
 /// Four-lane fixed-wing mixer: throttle, aileron, elevator, rudder.
+#[derive(Clone)]
 pub struct FixedWingMixer {
     /// Timestamp provider for emitted [`ActuatorCmd`] packets.
     pub timestamp_source: fn() -> Timestamp,

@@ -38,6 +38,7 @@ pub trait Mixer {
 /// yaw loop close in the wrong direction — the controller
 /// commands +yaw and the body yaws -yaw, runaway-style.
 #[cfg(feature = "mc")]
+#[derive(Clone)]
 pub struct QuadXMixer {
     pub timestamp_source: fn() -> Timestamp,
 }
@@ -121,6 +122,7 @@ fn quad_actuator_cmd(motors: [crate::types::Scalar; 4], timestamp: Timestamp) ->
 /// produce body rotation in the opposite direction (positive
 /// feedback → tumble).
 #[cfg(feature = "mc")]
+#[derive(Clone)]
 pub struct QuadXMixerX500 {
     pub timestamp_source: fn() -> Timestamp,
 }
@@ -177,6 +179,7 @@ impl Mixer for QuadXMixerX500 {
 /// loop's rate command limit — with the controller pushing INTO the
 /// spin, and strengthening the yaw integrator made it wind up faster.
 #[cfg(feature = "mc")]
+#[derive(Clone)]
 pub struct QuadXMixerReversedSpin {
     pub timestamp_source: fn() -> Timestamp,
 }

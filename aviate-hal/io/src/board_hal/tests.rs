@@ -2,10 +2,12 @@
 
 use super::*;
 use crate::error::ActuatorResult;
+use crate::fake::{FakeActuator, FakeBaro, FakeGnss, FakeImu, FakeMag};
 use crate::traits::{RawBaroReading, RawGnssReading, RawImuReading, RawMagReading};
 use crate::SensorResult;
 
 // Mock time source
+#[derive(Clone)]
 struct MockTime(u64);
 impl TimeSource for MockTime {
     fn now_us(&self) -> u64 {
@@ -212,4 +214,84 @@ fn test_board_hal_actuator() {
     assert!(hal.is_armed());
     hal.disarm();
     assert!(!hal.is_armed());
+}
+
+type FakeBoardHal = BoardHal<FakeImu, FakeBaro, FakeMag, FakeGnss, MockTime, FakeActuator>;
+
+/// Read each sensor lane and return the values as bit patterns.
+fn drain_lanes(hal: &mut FakeBoardHal) -> [Option<u32>; 4] {
+    [
+        hal.read_imu().map(|r| r.value.gyro[1].0.to_bits()),
+        hal.read_baro()
+            .and_then(|r| r.value.air.static_pressure)
+            .map(|pressure| pressure.0.to_bits()),
+        hal.read_mag().map(|r| r.value.field_ut[2].0.to_bits()),
+        hal.read_gnss().map(|r| r.value.velocity_ned[0].0.to_bits()),
+    ]
+}
+
+// A simulator makes a snapshot of the board with `Clone`. The clone must
+// hold the buffered samples and the actuator state, and must not share
+// them with the original.
+#[test]
+fn clone_of_fake_board_hal_is_an_independent_snapshot() {
+    let mut hal: FakeBoardHal = BoardHal::new(
+        FakeImu::new(),
+        FakeBaro::new(),
+        FakeMag::new(),
+        FakeGnss::new(),
+        MockTime(1000),
+        FakeActuator::new(),
+    );
+    hal.imu_mut().feed(RawImuReading {
+        accel: [0.1, 0.2, -9.81],
+        gyro: [0.01, -0.02, 0.03],
+        temperature: Some(25.0),
+    });
+    hal.baro_mut().feed(RawBaroReading {
+        pressure_pa: 90_000.0,
+        differential_pressure_pa: None,
+        pressure_altitude_m: None,
+        temperature_c: 20.0,
+    });
+    hal.mag_mut().feed(RawMagReading {
+        field_ut: [20.0, 1.0, 40.0],
+    });
+    hal.gnss_mut().feed(RawGnssReading {
+        vel_ned: [3.5, 0.0, 0.0],
+        fix: GnssFix::ThreeD,
+        ..Default::default()
+    });
+    hal.arm();
+    let mut cmd = ActuatorCmd::default();
+    cmd.outputs[0] = aviate_core::types::Normalized(0.75);
+    hal.write(&cmd);
+
+    let mut snapshot = hal.clone();
+    assert!(snapshot.is_armed());
+    assert_eq!(
+        snapshot
+            .actuator()
+            .peek_cmd()
+            .map(|c| c.outputs[0].to_bits()),
+        hal.actuator().peek_cmd().map(|c| c.outputs[0].to_bits())
+    );
+    assert!(snapshot.actuator().has_cmd());
+
+    // Reading takes the buffered sample, so the second read of the
+    // original shows that the snapshot kept its own copy.
+    let original = drain_lanes(&mut hal);
+    assert!(original.iter().all(Option::is_some), "{original:?}");
+    assert!(hal.read_imu().is_none());
+    assert_eq!(drain_lanes(&mut snapshot), original);
+
+    hal.disarm();
+    assert!(snapshot.is_armed());
+
+    #[cfg(feature = "xil-fault")]
+    {
+        hal.mag_mut().inject_fault(crate::fake::SensorFault::NaN);
+        assert!(hal.clone().mag().has_fault());
+        assert!(!snapshot.mag().has_fault());
+    }
 }

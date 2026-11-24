@@ -35,6 +35,7 @@ use crate::mixer::{ActuatorSanitizer, Mixer};
 
 /// Algorithm-identity bundle. Type parameters mirror the kernel's:
 /// `<E, V, M, S>` = estimator, vehicle controller, mixer, sanitizer.
+#[derive(Clone)]
 pub struct KernelPipeline<E, V, M, S>
 where
     E: Estimator,

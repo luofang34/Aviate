@@ -5,6 +5,7 @@ use crate::control::{
 use crate::state::StateEstimate;
 use crate::types::NormalizedSigned;
 
+#[derive(Clone)]
 pub struct VtolController;
 
 impl VehicleController for VtolController {

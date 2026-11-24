@@ -324,7 +324,7 @@ pub trait ActuatorSanitizer {
 /// internal state field — fallback memory now lives in
 /// `KernelState.fallback`. The sanitizer itself is a unit struct,
 /// preserved as a name for the trait impl + future tuning fields.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Sanitizer;
 
 // Impl block lives in mixer/sanitizer_impl.rs to keep this file under the

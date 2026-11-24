@@ -63,6 +63,7 @@ use crate::traits::{
 /// This struct is the central composition point for all I/O. By using the same
 /// `BoardHal` for both SITL and real hardware (with different driver types),
 /// the kernel code remains unchanged between simulation and deployment.
+#[derive(Clone)]
 pub struct BoardHal<I, B, M, G, T, A> {
     imu: I,
     baro: B,
