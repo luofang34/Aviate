@@ -27,6 +27,10 @@ use crate::description::FixedWingAirframe;
 ///   0.77. The pitch rate leads the angle of attack: after a step of the
 ///   demand it is above the demand by 0.23 of the step for a short time.
 ///
+/// In that pull-up the pitch damping `-Mq` = 4.00 /s is 0.33 of what
+/// resists the rate and the stability term `-Ma / Za` = 8.14 /s is the
+/// other part, which is the pitch damping share.
+///
 /// The yaw feedforward and the feedback gains have no such source.
 #[must_use]
 pub fn c172() -> FixedWingAirframe {
@@ -60,6 +64,7 @@ pub fn c172() -> FixedWingAirframe {
             rate_p: [0.4, 0.6, 0.5],
             rate_i: [0.2, 0.4, 0.0],
             rate_ff: [0.69, 0.77, 0.5],
+            pitch_damping_share: 0.33,
             rate_integrator_limit: 0.3,
             airspeed_scale_min: 0.5,
             airspeed_scale_max: 2.0,

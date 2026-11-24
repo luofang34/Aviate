@@ -33,6 +33,7 @@ pub(crate) fn reference_params() -> FixedWingParams {
         rate_p: [0.4, 0.6, 0.5],
         rate_i: [0.2, 0.4, 0.1],
         rate_ff: [0.8, 1.0, 0.5],
+        pitch_damping_share: 0.5,
         rate_integrator_limit: 0.3,
         airspeed_scale_min: 0.5,
         airspeed_scale_max: 2.0,
@@ -41,7 +42,7 @@ pub(crate) fn reference_params() -> FixedWingParams {
 }
 
 /// One mutation of each stored value, in declaration order.
-fn mutations() -> [fn(&mut FixedWingParams); 36] {
+fn mutations() -> [fn(&mut FixedWingParams); 37] {
     [
         |p| p.stall_airspeed.0 += 0.5,
         |p| p.min_airspeed.0 += 0.5,
@@ -75,6 +76,7 @@ fn mutations() -> [fn(&mut FixedWingParams); 36] {
         |p| p.rate_ff[0] += 0.1,
         |p| p.rate_ff[1] += 0.1,
         |p| p.rate_ff[2] += 0.1,
+        |p| p.pitch_damping_share += 0.1,
         |p| p.rate_integrator_limit += 0.1,
         |p| p.airspeed_scale_min -= 0.1,
         |p| p.airspeed_scale_max += 0.1,
@@ -97,7 +99,7 @@ fn reference_block_is_valid() {
 #[test]
 fn every_value_moves_the_tuning_identity_and_the_canonical_hash() {
     let reference = config_with(reference_params());
-    let mut identities = [reference.fixed_wing_tuning_identity(); 37];
+    let mut identities = [reference.fixed_wing_tuning_identity(); 38];
     for (index, mutate) in mutations().into_iter().enumerate() {
         let mut params = reference_params();
         mutate(&mut params);
@@ -153,6 +155,8 @@ fn a_block_that_cannot_fly_is_refused_with_its_reason() {
     assert_eq!(rejected(|p| p.cruise_throttle.0 = 1.0), E::ThrottleOrder);
     assert_eq!(rejected(|p| p.airspeed_scale_min = 1.2), E::ScaleOrder);
     assert_eq!(rejected(|p| p.airspeed_scale_max = 0.9), E::ScaleOrder);
+    assert_eq!(rejected(|p| p.pitch_damping_share = -0.1), E::ShareRange);
+    assert_eq!(rejected(|p| p.pitch_damping_share = 1.1), E::ShareRange);
 }
 
 /// Fixed-capacity text sink: the crate has no allocator in its tests.
@@ -193,6 +197,7 @@ fn each_refusal_reason_has_its_own_text() {
         E::AirspeedOrder,
         E::ThrottleOrder,
         E::ScaleOrder,
+        E::ShareRange,
     ];
     for (index, reason) in reasons.iter().enumerate() {
         let text = text_of(*reason);

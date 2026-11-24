@@ -7,6 +7,9 @@
 //! of attack that needs a constant elevator deflection, and a yaw axis
 //! with sideslip: directional stability, yaw damping, rudder power,
 //! adverse yaw from the ailerons, side force and roll from sideslip.
+//! The air density is that of the standard atmosphere at the height of
+//! the vehicle. It sets the lift, the drag, the surface and stability
+//! moments and the damping; the thrust power does not fall with height.
 //! The air mass may move over the ground with a constant or slowly
 //! changing horizontal wind; the aeroplane flies relative to the air.
 //!
@@ -42,11 +45,16 @@ pub struct PlantModel {
     /// Travel of the elevator down as a fraction of its travel up.
     down_elevator_travel: f32,
     /// Pitch rate per radian of angle of attack away from trim at the
-    /// reference speed.
+    /// reference speed, from the static stability.
     pitch_stability_per_s: f32,
-    /// Time constant of the roll mode at the reference speed.
+    /// Part of that pitch rate which the damping of the rate of the
+    /// angle of attack takes back at sea-level density.
+    alpha_rate_damping_per_s: f32,
+    /// Time constant of the roll mode at the reference speed and
+    /// sea-level density.
     roll_response_time_s: f32,
-    /// Time constant of the pitch-rate response at the reference speed.
+    /// Time constant of the pitch-rate response at the reference speed
+    /// and sea-level density.
     pitch_response_time_s: f32,
     /// Angle of attack that the vehicle holds with the elevator at neutral.
     trim_alpha_rad: f32,
@@ -92,7 +100,9 @@ impl PlantModel {
     ///   `d(alpha)/dt = q - Za * alpha`, `Za = q S CLa / (m V)` = 2.62 /s,
     ///   the pitch rate is a first-order response with the time constant
     ///   `1 / -(Mq + Madot)` = 0.158 s toward
-    ///   `2.50 * elevator - 2.40 * alpha`. A steady pull-up holds
+    ///   `2.50 * elevator - (3.37 - 0.97) * alpha`: 3.37 is
+    ///   `Ma / (Mq + Madot)` and 0.97 is `Madot * Za / (Mq + Madot)`,
+    ///   which falls with the air density. A steady pull-up holds
     ///   `2.50 / (1 + 2.40 / Za)` = 1.31 rad/s for each unit of up
     ///   elevator.
     ///
@@ -113,7 +123,8 @@ impl PlantModel {
         roll_rate_at_full_aileron_rps: 1.445,
         pitch_rate_at_full_elevator_rps: 2.50,
         down_elevator_travel: 0.821,
-        pitch_stability_per_s: 2.40,
+        pitch_stability_per_s: 3.37,
+        alpha_rate_damping_per_s: 0.97,
         roll_response_time_s: 0.091,
         pitch_response_time_s: 0.158,
         trim_alpha_rad: 0.008,
@@ -145,6 +156,7 @@ impl PlantModel {
         pitch_rate_at_full_elevator_rps: 1.2,
         down_elevator_travel: 1.0,
         pitch_stability_per_s: 3.0,
+        alpha_rate_damping_per_s: 0.0,
         roll_response_time_s: 0.08,
         pitch_response_time_s: 0.08,
         trim_alpha_rad: 0.0067,
@@ -336,9 +348,12 @@ impl FixedWingPlant {
             / speed.max(model.static_thrust_speed_mps);
         self.load_factor = lift / weight;
 
-        // Surface and stability moments grow with dynamic pressure; the
-        // rate that a deflection holds, and the damping, grow with airspeed.
+        // Surface and stability moments grow with dynamic pressure and
+        // damping moments with dynamic pressure divided by true airspeed.
+        // The rate that a deflection holds is their quotient and grows
+        // with true airspeed; the air density cancels in it.
         let authority = speed / model.reference_speed_mps;
+        let density = air_density(self.height()) / 1.225;
         let sideslip = self.sideslip();
 
         let speed_rate = (thrust - drag) / model.mass_kg - g * self.path_angle.sin();
@@ -346,7 +361,7 @@ impl FixedWingPlant {
             (lift * self.roll.cos() - weight * self.path_angle.cos()) / (model.mass_kg * speed);
         // The side force of the fuselage and fin turns the velocity toward the nose.
         let course_rate = lift * self.roll.sin() / (model.mass_kg * speed * self.path_angle.cos())
-            - model.side_force_per_s * authority * sideslip;
+            - model.side_force_per_s * density * authority * sideslip;
 
         let turn_pitch_rate = course_rate * self.pitch.cos() * self.roll.sin();
         let roll_rate_target = model.roll_rate_at_full_aileron_rps * authority * aileron
@@ -359,19 +374,23 @@ impl FixedWingPlant {
         let pitch_rate_target = model.pitch_rate_at_full_elevator_rps
             * authority
             * (elevator_travel * elevator - model.trim_elevator)
-            - model.pitch_stability_per_s * authority * (alpha - model.trim_alpha_rad)
+            - (model.pitch_stability_per_s - model.alpha_rate_damping_per_s * density)
+                * authority
+                * (alpha - model.trim_alpha_rad)
             + turn_pitch_rate;
-        // The damping moments grow with airspeed, so the responses
-        // quicken with it.
-        let roll_blend = (dt_s * authority / model.roll_response_time_s).min(1.0);
-        let pitch_blend = (dt_s * authority / model.pitch_response_time_s).min(1.0);
+        // The damping moments grow with airspeed and with air density,
+        // so the responses quicken with both.
+        let damping = density * authority;
+        let roll_blend = (dt_s * damping / model.roll_response_time_s).min(1.0);
+        let pitch_blend = (dt_s * damping / model.pitch_response_time_s).min(1.0);
         self.roll_rate += roll_blend * (roll_rate_target - self.roll_rate);
         self.pitch_rate += pitch_blend * (pitch_rate_target - self.pitch_rate);
-        let yaw_acceleration = authority
+        let yaw_acceleration = density
+            * authority
             * authority
             * (model.directional_stability_per_s2 * sideslip + model.rudder_power_per_s2 * rudder
                 - model.adverse_yaw_per_s2 * aileron)
-            - authority * model.yaw_damping_per_s * self.yaw_rate
+            - damping * model.yaw_damping_per_s * self.yaw_rate
             + self.engine * throttle * model.propeller_yaw_per_s2;
         self.yaw_rate += dt_s * yaw_acceleration;
 

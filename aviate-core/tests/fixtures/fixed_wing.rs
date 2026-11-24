@@ -32,6 +32,7 @@ pub fn reference_params() -> FixedWingParams {
         rate_p: [0.4, 0.6, 0.5],
         rate_i: [0.2, 0.4, 0.1],
         rate_ff: [0.8, 1.0, 0.5],
+        pitch_damping_share: 0.5,
         rate_integrator_limit: 0.3,
         airspeed_scale_min: 0.5,
         airspeed_scale_max: 2.0,

@@ -291,49 +291,94 @@ fn surface_gains_follow_the_airspeed() {
     assert!((aileron_at(25.0) - 0.32).abs() < 1.0e-3);
 }
 
-#[test]
-fn feedforward_follows_the_true_airspeed_in_roll_and_yaw_only() {
+/// Aileron, elevator and rudder for a 0.1 rad/s demand on each axis in
+/// one cycle of `rig` with the air data `air`.
+fn surfaces_in(
+    rig: &mut Rig,
+    state: &StateEstimate,
+    air: Option<&crate::sensor::AirData>,
+) -> [f32; 3] {
     use crate::control::runtime::ControllerRuntimeState;
     use crate::control::{ConfigMode, VehicleControlMode, VehicleController};
     let demand = rate_command(0.1, 0.1, 0.1);
-    let surfaces_in = |air: &crate::sensor::AirData| {
-        let mut rig = Rig::new();
-        rig.runtime.set_cycle_interval(crate::types::Seconds(DT));
-        rig.runtime.set_air_data(Some(air));
-        let output = rig.controller.step(
-            &mut rig.runtime,
-            &cruise_state(),
-            &demand,
-            &VehicleControlMode::from_control_mode(demand.mode),
-            ConfigMode::Cruise,
-            &rig.limits,
-        );
-        [output.roll.0, output.pitch.0, output.yaw.0]
-    };
-    let near = |surfaces: [f32; 3], expected: [f32; 3]| {
-        surfaces
-            .iter()
-            .zip(expected)
-            .all(|(surface, expected)| (surface - expected).abs() < 1.0e-3)
-    };
+    rig.runtime.set_cycle_interval(crate::types::Seconds(DT));
+    rig.runtime.set_air_data(air);
+    let output = rig.controller.step(
+        &mut rig.runtime,
+        state,
+        &demand,
+        &VehicleControlMode::from_control_mode(demand.mode),
+        ConfigMode::Cruise,
+        &rig.limits,
+    );
+    [output.roll.0, output.pitch.0, output.yaw.0]
+}
 
-    // At sea level the two airspeeds are equal. Feedforward 0.8, 1.0 and
-    // 0.5 and feedback 0.4, 0.6 and 0.5 on a 0.1 rad/s demand.
-    let sea_level = surfaces_in(&super::pitot(55.0));
-    assert!(near(sea_level, [0.12, 0.16, 0.10]), "{sea_level:?}");
+fn near(surfaces: [f32; 3], expected: [f32; 3]) -> bool {
+    surfaces
+        .iter()
+        .zip(expected)
+        .all(|(surface, expected)| (surface - expected).abs() < 1.0e-3)
+}
 
-    // A quarter of the sea-level density at the same indicated airspeed:
-    // the true airspeed is twice the indicated one. A deflection then
-    // holds twice the roll rate and twice the yaw rate, so their
-    // feedforward is half. The pitch feedforward and each feedback term
-    // stay.
-    let thin_air = crate::sensor::AirData {
+/// 55 m/s indicated in a quarter of the sea-level density: the true
+/// airspeed is twice the indicated one.
+fn thin_air() -> crate::sensor::AirData {
+    crate::sensor::AirData {
         static_pressure: Some(crate::types::Pascals(25_331.25)),
         temperature: Some(crate::types::Celsius(15.0)),
         ..super::pitot(55.0)
-    };
-    let high = surfaces_in(&thin_air);
-    assert!(near(high, [0.08, 0.16, 0.075]), "{high:?}");
+    }
+}
+
+#[test]
+fn each_feedforward_follows_the_airspeed_of_its_physics() {
+    // At sea level the two airspeeds are equal. Feedforward 0.8, 1.0 and
+    // 0.5 and feedback 0.4, 0.6 and 0.5 on a 0.1 rad/s demand.
+    let sea_level = surfaces_in(&mut Rig::new(), &cruise_state(), Some(&super::pitot(55.0)));
+    assert!(near(sea_level, [0.12, 0.16, 0.10]), "{sea_level:?}");
+
+    // At twice the true airspeed a deflection holds twice the roll rate
+    // and twice the yaw rate, so their feedforward is half. Each
+    // feedback term stays: the dynamic pressure is the same. Half of the
+    // pitch feedforward balances damping and is half; the other half
+    // balances stability and is twice: 0.25 + 1.0.
+    let high = surfaces_in(&mut Rig::new(), &cruise_state(), Some(&thin_air()));
+    assert!(near(high, [0.08, 0.185, 0.075]), "{high:?}");
+
+    // A pitch feedforward that balances damping only follows the true
+    // airspeed as roll does; one that balances stability only is twice.
+    for (share, elevator) in [(1.0, 0.11), (0.0, 0.26)] {
+        let mut params = reference_params();
+        params.pitch_damping_share = share;
+        let [_, pitch, _] = surfaces_in(&mut Rig::with(params), &cruise_state(), Some(&thin_air()));
+        assert!((pitch - elevator).abs() < 1.0e-3, "{share}: {pitch}");
+    }
+}
+
+#[test]
+fn without_a_measured_density_the_schedule_is_that_of_sea_level() {
+    // A probe without a static port gives no density: the true airspeed
+    // is the indicated one.
+    let mut fast = cruise_state();
+    fast.velocity_ned[0] = MetersPerSecond(110.0);
+    let pitot_only = surfaces_in(&mut Rig::new(), &fast, Some(&super::pitot(55.0)));
+    assert!(near(pitot_only, [0.12, 0.16, 0.10]), "{pitot_only:?}");
+
+    // Without a probe both airspeeds are the speed over the ground. At
+    // 110 m/s each feedforward is half and each feedback term a quarter.
+    let ground_speed = surfaces_in(&mut Rig::new(), &fast, None);
+    assert!(
+        near(ground_speed, [0.05, 0.065, 0.0375]),
+        "{ground_speed:?}"
+    );
+
+    // Without a probe and without a velocity both are the cruise
+    // airspeed: each scale is one.
+    fast.valid_flags
+        .remove(crate::state::StateValidFlags::VELOCITY);
+    let assumed = surfaces_in(&mut Rig::new(), &fast, None);
+    assert!(near(assumed, [0.12, 0.16, 0.10]), "{assumed:?}");
 }
 
 #[test]

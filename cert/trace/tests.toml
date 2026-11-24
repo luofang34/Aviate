@@ -2035,19 +2035,19 @@ traces_to = ["2c39f20c-eff8-4784-9fa6-0deb5b162681"]
 uid = "f63459c6-868c-4e7d-8515-1db1af081961"
 id = "TST-CTL-213"
 title = "C172 bank and pitch steps inside the rate limits; identified feedforward"
-test_selectors = ["a_bank_step_of_40_degrees_stays_inside_the_roll_rate_limit", "a_bank_step_at_3000_m_stays_inside_the_roll_rate_limit", "control::fixed_wing::tests::loops_tests::feedforward_follows_the_true_airspeed_in_roll_and_yaw_only", "control::fixed_wing::tests::loops_tests::surface_gains_follow_the_airspeed", "a_pitch_step_stays_inside_the_pitch_rate_and_load_limits", "the_rate_feedforward_is_the_inverse_of_the_response_of_the_aeroplane"]
+test_selectors = ["a_bank_step_of_40_degrees_stays_inside_the_roll_rate_limit_at_each_height", "a_pitch_step_stays_inside_the_pitch_rate_and_load_limits_at_each_height", "the_feedforward_of_the_law_holds_the_demand_at_each_height", "control::fixed_wing::tests::loops_tests::each_feedforward_follows_the_airspeed_of_its_physics", "control::fixed_wing::tests::loops_tests::without_a_measured_density_the_schedule_is_that_of_sea_level", "control::fixed_wing::tests::loops_tests::surface_gains_follow_the_airspeed"]
 owner = "aviate-core@aviate"
 description = """
 `aviate-hal/xil/direct/tests/fixed_wing_rate_envelope.rs` flies the C172
 plant, which has the roll and pitch response of the JSBSim Cessna 172
-derivatives. With the autopilot engaged, bank steps of 40 degrees and
-pitch steps of 0.22 rad are measured for peak body rate, rise time,
-overshoot and load factor against the limits of HLR-CTL-207. The bank
-step is flown again at 3000 m, where the true airspeed is 1.16 times
-the indicated airspeed. `loops_tests.rs` checks the airspeed scale of
-each term of the rate loop. An open-loop test steps the aileron and the elevator of the plant and
-checks that the feedforward times the measured rate for each unit of
-deflection is one, inside 5 % for roll and 8 % for pitch.
+derivatives and the air density of the standard atmosphere. At sea
+level, 2000 m and 4000 m, at 55 m/s indicated and with the autopilot
+engaged, bank steps of 40 degrees and pitch steps of 0.22 rad are
+measured for peak body rate, rise time, overshoot and load factor
+against the limits of HLR-CTL-207. At the same heights the feedforward
+that the law gives for a body rate is applied to the bare plant, which
+must hold that rate. `loops_tests.rs` checks the airspeed scale of each
+term of the rate loop and the schedule without a measured density.
 These tests verify LLR-CTL-213.
 """
 traces_to = ["9ace69e9-7da4-4480-a166-a63e4b86842f"]

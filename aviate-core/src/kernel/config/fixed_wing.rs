@@ -68,11 +68,18 @@ pub struct FixedWingParams {
     /// Surface deflection rate for each rad/s of body-rate error.
     pub rate_i: [Scalar; 3],
     /// Surface deflection for each rad/s of body-rate demand at the
-    /// cruise airspeed and sea-level density. The value that makes the vehicle hold the demand
-    /// without feedback is the inverse of the body rate that a unit
-    /// deflection holds. A larger value takes the vehicle above the
-    /// body-rate limits of the envelope, which bound the demand.
+    /// cruise airspeed and sea-level density. The value that makes the
+    /// vehicle hold the demand without feedback is the inverse of the
+    /// body rate that a unit deflection holds. A larger value takes the
+    /// vehicle above the body-rate limits of the envelope, which bound
+    /// the demand.
     pub rate_ff: [Scalar; 3],
+    /// Part of the pitch feedforward that balances the pitch damping at
+    /// the cruise airspeed and sea-level density, from 0 to 1. The other
+    /// part balances the stability of the angle of attack that a pitch
+    /// rate needs. The two parts follow the airspeed and the air density
+    /// differently.
+    pub pitch_damping_share: Scalar,
     /// Largest surface deflection that a rate integrator holds.
     pub rate_integrator_limit: Scalar,
     /// Lowest gain scale, used at high airspeed.
@@ -99,6 +106,8 @@ pub enum FixedWingParamsError {
     ThrottleOrder,
     /// The gain-scale bounds do not enclose 1.
     ScaleOrder,
+    /// The pitch damping share is not inside 0 to 1.
+    ShareRange,
 }
 
 impl core::fmt::Display for FixedWingParamsError {
@@ -114,6 +123,7 @@ impl core::fmt::Display for FixedWingParamsError {
                 "fixed-wing throttles are not 0 <= minimum < cruise < maximum <= 1"
             }
             Self::ScaleOrder => "fixed-wing gain-scale bounds do not enclose 1",
+            Self::ShareRange => "fixed-wing pitch damping share is not inside 0 to 1",
         })
     }
 }
@@ -122,7 +132,7 @@ impl core::error::Error for FixedWingParamsError {}
 
 impl FixedWingParams {
     /// Every value in a fixed order: the order of the canonical encoding.
-    pub(crate) fn values(&self) -> [Scalar; 36] {
+    pub(crate) fn values(&self) -> [Scalar; 37] {
         let [rate_p_roll, rate_p_pitch, rate_p_yaw] = self.rate_p;
         let [rate_i_roll, rate_i_pitch, rate_i_yaw] = self.rate_i;
         let [rate_ff_roll, rate_ff_pitch, rate_ff_yaw] = self.rate_ff;
@@ -159,6 +169,7 @@ impl FixedWingParams {
             rate_ff_roll,
             rate_ff_pitch,
             rate_ff_yaw,
+            self.pitch_damping_share,
             self.rate_integrator_limit,
             self.airspeed_scale_min,
             self.airspeed_scale_max,
@@ -247,6 +258,9 @@ impl FixedWingParams {
         }
         if self.airspeed_scale_min > 1.0 || self.airspeed_scale_max < 1.0 {
             return Err(FixedWingParamsError::ScaleOrder);
+        }
+        if !(0.0..=1.0).contains(&self.pitch_damping_share) {
+            return Err(FixedWingParamsError::ShareRange);
         }
         Ok(())
     }

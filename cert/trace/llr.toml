@@ -2557,19 +2557,30 @@ unit deflection holds at the cruise airspeed, so that the feedforward
 holds the demand and the feedback corrects only errors.
 
 `rate_loop` SHALL scale each term with the airspeed that its physics
-follows. The surface moment grows with dynamic pressure, so each
-feedback term SHALL scale with the square of
-`cruise_airspeed / indicated airspeed`. The roll rate and the yaw rate
-that a deflection holds are the surface moment divided by the damping
-moment of a unit of rate, and they grow with the true airspeed: the
-roll and yaw feedforward SHALL scale with
-`cruise_airspeed / true airspeed`. The pitch rate that a deflection
-holds grows with dynamic pressure divided by true airspeed, less the
-part that the pitch damping takes: the pitch feedforward SHALL scale
-with `cruise_airspeed / indicated airspeed`, which is inside 9 % of the
-Cessna 172 response up to 4000 m and gives less elevator than the
-exact scale. Each scale SHALL stay inside `airspeed_scale_min` and
-`airspeed_scale_max`.
+follows. With `i = cruise_airspeed / indicated airspeed` and
+`t = cruise_airspeed / true airspeed`:
+
+  - The surface moment grows with dynamic pressure, so each feedback
+    term SHALL scale with `i * i`.
+  - The roll rate and the yaw rate that a deflection holds are the
+    surface moment divided by the damping moment of a unit of rate. The
+    damping moment grows with dynamic pressure divided by true
+    airspeed. The roll and yaw feedforward SHALL scale with `t`.
+  - A pitch rate is resisted by the pitch damping and by the stability
+    of the angle of attack that the rate needs. The second part grows
+    with true airspeed and does not change with air density. With
+    `pitch_damping_share` = s, the pitch feedforward SHALL scale with
+    `s * t + (1 - s) * i * i / t`.
+
+Each scale SHALL stay inside `airspeed_scale_min` and
+`airspeed_scale_max`. `pitch_damping_share` SHALL be inside 0 to 1.
+
+The true airspeed is the measured one only when a fresh probe sample
+gives a static pressure and a temperature. A probe without them, the
+speed over the ground and the assumed cruise airspeed give one airspeed
+for `i` and `t`: the schedule is then that of sea-level density, and at
+height the roll and yaw feedforward are too large by the ratio of true
+to indicated airspeed.
 
 The Cessna 172 description SHALL use the stability derivatives of the
 JSBSim Cessna 172 models at 55 m/s and sea-level density:
@@ -2581,7 +2592,9 @@ JSBSim Cessna 172 models at 55 m/s and sea-level density:
     = 1.31 rad/s in a steady pull-up, with `Cmde` = -1.122 at 1.22
     times the free-stream dynamic pressure, `Cmq` = -12.4, `Cma` =
     -0.90, `CLa` = 5.35 and 0.4887 rad of travel. The feedforward is
-    0.77.
+    0.77. The pitch damping `-Mq` = 4.00 /s is 0.33 of what resists the
+    rate and `-Ma / Za` = 8.14 /s is the other part:
+    `pitch_damping_share` is 0.33.
 
 The yaw feedforward and the feedback gains are not derived from data.
 """

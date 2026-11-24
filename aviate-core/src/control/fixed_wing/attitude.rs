@@ -109,21 +109,27 @@ pub(super) fn rate_loop(
     dt: Scalar,
 ) -> [Scalar; 3] {
     let stall = params.stall_airspeed.0;
-    let scale_at = |airspeed: Scalar| {
-        (params.cruise_airspeed.0 / airspeed.max(stall))
-            .clamp(params.airspeed_scale_min, params.airspeed_scale_max)
-    };
-    // The rate that a deflection holds is the surface moment divided by
-    // the moment that resists a unit of rate. In roll and yaw that is
-    // the damping moment, which grows with dynamic pressure divided by
-    // true airspeed: the rate grows with true airspeed. In pitch most of
-    // it is the stability of the angle of attack that the rate needs,
-    // which dynamic pressure does not change: the rate grows with
-    // dynamic pressure divided by true airspeed, and the indicated
-    // airspeed is the nearer single scale.
-    let damped = scale_at(air.true_speed);
+    let bound = |scale: Scalar| scale.clamp(params.airspeed_scale_min, params.airspeed_scale_max);
+    // Cruise airspeed over the indicated and over the true airspeed. The
+    // two are equal when no probe gives the air density: the schedule is
+    // then that of sea-level density.
+    let indicated = params.cruise_airspeed.0 / air.indicated.max(stall);
+    let true_speed = params.cruise_airspeed.0 / air.true_speed.max(stall);
+    // The deflection that holds a rate is the moment that resists a unit
+    // of rate divided by the surface moment. The surface moment grows
+    // with dynamic pressure, the square of the indicated airspeed. In
+    // roll and yaw the damping resists, which grows with dynamic
+    // pressure divided by true airspeed: the deflection falls with true
+    // airspeed.
+    let damped = bound(true_speed);
+    // In pitch the damping resists in the same way, and so does the
+    // stability of the angle of attack that the rate needs. That part
+    // grows with true airspeed and not with air density, so its
+    // deflection grows with true airspeed divided by dynamic pressure.
+    let share = params.pitch_damping_share;
+    let pitch = bound(share * true_speed + (1.0 - share) * indicated * indicated / true_speed);
     let context = AxisContext {
-        scale: scale_at(air.indicated),
+        scale: bound(indicated),
         // Below the stall speed the vehicle is on the ground or not
         // flying: an integrator would only store the error of that state.
         integrating: air.indicated >= stall,
@@ -148,7 +154,7 @@ pub(super) fn rate_loop(
             pitch_memory,
             pitch_demand,
             pitch_rate.0,
-            (pitch_p, pitch_i, pitch_ff * context.scale),
+            (pitch_p, pitch_i, pitch_ff * pitch),
             &context,
         ),
         axis(

@@ -44,6 +44,8 @@ pub fn rascal() -> FixedWingAirframe {
             rate_p: [0.15, 0.25, 0.2],
             rate_i: [0.1, 0.2, 0.0],
             rate_ff: [0.4, 0.5, 0.3],
+            // No data: the share of the plant that the tests fly.
+            pitch_damping_share: 0.74,
             rate_integrator_limit: 0.3,
             airspeed_scale_min: 0.5,
             airspeed_scale_max: 2.0,
